@@ -1,0 +1,6 @@
+symbols: [VCB, HPG, TCB]
+indices: [VNINDEX, VN30]
+bar_interval_minutes: 5
+holidays: ['2026-09-02']
+nats: {url: 'nats://localhost:4222', stream: BARS}
+watchdog: {stale_seconds: 180, max_failures: 3}

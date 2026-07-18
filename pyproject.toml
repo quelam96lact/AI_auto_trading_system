@@ -1,0 +1,20 @@
+[project]
+name = "trading"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "ssi-fc-data",
+    "nats-py>=2.6",
+    "psycopg[binary]>=3.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+markers = ["integration: cần Docker Postgres/NATS đang chạy"]
+asyncio_mode = "auto"
+
+[tool.setuptools]
+packages = { find = { include = ["trading*"] } }
