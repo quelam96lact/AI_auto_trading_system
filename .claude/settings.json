@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|MultiEdit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "claudekit-hooks run file-guard"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "claudekit-hooks run typecheck-project"
+          },
+          {
+            "type": "command",
+            "command": "claudekit-hooks run lint-project"
+          },
+          {
+            "type": "command",
+            "command": "claudekit-hooks run test-project"
+          },
+          {
+            "type": "command",
+            "command": "claudekit-hooks run check-todos"
+          },
+          {
+            "type": "command",
+            "command": "claudekit-hooks run self-review"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [],
+    "SessionStart": [],
+    "UserPromptSubmit": []
+  }
+}
