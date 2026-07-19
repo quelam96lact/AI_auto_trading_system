@@ -63,3 +63,52 @@ def run_backtest(
         win_rate=(wins / len(sell_fills)) if sell_fills else 0.0,
         trades=len(sell_fills),
     )
+
+
+import argparse
+from datetime import datetime, timedelta
+
+from trading.calendar_vn import TZ
+from trading.config import load_config
+from trading.resample import resample_bars
+from trading.storage.db import Storage
+from trading.strategies.sma_cross import SmaCrossStrategy
+
+STRATEGIES = {"sma_cross": lambda: SmaCrossStrategy()}
+_TF_MINUTES = {"15m": 15, "1h": 60}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--strategy", required=True, choices=list(STRATEGIES))
+    ap.add_argument("--symbols", required=True, help="VD: VCB,HPG")
+    ap.add_argument("--from", dest="frm", required=True, help="YYYY-MM-DD")
+    ap.add_argument("--to", dest="to", required=True, help="YYYY-MM-DD")
+    ap.add_argument("--tf", default="5m", choices=["5m", "15m", "1h"])
+    ap.add_argument("--capital", type=float, default=100_000_000.0)
+    ap.add_argument("--config", default="config/config.yaml")
+    args = ap.parse_args()
+
+    cfg = load_config(args.config)
+    storage = Storage(cfg.db_dsn)
+    frm = datetime.strptime(args.frm, "%Y-%m-%d").replace(tzinfo=TZ)
+    to = datetime.strptime(args.to, "%Y-%m-%d").replace(tzinfo=TZ) + timedelta(days=1)
+
+    bars: list[Bar] = []
+    for sym in args.symbols.split(","):
+        rows = storage.read_bars(sym, frm, to)
+        bars.extend(rows if args.tf == "5m" else resample_bars(rows, _TF_MINUTES[args.tf]))
+    bars.sort(key=lambda b: (b.ts, b.symbol))
+
+    strategy = STRATEGIES[args.strategy]()
+    risk = RiskManager(capital=args.capital)
+    report = run_backtest(bars, strategy, risk, args.capital)
+
+    print(f"Bars replayed: {len(bars)}")
+    print(f"Trades: {report.trades}  Win rate: {report.win_rate:.1%}")
+    print(f"Realized PnL: {report.realized_pnl:,.0f}  Unrealized PnL: {report.unrealized_pnl:,.0f}")
+    print(f"Ending cash: {report.ending_cash:,.0f}  Max drawdown: {report.max_drawdown:.1%}")
+
+
+if __name__ == "__main__":
+    main()
