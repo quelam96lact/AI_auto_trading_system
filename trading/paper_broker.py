@@ -70,3 +70,18 @@ class PaperBroker:
             for s, p in self.positions.items()
             if p.qty > 0 and s in marks
         )
+
+    @classmethod
+    def restore(
+        cls,
+        capital: float,
+        cash: float,
+        realized_pnl: float,
+        positions: dict[str, Position],
+        **kwargs,
+    ) -> "PaperBroker":
+        broker = cls(capital, **kwargs)
+        broker.cash = cash
+        broker.realized_pnl = realized_pnl
+        broker.positions = positions
+        return broker

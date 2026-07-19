@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from trading.broker import Position
 from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
@@ -49,3 +50,17 @@ def test_unrealized_pnl_uses_marks():
     pos = b.positions["VCB"]
     expected = (12.0 - pos.avg_price) * 100
     assert abs(b.unrealized_pnl({"VCB": 12.0}) - expected) < 1e-6
+
+
+def test_restore_resumes_cash_positions_and_realized_pnl():
+    positions = {"VCB": Position("VCB", 100, 10.0)}
+    b = PaperBroker.restore(
+        capital=100_000_000,
+        cash=95_000_000,
+        realized_pnl=200_000,
+        positions=positions,
+    )
+    assert b.cash == 95_000_000
+    assert b.realized_pnl == 200_000
+    assert b.position_qty("VCB") == 100
+    assert b.capital == 100_000_000
