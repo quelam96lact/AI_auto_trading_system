@@ -1,9 +1,10 @@
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from importlib.resources import files
 
 import psycopg
 
+from trading.broker import Fill, Position
 from trading.models import Bar, IndexValue
 
 _UPSERT_BAR = """
@@ -74,4 +75,51 @@ class Storage:
                 "INSERT INTO heartbeat (service, last_seen) VALUES (%s, now()) "
                 "ON CONFLICT (service) DO UPDATE SET last_seen = now()",
                 (service,),
+            )
+
+    def upsert_position(self, pos: Position) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO positions (symbol, qty, avg_price, updated_at) VALUES (%s, %s, %s, now()) "
+                "ON CONFLICT (symbol) DO UPDATE SET qty = EXCLUDED.qty, avg_price = EXCLUDED.avg_price, "
+                "updated_at = now()",
+                (pos.symbol, pos.qty, pos.avg_price),
+            )
+
+    def read_positions(self) -> dict[str, Position]:
+        with self.conn() as c:
+            rows = c.execute("SELECT symbol, qty, avg_price FROM positions WHERE qty > 0").fetchall()
+        return {r[0]: Position(r[0], r[1], r[2]) for r in rows}
+
+    def write_engine_state(self, cash: float, realized_pnl: float) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO engine_state (id, cash, realized_pnl, updated_at) VALUES (1, %s, %s, now()) "
+                "ON CONFLICT (id) DO UPDATE SET cash = EXCLUDED.cash, "
+                "realized_pnl = EXCLUDED.realized_pnl, updated_at = now()",
+                (cash, realized_pnl),
+            )
+
+    def read_engine_state(self) -> tuple[float, float] | None:
+        with self.conn() as c:
+            row = c.execute("SELECT cash, realized_pnl FROM engine_state WHERE id = 1").fetchone()
+        return (row[0], row[1]) if row else None
+
+    def write_order(self, fill: Fill, mode: str = "paper") -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO orders (ts, symbol, side, qty, price, fee, pnl, mode) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (fill.ts, fill.symbol, fill.side, fill.qty, fill.price, fill.fee, fill.pnl, mode),
+            )
+
+    def update_pnl_daily(self, day: date, realized_delta: float, fee_delta: float, unrealized: float) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO pnl_daily (date, realized, unrealized, fees) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (date) DO UPDATE SET "
+                "realized = pnl_daily.realized + EXCLUDED.realized, "
+                "fees = pnl_daily.fees + EXCLUDED.fees, "
+                "unrealized = EXCLUDED.unrealized",
+                (day, realized_delta, unrealized, fee_delta),
             )

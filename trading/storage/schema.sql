@@ -37,3 +37,37 @@ CREATE TABLE IF NOT EXISTS heartbeat (
   service text PRIMARY KEY,
   last_seen timestamptz NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS orders (
+  id bigserial PRIMARY KEY,
+  ts timestamptz NOT NULL,
+  symbol text NOT NULL,
+  side text NOT NULL,
+  qty integer NOT NULL,
+  price double precision NOT NULL,
+  fee double precision NOT NULL,
+  pnl double precision,
+  mode text NOT NULL DEFAULT 'paper'
+);
+
+CREATE TABLE IF NOT EXISTS positions (
+  symbol text PRIMARY KEY,
+  qty integer NOT NULL,
+  avg_price double precision NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS engine_state (
+  id integer PRIMARY KEY DEFAULT 1,
+  cash double precision NOT NULL,
+  realized_pnl double precision NOT NULL,
+  updated_at timestamptz NOT NULL,
+  CHECK (id = 1)
+);
+
+CREATE TABLE IF NOT EXISTS pnl_daily (
+  date date PRIMARY KEY,
+  realized double precision NOT NULL DEFAULT 0,
+  unrealized double precision NOT NULL DEFAULT 0,
+  fees double precision NOT NULL DEFAULT 0
+);
