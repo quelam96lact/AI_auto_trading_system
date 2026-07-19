@@ -81,8 +81,11 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 storage.beat("engine")
                 continue
             bar = bar_from_payload(json.loads(msg.data))
+            was_halted = risk.halted_date
             fills = process_bar(bar, broker, strategy, risk, marks)
             persist_fills(fills)
+            if risk.halted_date is not None and risk.halted_date != was_halted:
+                alert("CRITICAL", "risk halt: max daily loss reached", date=str(risk.halted_date))
             await msg.ack()
             storage.beat("engine")
             processed += 1

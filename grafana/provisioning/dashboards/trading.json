@@ -1,0 +1,59 @@
+{
+  "title": "Trading Overview",
+  "uid": "trading-overview",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Gia (VCB)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT ts AS time, close FROM bars WHERE symbol = 'VCB' ORDER BY ts",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "PnL theo ngay",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT date AS time, realized, unrealized, fees FROM pnl_daily ORDER BY date",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Vi the hien tai",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT symbol, qty, avg_price, updated_at FROM positions WHERE qty > 0",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Suc khoe service",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT service, last_seen, extract(epoch from (now() - last_seen)) AS age_seconds FROM heartbeat",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

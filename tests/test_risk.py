@@ -56,3 +56,11 @@ def test_halts_all_trading_for_rest_of_day_after_max_loss():
         )
         is True
     )
+
+
+def test_halted_date_publicly_readable_for_alerting():
+    rm = RiskManager(capital=CAP, max_daily_loss_pct=0.03)
+    assert rm.halted_date is None
+    buy = Signal("VCB", "BUY", 10)
+    rm.approve(buy, ref_price=1_000, positions={}, daily_pnl=-3_000_001, today=D)
+    assert rm.halted_date == D

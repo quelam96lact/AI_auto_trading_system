@@ -11,7 +11,7 @@ class RiskManager:
     max_positions: int = 5
     max_order_value_pct: float = 0.20
     max_daily_loss_pct: float = 0.03
-    _halted_date: date | None = field(default=None, init=False, repr=False)
+    halted_date: date | None = field(default=None, init=False, repr=False)
 
     def approve(
         self,
@@ -21,10 +21,10 @@ class RiskManager:
         daily_pnl: float,
         today: date,
     ) -> bool:
-        if self._halted_date == today:
+        if self.halted_date == today:
             return False
         if daily_pnl <= -self.capital * self.max_daily_loss_pct:
-            self._halted_date = today
+            self.halted_date = today
             return False
         if signal.side == "BUY":
             order_value = ref_price * signal.qty

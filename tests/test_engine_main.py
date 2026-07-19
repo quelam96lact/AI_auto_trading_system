@@ -96,3 +96,23 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
         await run(cfg, max_messages=1)
     assert any("engine restored state" in r.message for r in caplog.records)
     assert storage.read_positions()["ENGT"].qty == 100
+
+
+async def test_engine_alerts_critical_on_risk_halt(storage, monkeypatch):
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg)),
+    )
+
+    cfg = make_cfg()
+    prices = [90_000] * 20 + [95_000] * 10 + [50_000] * 10
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+
+    await run(cfg, max_messages=len(bars))
+
+    assert ("CRITICAL", "risk halt: max daily loss reached") in alerts_seen
