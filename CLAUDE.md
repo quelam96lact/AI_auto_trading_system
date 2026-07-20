@@ -4,15 +4,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This repository is not yet started — it currently contains only git metadata (no source code, README, configuration, or dependency manifests). There is nothing to build, lint, or test yet, and no architecture to document.
+**Active development:** AI auto-trading system for Vietnamese stocks (HOSE/HNX) using SSI FastConnect API.
 
-Per project memory (`ssi-fastconnect-api-facts`), this project is expected to become an AI auto-trading system integrating with the SSI FastConnect API. Verify current API facts against that memory file before relying on it, since it flagged that some prior assumptions (a "Task 31" and an existing `connector.py`) were fabricated and not actually present in the codebase.
+**Completed:**
+- Sub-project 4 (Monitoring): Telegram alerts + Grafana dashboards
+- Sub-project 1 Task 10 (Collector): SSI real-time stream consumer with backfill, 5m bar aggregation, NATS publisher
+- Sub-project 1 Phase 2 Tasks 1-2 (Data layer): SSI message fixtures + TDD parser (B/MI messages)
 
-## Next steps for future Claude instances
+**In progress:**
+- Sub-project 1 Phase 2 Task 3 (E2E verification): Awaiting next trading session for full integration test
 
-When source code is added to this repository, update this file with:
-1. Build, lint, and test commands (including how to run a single test).
-2. High-level architecture — module boundaries, data flow, and how major components interact.
+## Build, lint, test commands
+
+```bash
+# Install dependencies
+uv sync
+
+# Run all unit tests (excluding integration tests)
+uv run pytest -m "not integration" -v
+
+# Run single test file
+uv run pytest tests/test_parser.py -v
+
+# Run single test
+uv run pytest tests/test_parser.py::test_parse_b_string_envelope -v
+
+# Lint with ruff
+uv run ruff check trading tests
+
+# Start collector service
+docker compose up -d --build collector
+
+# Start engine (paper trading)
+docker compose up -d --build engine
+
+# View logs
+docker compose logs -f collector
+docker compose logs -f engine
+```
+
+## High-level architecture
+
+**Data flow: SSI stream → Collector → DB/NATS → Engine → PaperBroker**
+
+- `trading/collector/`: SSI feed (real-time stream), parser (B/MI messages), backfill (REST API), aggregator (1m→5m bars)
+- `trading/engine/`: Main loop, bar processing, strategy (SMA cross), risk management
+- `trading/broker`: PaperBroker (simulates order fills with VN fees + slippage)
+- `trading/storage/`: PostgreSQL + TimescaleDB (bars, orders, positions, PnL)
+- `trading/bus/`: NATS JetStream publisher (bars → engine subscription)
+- `trading/alerts/`: Structured logging + Telegram daemon threads (WARN/CRITICAL)
+- `grafana/`: Dashboard (price, PnL, positions, heartbeat) with PostgreSQL datasource
+
+**Key services:**
+- postgres:5432 — TimescaleDB (hypertable for bars/orders/positions)
+- nats:4222 — JetStream stream=BARS, subject=bars.ssi.{symbol}
+- collector — Backfills + streams real-time ticks → bars → DB + NATS
+- engine — Subscribes bars, runs strategy, executes orders → positions/PnL
+- grafana:3000 — Live dashboards (admin/admin)
 
 ## Nguyên tắc lập kế hoạch khi giao việc coding cho agent AI khác
 
@@ -59,50 +107,6 @@ Khi Claude đóng vai trò lên kế hoạch (planner) và giao việc viết co
 
 ### Phân vai giữa agent thực thi và Claude
 
-- Mọi kế hoạch giao cho agent thực thi phải yêu cầu agent **kiểm tra GitNexus trước khi sửa code** (xem phần "GitNexus — Code Intelligence" bên dưới: `gitnexus_query`/`gitnexus_context` để hiểu code, `gitnexus_impact` trước khi sửa symbol, `gitnexus_detect_changes` sau khi sửa).
+- Mọi kế hoạch giao cho agent thực thi phải yêu cầu agent **kiểm tra GitNexus trước khi sửa code** (see AGENTS.md for GitNexus resources: `gitnexus_query`/`gitnexus_context` to understand code, `gitnexus_impact` before editing symbol, `gitnexus_detect_changes` after editing).
 - Agent thực thi chỉ viết code và tự kiểm chứng theo tiêu chí đã định (nguyên tắc 4) — **không tự commit, không tự push**.
 - Claude là người audit kết quả cuối cùng (đối chiếu với kế hoạch, chạy `gitnexus_detect_changes`, xem xét blast radius), rồi mới **commit và push lên GitHub**.
-
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **AI_auto_trading_system** (768 symbols, 1386 relationships, 26 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/AI_auto_trading_system/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/AI_auto_trading_system/clusters` | All functional areas |
-| `gitnexus://repo/AI_auto_trading_system/processes` | All execution flows |
-| `gitnexus://repo/AI_auto_trading_system/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
