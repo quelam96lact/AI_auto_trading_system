@@ -34,6 +34,8 @@ services:
     environment:
       DB_DSN: postgresql://trading:trading@postgres:5432/trading
       NATS_URL: nats://nats:4222
+      SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
+      SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
