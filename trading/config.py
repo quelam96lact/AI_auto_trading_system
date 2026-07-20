@@ -29,7 +29,7 @@ def load_config(path: str) -> Config:
         bar_interval_minutes=int(raw.get("bar_interval_minutes", 5)),
         holidays={date.fromisoformat(str(h)) for h in raw.get("holidays", [])},
         db_dsn=os.environ["DB_DSN"],
-        nats_url=raw["nats"]["url"],
+        nats_url=os.environ.get("NATS_URL") or raw["nats"]["url"],
         nats_stream=raw["nats"]["stream"],
         watchdog_stale_seconds=int(raw["watchdog"]["stale_seconds"]),
         watchdog_max_failures=int(raw["watchdog"]["max_failures"]),
