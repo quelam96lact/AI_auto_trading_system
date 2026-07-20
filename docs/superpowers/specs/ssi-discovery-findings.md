@@ -5,7 +5,30 @@ Phần đánh dấu **[CHƯA XÁC MINH]** cần chạy thật với credentials 
 
 ## Stream B fields
 
-**[CHƯA XÁC MINH]** — cần ghi fixture trong phiên (`python scripts/record_fixtures.py`).
+**ĐÃ XÁC MINH bằng fixture stream thật ngày 2026-07-20** (`tests/fixtures/ssi_b_messages.jsonl`, 1813 dòng sau khi ghi trong phiên).
+
+Mẫu B thật mới nhất:
+
+```json
+{"DataType": "B", "Content": "{\"RType\":\"B\",\"TradingDate\":\"20/07/2026\",\"Time\":\"13:36:24\",\"Symbol\":\"HPG\",\"Open\":20800.0,\"High\":20800.0,\"Low\":20800.0,\"Close\":20800.0,\"Volume\":100.0,\"Value\":0.0}"}
+```
+
+Envelope:
+
+- `DataType`: string, giá trị `"B"`.
+- `Content`: string JSON; phải `json.loads(Content)` để lấy payload.
+
+Payload B:
+
+- Casing PascalCase.
+- `RType`: string, `"B"`.
+- `TradingDate`: string, format `"dd/MM/yyyy"`; ví dụ `"20/07/2026"`.
+- `Time`: string, format `"HH:MM:SS"` theo giờ Việt Nam; ví dụ `"13:36:24"`.
+- `Symbol`: string; ví dụ `"HPG"`.
+- `Open`, `High`, `Low`, `Close`: number/float, giá VND; parser tick dùng `Close` làm giá khớp/cập nhật.
+- `Volume`: number/float; parser tick dùng làm khối lượng.
+- `Value`: number/float; có thể là `0.0` trong stream B mẫu.
+
 Đã xác minh từ source về CÁCH nhận message:
 
 - `MarketDataStream.start(on_message, on_error, channel)`; `on_message` nhận **dict đã `json.loads`** (không phải string thô) — `fc_md_stream.py:20-26`.
@@ -16,8 +39,37 @@ Phần đánh dấu **[CHƯA XÁC MINH]** cần chạy thật với credentials 
 
 ## Stream MI fields + channel format
 
-**[CHƯA XÁC MINH]** — SDK không hề nêu format channel (grep toàn bộ source chỉ thấy `SwitchChannels`).
-Kế hoạch: thử `MI:VNINDEX` bằng `python scripts/record_fixtures.py --channel "MI:VNINDEX"` trong phiên, ghi kết quả vào đây.
+**ĐÃ XÁC MINH bằng fixture stream thật ngày 2026-07-20** (`tests/fixtures/ssi_mi_messages.jsonl`, 26 dòng sau khi ghi trong phiên).
+
+Mẫu MI thật mới nhất:
+
+```json
+{"DataType": "MI", "Content": "{\"IndexId\":\"VNINDEX\",\"IndexValue\":1746.55,\"PriorIndexValue\":1787.45,\"TradingDate\":\"20/07/2026\",\"Time\":\"13:37:35\",\"TotalTrade\":0.0,\"TotalQtty\":475358288.0,\"TotalValue\":10672028103810.0,\"IndexName\":\"VNINDEX\",\"Advances\":37,\"NoChanges\":30,\"Declines\":274,\"Ceilings\":0,\"Floors\":13,\"Change\":-40.9,\"RatioChange\":-2.29,\"TotalQttyPt\":34677711.0,\"TotalValuePt\":704642714360.0,\"Exchange\":\"HOSE\",\"AllQty\":510035999.0,\"AllValue\":11376670818170.0,\"IndexType\":\"Main\",\"TradingSession\":\"LO\",\"MarketId\":\"HOSE\",\"RType\":\"MI\",\"TotalQttyOd\":0.0,\"TotalValueOd\":0.0}"}
+```
+
+Envelope:
+
+- `DataType`: string, giá trị `"MI"`.
+- `Content`: string JSON; phải `json.loads(Content)` để lấy payload.
+
+Payload MI:
+
+- Casing PascalCase.
+- `RType`: string, `"MI"`.
+- `TradingDate`: string, format `"dd/MM/yyyy"`; ví dụ `"20/07/2026"`.
+- `Time`: string, format `"HH:MM:SS"` theo giờ Việt Nam; ví dụ `"13:37:35"`.
+- `IndexId`: string, mã index; ví dụ `"VNINDEX"`.
+- `IndexName`: string, ví dụ `"VNINDEX"`.
+- `IndexValue`: number/float, giá trị index; parser index dùng field này.
+- `PriorIndexValue`, `Change`, `RatioChange`: number/float.
+- `TotalTrade`, `TotalQtty`, `TotalValue`, `TotalQttyPt`, `TotalValuePt`, `AllQty`, `AllValue`, `TotalQttyOd`, `TotalValueOd`: number/float.
+- `Advances`, `NoChanges`, `Declines`, `Ceilings`, `Floors`: integer.
+- `Exchange`, `IndexType`, `TradingSession`, `MarketId`: string.
+
+Channel format:
+
+- `MI:VNINDEX` ghi được dữ liệu MI thật.
+- `B:VCB-TCB-HPG,MI:VNINDEX` không ghi được MI trong lần thử 60s.
 
 ## REST daily/intraday: method, params, response, limits
 
@@ -38,9 +90,6 @@ Kế hoạch: thử `MI:VNINDEX` bằng `python scripts/record_fixtures.py --cha
 
 ## Điều chưa xác minh được
 
-1. Tên field chính xác (casing, kiểu) + field thời gian của message B và MI — chờ fixture stream trong phiên.
-2. Channel MI format (`MI:VNINDEX`?) — chờ thử trong phiên.
-3. `SwitchChannels` có nhận nhiều kênh một lúc (chuỗi phân tách) hay phải gọi lặp — chờ thử trong phiên.
-4. Độ sâu lịch sử tối đa của daily/intraday REST (ngoài ràng buộc 30 ngày/call).
+1. Độ sâu lịch sử tối đa của daily/intraday REST (ngoài ràng buộc 30 ngày/call).
 
 **Trạng thái Task 6:** Step 1–3 XONG (đọc SDK + script + REST fixtures thật: daily 20 record, intraday 100/219 record page 1 — đủ cho Task 9 phát triển; khi backfill thật Task 9 tự loop page). Step 4 (stream fixtures) HOÃN: ngoài phiên (ghi ngày 2026-07-19, Chủ nhật) — chạy `python scripts/record_fixtures.py` trong phiên giao dịch để sinh `ssi_b_messages.jsonl`/`ssi_mi_messages.jsonl` (điều kiện của Task 7).
