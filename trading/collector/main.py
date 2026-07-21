@@ -25,8 +25,14 @@ async def run(cfg) -> None:
     await pub.connect()
 
     alert("INFO", "backfill start")
-    counts = run_backfill(storage, SSIRestClient(cfg), cfg.symbols, datetime.now(TZ).date())
-    alert("INFO", "backfill done", counts=counts)
+    try:
+        counts = run_backfill(
+            storage, SSIRestClient(cfg), cfg.symbols, datetime.now(TZ).date()
+        )
+        alert("INFO", "backfill done", counts=counts)
+    except Exception as e:
+        alert("WARN", "backfill failed, skipping", error=str(e)[:100])
+        counts = {}
 
     agg = BarAggregator(cfg.bar_interval_minutes, cfg.holidays)
     raw_q: queue.Queue = queue.Queue()
@@ -34,7 +40,8 @@ async def run(cfg) -> None:
     feed.start()
 
     wd = Watchdog(
-        cfg.watchdog_stale_seconds, cfg.watchdog_max_failures,
+        cfg.watchdog_stale_seconds,
+        cfg.watchdog_max_failures,
         now_fn=lambda: datetime.now(TZ),
         is_trading_fn=lambda ts: is_trading_time(ts, cfg.holidays),
         on_stale=lambda: alert("WARN", "feed stale, forcing reconnect"),
@@ -68,10 +75,17 @@ async def run(cfg) -> None:
             now = datetime.now(TZ)
             end = session_end_after(now)
             if end is not None and now >= end - timedelta(seconds=1):
-                await persist(agg.flush())  # đóng bar cuối phiên (không còn tick đẩy nó đóng)
-            if (now.hour, now.minute) >= (EOD_HOUR, EOD_MINUTE) and eod_done_for != now.date():
+                await persist(
+                    agg.flush()
+                )  # đóng bar cuối phiên (không còn tick đẩy nó đóng)
+            if (now.hour, now.minute) >= (
+                EOD_HOUR,
+                EOD_MINUTE,
+            ) and eod_done_for != now.date():
                 eod_done_for = now.date()
-                counts = run_backfill(storage, SSIRestClient(cfg), cfg.symbols, now.date())
+                counts = run_backfill(
+                    storage, SSIRestClient(cfg), cfg.symbols, now.date()
+                )
                 alert("INFO", "eod backfill done", counts=counts)
 
     await asyncio.gather(consume(), housekeeping())
@@ -82,6 +96,7 @@ def main() -> None:
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
     import logging
+
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     asyncio.run(run(load_config(args.config)))
 
