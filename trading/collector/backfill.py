@@ -27,7 +27,8 @@ def parse_intraday_response(raw: dict) -> list[Bar]:
         by_bucket[(sym, bucket)].append((ts, r))
     for (sym, bucket), items in sorted(by_bucket.items(), key=lambda kv: kv[0]):
         items.sort(key=lambda x: x[0])
-        opens = float(_f(items[0][1], "Open")); closes = float(_f(items[-1][1], "Close"))
+        opens = float(_f(items[0][1], "Open"))
+        closes = float(_f(items[-1][1], "Close"))
         highs = max(float(_f(r, "High")) for _, r in items)
         lows = min(float(_f(r, "Low")) for _, r in items)
         vol = sum(int(float(_f(r, "Volume") or 0)) for _, r in items)
@@ -41,9 +42,17 @@ def parse_daily_response(raw: dict) -> list[Bar]:
     out: list[Bar] = []
     for r in rows:
         sym = r.get("Symbol") or r.get("symbol")
-        out.append(Bar(sym, _row_ts(r), float(_f(r, "Open")), float(_f(r, "High")),
-                       float(_f(r, "Low")), float(_f(r, "Close")),
-                       int(float(_f(r, "Volume") or 0))))
+        out.append(
+            Bar(
+                sym,
+                _row_ts(r),
+                float(_f(r, "Open")),
+                float(_f(r, "High")),
+                float(_f(r, "Low")),
+                float(_f(r, "Close")),
+                int(float(_f(r, "Volume") or 0)),
+            )
+        )
     out.sort(key=lambda b: b.ts)
     return out
 
@@ -60,7 +69,9 @@ def _row_ts(row: dict) -> datetime:
     if not t:
         return datetime(day.year, day.month, day.day, tzinfo=TZ)
     tt = datetime.strptime(str(t), "%H:%M:%S").time()
-    return datetime(day.year, day.month, day.day, tt.hour, tt.minute, tt.second, tzinfo=TZ)
+    return datetime(
+        day.year, day.month, day.day, tt.hour, tt.minute, tt.second, tzinfo=TZ
+    )
 
 
 class SSIRestClient:
@@ -106,9 +117,16 @@ class SSIRestClient:
         rows = self._paged_rows(
             self._client.daily_ohlc,
             lambda s, e, p: self._model.daily_ohlc(
-                symbol=symbol, fromDate=self._fmt(s), toDate=self._fmt(e),
-                pageIndex=p, pageSize=_PAGE_SIZE, ascending=True),
-            frm, to)
+                symbol=symbol,
+                fromDate=self._fmt(s),
+                toDate=self._fmt(e),
+                pageIndex=p,
+                pageSize=_PAGE_SIZE,
+                ascending=True,
+            ),
+            frm,
+            to,
+        )
         return parse_daily_response({"data": rows})
 
     def intraday_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
@@ -116,9 +134,17 @@ class SSIRestClient:
         rows = self._paged_rows(
             self._client.intraday_ohlc,
             lambda s, e, p: self._model.intraday_ohlc(
-                symbol=symbol, fromDate=self._fmt(s), toDate=self._fmt(e),
-                pageIndex=p, pageSize=_PAGE_SIZE, ascending=True, resolution=1),
-            frm, to)
+                symbol=symbol,
+                fromDate=self._fmt(s),
+                toDate=self._fmt(e),
+                pageIndex=p,
+                pageSize=_PAGE_SIZE,
+                ascending=True,
+                resolution=1,
+            ),
+            frm,
+            to,
+        )
         return parse_intraday_response({"data": rows})
 
 
@@ -126,9 +152,12 @@ def run_backfill(storage, client, symbols: list[str], today: date) -> dict[str, 
     counts: dict[str, int] = {}
     for sym in symbols:
         last = storage.last_bar_ts(sym)
-        frm = (last.astimezone(TZ).date() if last else today - timedelta(days=365))
-        intraday = [b for b in client.intraday_ohlc(sym, frm, today)
-                    if last is None or b.ts > last]
+        frm = last.astimezone(TZ).date() if last else today - timedelta(days=7)
+        intraday = [
+            b
+            for b in client.intraday_ohlc(sym, frm, today)
+            if last is None or b.ts > last
+        ]
         storage.write_bars(intraday)
         storage.write_daily(client.daily_ohlc(sym, frm, today))
         counts[sym] = len(intraday)
@@ -142,7 +171,9 @@ def main() -> None:
     cfg = load_config(args.config)
     storage = Storage(cfg.db_dsn)
     storage.init_schema()
-    counts = run_backfill(storage, SSIRestClient(cfg), cfg.symbols, datetime.now(TZ).date())
+    counts = run_backfill(
+        storage, SSIRestClient(cfg), cfg.symbols, datetime.now(TZ).date()
+    )
     print(counts)
 
 

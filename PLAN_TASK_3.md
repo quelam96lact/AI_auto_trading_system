@@ -42,9 +42,8 @@ Xác minh SSI data layer hoạt động **end-to-end** với dữ liệu **thự
 cat .env | grep -E "SSI_|NATS_"
 
 # Expected:
-# SSI_USERNAME=quelam96lact
-# SSI_PASSWORD=***
-# SSI_APP_ID=***
+# SSI_CONSUMER_ID=***
+# SSI_CONSUMER_SECRET=***
 # NATS_URL=nats://nats:4222
 ```
 
