@@ -4,3 +4,4 @@ __pycache__/
 .env
 .pytest_cache/
 .superpowers/
+scripts/.ssi_sdk_token.json
