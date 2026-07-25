@@ -1,7 +1,9 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
-from trading.collector.parser import ci_get, parse_message
+from trading.calendar_vn import TZ
+from trading.collector.parser import ci_get, parse_interval_message, parse_message
 from trading.models import IndexValue, Tick
 
 
@@ -49,3 +51,41 @@ def test_parse_mi_fixtures():
 def test_unknown_message_returns_none():
     assert parse_message({"DataType": "X", "Content": "{}"}) is None
     assert parse_message({"garbage": True}) is None
+
+
+def test_parse_interval_message_maps_fields():
+    """Uses the unconfirmed stream timestamp format assumption, not a live fixture."""
+    from ssi_sdk.models import IntervalMessage
+
+    msg = IntervalMessage(
+        symbol="VCB",
+        interval_time="2026/07/24 14:45:00",
+        trading_time="2026/07/24 14:45:03",
+        open=54100,
+        high=54100,
+        low=54100,
+        close=54100,
+        volume=189100,
+    )
+    bar = parse_interval_message(msg)
+    assert bar is not None
+    assert bar.symbol == "VCB"
+    assert bar.open == 54100
+    assert bar.volume == 189100
+    assert bar.ts == datetime(2026, 7, 24, 14, 45, tzinfo=TZ)
+
+
+def test_parse_interval_message_bad_format_returns_none():
+    """Bad timestamp formats should drop one message instead of crashing collection."""
+    from ssi_sdk.models import IntervalMessage
+
+    msg = IntervalMessage(
+        symbol="VCB",
+        interval_time="not-a-date",
+        open=1,
+        high=1,
+        low=1,
+        close=1,
+        volume=1,
+    )
+    assert parse_interval_message(msg) is None

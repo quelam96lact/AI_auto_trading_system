@@ -1,21 +1,18 @@
 import argparse
 import asyncio
-import queue
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
-from trading.calendar_vn import TZ, is_trading_time, session_end_after
-from trading.collector.aggregator import BarAggregator
+from trading.calendar_vn import TZ, is_trading_time
 from trading.collector.backfill import SSIRestClient, run_backfill
 from trading.collector.feed import SSIFeed
-from trading.collector.parser import parse_message
+from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
 from trading.config import load_config
-from trading.models import IndexValue, Tick
 from trading.storage.db import Storage
 
-EOD_HOUR, EOD_MINUTE = 15, 5  # job vá gap cuối ngày
+EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
 
 
 async def run(cfg) -> None:
@@ -35,20 +32,6 @@ async def run(cfg) -> None:
     finally:
         await client.close()
 
-    agg = BarAggregator(cfg.bar_interval_minutes, cfg.holidays)
-    raw_q: queue.Queue = queue.Queue()
-    feed = SSIFeed(cfg, on_raw=raw_q.put)
-    feed.start()
-
-    wd = Watchdog(
-        cfg.watchdog_stale_seconds,
-        cfg.watchdog_max_failures,
-        now_fn=lambda: datetime.now(TZ),
-        is_trading_fn=lambda ts: is_trading_time(ts, cfg.holidays),
-        on_stale=lambda: alert("WARN", "feed stale, forcing reconnect"),
-        on_critical=lambda: alert("CRITICAL", "feed stale beyond max failures"),
-    )
-
     async def persist(bars):
         if bars:
             storage.write_bars(bars)
@@ -56,16 +39,29 @@ async def run(cfg) -> None:
                 await pub.publish(b)
             alert("INFO", "bars closed", n=len(bars), symbols=[b.symbol for b in bars])
 
-    async def consume():
-        loop = asyncio.get_running_loop()
-        while True:
-            raw = await loop.run_in_executor(None, raw_q.get)
+    def _on_stale():
+        alert("WARN", "feed stale, forcing reconnect")
+        asyncio.create_task(feed.restart())
+
+    wd = Watchdog(
+        cfg.watchdog_stale_seconds,
+        cfg.watchdog_max_failures,
+        now_fn=lambda: datetime.now(TZ),
+        is_trading_fn=lambda ts: is_trading_time(ts, cfg.holidays),
+        on_stale=_on_stale,
+        on_critical=lambda: alert("CRITICAL", "feed stale beyond max failures"),
+    )
+
+    def on_stream_message(msg):
+        bar = parse_interval_message(msg)
+        if bar is not None:
             wd.beat()
-            msg = parse_message(raw)
-            if isinstance(msg, Tick):
-                await persist(agg.add_tick(msg))
-            elif isinstance(msg, IndexValue):
-                storage.write_index_values([msg])
+            asyncio.create_task(persist([bar]))
+        # TODO index streaming: if TradeMessage is proven valid for indices,
+        # handle it separately here and write IndexValue rows.
+
+    feed = SSIFeed(cfg, storage, on_message=on_stream_message)
+    feed.start()
 
     async def housekeeping():
         eod_done_for: object = None
@@ -74,11 +70,6 @@ async def run(cfg) -> None:
             wd.check()
             storage.beat("collector")
             now = datetime.now(TZ)
-            end = session_end_after(now)
-            if end is not None and now >= end - timedelta(seconds=1):
-                await persist(
-                    agg.flush()
-                )  # đóng bar cuối phiên (không còn tick đẩy nó đóng)
             if (now.hour, now.minute) >= (
                 EOD_HOUR,
                 EOD_MINUTE,
@@ -91,7 +82,7 @@ async def run(cfg) -> None:
                 finally:
                     await eod_client.close()
 
-    await asyncio.gather(consume(), housekeeping())
+    await housekeeping()
 
 
 def main() -> None:

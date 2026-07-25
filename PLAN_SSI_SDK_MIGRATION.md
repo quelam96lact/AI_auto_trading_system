@@ -195,7 +195,13 @@ Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ
 5. ✅ `main.py` 2 call site cập nhật `async`/`await` + `client.close()`.
 6. ✅ `gitnexus detect-changes`: 3 files, 20 symbols, 8 processes, risk HIGH — audit xác nhận HIGH do fan-out (1 hàm chạm 8 execution flow `Main`/`Housekeeping`), không phải rủi ro thật (không flow nào chạm trading/tiền, broker vẫn `PaperBroker`). Tất cả 8 flow đều nằm trong phạm vi đã giao (`main.py` 2 chỗ + `backfill.py::main`).
 
-### Phase 3 — Migrate streaming feed + parser
+### Phase 3 — Migrate streaming feed + parser — ✅ HOÀN THÀNH (2026-07-25, chờ verify thật ở Phase 4)
+
+**Kết quả:** `SSIFeedLegacy` giữ nguyên (rollback reference), `SSIFeed` mới async-native (bỏ thread+queue, finding #5), `parse_interval_message()` map `IntervalMessage → Bar` (docstring đánh dấu rõ format `interval_time` **chưa xác nhận bằng dữ liệu live**, chỉ suy đoán theo format REST OHLC), `BarAggregator` ngừng dùng trong luồng streaming (finding #4), watchdog `on_stale` giờ gọi `feed.restart()` thật qua `asyncio.create_task()` (fix finding #2 alert-theatre). Index streaming (VNINDEX/VN30) **cố tình chưa làm** — TODO rõ trong `feed.py`+`main.py`, không tự ý bỏ âm thầm (mapping `TradeMessage→IndexValue` vẫn là suy đoán chưa xác nhận).
+
+**Kiểm chứng (audit độc lập bởi Claude):** `uv run pytest -v` (kể cả integration, Postgres/NATS thật) → 75/75 pass (59 unit + 16 integration). `gitnexus detect-changes`: 5 files, 19 symbols, 13 processes, risk HIGH — xác nhận toàn bộ do fan-out (hàm `consume()` cũ bị xoá hẳn nên nhiều flow "Consume → ..." bị đánh dấu changed, đúng theo Task 4 yêu cầu xoá), không có symbol/flow nào ngoài `feed.py`/`main.py`/`parser.py`.
+
+**Còn lại trước Phase 4:** format `interval_time` thật + hành vi đóng bar thật (đúng giờ VN hay không) — chỉ verify được khi có phiên giao dịch mở, xem Task 5 trong `PROMPT_EXECUTE_SSI_MIGRATION_PHASE3.md` (live smoke test) đã chạy connect/subscribe thành công nhưng chưa nhận được `IntervalMessage` thật nào.
 
 **Bổ sung từ architecture review độc lập (2026-07-25, 3 explore subagents, không sửa code):** 3/5 finding liên quan trực tiếp tới phạm vi Phase 3, gộp vào task list dưới đây (task 5-6 là mới, không có trong bản trước).
 

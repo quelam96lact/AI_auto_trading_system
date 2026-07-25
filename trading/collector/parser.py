@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from trading.calendar_vn import TZ
-from trading.models import IndexValue, Tick
+from trading.models import Bar, IndexValue, Tick
 
 
 def ci_get(d: dict, *names: str) -> Any | None:
@@ -64,4 +64,27 @@ def parse_message(raw: dict | str) -> Tick | IndexValue | None:
             return _parse_mi(content)
         return None
     except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def parse_interval_message(msg) -> Bar | None:
+    """Map ssi-sdk IntervalMessage to Bar.
+
+    UNCONFIRMED WITH LIVE STREAM DATA: interval_time/trading_time string format.
+    This assumes the same "YYYY/MM/DD HH:mm:ss" format verified for REST OHLC.
+    If SSI stream uses a different format, return None so one bad message does
+    not crash the collector; Phase 4 should verify this with a real session.
+    """
+    try:
+        ts = datetime.strptime(msg.interval_time, "%Y/%m/%d %H:%M:%S").replace(tzinfo=TZ)
+        return Bar(
+            msg.symbol,
+            ts,
+            float(msg.open),
+            float(msg.high),
+            float(msg.low),
+            float(msg.close),
+            int(msg.volume),
+        )
+    except (TypeError, ValueError, AttributeError):
         return None
