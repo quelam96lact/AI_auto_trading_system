@@ -13,6 +13,7 @@ def test_load_config(tmp_path, monkeypatch):
         "symbols: [VCB, HPG]\n"
         "indices: [VNINDEX]\n"
         "bar_interval_minutes: 5\n"
+        "ssi_equity_accounts: ['0434221', '0434226']\n"
         "holidays: ['2026-09-02']\n"
         "nats: {url: 'nats://localhost:4222', stream: BARS}\n"
         "watchdog: {stale_seconds: 180, max_failures: 3}\n",
@@ -20,6 +21,7 @@ def test_load_config(tmp_path, monkeypatch):
     )
     cfg = load_config(str(p))
     assert cfg.symbols == ["VCB", "HPG"]
+    assert cfg.ssi_equity_accounts == ["0434221", "0434226"]
     assert cfg.holidays == {date(2026, 9, 2)}
     assert cfg.ssi_consumer_id == "id123"
     assert cfg.ssi_api_key == "key789"

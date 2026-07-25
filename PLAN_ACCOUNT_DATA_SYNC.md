@@ -3,6 +3,7 @@
 **Ngày viết:** 2026-07-25
 **Mục đích đã xác nhận với user:** Chuẩn bị nền tảng cho việc tiến tới đặt lệnh thật sau này.
 **Phạm vi plan này:** **CHỈ đọc dữ liệu** (số dư, vị thế thật từ SSI) — lưu Postgres + hiện Grafana. **KHÔNG đặt lệnh thật.**
+**Trạng thái:** ✅ **Phase 1-3 HOÀN THÀNH** (2026-07-25, audit xong, xem mục cuối file).
 
 ---
 
@@ -186,5 +187,26 @@ Script tạm `scripts/spike_ssi_sdk_account.py` (giống `spike_ssi_sdk_ohlc.py`
 ## Việc cần bạn làm trước
 
 Không cần credential mới (client_id lấy tự động từ JWT theo giả thuyết trên) — chỉ cần xác nhận:
-1. Đồng ý chạy Phase 0 discovery spike? (cần chạy với token thật, giống các lần trước — tôi viết script, bạn chạy vì tôi không đọc được `.env`)
-2. Trong 3 account (`0434221, 0434228, 0434226`) — bạn có biết cái nào là tài khoản cổ phiếu thường không, hay để `get_account_info()` tự xác định?
+1. ~~Đồng ý chạy Phase 0 discovery spike?~~ ✅ Đã chạy, xem kết quả ở mục "Phase 0 — Kết quả thật".
+2. ~~Trong 3 account, cái nào là tài khoản cổ phiếu thường?~~ ✅ Đã xác định — `0434221` (Cash) + `0434226` (Margin).
+
+---
+
+## ✅ Phase 1-3 — HOÀN THÀNH (2026-07-25, audit bởi Claude)
+
+Thực thi qua `PROMPT_EXECUTE_ACCOUNT_DATA_SYNC.md` bởi 1 agent coding khác, Claude audit toàn bộ trước khi commit.
+
+**File sửa/tạo:** `config/config.yaml`, `trading/config.py`, `trading/collector/ssi_auth.py` (+`decode_client_id()`, **không sửa `ensure_authenticated()`**), `trading/collector/account_sync.py` (mới), `trading/storage/schema.sql`, `trading/storage/db.py`, `trading/collector/main.py` (wire vào `housekeeping()`, sync mỗi 5 phút), `grafana/provisioning/dashboards/trading.json` (2 panel mới), test tương ứng.
+
+**Kiểm chứng an toàn (độc lập, không tin báo cáo):**
+- `grep -rn "AsyncTrading|TradingService|place_order|cancel_order|modify_order" trading/` → **rỗng**, xác nhận không có khả năng đặt lệnh nào trong code.
+- `git diff trading/collector/ssi_auth.py` → xác nhận `ensure_authenticated()` **không đổi 1 dòng**, chỉ thêm hàm mới phía trước.
+- Test chống regression (`test_sync_balance_maps_real_api_fields`) assert `account_balance=21459.0` từ raw dict đúng format thật — bảo vệ nếu ai đó lỡ quay lại dùng `get_equity_balance()` bị bug.
+
+**Bug tìm thấy trong lúc audit (đã sửa trước khi commit):**
+- `tests/test_engine_main.py::make_cfg()` crash (`TypeError: missing ssi_equity_accounts`) — file này là integration test, không nằm trong checklist kiểm chứng của prompt (chỉ ghi 2 file `test_storage.py`/`test_dashboard_queries.py`, thiếu sót của Claude khi viết prompt) nên cả executor lẫn lần chạy `-m "not integration"` đều không bắt được. Phát hiện khi Claude tự chạy full `pytest -v` (kể cả integration) để audit — đã sửa, thêm `ssi_equity_accounts=[]` vào `make_cfg()`.
+- 2 chỗ import không đúng thứ tự alphabet (`main.py`, `test_ssi_auth.py`) — sửa nhân tiện.
+
+**Kiểm chứng cuối:** `uv run pytest -v` (đủ unit + integration, Postgres/NATS thật) → **83/83 pass**. `gitnexus detect-changes`: 12 files, 18 symbols, 7 processes, risk HIGH — audit xác nhận `ensure_authenticated` bị gắn nhãn "changed" do dịch số dòng (hàm mới chèn phía trước), không phải sửa logic thật (xác nhận qua `git diff` chính xác dòng). HIGH do fan-out (7 process), không phải rủi ro thật — không process nào chạm đặt lệnh.
+
+**Bài học cho lần sau:** checklist kiểm chứng trong prompt thực thi nên luôn yêu cầu full `uv run pytest -v` (không chỉ liệt kê vài file cụ thể) khi thay đổi field bắt buộc trong `Config` — vì bất kỳ nơi nào tự dựng `Config(...)` trực tiếp (không qua `load_config()`) đều có thể vỡ, và integration test dễ bị bỏ sót nếu không chạy full suite.

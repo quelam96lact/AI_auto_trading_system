@@ -1,3 +1,5 @@
+import base64
+import json
 import time
 from types import SimpleNamespace
 
@@ -60,6 +62,17 @@ def _valid_saved():
         "refresh_token": "old-refresh",
         "refresh_token_expires_at": NOW + 30 * 86400,  # refresh còn hạn
     }
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def test_decode_client_id_from_access_token():
+    payload = _b64url(json.dumps({"client_id": "043422"}).encode("utf-8"))
+    token = f"{_b64url(b'{}')}.{payload}.{_b64url(b'signature')}"
+
+    assert ssi_auth.decode_client_id(token) == "043422"
 
 
 async def test_refresh_token_con_han_goi_refresh_va_luu_token_moi(monkeypatch):

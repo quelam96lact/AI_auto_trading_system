@@ -17,6 +17,17 @@ from trading.config import Config
 from trading.storage.db import Storage
 
 
+def decode_client_id(access_token: str) -> str:
+    """Decode the client_id claim from an SSI JWT access token without verifying its signature."""
+    import base64
+    import json
+
+    payload_b64 = access_token.split(".")[1]
+    payload_b64 += "=" * (-len(payload_b64) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+    return claims.get("client_id", "")
+
+
 async def ensure_authenticated(cfg: Config, storage: Storage) -> AsyncAuth:
     """Trả về AsyncAuth đã có access_token hợp lệ.
 

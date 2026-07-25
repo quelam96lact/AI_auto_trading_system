@@ -10,6 +10,7 @@ class Config:
     symbols: list[str]
     indices: list[str]
     bar_interval_minutes: int
+    ssi_equity_accounts: list[str]
     holidays: set[date]
     db_dsn: str
     nats_url: str
@@ -29,6 +30,7 @@ def load_config(path: str) -> Config:
         symbols=list(raw["symbols"]),
         indices=list(raw.get("indices", [])),
         bar_interval_minutes=int(raw.get("bar_interval_minutes", 5)),
+        ssi_equity_accounts=list(raw["ssi_equity_accounts"]),
         holidays={date.fromisoformat(str(h)) for h in raw.get("holidays", [])},
         db_dsn=os.environ["DB_DSN"],
         nats_url=os.environ.get("NATS_URL") or raw["nats"]["url"],

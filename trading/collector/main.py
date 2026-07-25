@@ -1,10 +1,11 @@
 import argparse
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ, is_trading_time
+from trading.collector.account_sync import sync_account_data
 from trading.collector.backfill import SSIRestClient, run_backfill
 from trading.collector.feed import SSIFeed
 from trading.collector.parser import parse_interval_message
@@ -24,7 +25,9 @@ async def run(cfg) -> None:
     alert("INFO", "backfill start")
     client = SSIRestClient(cfg, storage)
     try:
-        counts = await run_backfill(storage, client, cfg.symbols, datetime.now(TZ).date())
+        counts = await run_backfill(
+            storage, client, cfg.symbols, datetime.now(TZ).date()
+        )
         alert("INFO", "backfill done", counts=counts)
     except Exception as e:
         alert("WARN", "backfill failed, skipping", error=str(e)[:100])
@@ -65,11 +68,20 @@ async def run(cfg) -> None:
 
     async def housekeeping():
         eod_done_for: object = None
+        last_account_sync: datetime | None = None
         while True:
             await asyncio.sleep(30)
             wd.check()
             storage.beat("collector")
             now = datetime.now(TZ)
+            if last_account_sync is None or now - last_account_sync >= timedelta(
+                minutes=5
+            ):
+                last_account_sync = now
+                try:
+                    await sync_account_data(cfg, storage)
+                except Exception as e:
+                    alert("WARN", "account sync failed, skipping", error=str(e)[:100])
             if (now.hour, now.minute) >= (
                 EOD_HOUR,
                 EOD_MINUTE,
@@ -77,7 +89,9 @@ async def run(cfg) -> None:
                 eod_done_for = now.date()
                 eod_client = SSIRestClient(cfg, storage)
                 try:
-                    counts = await run_backfill(storage, eod_client, cfg.symbols, now.date())
+                    counts = await run_backfill(
+                        storage, eod_client, cfg.symbols, now.date()
+                    )
                     alert("INFO", "eod backfill done", counts=counts)
                 finally:
                     await eod_client.close()

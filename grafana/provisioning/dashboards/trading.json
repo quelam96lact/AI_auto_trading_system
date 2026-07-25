@@ -54,6 +54,32 @@
           "format": "table"
         }
       ]
+    },
+    {
+      "id": 5,
+      "title": "Real Account Balance",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT ts AS time, account_no AS metric, account_balance AS value FROM account_balance_snapshot ORDER BY ts",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Real Positions",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT account_no, symbol, quantity, cost_price, sellable_quantity, ts FROM account_position_snapshot aps WHERE ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = aps.account_no AND symbol = aps.symbol) ORDER BY account_no, symbol",
+          "format": "table"
+        }
+      ]
     }
   ]
 }

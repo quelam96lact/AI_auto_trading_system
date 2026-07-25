@@ -81,3 +81,24 @@ CREATE TABLE IF NOT EXISTS ssi_auth_state (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (id = 1)
 );
+
+CREATE TABLE IF NOT EXISTS account_balance_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  account_balance double precision NOT NULL,
+  total_debt double precision NOT NULL,
+  withdrawable double precision NOT NULL,
+  buy_unmatched double precision NOT NULL,
+  sell_unmatched double precision NOT NULL,
+  PRIMARY KEY (account_no, ts)
+);
+
+CREATE TABLE IF NOT EXISTS account_position_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  symbol text NOT NULL,
+  quantity integer NOT NULL,
+  cost_price double precision NOT NULL,
+  sellable_quantity integer NOT NULL,
+  PRIMARY KEY (account_no, ts, symbol)
+);

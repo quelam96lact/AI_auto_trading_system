@@ -139,6 +139,53 @@ class Storage:
             "refresh_token_expires_at": row[3],
         }
 
+    def save_account_balance(
+        self,
+        account_no: str,
+        ts: datetime,
+        account_balance: float,
+        total_debt: float,
+        withdrawable: float,
+        buy_unmatched: float,
+        sell_unmatched: float,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO account_balance_snapshot "
+                "(account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts) DO UPDATE SET "
+                "account_balance = EXCLUDED.account_balance, total_debt = EXCLUDED.total_debt, "
+                "withdrawable = EXCLUDED.withdrawable, buy_unmatched = EXCLUDED.buy_unmatched, "
+                "sell_unmatched = EXCLUDED.sell_unmatched",
+                (account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched),
+            )
+
+    def save_account_positions(self, account_no: str, ts: datetime, positions: list[dict]) -> None:
+        """positions: list of symbol/quantity/cost_price/sellable_quantity dicts."""
+        if not positions:
+            return
+        with self.conn() as c:
+            c.cursor().executemany(
+                "INSERT INTO account_position_snapshot "
+                "(account_no, ts, symbol, quantity, cost_price, sellable_quantity) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts, symbol) DO UPDATE SET "
+                "quantity = EXCLUDED.quantity, cost_price = EXCLUDED.cost_price, "
+                "sellable_quantity = EXCLUDED.sellable_quantity",
+                [
+                    (
+                        account_no,
+                        ts,
+                        p["symbol"],
+                        p["quantity"],
+                        p["cost_price"],
+                        p["sellable_quantity"],
+                    )
+                    for p in positions
+                ],
+            )
+
     def update_pnl_daily(self, day: date, realized_delta: float, fee_delta: float, unrealized: float) -> None:
         with self.conn() as c:
             c.execute(

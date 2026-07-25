@@ -21,6 +21,7 @@ def make_cfg() -> Config:
         symbols=["ENGT"],
         indices=[],
         bar_interval_minutes=15,
+        ssi_equity_accounts=[],
         holidays=set(),
         db_dsn=DSN,
         nats_url="nats://localhost:4222",
@@ -90,7 +91,9 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     assert state is not None and state[0] < 100_000_000
 
     with storage.conn() as c:
-        n_orders = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
+        n_orders = c.execute(
+            "SELECT count(*) FROM orders WHERE symbol = 'ENGT'"
+        ).fetchone()[0]
     assert n_orders == 1
 
     await _publish(cfg, make_bars([20], sym="ENGT"))

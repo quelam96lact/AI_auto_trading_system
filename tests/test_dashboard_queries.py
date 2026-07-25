@@ -21,6 +21,8 @@ def storage():
         c.execute("DELETE FROM positions WHERE symbol = 'DASH'")
         c.execute("DELETE FROM pnl_daily WHERE date = '2026-07-15'")
         c.execute("DELETE FROM heartbeat WHERE service = 'dash_test'")
+        c.execute("DELETE FROM account_balance_snapshot WHERE account_no = 'DASH_ACC'")
+        c.execute("DELETE FROM account_position_snapshot WHERE account_no = 'DASH_ACC'")
     return s
 
 
@@ -60,3 +62,38 @@ def test_heartbeat_panel_query(storage):
             "FROM heartbeat WHERE service = 'dash_test'"
         ).fetchone()
     assert row[0] == "dash_test" and row[1] < 5
+
+
+def test_real_account_balance_panel_query(storage):
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    storage.save_account_balance("DASH_ACC", ts, 21459.0, 0.0, 21459.0, 0.0, 0.0)
+    with storage.conn() as c:
+        rows = c.execute(
+            "SELECT ts AS time, account_no AS metric, account_balance AS value "
+            "FROM account_balance_snapshot ORDER BY ts"
+        ).fetchall()
+    assert (ts, "DASH_ACC", 21459.0) in rows
+
+
+def test_real_positions_panel_query(storage):
+    older = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    newer = datetime(2026, 7, 15, 9, 5, tzinfo=TZ)
+    storage.save_account_positions(
+        "DASH_ACC",
+        older,
+        [{"symbol": "DASH", "quantity": 10, "cost_price": 20.0, "sellable_quantity": 8}],
+    )
+    storage.save_account_positions(
+        "DASH_ACC",
+        newer,
+        [{"symbol": "DASH", "quantity": 12, "cost_price": 21.0, "sellable_quantity": 9}],
+    )
+    with storage.conn() as c:
+        rows = c.execute(
+            "SELECT account_no, symbol, quantity, cost_price, sellable_quantity, ts "
+            "FROM account_position_snapshot aps "
+            "WHERE ts = (SELECT max(ts) FROM account_position_snapshot "
+            "WHERE account_no = aps.account_no AND symbol = aps.symbol) "
+            "ORDER BY account_no, symbol"
+        ).fetchall()
+    assert ("DASH_ACC", "DASH", 12, 21.0, 9, newer) in rows
