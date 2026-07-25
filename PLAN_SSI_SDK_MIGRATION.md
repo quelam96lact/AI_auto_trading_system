@@ -89,8 +89,8 @@ Grep toàn bộ `ssi_sdk/services/*.py` cho thấy:
 
 | Cũ (`ssi_fc_data`) | Mới (`ssi-sdk`) |
 |---|---|
-| `client.intraday_ohlc(None, model.intraday_ohlc(symbol=, fromDate="dd/MM/yyyy", toDate=, pageIndex=, pageSize=, ascending=, resolution=1))` | `await data.market_data.get_ohlc_5minute_historical(symbol, from_date="YYYY/MM/DD", to_date="YYYY/MM/DD", page=1, size=1000)` |
-| `client.daily_ohlc(...)` | `await data.market_data.get_ohlc_1day_historical(symbol, from_date, to_date, page, size)` (suy ra theo pattern, cần xác nhận tên chính xác khi code) |
+| `client.intraday_ohlc(None, model.intraday_ohlc(symbol=, fromDate="dd/MM/yyyy", toDate=, pageIndex=, pageSize=, ascending=, resolution=1))` | `await data.market_data.get_ohlc_5minute_historical(symbol, from_date="YYYY/MM/DD HH:mm:ss", to_date="YYYY/MM/DD HH:mm:ss", page=1, size=1000)` ⚠️ **intraday PHẢI có giờ** — thiếu giờ → lỗi `400213 "Invalid Date/Timestamp"` (đã gặp thật 2026-07-25, xác nhận qua docs `data-ohlc`: daily dùng `YYYY/MM/DD`, intraday dùng `YYYY/MM/DD HH:mm:ss`) |
+| `client.daily_ohlc(...)` | `await data.market_data.get_ohlc_1day_historical(symbol, from_date="YYYY/MM/DD", to_date="YYYY/MM/DD", page, size)` (daily KHÔNG cần giờ; tên method suy ra theo pattern, cần xác nhận khi code) |
 | Response: `dict {data: [...]}`, field PascalCase (`Symbol`, `TradingDate`, `Time`, `Open`...) | Response: `list[OHLCData]` — dataclass đã parse sẵn: `symbol`, `trading_date` (string, format thật **chưa xác nhận** — cần test), `open_price`, `high_price`, `low_price`, `close_price`, `volume`, `value` |
 | Ta tự bucket 1m → 5m (`parse_intraday_response`) | SDK trả **thẳng bar 5m** nếu gọi `get_ohlc_5minute_historical` — **có thể bỏ hẳn logic tự bucket trong `backfill.py`** (giảm code, không phải giữ nguyên bucket logic cũ) |
 | Page mặc định: `pageSize=100` (ta tự set) | Page mặc định SDK: `size=1000` (constant `DEFAULT_SIZE`) |

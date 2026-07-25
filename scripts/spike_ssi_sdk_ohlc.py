@@ -23,8 +23,9 @@ Ghi chú API đã xác minh từ ssi-sdk 3.1.0 cài thật (inspect.signature):
   size=1000) -> list[OHLCData]; OHLCData là dataclass (dùng dataclasses.asdict).
 - streaming.on_data là PROPERTY (gán callback), connect()/wait(timeout)/
   disconnect() đều async; message push về là dataclass IntervalMessage.
-- from_date/to_date format "YYYY/MM/DD" (theo PLAN mục 2.2 — cần sample thật
-  để xác nhận format của trading_date trong response).
+- from_date/to_date: daily dùng "YYYY/MM/DD", intraday (5m ở đây) PHẢI có giờ
+  "YYYY/MM/DD HH:mm:ss" — xác nhận từ docs/api-reference/data-ohlc + thực tế
+  (thiếu giờ → 400213 "Invalid Date/Timestamp", đã gặp 2026-07-25).
 """
 
 import asyncio
@@ -99,11 +100,14 @@ async def fetch_ohlc_sample() -> None:
         data = AsyncData(auth)
         to_date = datetime.now(VN_TZ).date()
         from_date = to_date - timedelta(days=7)
-        print(
-            f"Gọi get_ohlc_5minute_historical({SYMBOL}, {from_date:%Y/%m/%d} -> {to_date:%Y/%m/%d})..."
-        )
+        # Docs SSI (data-ohlc): intraday can "YYYY/MM/DD HH:mm:ss" (co gio),
+        # khac daily chi can "YYYY/MM/DD" — thieu gio gay loi 400213
+        # "Invalid Date/Timestamp" (da xac nhan thuc te 2026-07-25).
+        from_str = f"{from_date:%Y/%m/%d} 00:00:00"
+        to_str = f"{to_date:%Y/%m/%d} 23:59:59"
+        print(f"Gọi get_ohlc_5minute_historical({SYMBOL}, {from_str} -> {to_str})...")
         rows = await data.market_data.get_ohlc_5minute_historical(
-            SYMBOL, from_date.strftime("%Y/%m/%d"), to_date.strftime("%Y/%m/%d")
+            SYMBOL, from_str, to_str
         )
         payload = [dataclasses.asdict(r) for r in rows]
         OHLC_OUT.write_text(
