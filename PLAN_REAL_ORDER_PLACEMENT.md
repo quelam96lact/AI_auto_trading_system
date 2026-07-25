@@ -120,3 +120,26 @@ Không viết prompt thực thi cho các phase này ngay bây giờ — chờ Ph
 Account Cash chỉ có **~21,459đ**. Giá VCB thật (từ fixture Phase 0 backfill) dao động 53,000-58,800đ/cổ phiếu — 1 lô tối thiểu (100 cổ phiếu) cần **≥ 5,300,000đ**, vượt xa số dư hiện có. Đặt lệnh mua thật (dù giá thấp) nhiều khả năng sẽ bị SSI từ chối ngay vì **không đủ sức mua**, không phải vì cơ chế sai.
 
 **Script xử lý an toàn:** gọi `get_max_buy_sell()` (chỉ đọc, không đặt lệnh) trước — nếu sức mua tính ra < 100 cổ phiếu, script tự dừng, in rõ cần nạp thêm bao nhiêu tiền để test được đầy đủ (đặt + huỷ), không cố đặt lệnh biết trước sẽ thất bại.
+
+## 📋 Kết quả Phase 0 thật (chạy 2026-07-26)
+
+**Kết quả: dừng ở Bước 1 (get_max_buy_sell_at_market_price) — đúng kịch bản dự kiến.**
+
+```
+Account 0434221 / VCB: max_buy_quantity=0, max_sell_quantity=0, purchasing_power=21459 (VND)
+→ Script tự dừng, KHÔNG đặt lệnh. Không có lỗi 401/403, không có lỗi ký request.
+```
+
+**Xác nhận:** cơ chế an toàn (kiểm tra sức mua thật trước khi đặt lệnh) hoạt động đúng. **Chưa xác nhận được** bước đặt lệnh thật + huỷ (`place_limit_order`/`cancel_order`) vì chưa từng chạy tới — số dư không đủ 1 lô của bất kỳ mã nào đã thử.
+
+### 🐛 Bug thứ 3 phát hiện trong `ssi-sdk` 3.1.0 (cùng dạng 2 bug trước — field-mapping sai, không phải giả thuyết)
+
+`AsyncTradingService.get_max_buy_sell_at_market_price()` nằm ở `trading.trading.*`, **không phải** `trading.portfolio.*` — bản nháp đầu của script gọi sai chỗ (`trading.portfolio.get_max_buy_sell_at_market_price`), gây lỗi `AttributeError` khi chạy thật. Đã sửa 1 dòng trong `scripts/spike_ssi_sdk_place_order.py`, xác nhận lại bằng `hasattr()` trên cả hai service class trước khi chấp nhận fix.
+
+Ngoài ra, `MaxBuySellResponse.from_dict()` (trong `ssi_sdk/models`) đọc sai key JSON cho field `purchase_power`: code đọc `data.get("purchasePower", ...)` nhưng response thật trả về key `purchasingPower` (xác nhận qua raw debug log: `{"accountNo":"0434221","maxBuyQty":0,"marginRatio":"0%","purchasingPower":21459,"maxSellQty":0}`) → `purchase_power` luôn là chuỗi rỗng `""`, im lặng. **Không ảnh hưởng Phase 0** vì cơ chế dừng chỉ dựa vào `max_buy_quantity` (map đúng), nhưng **Phase 1-4 không được dùng `mbs.purchase_power`** cho bất kỳ logic nào (ví dụ hiển thị sức mua bằng tiền) — phải tự đọc raw REST response giống cách `account_sync.py` đã làm với `EquityAccountBalance`, hoặc chỉ dùng `max_buy_quantity`/`max_sell_quantity`.
+
+### Còn thiếu để viết Phase 1-4 đầy đủ
+
+`place_limit_order()`/`cancel_order()` chưa từng được gọi thật — response shape thật (đặc biệt trạng thái lệnh, format lỗi khi giá/khối lượng sai) **vẫn là giả định** (dựa trên `inspect.signature`/dataclass fields, không phải response thật). Có 2 lựa chọn:
+1. Nạp thêm tiền vào tài khoản Cash (đủ mua 1 lô mã rẻ, ví dụ mã dưới 5,000đ/cp cần ~500,000đ) rồi chạy lại spike để xác nhận nốt bước đặt+huỷ.
+2. Viết Phase 1-4 dựa trên phần đã xác nhận (schema, RiskManager, dry-run gate, script xác nhận thủ công) nhưng **giữ nguyên dry-run là bắt buộc** và ghi rõ "chưa test đặt+huỷ lệnh thật" như một rủi ro còn tồn đọng, cần test thủ công trước khi bật `real_trading_enabled=true`.

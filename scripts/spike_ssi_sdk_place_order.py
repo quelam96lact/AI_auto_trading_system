@@ -63,7 +63,7 @@ async def main() -> None:
     print(
         f"Bước 1 — get_max_buy_sell_at_market_price({account_no}, {symbol}) (chỉ đọc)..."
     )
-    mbs = await trading.portfolio.get_max_buy_sell_at_market_price(account_no, symbol)
+    mbs = await trading.trading.get_max_buy_sell_at_market_price(account_no, symbol)
     payload = dataclasses.asdict(mbs)
     MAX_BUY_SELL_OUT.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
