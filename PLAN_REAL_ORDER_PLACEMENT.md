@@ -110,8 +110,13 @@ Không viết prompt thực thi cho các phase này ngay bây giờ — chờ Ph
 2. ~~Cơ chế xác nhận: script thủ công hay Telegram 2 chiều?~~ ✅ **Script thủ công** (`scripts/confirm_real_order.py`) — đơn giản hơn, không xây bot 2 chiều.
 3. ~~Vốn tối đa cho `RiskManager`?~~ ✅ **Mặc định = số dư thật hiện tại** (~21,459đ, đọc từ `account_balance_snapshot` lúc viết plan — sẽ hardcode 1 con số cụ thể trong config lúc code, không tự động đọc số dư sống, xem mục Kiến trúc #1).
 
-## ⛔ Vẫn còn chặn — chỉ bạn làm được
+## ✅ Chặn đã gỡ (2026-07-26)
 
-1. **Tìm hiểu quy trình lấy `private_key`/đăng ký Trading API trên console SSI.** Đây là việc DUY NHẤT tôi không tự làm được (cần đăng nhập console SSI bằng tài khoản của bạn) — **Phase 0 chưa thể bắt đầu viết script spike cho tới khi có thông tin này**, vì tôi chưa biết `private_key` sẽ ở định dạng gì (giống base64 XML RSA như `api_key`/`api_secret` cũ, hay quy trình khác hẳn) để viết đúng.
+`SSI_PRIVATE_KEY` đã có sẵn trong `.env` từ trước (thêm cùng lúc với `api_key`/`api_secret` lúc đăng ký console, chỉ là chưa cần dùng tới ở các phase trước). Định dạng khớp đúng dự đoán ban đầu — base64-encode 1 XML RSA key (`<RSAKeyValue>...`), đúng dạng `ssi_sdk.utils.crypto.get_rsa_key()`/`sign()` cần.
 
-Khi bạn có kết quả (đăng ký được `private_key`, hay console yêu cầu thêm bước nào khác) — báo lại, tôi viết script spike Phase 0 ngay.
+**Phase 0 sẵn sàng bắt đầu** — xem `scripts/spike_ssi_sdk_place_order.py`.
+
+### ⚠️ Rủi ro mới phát hiện khi thiết kế script: số dư quá thấp để test "đặt lệnh thành công"
+Account Cash chỉ có **~21,459đ**. Giá VCB thật (từ fixture Phase 0 backfill) dao động 53,000-58,800đ/cổ phiếu — 1 lô tối thiểu (100 cổ phiếu) cần **≥ 5,300,000đ**, vượt xa số dư hiện có. Đặt lệnh mua thật (dù giá thấp) nhiều khả năng sẽ bị SSI từ chối ngay vì **không đủ sức mua**, không phải vì cơ chế sai.
+
+**Script xử lý an toàn:** gọi `get_max_buy_sell()` (chỉ đọc, không đặt lệnh) trước — nếu sức mua tính ra < 100 cổ phiếu, script tự dừng, in rõ cần nạp thêm bao nhiêu tiền để test được đầy đủ (đặt + huỷ), không cố đặt lệnh biết trước sẽ thất bại.
