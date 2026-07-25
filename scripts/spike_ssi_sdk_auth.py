@@ -25,32 +25,16 @@ Token lưu vào scripts/.ssi_sdk_token.json (gitignored — KHÔNG commit).
 
 import asyncio
 import json
-import os
 import sys
-from pathlib import Path
 
-TOKEN_FILE = Path(__file__).parent / ".ssi_sdk_token.json"
-
-
-def _make_config():
-    from ssi_sdk import Config
-
-    # log_level=DEBUG bat logger noi bo cua SDK in raw response.text khi loi —
-    # can vi APIError.response_body luon la None (bug ke thua ctor trong
-    # ssi-sdk 3.1.0: APIError.__init__ goi super().__init__(message, code)
-    # khong forward status_code/response_body, nen SSIError.__init__ ghi de
-    # ve None ngay sau do). Day la cach duy nhat xem duoc noi dung loi that.
-    return Config(
-        api_key=os.environ["SSI_API_KEY"],
-        api_secret=os.environ["SSI_API_SECRET"],
-        log_level="DEBUG",
-    )
+from _ssi_spike_common import TOKEN_FILE, make_config
+from _ssi_spike_common import save_token as _save_token
 
 
 async def do_request_otp() -> None:
     from ssi_sdk import AsyncAuth
 
-    async with AsyncAuth(_make_config()) as auth:
+    async with AsyncAuth(make_config()) as auth:
         print("Đang xin OTP (SSI sẽ gửi qua SMS/email)...")
         try:
             await auth.request_otp()
@@ -70,7 +54,7 @@ def _print_api_error(e: Exception) -> None:
 async def do_authenticate(otp: str | None = None, ask_if_missing: bool = True) -> None:
     from ssi_sdk import AsyncAuth
 
-    async with AsyncAuth(_make_config()) as auth:
+    async with AsyncAuth(make_config()) as auth:
         if otp is None and ask_if_missing:
             print("Đang xin OTP (SSI sẽ gửi qua SMS/email)...")
             await auth.request_otp()
@@ -99,7 +83,7 @@ async def do_refresh() -> None:
         sys.exit(1)
 
     saved = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    async with AsyncAuth(_make_config()) as auth:
+    async with AsyncAuth(make_config()) as auth:
         from ssi_sdk.models import Token
 
         # to_dict() trả key camelCase (accessToken...) → phải dùng from_dict(),
@@ -113,12 +97,6 @@ async def do_refresh() -> None:
             raise
         _save_token(token)
         _print_token_info(token, label="REFRESH (không OTP)")
-
-
-def _save_token(token) -> None:
-    TOKEN_FILE.write_text(
-        json.dumps(token.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
 
 def _print_token_info(token, label: str) -> None:

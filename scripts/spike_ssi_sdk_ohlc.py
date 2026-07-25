@@ -31,72 +31,25 @@ Ghi chú API đã xác minh từ ssi-sdk 3.1.0 cài thật (inspect.signature):
 import asyncio
 import dataclasses
 import json
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from _ssi_spike_common import make_auth
+
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")  # khớp trading/calendar_vn.py
 
-TOKEN_FILE = Path(__file__).parent / ".ssi_sdk_token.json"
 OHLC_OUT = Path(__file__).parent / ".spike_ohlc_sample.json"
 STREAM_OUT = Path(__file__).parent / ".spike_stream_sample.jsonl"
 
 SYMBOL = "VCB"  # khớp config/config.yaml
 
 
-def _load_saved_token():
-    """Đọc token đã lưu bởi spike_ssi_sdk_auth.py; thoát rõ ràng nếu chưa có."""
-    if not TOKEN_FILE.exists():
-        print(
-            f"Chưa có token đã lưu ở {TOKEN_FILE} — "
-            "chạy scripts/spike_ssi_sdk_auth.py trước để xác thực OTP."
-        )
-        sys.exit(1)
-    return json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-
-
-async def _make_auth():
-    """AsyncAuth với token đã lưu; refresh() nếu access_token hết hạn."""
-    import httpx
-    from ssi_sdk import AsyncAuth, Config
-    from ssi_sdk.exceptions import SSIError
-    from ssi_sdk.models import Token
-
-    saved = _load_saved_token()
-    # log_level=DEBUG: APIError.response_body luon None do bug ke thua ctor
-    # trong ssi-sdk 3.1.0 (xem spike_ssi_sdk_auth.py::_make_config) — bat debug
-    # log noi bo cua SDK la cach duy nhat xem noi dung loi that tu server.
-    config = Config(
-        api_key=os.environ["SSI_API_KEY"],
-        api_secret=os.environ["SSI_API_SECRET"],
-        log_level="DEBUG",
-    )
-    auth = AsyncAuth(config)
-    # to_dict() trả key camelCase → phải dùng from_dict(), không phải Token(**saved)
-    await auth.token_manager.set_token(Token.from_dict(saved))
-    if auth.token_manager.is_token_expired:
-        print("access_token hết hạn — đang refresh bằng refresh_token đã lưu...")
-        try:
-            token = await auth.token_manager.refresh()
-        except (SSIError, httpx.HTTPError) as e:
-            print(
-                f"refresh() thất bại ({e}) — refresh_token có thể đã hết hạn. "
-                "Chạy lại scripts/spike_ssi_sdk_auth.py để xác thực OTP mới."
-            )
-            sys.exit(1)
-        TOKEN_FILE.write_text(
-            json.dumps(token.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print("refresh() OK — đã cập nhật token file.")
-    return auth
-
-
 async def fetch_ohlc_sample() -> None:
     from ssi_sdk import AsyncData
 
-    async with await _make_auth() as auth:
+    async with await make_auth() as auth:
         data = AsyncData(auth)
         to_date = datetime.now(VN_TZ).date()
         from_date = to_date - timedelta(days=7)
@@ -138,7 +91,7 @@ async def record_stream(seconds: int) -> None:
         count += 1
         print(f"[{count}] {line}")
 
-    async with await _make_auth() as auth:
+    async with await make_auth() as auth:
         stream = AsyncStream(auth)
         stream.streaming.on_data = on_message  # property setter (đã xác minh)
         await stream.streaming.connect()
