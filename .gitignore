@@ -7,3 +7,6 @@ __pycache__/
 scripts/.ssi_sdk_token.json
 scripts/.spike_ohlc_sample.json
 scripts/.spike_stream_sample.jsonl
+scripts/.spike_account_info.json
+scripts/.spike_equity_balance.json
+scripts/.spike_equity_positions.json
