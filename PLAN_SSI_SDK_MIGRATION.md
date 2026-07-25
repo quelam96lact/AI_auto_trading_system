@@ -91,12 +91,12 @@ Grep toàn bộ `ssi_sdk/services/*.py` cho thấy:
 |---|---|
 | `client.intraday_ohlc(None, model.intraday_ohlc(symbol=, fromDate="dd/MM/yyyy", toDate=, pageIndex=, pageSize=, ascending=, resolution=1))` | `await data.market_data.get_ohlc_5minute_historical(symbol, from_date="YYYY/MM/DD HH:mm:ss", to_date="YYYY/MM/DD HH:mm:ss", page=1, size=1000)` ⚠️ **intraday PHẢI có giờ** — thiếu giờ → lỗi `400213 "Invalid Date/Timestamp"` (đã gặp thật 2026-07-25, xác nhận qua docs `data-ohlc`: daily dùng `YYYY/MM/DD`, intraday dùng `YYYY/MM/DD HH:mm:ss`) |
 | `client.daily_ohlc(...)` | `await data.market_data.get_ohlc_1day_historical(symbol, from_date="YYYY/MM/DD", to_date="YYYY/MM/DD", page, size)` (daily KHÔNG cần giờ; tên method suy ra theo pattern, cần xác nhận khi code) |
-| Response: `dict {data: [...]}`, field PascalCase (`Symbol`, `TradingDate`, `Time`, `Open`...) | Response: `list[OHLCData]` — dataclass đã parse sẵn: `symbol`, `trading_date` (string, format thật **chưa xác nhận** — cần test), `open_price`, `high_price`, `low_price`, `close_price`, `volume`, `value` |
+| Response: `dict {data: [...]}`, field PascalCase (`Symbol`, `TradingDate`, `Time`, `Open`...) | Response: `list[OHLCData]` — dataclass đã parse sẵn: `symbol`, `trading_date` **✅ xác nhận thật `"YYYY/MM/DD HH:mm:ss"`** (vd `"2026/07/24 14:45:00"`, xem `tests/fixtures/ssi_sdk_ohlc_5m_vcb.json`), `open_price`/`high_price`/`low_price`/`close_price`/`volume`/`value` đã là **số** (SDK tự convert từ string trong raw JSON qua `to_number()`/`to_int()`, không cần tự ép kiểu) |
 | Ta tự bucket 1m → 5m (`parse_intraday_response`) | SDK trả **thẳng bar 5m** nếu gọi `get_ohlc_5minute_historical` — **có thể bỏ hẳn logic tự bucket trong `backfill.py`** (giảm code, không phải giữ nguyên bucket logic cũ) |
 | Page mặc định: `pageSize=100` (ta tự set) | Page mặc định SDK: `size=1000` (constant `DEFAULT_SIZE`) |
 | Không rate limit rõ ràng, ta tự `time.sleep(0.25)` | SDK có `rate_limit_per_second` tích hợp trong `Config` — **có thể bỏ throttle thủ công**, dùng config SDK |
 
-**Điểm chưa chắc, cần verify bằng response thật (không suy ra được từ dataclass vì đây là passthrough field):** format chuỗi `trading_date` trả về — là `"2026/07/21"` (chỉ ngày) hay có kèm giờ `"2026/07/21 09:05:00"`? Việc này quyết định `_row_ts()` trong `backfill.py` viết lại thế nào.
+**✅ Đã verify bằng response thật (2026-07-25):** `trading_date` luôn có giờ `"YYYY/MM/DD HH:mm:ss"` cho intraday (kể cả khi request `to_date` là cuối ngày `23:59:59` — server trả đúng timestamp của từng bar, không phải giờ request). Dữ liệu 230 bar thật của VCB khớp đúng ranh giới phiên VN (nghỉ trưa 11:25→13:00, có ATC 14:45) — `_row_ts()` trong `backfill.py` viết lại chỉ cần `strptime(s, "%Y/%m/%d %H:%M:%S")`, đơn giản hơn hẳn bản cũ (không cần ghép `TradingDate`+`Time` riêng như SDK cũ).
 
 ### 2.3. Mapping Streaming (cho `feed.py` + `parser.py`)
 
@@ -160,6 +160,22 @@ Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ
    - Kiểm chứng: có sample thật lưu vào file để dùng viết test fixture cho Phase 2-3 (giống cách Task 6 cũ đã làm với SDK cũ).
 
 **Checkpoint sau Phase 0:** báo cáo lại cho user 3 con số — TTL refresh_token, format `trading_date`, SDK có tự đóng bar đúng giờ VN không — trước khi viết code production ở Phase 1-3.
+
+### ✅ Phase 0 HOÀN THÀNH (2026-07-25) — kết quả thực nghiệm
+
+| Câu hỏi | Kết quả |
+|---|---|
+| `api_key`/`api_secret` hợp lệ? | ✅ Có (`authenticate()` không OTP trả 200) |
+| OTP có bắt buộc? | ❌ Không — full scope `trading:*:*,data:*:*,stream:*:*` cấp ngay không cần OTP (xem mục 1.1) |
+| TTL `access_token` | 15 phút |
+| TTL `refresh_token` | 8 giờ |
+| Format `trading_date` | `"YYYY/MM/DD HH:mm:ss"` — xác nhận (xem mục 2.2) |
+| Stream connect + subscribe | ✅ Thành công (`wss://stream.ssi.com.vn/ws/v3`, subscribe `trade.VCB@5m` trả `{"status":"ok"}`) — chưa nhận được `IntervalMessage` thật (test ngoài giờ giao dịch, phiên đã đóng) |
+| Fixture OHLC thật | ✅ `tests/fixtures/ssi_sdk_ohlc_5m_vcb.json` (230 bar VCB, 5 ngày) |
+| Fixture Stream thật (`IntervalMessage`) | ⚠️ **Còn thiếu** — cần chạy lại `scripts/spike_ssi_sdk_ohlc.py --stream-only` **trong giờ giao dịch** (09:00-14:45 VN) để bắt được bar thật, dùng ghi fixture cho Phase 3 |
+
+**Sẵn sàng bắt đầu Phase 2** (viết lại `backfill.py`) ngay — đã có đủ fixture OHLC thật.
+**Phase 3** (viết lại `feed.py`/`parser.py`) nên chờ thêm 1 lần chạy trong giờ giao dịch để có sample `IntervalMessage` thật, tránh đoán field như `interval_time`/`trading_time` format (đã biết tên field từ source code nhưng chưa có giá trị thật để đối chiếu).
 
 ---
 
