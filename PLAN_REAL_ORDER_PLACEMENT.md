@@ -105,8 +105,13 @@ Không viết prompt thực thi cho các phase này ngay bây giờ — chờ Ph
 
 ---
 
-## Việc cần bạn làm ngay
+## Quyết định đã chốt (2026-07-26)
 
-1. Tìm hiểu quy trình lấy `private_key`/đăng ký Trading API trên console SSI, báo lại cho tôi.
-2. Xác nhận lại: đồng ý với cơ chế xác nhận "chạy script thủ công" (đơn giản hơn) hay muốn xác nhận qua Telegram 2 chiều (phức tạp hơn)?
-3. Xác nhận số vốn tối đa cho phép `RiskManager` dùng (không nhất thiết bằng toàn bộ số dư thật) — hay để mặc định = số dư thật hiện tại (~21,459đ)?
+2. ~~Cơ chế xác nhận: script thủ công hay Telegram 2 chiều?~~ ✅ **Script thủ công** (`scripts/confirm_real_order.py`) — đơn giản hơn, không xây bot 2 chiều.
+3. ~~Vốn tối đa cho `RiskManager`?~~ ✅ **Mặc định = số dư thật hiện tại** (~21,459đ, đọc từ `account_balance_snapshot` lúc viết plan — sẽ hardcode 1 con số cụ thể trong config lúc code, không tự động đọc số dư sống, xem mục Kiến trúc #1).
+
+## ⛔ Vẫn còn chặn — chỉ bạn làm được
+
+1. **Tìm hiểu quy trình lấy `private_key`/đăng ký Trading API trên console SSI.** Đây là việc DUY NHẤT tôi không tự làm được (cần đăng nhập console SSI bằng tài khoản của bạn) — **Phase 0 chưa thể bắt đầu viết script spike cho tới khi có thông tin này**, vì tôi chưa biết `private_key` sẽ ở định dạng gì (giống base64 XML RSA như `api_key`/`api_secret` cũ, hay quy trình khác hẳn) để viết đúng.
+
+Khi bạn có kết quả (đăng ký được `private_key`, hay console yêu cầu thêm bước nào khác) — báo lại, tôi viết script spike Phase 0 ngay.
