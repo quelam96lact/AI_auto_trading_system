@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 .superpowers/
 scripts/.ssi_sdk_token.json
+scripts/.spike_ohlc_sample.json
+scripts/.spike_stream_sample.jsonl

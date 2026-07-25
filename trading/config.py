@@ -18,6 +18,8 @@ class Config:
     watchdog_max_failures: int
     ssi_consumer_id: str
     ssi_consumer_secret: str
+    ssi_api_key: str
+    ssi_api_secret: str
 
 
 def load_config(path: str) -> Config:
@@ -35,4 +37,6 @@ def load_config(path: str) -> Config:
         watchdog_max_failures=int(raw["watchdog"]["max_failures"]),
         ssi_consumer_id=os.environ["SSI_CONSUMER_ID"],
         ssi_consumer_secret=os.environ["SSI_CONSUMER_SECRET"],
+        ssi_api_key=os.environ["SSI_API_KEY"],
+        ssi_api_secret=os.environ["SSI_API_SECRET"],
     )

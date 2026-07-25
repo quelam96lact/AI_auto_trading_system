@@ -29,6 +29,8 @@ def make_cfg() -> Config:
         watchdog_max_failures=3,
         ssi_consumer_id="x",
         ssi_consumer_secret="y",
+        ssi_api_key="k",
+        ssi_api_secret="s",
     )
 
 

@@ -36,6 +36,8 @@ services:
       NATS_URL: nats://nats:4222
       SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
       SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
+      SSI_API_KEY: ${SSI_API_KEY}
+      SSI_API_SECRET: ${SSI_API_SECRET}
     dns:
       - 8.8.8.8
       - 8.8.4.4

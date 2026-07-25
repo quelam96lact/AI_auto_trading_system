@@ -5,6 +5,8 @@ from trading.config import load_config
 def test_load_config(tmp_path, monkeypatch):
     monkeypatch.setenv("SSI_CONSUMER_ID", "id123")
     monkeypatch.setenv("SSI_CONSUMER_SECRET", "sec456")
+    monkeypatch.setenv("SSI_API_KEY", "key789")
+    monkeypatch.setenv("SSI_API_SECRET", "secret000")
     monkeypatch.setenv("DB_DSN", "postgresql://t:t@localhost:5432/trading")
     p = tmp_path / "c.yaml"
     p.write_text(
@@ -20,6 +22,8 @@ def test_load_config(tmp_path, monkeypatch):
     assert cfg.symbols == ["VCB", "HPG"]
     assert cfg.holidays == {date(2026, 9, 2)}
     assert cfg.ssi_consumer_id == "id123"
+    assert cfg.ssi_api_key == "key789"
+    assert cfg.ssi_api_secret == "secret000"
     assert cfg.db_dsn.startswith("postgresql://")
     assert cfg.nats_stream == "BARS"
     assert cfg.watchdog_stale_seconds == 180

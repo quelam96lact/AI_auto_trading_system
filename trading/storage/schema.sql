@@ -71,3 +71,13 @@ CREATE TABLE IF NOT EXISTS pnl_daily (
   unrealized double precision NOT NULL DEFAULT 0,
   fees double precision NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS ssi_auth_state (
+  id integer PRIMARY KEY DEFAULT 1,
+  access_token text NOT NULL,
+  expires_at bigint NOT NULL,
+  refresh_token text NOT NULL,
+  refresh_token_expires_at bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (id = 1)
+);

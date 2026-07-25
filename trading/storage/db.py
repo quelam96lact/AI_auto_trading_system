@@ -113,6 +113,32 @@ class Storage:
                 (fill.ts, fill.symbol, fill.side, fill.qty, fill.price, fill.fee, fill.pnl, mode),
             )
 
+    def save_ssi_token(self, access_token: str, expires_at: int, refresh_token: str, refresh_token_expires_at: int) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO ssi_auth_state (id, access_token, expires_at, refresh_token, refresh_token_expires_at, updated_at) "
+                "VALUES (1, %s, %s, %s, %s, now()) "
+                "ON CONFLICT (id) DO UPDATE SET access_token = EXCLUDED.access_token, "
+                "expires_at = EXCLUDED.expires_at, refresh_token = EXCLUDED.refresh_token, "
+                "refresh_token_expires_at = EXCLUDED.refresh_token_expires_at, updated_at = now()",
+                (access_token, expires_at, refresh_token, refresh_token_expires_at),
+            )
+
+    def load_ssi_token(self) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT access_token, expires_at, refresh_token, refresh_token_expires_at "
+                "FROM ssi_auth_state WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "access_token": row[0],
+            "expires_at": row[1],
+            "refresh_token": row[2],
+            "refresh_token_expires_at": row[3],
+        }
+
     def update_pnl_daily(self, day: date, realized_delta: float, fee_delta: float, unrealized: float) -> None:
         with self.conn() as c:
             c.execute(
