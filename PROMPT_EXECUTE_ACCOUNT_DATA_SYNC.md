@@ -177,7 +177,7 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
     storage.save_account_positions(account_no, ts, rows)
 ```
 
-**Lưu ý khi code thật:** xác nhận lại `EP_ACCOUNT_BALANCE` bằng cách import từ `ssi_sdk.constant` thay vì hardcode string (đã hardcode ở trên cho dễ đọc — đổi lại `from ssi_sdk.constant import EP_ACCOUNT_BALANCE` khi viết thật, kiểm tra tên constant đúng còn tồn tại trong package đã cài).
+**Lưu ý khi code thật:** `EP_ACCOUNT_BALANCE = "/api/v3/trading/accountBalance"` và format params `{"clientId": ..., "accountNo": ...}` **đã verify thật** (chạy `AccountBalanceRequest(...).to_dict()` trên package cài thật trước khi viết prompt này — không phải suy đoán). Viết code thật dùng `from ssi_sdk.constant import EP_ACCOUNT_BALANCE` (import từ package, không hardcode string trùng lặp) thay vì chép lại hằng số như bản blueprint ở trên (chỉ để dễ đọc).
 
 **Kiểm chứng:** test mới `tests/test_account_sync.py` — mock `ensure_authenticated`/`auth.rest_client.get`/`AsyncPortfolioService.get_equity_positions` (theo pattern `tests/test_ssi_auth.py` đã dùng — fake class, monkeypatch). Test case bắt buộc:
 1. `_sync_balance` map đúng `accountBalance`/`withdrawable`/`advancedCashT0/1` (raw dict giả lập ĐÚNG format thật đã xác nhận: `{"equity": {"accountBalance": "21459", "withdrawable": "21459", ...}}`) → `storage.save_account_balance` được gọi với `account_balance=21459.0` (KHÔNG phải 0.0 — test này chính là bảo vệ chống regression nếu ai đó lỡ quay lại dùng `get_equity_balance()` bị bug).
