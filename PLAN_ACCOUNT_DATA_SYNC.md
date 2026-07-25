@@ -67,9 +67,44 @@ Giải mã JWT `access_token` đã lấy được ở Phase 0 (migration SDK, xe
 
 ## Giả định chưa xác nhận (cần Phase 0 discovery, giống cách làm với Data/Stream trước đó)
 
-1. **OTP có bắt buộc cho Portfolio API không?** Data/Stream đã xác nhận KHÔNG cần OTP trên account này (Phase 0 migration). Portfolio là API khác nhóm (đọc số dư/vị thế thật) — **chưa test, không được giả định giống Data/Stream**. Có thể server áp OTP chặt hơn cho nhóm "trading" dù JWT scope claim ghi `trading:*:*`.
-2. **`client_id` giải mã từ JWT có đúng giá trị SSI Portfolio API mong đợi không?** — JWT tự SSI cấp nên khả năng cao đúng, nhưng chưa test gọi thật.
-3. **Account nào trong 3 account là equity account** — xem câu hỏi mở ở trên.
+1. ~~OTP có bắt buộc cho Portfolio API không?~~ ✅ **Xác nhận KHÔNG cần** — xem Phase 0 kết quả bên dưới.
+2. ~~`client_id` giải mã từ JWT có đúng không?~~ ✅ **Xác nhận đúng** — `043422`, gọi API thành công.
+3. ~~Account nào là equity account?~~ ✅ **Xác nhận** — xem Phase 0 kết quả bên dưới (không như giả định ban đầu).
+
+---
+
+## ✅ Phase 0 — Kết quả thật (2026-07-25, đã chạy)
+
+### 1. Account types (từ `get_account_info()`)
+| account_no | Loại | Ghi chú |
+|---|---|---|
+| `0434221` | Cash | Có tiền (`accountBalance=21459`), **0 vị thế** |
+| `0434228` | Derivative | Phái sinh — **không dùng**, dự án chỉ trade cổ phiếu |
+| `0434226` | Margin | **Có vị thế thật: CAP, HCM, VCB, TCX** (VCB trùng symbol dự án đang theo dõi!) |
+
+**⚠️ Sửa lại giả định ban đầu:** Vị thế cổ phiếu thật nằm ở account **Margin** (`0434226`), không phải account "Cash" như tôi đoán lúc viết plan. `get_equity_positions()`/`get_equity_balance()` **hoạt động trên cả Cash lẫn Margin** (API gọi là "equity" theo nghĩa "không phải derivative", không phải kiểu tài khoản cụ thể) — cần đồng bộ **cả 2 account** (`0434221` + `0434226`), bỏ qua `0434228` (derivative).
+
+### 2. OTP — KHÔNG cần cho Portfolio API
+`get_equity_balance()`/`get_equity_positions()` gọi thành công (HTTP 200) chỉ bằng access_token từ `refresh()` (không OTP) — xác nhận giả định #1 sai theo hướng tốt (không nghiêm ngặt hơn Data/Stream như lo ngại).
+
+### 3. 🐛 Bug SDK đã xác nhận — `EquityAccountBalance.from_dict()` map sai tên field
+
+So sánh field SDK đọc (`ssi_sdk/models/portfolio.py::EquityAccountBalance.from_dict`) với response thật:
+
+| SDK đọc | API thật trả | Khớp? |
+|---|---|---|
+| `data.get("availableCash")` | field thật tên `accountBalance` (không có `availableCash`) | ❌ luôn `0.0` |
+| `data.get("withdrawal")` | field thật tên `withdrawable` | ❌ luôn `0.0` |
+| `data.get("advanceCashT0"/"advanceCashT1")` | field thật tên `advancedCashT0`/`advancedCashT1` (có "d") | ❌ luôn `0.0` |
+| còn lại (`totalDebt`, `interestLoan`, `sellUnmatched`, `buyT0-2`, `dividend`, `onHoldCash`...) | | ✅ đúng |
+
+**Hệ quả cho thiết kế:** `available_cash`/`withdrawal`/`advance_cash_t0`/`advance_cash_t1` từ `EquityAccountBalance` (qua `get_equity_balance()`) **không dùng được** — luôn trả `0.0` bất kể giá trị thật (bug âm thầm, không raise lỗi — nguy hiểm hơn bug `APIError` ở migration trước vì dễ bị bỏ sót). Đã verify bằng dữ liệu thật: account `0434221` có `accountBalance` thật = `21459`, nhưng `EquityAccountBalance.available_cash` in ra `0.0`.
+
+**Hướng khắc phục (quyết định lúc code Phase 1, không sửa SDK bên thứ 3):** viết hàm map riêng đọc thẳng raw dict (bypass `get_equity_balance()`'s field mapping lỗi, hoặc tự đọc `self._rest.get(EP_ACCOUNT_BALANCE, ...)` ở tầng thấp hơn), dùng tên field đúng đã xác nhận (`accountBalance`, `withdrawable`, `advancedCashT0/1`). `get_equity_positions()` **không có bug này** — field khớp đúng 100% (đã verify: `quantity`, `costPrice`, `sellableQuantity` đều đúng với raw response).
+
+### 4. Bug nhỏ trong script spike (không phải SDK) — đã sửa
+- `get_account_info()` crash serialize `AccountType` (Enum) — do `json.dumps()` không tự serialize Enum, sửa bằng `default=str`.
+- `get_equity_balance()` trả `None` khi account không có phần "equity" (vd account Derivative) — script cũ gọi `dataclasses.asdict(None)` crash; sửa: check `None` trước, in "account này không có dữ liệu equity" thay vì crash.
 
 ---
 
@@ -79,12 +114,16 @@ Giải mã JWT `access_token` đã lấy được ở Phase 0 (migration SDK, xe
 `trading/config.py::Config` thêm field `ssi_client_id: str` — nhưng **không đọc từ env var** như `ssi_api_key`. Thay vào đó: sau khi `ensure_authenticated()` trả token, decode JWT lấy `client_id` claim, set vào `Config`/truyền cho service. (Chi tiết kỹ thuật quyết định lúc code — có thể thêm hàm `decode_client_id(access_token: str) -> str` trong `ssi_auth.py`.)
 
 ### 2. Bảng DB mới (theo pattern `pnl_daily`/`positions` đã có)
+
+**⚠️ Cập nhật sau Phase 0:** `available_cash`/`withdrawal`/`advance_cash_t0`/`advance_cash_t1` KHÔNG lấy qua `EquityAccountBalance` (bug SDK, luôn `0.0`) — phải tự map từ raw response (`accountBalance`, `withdrawable`, `advancedCashT0/1`). Đồng bộ **2 account** (`0434221` Cash + `0434226` Margin), bỏ qua `0434228` (derivative).
+
 ```sql
 CREATE TABLE IF NOT EXISTS account_balance_snapshot (
   account_no text NOT NULL,
   ts timestamptz NOT NULL,
-  available_cash double precision NOT NULL,
+  account_balance double precision NOT NULL,  -- KHÔNG phải available_cash (tên field SDK sai)
   total_debt double precision NOT NULL,
+  withdrawable double precision NOT NULL,      -- tên field thật, KHÔNG phải "withdrawal"
   buy_unmatched double precision NOT NULL,
   sell_unmatched double precision NOT NULL,
   PRIMARY KEY (account_no, ts)
@@ -103,7 +142,7 @@ CREATE TABLE IF NOT EXISTS account_position_snapshot (
 (Chỉ chọn subset field hữu ích cho dashboard — không lưu hết 25 field của `EquityAccountBalance`. Điều chỉnh khi code nếu Grafana cần thêm field cụ thể.)
 
 ### 3. Job đồng bộ định kỳ
-Module mới `trading/collector/account_sync.py` — gọi `get_equity_balance`/`get_equity_positions`, ghi snapshot vào 2 bảng trên. Wire vào `main.py::housekeeping()` (đã có sẵn vòng lặp 30s) — gọi mỗi N phút trong giờ giao dịch (đề xuất 5 phút, khớp nhịp bar; có thể chỉnh). Dùng `ensure_authenticated()` sẵn có (Phase 1 migration) — không viết auth mới.
+Module mới `trading/collector/account_sync.py` — gọi `get_equity_balance`/`get_equity_positions` cho cả `0434221` và `0434226`. **Viết hàm map balance riêng** (bypass field mapping lỗi của `EquityAccountBalance.from_dict()` — đọc raw dict trực tiếp hoặc gọi REST endpoint tầng thấp hơn với tên field đúng đã xác nhận). `get_equity_positions()` dùng được thẳng, không cần workaround (đã verify field đúng). Ghi snapshot vào 2 bảng trên. Wire vào `main.py::housekeeping()` (đã có sẵn vòng lặp 30s) — gọi mỗi N phút trong giờ giao dịch (đề xuất 5 phút, khớp nhịp bar; có thể chỉnh). Dùng `ensure_authenticated()` sẵn có (Phase 1 migration) — không viết auth mới. **Không cần OTP** (đã xác nhận Phase 0).
 
 ### 4. Grafana panel mới
 Thêm panel "Real Account Balance" + "Real Positions" vào dashboard hiện có, query 2 bảng trên — theo đúng pattern `test_dashboard_queries.py` đã có cho PnL/positions PaperBroker.

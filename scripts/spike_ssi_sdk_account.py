@@ -92,15 +92,22 @@ async def main() -> None:
     try:
         accounts_info = await trading.account.get_account_info()
         payload = [dataclasses.asdict(a) for a in accounts_info]
+        # default=str: AccountType là Enum, json.dumps không tự serialize được
+        # (đã gặp thật 2026-07-25: "Object of type AccountType is not JSON serializable").
         ACCOUNT_INFO_OUT.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
         )
         print(f"Nhận {len(accounts_info)} account → {ACCOUNT_INFO_OUT}")
         for a in payload:
             print(" ", a)
     except Exception as e:
         print(f"!! get_account_info() lỗi: {e}")
-        accounts_info = []
+
+    # Gom kết quả tất cả account vào 1 dict thay vì ghi đè file mỗi vòng lặp
+    # (bug đã gặp: BALANCE_OUT/POSITIONS_OUT bị ghi đè, chỉ còn account cuối).
+    all_balances: dict[str, dict] = {}
+    all_positions: dict[str, list] = {}
 
     for acc_no in accounts:
         acc_no = acc_no.strip()
@@ -109,26 +116,46 @@ async def main() -> None:
         print(f"\nGọi get_equity_balance({acc_no})...")
         try:
             balance = await trading.portfolio.get_equity_balance(acc_no)
+            if balance is None:
+                # Account không có phần "equity" (vd account derivative thuần) —
+                # đây là kết quả hợp lệ, KHÔNG phải lỗi (đã gặp thật với account
+                # derivative 2026-07-25, script cũ crash ở dataclasses.asdict(None)).
+                print(" (account này không có dữ liệu equity — bỏ qua)")
+                continue
             payload = dataclasses.asdict(balance)
-            BALANCE_OUT.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            all_balances[acc_no] = payload
+            print(f"OK — total_debt: {payload.get('total_debt')}")
+            # available_cash/withdrawal/advance_cash_t0/advance_cash_t1 KHÔNG
+            # tin được — bug xác nhận trong ssi-sdk 3.1.0 EquityAccountBalance.
+            # from_dict() đọc sai tên field (availableCash/withdrawal thay vì
+            # accountBalance/withdrawable thật) → luôn 0.0. Xem
+            # PLAN_ACCOUNT_DATA_SYNC.md mục "Phase 0 — Kết quả thật" #3.
+            print(
+                " !! available_cash/withdrawal (BUG SDK, luôn 0.0, đừng tin):",
+                payload.get("available_cash"),
+                "/",
+                payload.get("withdrawal"),
             )
-            print(f"OK → {BALANCE_OUT}")
-            print(" available_cash:", payload.get("available_cash"))
         except Exception as e:
             print(f"!! get_equity_balance({acc_no}) lỗi: {e}")
-            continue  # account này không phải equity hoặc không hợp lệ, thử account khác
+            continue  # account này không hợp lệ cho equity, thử account khác
 
         print(f"Gọi get_equity_positions({acc_no})...")
         try:
             positions = await trading.portfolio.get_equity_positions(acc_no)
-            payload = [dataclasses.asdict(p) for p in positions]
-            POSITIONS_OUT.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            print(f"Nhận {len(positions)} vị thế → {POSITIONS_OUT}")
+            all_positions[acc_no] = [dataclasses.asdict(p) for p in positions]
+            print(f"Nhận {len(positions)} vị thế")
         except Exception as e:
             print(f"!! get_equity_positions({acc_no}) lỗi: {e}")
+
+    BALANCE_OUT.write_text(
+        json.dumps(all_balances, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    POSITIONS_OUT.write_text(
+        json.dumps(all_positions, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"\nĐã lưu balance ({len(all_balances)} account) → {BALANCE_OUT}")
+    print(f"Đã lưu positions ({len(all_positions)} account) → {POSITIONS_OUT}")
 
     await auth.close()
 
