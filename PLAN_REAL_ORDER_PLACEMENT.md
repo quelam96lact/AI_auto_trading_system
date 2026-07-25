@@ -143,3 +143,17 @@ Ngoài ra, `MaxBuySellResponse.from_dict()` (trong `ssi_sdk/models`) đọc sai 
 `place_limit_order()`/`cancel_order()` chưa từng được gọi thật — response shape thật (đặc biệt trạng thái lệnh, format lỗi khi giá/khối lượng sai) **vẫn là giả định** (dựa trên `inspect.signature`/dataclass fields, không phải response thật). Có 2 lựa chọn:
 1. Nạp thêm tiền vào tài khoản Cash (đủ mua 1 lô mã rẻ, ví dụ mã dưới 5,000đ/cp cần ~500,000đ) rồi chạy lại spike để xác nhận nốt bước đặt+huỷ.
 2. Viết Phase 1-4 dựa trên phần đã xác nhận (schema, RiskManager, dry-run gate, script xác nhận thủ công) nhưng **giữ nguyên dry-run là bắt buộc** và ghi rõ "chưa test đặt+huỷ lệnh thật" như một rủi ro còn tồn đọng, cần test thủ công trước khi bật `real_trading_enabled=true`.
+
+**Quyết định (2026-07-26): chọn lựa chọn 2** — viết prompt Phase 1-4 ngay, không chờ nạp thêm tiền. Xem `PROMPT_EXECUTE_REAL_ORDER_PHASE1.md`/`PHASE2.md`/`PHASE3.md`.
+
+## ✅ Prompt Phase 1-4 đã viết xong (2026-07-26)
+
+3 file thực thi, giao tuần tự (mỗi phase audit xong mới giao phase sau):
+- `PROMPT_EXECUTE_REAL_ORDER_PHASE1.md` — bảng `pending_real_orders`/`real_order_fills` (tách biệt hoàn toàn khỏi `orders`/`positions`/`pnl_daily` của PaperBroker — quyết định mới, xem lý do bên dưới), field mới trong `Config`, CRUD methods trong `Storage`. Không gọi API đặt lệnh nào.
+- `PROMPT_EXECUTE_REAL_ORDER_PHASE2.md` — sinh tín hiệu **bằng cách gắn thêm vào tiến trình engine đang chạy** (quyết định mới, xem lý do bên dưới), qua `RiskManager` riêng cho lệnh thật, ghi `pending_real_orders` + Telegram. Vẫn không gọi API đặt lệnh nào.
+- `PROMPT_EXECUTE_REAL_ORDER_PHASE3.md` — `scripts/confirm_real_order.py`: xác nhận thủ công, dry-run gate (`real_trading_enabled=false` → chỉ log, không gọi API), chỉ khi `true` mới thật sự gọi `place_limit_order`. Phần "Phase 4" (giám sát dry-run ≥2 tuần, nạp tiền test đặt+huỷ thật, rồi mới bật `real_trading_enabled=true`) là runbook cho người dùng, không phải code, nằm ở cuối file này.
+
+### Quyết định thiết kế mới, chốt khi viết prompt (chưa có trong bản plan gốc)
+
+1. **Bảng DB riêng, không tái sử dụng `orders`/`positions`/`pnl_daily`/`engine_state`.** Lý do: các bảng đó thuộc về `PaperBroker` + được Grafana dashboard/engine loop paper-trading dùng trực tiếp; trộn lẫn lệnh thật vào sẽ tăng rủi ro (bug ở lệnh thật ảnh hưởng số liệu paper, hoặc ngược lại) — vi phạm nguyên tắc "phạm vi phẫu thuật". Thêm 2 bảng mới: `pending_real_orders` (đã có trong bản gốc), `real_order_fills` (mới, để tính `daily_pnl` riêng cho gate của lệnh thật).
+2. **Sinh tín hiệu bằng cách gắn vào engine đang chạy, không viết job riêng.** Được hỏi và user chọn trực tiếp (2026-07-26) — lý do: `SmaCrossStrategy` giữ trạng thái (moving average) trong bộ nhớ theo từng bar; 1 job riêng đọc lại lịch sử bar từ DB mỗi lần chạy sẽ phải viết lại logic replay state (code mới, rủi ro bug), trong khi engine đã tính đúng, sẵn có. Đánh đổi: `trading/engine/main.py`/`logic.py` (paper-trading, đã ổn định) giờ có thêm 1 optional callback — Phase 2 prompt yêu cầu tường minh: test cũ (`test_engine_logic.py`) phải pass nguyên vẹn, thay đổi chỉ được phụ thêm (additive).
