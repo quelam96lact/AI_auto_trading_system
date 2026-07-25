@@ -48,7 +48,16 @@ Cơ chế: `authenticate(otp=...)` lần đầu trả về `Token` gồm `access
 | Endpoint xin OTP | `POST /api/v3/auth/requestOtp` |
 | Endpoint OHLC | `GET /api/v3/data/ohlc` |
 
-**`private_key` dùng để làm gì:** SDK dùng nó ký request bằng **RSA PKCS#1 v1.5 SHA-256** (`utils/crypto.py::sign()`), gửi qua header `X-Signature`. Key là chuỗi base64-encode 1 XML RSA key (định dạng kiểu .NET `<RSAKeyValue>`). → Khi đăng ký app mới trên console SSI, cần tải/generate cặp khoá RSA này, **không phải chuỗi bí mật đơn giản như `consumerSecret` cũ**.
+**`private_key` dùng để làm gì:** SDK dùng nó ký request bằng **RSA PKCS#1 v1.5 SHA-256** (`utils/crypto.py::sign()`), gửi qua header `X-Signature`. Key là chuỗi base64-encode 1 XML RSA key (định dạng kiểu .NET `<RSAKeyValue>`).
+
+### 2.1.1. ⚠️ Sửa lại: `client_id`/`private_key` KHÔNG cần cho scope dự án hiện tại
+
+Grep toàn bộ `ssi_sdk/services/*.py` cho thấy:
+- `private_key`/`sign()` **chỉ được dùng trong `services/trading.py`** (đặt lệnh, cần chữ ký RSA).
+- `client_id` **chỉ được dùng trong `services/portfolio.py`** (tra số dư/vị thế tài khoản).
+- `services/market_data.py` và `services/streaming.py` — 2 module dự án này cần (OHLC + bar streaming) — **không tham chiếu `client_id` hay `private_key` ở đâu cả**.
+
+→ Vì broker hiện tại là **PaperBroker** (giả lập nội bộ, không đặt lệnh thật qua SSI Trading API), dự án **chỉ cần `api_key` + `api_secret`** (+ OTP một lần để lấy `refresh_token`). `client_id`/`private_key` chỉ cần khi nào chuyển sang đặt lệnh thật qua SSI — ngoài scope hiện tại, hoãn lại tới khi có nhu cầu đó.
 
 ### 2.2. Mapping REST OHLC (cho `backfill.py`)
 
@@ -82,7 +91,7 @@ Cơ chế: `authenticate(otp=...)` lần đầu trả về `Token` gồm `access
 | File | Thay đổi |
 |---|---|
 | `pyproject.toml` | `ssi-fc-data` → `ssi-sdk` |
-| `trading/config.py` | `Config`: bỏ `ssi_consumer_id/secret`, thêm `ssi_client_id`, `ssi_api_key`, `ssi_api_secret`, `ssi_private_key` (base64 XML RSA), thêm `ssi_refresh_token_path` hoặc tương tự để trỏ nơi lưu refresh_token bền vững (xem mục 5) |
+| `trading/config.py` | `Config`: bỏ `ssi_consumer_id/secret`, thêm `ssi_api_key`, `ssi_api_secret` (chỉ 2 giá trị — `client_id`/`private_key` hoãn tới khi cần Trading API thật, xem mục 2.1.1), thêm `ssi_refresh_token_path` hoặc tương tự để trỏ nơi lưu refresh_token bền vững (xem mục 5) |
 | `trading/collector/backfill.py` | Viết lại `SSIRestClient`: dùng `AsyncData.market_data.get_ohlc_5minute_historical`/`get_ohlc_1day_historical`. Có thể **xoá** `parse_intraday_response`'s bucket-5m logic (SDK trả sẵn). Giữ `parse_daily_response` nhưng đổi field mapping theo `OHLCData` |
 | `trading/collector/feed.py` | Viết lại `SSIFeed`: dùng `AsyncStream`, `subscribe_symbol_ohlcv`. Cân nhắc bỏ thread wrapper (đổi sang native async task), nhưng **giữ lại cơ chế reconnect+backoff** hiện có (SDK có vẻ không tự làm) |
 | `trading/collector/parser.py` | Viết lại `parse_message()`: input giờ là `IntervalMessage`/`TradeMessage` (dataclass), không phải dict envelope `{DataType, Content}` nữa — logic đơn giản hơn hẳn |
@@ -107,11 +116,11 @@ SDK mới đưa ra khái niệm `refresh_token` cần **lưu bền vững qua l�
 
 Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ còn 3 việc thực nghiệm thật (cần credentials thật):
 
-1. **Đăng ký app mới trên console SSI** (`developers.ssi.com.vn/console/register`) → lấy `client_id`, `api_key`, `api_secret`, và **tạo/tải cặp khoá RSA** cho `private_key`.
-   - Kiểm chứng: có đủ 4 giá trị, `private_key` decode base64 → parse XML → lấy được `Modulus`/`D` (test bằng `ssi_sdk.utils.crypto.get_rsa_key()`).
+1. **Tạo API Key trên console SSI** (`developers.ssi.com.vn` → Bảng điều khiển → Quản lý API Key → Tạo Key mới) → lấy `api_key`, `api_secret`. Không cần `client_id`/`private_key` (xem mục 2.1.1).
+   - Kiểm chứng: có đủ 2 giá trị, lưu vào `.env` (`SSI_API_KEY`, `SSI_API_SECRET`). Lưu ý `API Secret` chỉ hiển thị 1 lần lúc tạo.
 2. **Script spike xác nhận đường auth + TTL refresh_token** (`scripts/spike_ssi_sdk_auth.py`, tạm, không commit vào `trading/`):
    ```python
-   async with AsyncAuth(client_id=..., api_key=..., api_secret=..., private_key=...) as auth:
+   async with AsyncAuth(api_key=..., api_secret=...) as auth:
        otp = await auth.request_otp()   # xin OTP qua SMS/email
        token = await auth.authenticate(otp=input("Nhập OTP: "))
        print("refresh_token_expires_at:", token.refresh_token_expires_at)
@@ -183,6 +192,7 @@ Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ
 
 ## 8. Việc cần làm ngay (theo yêu cầu "muốn nâng cấp toàn bộ")
 
-1. **Bạn đăng ký app mới trên console SSI** (`developers.ssi.com.vn/console/register`) để lấy `client_id/api_key/api_secret` + tạo cặp khoá RSA cho `private_key`. Đây là bước duy nhất **chỉ bạn làm được** (gắn với tài khoản/công ty đăng ký với SSI) — tôi không có quyền tự đăng ký thay.
-2. Sau khi có credentials, đưa tôi (qua `.env`, không paste trực tiếp vào chat) → tôi chạy Phase 0 script để đo TTL refresh_token + lấy sample dữ liệu thật.
-3. Sau Phase 0, tôi báo cáo lại kết quả cụ thể rồi triển khai Phase 1-5 theo plan trên.
+1. **Bạn tạo API Key trên console SSI** (`developers.ssi.com.vn` → Bảng điều khiển → Quản lý API Key → Tạo Key mới) để lấy `api_key` + `api_secret`. **Không cần `client_id`/`private_key`** — 2 giá trị đó chỉ dùng cho Trading/Portfolio API thật, ngoài scope hiện tại (dự án dùng PaperBroker). Đây là bước duy nhất **chỉ bạn làm được** (gắn với tài khoản SSI của bạn) — tôi không có quyền tự tạo thay.
+2. Thêm vào `.env`: `SSI_API_KEY=...`, `SSI_API_SECRET=...` (giữ song song `SSI_CONSUMER_ID/SECRET` cũ tới khi migration xong).
+3. Báo tôi khi xong → tôi chạy Phase 0 script để đo TTL refresh_token + lấy sample dữ liệu thật.
+4. Sau Phase 0, tôi báo cáo lại kết quả cụ thể rồi triển khai Phase 1-5 theo plan trên.
