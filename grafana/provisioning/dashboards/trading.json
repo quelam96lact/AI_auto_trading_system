@@ -76,7 +76,7 @@
       "datasource": {"type": "postgres", "uid": "TimescaleDB"},
       "targets": [
         {
-          "rawSql": "SELECT account_no, symbol, quantity, cost_price, sellable_quantity, ts FROM account_position_snapshot aps WHERE ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = aps.account_no AND symbol = aps.symbol) ORDER BY account_no, symbol",
+          "rawSql": "SELECT account_no, symbol, quantity, cost_price, sellable_quantity, ts FROM account_position_snapshot aps WHERE ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = aps.account_no) ORDER BY account_no, symbol",
           "format": "table"
         }
       ]

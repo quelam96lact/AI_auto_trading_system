@@ -37,7 +37,9 @@ def test_price_panel_query(storage):
 
 
 def test_pnl_panel_query(storage):
-    storage.update_pnl_daily(date(2026, 7, 15), realized_delta=100.0, fee_delta=5.0, unrealized=20.0)
+    storage.update_pnl_daily(
+        date(2026, 7, 15), realized_delta=100.0, fee_delta=5.0, unrealized=20.0
+    )
     with storage.conn() as c:
         row = c.execute(
             "SELECT date AS time, realized, unrealized, fees FROM pnl_daily ORDER BY date"
@@ -78,22 +80,50 @@ def test_real_account_balance_panel_query(storage):
 def test_real_positions_panel_query(storage):
     older = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
     newer = datetime(2026, 7, 15, 9, 5, tzinfo=TZ)
+    # "DASH_SOLD" chỉ có ở lần sync cũ (mô phỏng vị thế đã bán hết trước lần
+    # sync mới) — query "latest" phải bỏ hẳn nó, không được kẹt lại vô thời hạn.
     storage.save_account_positions(
         "DASH_ACC",
         older,
-        [{"symbol": "DASH", "quantity": 10, "cost_price": 20.0, "sellable_quantity": 8}],
+        [
+            {
+                "symbol": "DASH",
+                "quantity": 10,
+                "cost_price": 20.0,
+                "sellable_quantity": 8,
+            },
+            {
+                "symbol": "DASH_SOLD",
+                "quantity": 5,
+                "cost_price": 15.0,
+                "sellable_quantity": 5,
+            },
+        ],
     )
     storage.save_account_positions(
         "DASH_ACC",
         newer,
-        [{"symbol": "DASH", "quantity": 12, "cost_price": 21.0, "sellable_quantity": 9}],
+        [
+            {
+                "symbol": "DASH",
+                "quantity": 12,
+                "cost_price": 21.0,
+                "sellable_quantity": 9,
+            }
+        ],
     )
     with storage.conn() as c:
         rows = c.execute(
             "SELECT account_no, symbol, quantity, cost_price, sellable_quantity, ts "
             "FROM account_position_snapshot aps "
             "WHERE ts = (SELECT max(ts) FROM account_position_snapshot "
-            "WHERE account_no = aps.account_no AND symbol = aps.symbol) "
+            "WHERE account_no = aps.account_no) "
             "ORDER BY account_no, symbol"
         ).fetchall()
-    assert ("DASH_ACC", "DASH", 12, 21.0, 9, newer) in rows
+    dash_acc_rows = [r for r in rows if r[0] == "DASH_ACC"]
+    assert dash_acc_rows == [("DASH_ACC", "DASH", 12, 21.0, 9, newer)]
+    # DASH_SOLD KHÔNG được xuất hiện — nó đã "bán hết" trước lần sync mới nhất
+    # (không còn trong snapshot mới), nếu query dùng nhầm "latest per symbol"
+    # thay vì "latest per account" thì nó sẽ kẹt lại vĩnh viễn ở đây (bug đã
+    # sửa, xem PLAN_ACCOUNT_DATA_SYNC.md).
+    assert all(r[1] != "DASH_SOLD" for r in rows)
