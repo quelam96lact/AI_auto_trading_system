@@ -196,10 +196,17 @@ Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ
 6. ✅ `gitnexus detect-changes`: 3 files, 20 symbols, 8 processes, risk HIGH — audit xác nhận HIGH do fan-out (1 hàm chạm 8 execution flow `Main`/`Housekeeping`), không phải rủi ro thật (không flow nào chạm trading/tiền, broker vẫn `PaperBroker`). Tất cả 8 flow đều nằm trong phạm vi đã giao (`main.py` 2 chỗ + `backfill.py::main`).
 
 ### Phase 3 — Migrate streaming feed + parser
+
+**Bổ sung từ architecture review độc lập (2026-07-25, 3 explore subagents, không sửa code):** 3/5 finding liên quan trực tiếp tới phạm vi Phase 3, gộp vào task list dưới đây (task 5-6 là mới, không có trong bản trước).
+
 1. Viết lại `SSIFeed` dùng `AsyncStream`/`subscribe_symbol_ohlcv`, giữ lại backoff/reconnect logic hiện có (đổi lớp gọi bên dưới).
 2. Viết lại `parse_message()` nhận `IntervalMessage`.
-3. Quyết định giữ/bỏ `BarAggregator` dựa trên kết quả Phase 0.
-4. TDD: viết test trước bằng fixture thật ghi ở Phase 0, `uv run pytest tests/test_feed.py tests/test_parser.py -v` pass.
+3. Quyết định giữ/bỏ `BarAggregator` dựa trên kết quả Phase 0 — **finding review #4 củng cố thêm:** bucketing hiện đang trùng lặp giữa `aggregator.py` và `resample.py` (2 nơi làm cùng 1 việc). Nếu SDK mới trả sẵn bar 5m qua `IntervalMessage` (đã xác nhận subscribe được ở Phase 0, chưa xác nhận field/giờ đóng bar thật vì test ngoài giờ), đây là dịp dứt điểm bỏ hẳn bucketing thủ công ở tầng collector, không chỉ "cân nhắc".
+4. **Finding review #5:** đánh giá lại thiết kế `SSIFeed` hiện tại (thread + queue, xem `feed.py`) khi viết lại — SDK mới là async-native (`AsyncStream`), có cơ hội bỏ hẳn `threading.Thread`/`queue.Queue` wrapper, tích hợp thẳng vào `asyncio` loop đã có ở `main.py` thay vì giữ kiến trúc lai cũ.
+5. **Finding review #2 — sửa luôn, không mang bug sang code mới:** `main.py:48` hiện tại — `on_stale=lambda: alert("WARN", "feed stale, forcing reconnect")` — chỉ log, **không có dòng nào thật sự gọi reconnect** (đã xác nhận đọc code, không phải suy đoán). Khi viết lại `SSIFeed`/wiring watchdog ở Phase 3, thêm method `feed.restart()` (hoặc tương đương) thật, và sửa `on_stale` gọi nó — không giữ nguyên "alert-theatre" này khi đã động vào đúng chỗ.
+6. TDD: viết test trước bằng fixture thật ghi ở Phase 0, `uv run pytest tests/test_feed.py tests/test_parser.py -v` pass. Test mới cho task 5 (watchdog thật sự reconnect, không chỉ alert).
+
+**Không đưa vào Phase 3 (finding review #1, #3 — không liên quan migration, để backlog riêng):** `engine/logic.py` shallow + backtest duplicate loop; Dashboard SQL 2 nguồn sự thật.
 
 ### Phase 4 — E2E lại (tái dùng runbook Task 3)
 1. Chạy lại `EXECUTE_TASK_3_TODAY.md`/`PLAN_TASK_3.md` với SDK mới.
