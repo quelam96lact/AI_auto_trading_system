@@ -1,15 +1,26 @@
 """Phase 0 spike: xác nhận OTP flow + đo TTL refresh_token của ssi-sdk mới.
 Chạy: uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py
+      uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --no-otp
+      uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --request-otp
+      uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --otp 123456
       uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --refresh
 
 Cần env SSI_API_KEY, SSI_API_SECRET (không cần client_id/private_key —
 xem PLAN_SSI_SDK_MIGRATION.md mục 2.1.1: 2 giá trị đó chỉ dùng cho
 Trading/Portfolio API, ngoài scope market-data hiện tại).
 
-Lần đầu (không có --refresh): xin OTP qua SMS/email, xác thực, lưu token
-vào scripts/.ssi_sdk_token.json (gitignored — KHÔNG commit file này).
-Lần sau (--refresh): đọc token đã lưu, gọi refresh() — PHẢI chạy được
-mà KHÔNG cần nhập OTP nếu refresh_token còn hạn. Đây là điều cần verify.
+Mặc định (không cờ): xin OTP, hỏi nhập trực tiếp trong terminal (interactive).
+--no-otp: xác thực THẲNG không xin/nhập OTP — theo client.py docstring
+  (Data client "pass Auth, no OTP needed"), test xem apiKey/apiSecret có
+  hợp lệ cho scope market-data cơ bản không, tách biệt khỏi vấn đề OTP.
+--request-otp: chỉ xin OTP rồi thoát (không chờ nhập) — dùng khi muốn tách
+  bước xin OTP và bước xác thực (vd người khác tra OTP hộ qua email).
+--otp CODE: xác thực thẳng bằng mã đã có sẵn, không hỏi lại, không tự xin
+  OTP mới (dùng sau khi đã chạy --request-otp và có mã trong tay).
+--refresh: đọc token đã lưu, gọi refresh() — PHẢI chạy được mà KHÔNG cần
+  OTP nếu refresh_token còn hạn. Đây là điều cần verify.
+
+Token lưu vào scripts/.ssi_sdk_token.json (gitignored — KHÔNG commit).
 """
 
 import asyncio
@@ -21,24 +32,65 @@ from pathlib import Path
 TOKEN_FILE = Path(__file__).parent / ".ssi_sdk_token.json"
 
 
-async def do_authenticate() -> None:
-    from ssi_sdk import AsyncAuth, Config
+def _make_config():
+    from ssi_sdk import Config
 
-    config = Config(
+    # log_level=DEBUG bat logger noi bo cua SDK in raw response.text khi loi —
+    # can vi APIError.response_body luon la None (bug ke thua ctor trong
+    # ssi-sdk 3.1.0: APIError.__init__ goi super().__init__(message, code)
+    # khong forward status_code/response_body, nen SSIError.__init__ ghi de
+    # ve None ngay sau do). Day la cach duy nhat xem duoc noi dung loi that.
+    return Config(
         api_key=os.environ["SSI_API_KEY"],
         api_secret=os.environ["SSI_API_SECRET"],
+        log_level="DEBUG",
     )
-    async with AsyncAuth(config) as auth:
+
+
+async def do_request_otp() -> None:
+    from ssi_sdk import AsyncAuth
+
+    async with AsyncAuth(_make_config()) as auth:
         print("Đang xin OTP (SSI sẽ gửi qua SMS/email)...")
-        await auth.request_otp()
-        otp = input("Nhập OTP vừa nhận: ").strip()
-        token = await auth.authenticate(otp=otp)
+        try:
+            await auth.request_otp()
+        except Exception as e:
+            _print_api_error(e)
+            raise
+        print("Đã gửi yêu cầu OTP. Chạy lại với --otp CODE khi có mã.")
+
+
+def _print_api_error(e: Exception) -> None:
+    """SSIError.message mặc định không in kèm response_body — in rõ ra để debug."""
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "response_body", None)
+    print(f"\n!!! Loi tu SSI API (status={status}): {body}\n")
+
+
+async def do_authenticate(otp: str | None = None, ask_if_missing: bool = True) -> None:
+    from ssi_sdk import AsyncAuth
+
+    async with AsyncAuth(_make_config()) as auth:
+        if otp is None and ask_if_missing:
+            print("Đang xin OTP (SSI sẽ gửi qua SMS/email)...")
+            await auth.request_otp()
+            otp = input("Nhập OTP vừa nhận: ").strip()
+        try:
+            # otp=None hop le (theo client.py docstring: Data client "pass Auth,
+            # no OTP needed" — TokenRequest.to_dict() bo qua field "otp" khi None).
+            token = await auth.authenticate(otp=otp)
+        except Exception as e:
+            _print_api_error(e)
+            raise
         _save_token(token)
-        _print_token_info(token, label="AUTHENTICATE (lần đầu, có OTP)")
+        label = (
+            "AUTHENTICATE co OTP" if otp else "AUTHENTICATE KHONG OTP (Data-only scope)"
+        )
+        _print_token_info(token, label=label)
 
 
 async def do_refresh() -> None:
-    from ssi_sdk import AsyncAuth, Config
+    from ssi_sdk import AsyncAuth
 
     if not TOKEN_FILE.exists():
         print(
@@ -47,18 +99,18 @@ async def do_refresh() -> None:
         sys.exit(1)
 
     saved = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    config = Config(
-        api_key=os.environ["SSI_API_KEY"],
-        api_secret=os.environ["SSI_API_SECRET"],
-    )
-    async with AsyncAuth(config) as auth:
+    async with AsyncAuth(_make_config()) as auth:
         from ssi_sdk.models import Token
 
         # to_dict() trả key camelCase (accessToken...) → phải dùng from_dict(),
         # không phải Token(**saved) (field name snake_case sẽ không khớp).
         await auth.token_manager.set_token(Token.from_dict(saved))
         print("Đang refresh (KHÔNG dùng OTP)...")
-        token = await auth.token_manager.refresh()
+        try:
+            token = await auth.token_manager.refresh()
+        except Exception as e:
+            _print_api_error(e)
+            raise
         _save_token(token)
         _print_token_info(token, label="REFRESH (không OTP)")
 
@@ -86,5 +138,11 @@ def _print_token_info(token, label: str) -> None:
 if __name__ == "__main__":
     if "--refresh" in sys.argv:
         asyncio.run(do_refresh())
+    elif "--request-otp" in sys.argv:
+        asyncio.run(do_request_otp())
+    elif "--otp" in sys.argv:
+        asyncio.run(do_authenticate(otp=sys.argv[sys.argv.index("--otp") + 1]))
+    elif "--no-otp" in sys.argv:
+        asyncio.run(do_authenticate(otp=None, ask_if_missing=False))
     else:
         asyncio.run(do_authenticate())

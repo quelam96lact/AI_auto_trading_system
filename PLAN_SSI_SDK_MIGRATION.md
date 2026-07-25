@@ -36,6 +36,32 @@ Cơ chế: `authenticate(otp=...)` lần đầu trả về `Token` gồm `access
 
 ---
 
+## 1.1. Phase 0 đã chạy thật (2026-07-25) — kết quả thay đổi thiết kế lần nữa
+
+Đã chạy thật với credentials thật (`SSI_API_KEY`/`SSI_API_SECRET` từ console), qua `scripts/spike_ssi_sdk_auth.py`:
+
+### 🎯 Phát hiện lớn nhất: OTP KHÔNG bắt buộc trên account này
+
+`auth.authenticate()` gọi **KHÔNG kèm `otp`** (chỉ `apiKey`+`apiSecret`) trả về `200 OK` với JWT có:
+```json
+"scopes": "trading:*:*,data:*:*,stream:*:*"
+```
+— tức là full scope (kể cả Trading + Stream), **không cần OTP ở bước lấy token**. Xác nhận thêm bằng cách connect WebSocket + subscribe `trade.VCB@5m` bằng token này: `wss://stream.ssi.com.vn/ws/v3` connect OK, subscribe trả `{"status": "ok"}` — không có lỗi permission/OTP nào.
+
+Điều này khác với bảng trong `client.py` docstring (nói Trading/Stream cần `authenticate(otp=...)`). Có thể do: (a) cấu hình riêng cho account này, hoặc (b) OTP thật sự chỉ là gate ở tầng đặt lệnh (ký RSA qua `private_key`, xem mục 2.1.1), không phải ở tầng cấp token. **Chưa rõ đây có phải hành vi ổn định lâu dài hay không** — dự án vẫn nên giữ nguyên thiết kế `ensure_authenticated()` (Phase 1, đã code) có fallback yêu cầu người vận hành can thiệp nếu sau này OTP trở thành bắt buộc.
+
+### 📏 TTL đo được (qua đường không-OTP)
+| Token | TTL |
+|---|---|
+| `access_token` | 900s = **15 phút** |
+| `refresh_token` | 28800s = **8 giờ** |
+
+8 giờ đủ cho 1 phiên giao dịch (~6 giờ, 09:00-14:45) nhưng **không đủ chạy nhiều ngày liên tiếp không can thiệp** như kỳ vọng ban đầu. Tuy nhiên, vì `authenticate()` không cần OTP vẫn dùng được lặp lại (không phải one-time), **collector có thể tự gọi lại `authenticate()` (không OTP) mỗi khi cần** thay vì phụ thuộc hoàn toàn vào `refresh_token` — đơn giản hoá đáng kể so với thiết kế Phase 1 ban đầu (bảng `ssi_auth_state` vẫn có giá trị để giảm số lần gọi API, nhưng không còn là **bắt buộc** để tránh OTP nữa).
+
+**Khuyến nghị:** Giữ nguyên code Phase 1 đã commit (không rollback) — thiết kế "ưu tiên `refresh_token`, yêu cầu OTP thủ công khi hết hạn" vẫn an toàn và đúng dù OTP có thật sự cần hay không. Cân nhắc thêm 1 fallback nhẹ trong Phase 3 (khi wire `ensure_authenticated()` vào `main.py`): nếu `refresh_token` hết hạn, thử `authenticate()` không OTP trước khi raise lỗi yêu cầu người vận hành — chỉ raise khi cả 2 đường đều thất bại. Đây là quyết định để lúc code Phase 3, không sửa ngay bây giờ.
+
+---
+
 ## 2. Chi tiết kỹ thuật xác nhận từ source code (không còn là giả định)
 
 ### 2.1. Credentials & endpoints

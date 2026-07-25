@@ -64,9 +64,13 @@ async def _make_auth():
     from ssi_sdk.models import Token
 
     saved = _load_saved_token()
+    # log_level=DEBUG: APIError.response_body luon None do bug ke thua ctor
+    # trong ssi-sdk 3.1.0 (xem spike_ssi_sdk_auth.py::_make_config) — bat debug
+    # log noi bo cua SDK la cach duy nhat xem noi dung loi that tu server.
     config = Config(
         api_key=os.environ["SSI_API_KEY"],
         api_secret=os.environ["SSI_API_SECRET"],
+        log_level="DEBUG",
     )
     auth = AsyncAuth(config)
     # to_dict() trả key camelCase → phải dùng from_dict(), không phải Token(**saved)
@@ -95,7 +99,9 @@ async def fetch_ohlc_sample() -> None:
         data = AsyncData(auth)
         to_date = datetime.now(VN_TZ).date()
         from_date = to_date - timedelta(days=7)
-        print(f"Gọi get_ohlc_5minute_historical({SYMBOL}, {from_date:%Y/%m/%d} -> {to_date:%Y/%m/%d})...")
+        print(
+            f"Gọi get_ohlc_5minute_historical({SYMBOL}, {from_date:%Y/%m/%d} -> {to_date:%Y/%m/%d})..."
+        )
         rows = await data.market_data.get_ohlc_5minute_historical(
             SYMBOL, from_date.strftime("%Y/%m/%d"), to_date.strftime("%Y/%m/%d")
         )
