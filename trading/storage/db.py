@@ -196,3 +196,126 @@ class Storage:
                 "unrealized = EXCLUDED.unrealized",
                 (day, realized_delta, unrealized, fee_delta),
             )
+
+    def create_pending_order(
+        self,
+        account_no: str,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float,
+        expires_at: datetime,
+    ) -> int:
+        """Insert 1 dòng pending, trả về id vừa tạo."""
+        with self.conn() as c:
+            row = c.execute(
+                "INSERT INTO pending_real_orders "
+                "(account_no, symbol, side, quantity, price, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (account_no, symbol, side, quantity, price, expires_at),
+            ).fetchone()
+        return row[0]
+
+    def get_pending_order(self, order_id: int) -> dict | None:
+        """Trả về dict các cột của 1 dòng pending_real_orders theo id, hoặc None nếu không có."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT id, created_at, expires_at, account_no, symbol, side, quantity, price, "
+                "status, ssi_order_id, confirmed_at FROM pending_real_orders WHERE id = %s",
+                (order_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "created_at": row[1],
+            "expires_at": row[2],
+            "account_no": row[3],
+            "symbol": row[4],
+            "side": row[5],
+            "quantity": row[6],
+            "price": row[7],
+            "status": row[8],
+            "ssi_order_id": row[9],
+            "confirmed_at": row[10],
+        }
+
+    def update_pending_order_status(
+        self,
+        order_id: int,
+        status: str,
+        ssi_order_id: str | None = None,
+    ) -> None:
+        """Cập nhật status (và ssi_order_id nếu có); set confirmed_at = now() khi status != 'pending'."""
+        with self.conn() as c:
+            if ssi_order_id is not None:
+                c.execute(
+                    "UPDATE pending_real_orders SET status = %s, ssi_order_id = %s, "
+                    "confirmed_at = CASE WHEN status = 'pending' AND %s != 'pending' THEN now() ELSE confirmed_at END "
+                    "WHERE id = %s",
+                    (status, ssi_order_id, status, order_id),
+                )
+            else:
+                c.execute(
+                    "UPDATE pending_real_orders SET status = %s, "
+                    "confirmed_at = CASE WHEN status = 'pending' AND %s != 'pending' THEN now() ELSE confirmed_at END "
+                    "WHERE id = %s",
+                    (status, status, order_id),
+                )
+
+    def expire_stale_pending_orders(self) -> int:
+        """UPDATE status='expired' WHERE status='pending' AND expires_at < now(). Trả về số dòng bị ảnh hưởng."""
+        with self.conn() as c:
+            cur = c.execute(
+                "UPDATE pending_real_orders SET status = 'expired' "
+                "WHERE status = 'pending' AND expires_at < now()"
+            )
+        return cur.rowcount
+
+    def read_real_positions(self, account_no: str) -> dict[str, Position]:
+        """Đọc account_position_snapshot, lấy ts mới nhất theo account_no.
+
+        KHÔNG correlate thêm theo symbol — nếu correlate cả symbol, mã đã bán hết
+        sẽ không bao giờ bị ghi đè, hiện vĩnh viễn. Trả về dict[symbol, Position]
+        chỉ gồm các symbol có quantity > 0.
+        """
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, quantity, cost_price FROM account_position_snapshot "
+                "WHERE account_no = %s AND ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = %s) "
+                "AND quantity > 0",
+                (account_no, account_no),
+            ).fetchall()
+        return {r[0]: Position(r[0], r[1], r[2]) for r in rows}
+
+    def read_real_daily_pnl(self, account_no: str, day: date) -> float:
+        """SUM(pnl) từ real_order_fills WHERE account_no = ... AND ts::date = day. Trả về 0.0 nếu không có dòng nào."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT COALESCE(SUM(pnl), 0.0) FROM real_order_fills "
+                "WHERE account_no = %s AND ts::date = %s",
+                (account_no, day),
+            ).fetchone()
+        return float(row[0])
+
+    def write_real_order_fill(
+        self,
+        account_no: str,
+        ts: datetime,
+        symbol: str,
+        side: str,
+        qty: int,
+        price: float,
+        fee: float,
+        pnl: float | None,
+        ssi_order_id: str | None,
+        status: str,
+    ) -> None:
+        """INSERT 1 dòng vào real_order_fills."""
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO real_order_fills "
+                "(ts, account_no, symbol, side, qty, price, fee, pnl, ssi_order_id, status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (ts, account_no, symbol, side, qty, price, fee, pnl, ssi_order_id, status),
+            )

@@ -21,6 +21,10 @@ class Config:
     ssi_consumer_secret: str
     ssi_api_key: str
     ssi_api_secret: str
+    ssi_private_key: str
+    real_trading_enabled: bool
+    real_order_capital: float
+    real_order_account: str
 
 
 def load_config(path: str) -> Config:
@@ -41,4 +45,8 @@ def load_config(path: str) -> Config:
         ssi_consumer_secret=os.environ["SSI_CONSUMER_SECRET"],
         ssi_api_key=os.environ["SSI_API_KEY"],
         ssi_api_secret=os.environ["SSI_API_SECRET"],
+        ssi_private_key=os.environ["SSI_PRIVATE_KEY"],
+        real_trading_enabled=bool(raw.get("real_trading_enabled", False)),
+        real_order_capital=float(raw["real_order_capital"]),
+        real_order_account=str(raw["real_order_account"]),
     )

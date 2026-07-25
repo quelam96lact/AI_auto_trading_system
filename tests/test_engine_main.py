@@ -32,6 +32,10 @@ def make_cfg() -> Config:
         ssi_consumer_secret="y",
         ssi_api_key="k",
         ssi_api_secret="s",
+        ssi_private_key="pk",
+        real_trading_enabled=False,
+        real_order_capital=0,
+        real_order_account="",
     )
 
 

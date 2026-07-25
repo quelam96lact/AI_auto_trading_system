@@ -102,3 +102,31 @@ CREATE TABLE IF NOT EXISTS account_position_snapshot (
   sellable_quantity integer NOT NULL,
   PRIMARY KEY (account_no, ts, symbol)
 );
+
+CREATE TABLE IF NOT EXISTS pending_real_orders (
+  id bigserial PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  account_no text NOT NULL,
+  symbol text NOT NULL,
+  side text NOT NULL,
+  quantity integer NOT NULL,
+  price double precision NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  ssi_order_id text,
+  confirmed_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS real_order_fills (
+  id bigserial PRIMARY KEY,
+  ts timestamptz NOT NULL,
+  account_no text NOT NULL,
+  symbol text NOT NULL,
+  side text NOT NULL,
+  qty integer NOT NULL,
+  price double precision NOT NULL,
+  fee double precision NOT NULL DEFAULT 0,
+  pnl double precision,
+  ssi_order_id text,
+  status text NOT NULL
+);

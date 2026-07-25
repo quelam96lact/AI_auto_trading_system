@@ -24,6 +24,7 @@ services:
     command: python -m trading.engine.main --config config/config.yaml
     environment:
       DB_DSN: postgresql://trading:trading@postgres:5432/trading
+      SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
