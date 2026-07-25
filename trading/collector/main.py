@@ -25,14 +25,15 @@ async def run(cfg) -> None:
     await pub.connect()
 
     alert("INFO", "backfill start")
+    client = SSIRestClient(cfg, storage)
     try:
-        counts = run_backfill(
-            storage, SSIRestClient(cfg), cfg.symbols, datetime.now(TZ).date()
-        )
+        counts = await run_backfill(storage, client, cfg.symbols, datetime.now(TZ).date())
         alert("INFO", "backfill done", counts=counts)
     except Exception as e:
         alert("WARN", "backfill failed, skipping", error=str(e)[:100])
         counts = {}
+    finally:
+        await client.close()
 
     agg = BarAggregator(cfg.bar_interval_minutes, cfg.holidays)
     raw_q: queue.Queue = queue.Queue()
@@ -83,10 +84,12 @@ async def run(cfg) -> None:
                 EOD_MINUTE,
             ) and eod_done_for != now.date():
                 eod_done_for = now.date()
-                counts = run_backfill(
-                    storage, SSIRestClient(cfg), cfg.symbols, now.date()
-                )
-                alert("INFO", "eod backfill done", counts=counts)
+                eod_client = SSIRestClient(cfg, storage)
+                try:
+                    counts = await run_backfill(storage, eod_client, cfg.symbols, now.date())
+                    alert("INFO", "eod backfill done", counts=counts)
+                finally:
+                    await eod_client.close()
 
     await asyncio.gather(consume(), housekeeping())
 

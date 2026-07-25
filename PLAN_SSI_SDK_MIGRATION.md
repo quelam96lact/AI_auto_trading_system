@@ -187,10 +187,13 @@ Vì phần lớn API/kiến trúc đã rõ từ source code, Phase 0 giờ chỉ
 3. Viết logic bootstrap trong `main.py`: đọc token đã lưu → nếu còn hạn, `refresh()`; nếu hết hạn/chưa có, yêu cầu OTP (đọc từ biến môi trường 1 lần hoặc input thủ công lúc deploy — **không thiết kế OTP tự động hoá qua SMS**, vì đó là quyết định vượt phạm vi code).
 4. Kiểm chứng: `uv run pytest tests/test_config.py -v` pass; script thủ công xác nhận bootstrap hoạt động với credentials thật.
 
-### Phase 2 — Migrate REST backfill
-1. Viết lại `SSIRestClient` dùng `get_ohlc_5minute_historical`.
-2. Cập nhật `parse_daily_response`/bỏ bucket logic không cần nữa.
-3. Kiểm chứng: `uv run pytest tests/test_backfill.py -v` pass với fixture mới ghi từ Phase 0; đối chiếu số bar với REST cũ nếu `ssi_fc_data` vẫn gọi được song song.
+### Phase 2 — Migrate REST backfill — ✅ HOÀN THÀNH (2026-07-25)
+1. ✅ Viết lại `SSIRestClient` dùng `get_ohlc_5minute_historical`/`get_ohlc_1day_historical` (tên xác nhận thật qua `inspect.signature`, không đoán). Auth lazy qua `ensure_authenticated()` (Phase 1).
+2. ✅ Không sửa `parse_daily_response`/`parse_intraday_response` cũ (giữ nguyên cho `SSIRestClientLegacy` — đã đổi tên từ `SSIRestClient`, rollback reference theo mục 7) — viết hàm mới `_ohlc_rows_to_bars()`/`_parse_trading_date()` riêng cho SDK mới, không tái dùng bucket logic cũ (không cần nữa, SDK trả sẵn bar 5m).
+3. ✅ Pagination: response mới không expose `totalRecord` — dùng heuristic `len(rows) < size` để dừng.
+4. ✅ Kiểm chứng: `uv run pytest tests/test_backfill.py -v` — 3/3 pass (2 test cũ + 1 test mới dùng fixture thật `ssi_sdk_ohlc_5m_vcb.json`, 230 bar). Full suite 55/55 pass.
+5. ✅ `main.py` 2 call site cập nhật `async`/`await` + `client.close()`.
+6. ✅ `gitnexus detect-changes`: 3 files, 20 symbols, 8 processes, risk HIGH — audit xác nhận HIGH do fan-out (1 hàm chạm 8 execution flow `Main`/`Housekeeping`), không phải rủi ro thật (không flow nào chạm trading/tiền, broker vẫn `PaperBroker`). Tất cả 8 flow đều nằm trong phạm vi đã giao (`main.py` 2 chỗ + `backfill.py::main`).
 
 ### Phase 3 — Migrate streaming feed + parser
 1. Viết lại `SSIFeed` dùng `AsyncStream`/`subscribe_symbol_ohlcv`, giữ lại backoff/reconnect logic hiện có (đổi lớp gọi bên dưới).
