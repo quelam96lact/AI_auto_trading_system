@@ -33,7 +33,7 @@ BALANCE_OUT = Path(__file__).parent / ".spike_equity_balance.json"
 POSITIONS_OUT = Path(__file__).parent / ".spike_equity_positions.json"
 
 
-def decode_jwt_claims(access_token: str) -> dict:
+def _decode_jwt_claims(access_token: str) -> dict:
     """Decode phần payload (giữa) của JWT — không verify signature (chỉ đọc claim)."""
     payload_b64 = access_token.split(".")[1]
     payload_b64 += "=" * (-len(payload_b64) % 4)
@@ -75,7 +75,7 @@ async def main() -> None:
 
     auth = await _make_auth()
 
-    claims = decode_jwt_claims(auth.token_manager.access_token)
+    claims = _decode_jwt_claims(auth.token_manager.access_token)
     client_id = claims.get("client_id", "")
     accounts = str(claims.get("accounts", "")).split(",")
     print(f"client_id (từ JWT): {client_id}")
