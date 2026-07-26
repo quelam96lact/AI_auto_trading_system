@@ -13,3 +13,4 @@ scripts/.spike_equity_positions.json
 scripts/.spike_max_buy_sell.json
 scripts/.spike_place_order.json
 scripts/.spike_cancel_order.json
+scripts/.spike_index_stream_sample.jsonl
