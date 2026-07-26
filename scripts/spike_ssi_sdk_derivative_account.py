@@ -106,12 +106,22 @@ async def fetch_derivative_account(trading) -> None:
 
     print(f"\nGọi get_derivative_positions({ACCOUNT_NO})...")
     try:
-        positions = await trading.portfolio.get_derivative_positions(ACCOUNT_NO)
-        payload = [dataclasses.asdict(p) for p in positions] if positions else []
+        result = await trading.portfolio.get_derivative_positions(ACCOUNT_NO)
+        # Type hint SDK nói list[AllDerivativePosition] nhưng thực tế trả về 1
+        # object AllDerivativePosition với open_positions + closed_positions.
+        if result is not None:
+            payload = {
+                "open_positions": [dataclasses.asdict(p) for p in result.open_positions],
+                "closed_positions": [dataclasses.asdict(p) for p in result.closed_positions],
+            }
+        else:
+            payload = {"open_positions": [], "closed_positions": []}
         _save_json(POSITIONS_OUT, payload)
-        print(f"OK — {len(payload)} vị thế → {POSITIONS_OUT}")
-        for p in payload:
-            print(" ", p)
+        print(
+            f"OK — {len(payload['open_positions'])} mở, "
+            f"{len(payload['closed_positions'])} đã đóng → {POSITIONS_OUT}"
+        )
+        print(" ", payload)
     except Exception as e:
         print(f"!! get_derivative_positions({ACCOUNT_NO}) lỗi: {e}")
 
@@ -123,6 +133,19 @@ async def fetch_derivative_account(trading) -> None:
             print(" ", dataclasses.asdict(p))
     except Exception as e:
         print(f"!! get_open_derivative_positions({ACCOUNT_NO}) lỗi: {e}")
+
+
+async def _fetch_securities_info_raw(data, symbol: str) -> dict | None:
+    """Bypass SecuritiesInfo.from_list() — SDK crash khi board='DERIVATIVES'
+    (Board enum chỉ có HOSE/HNX/UPCOM, thiếu DERIVATIVES). Gọi thẳng REST endpoint
+    thật (/api/v3/data/securitiesByBoard, param symbol=<symbol>) và tự đọc field
+    cần thiết từ dict thô, không qua Board(...) enum conversion bị lỗi."""
+    raw = await data.market_data._rest.get(
+        "/api/v3/data/securitiesByBoard", params={"symbol": symbol}
+    )
+    if not raw:
+        return None
+    return raw[0]
 
 
 async def find_front_month_contract(data) -> str | None:
@@ -138,14 +161,13 @@ async def find_front_month_contract(data) -> str | None:
     verified: list[dict] = []
     for symbol, _ in OBSERVED_CANDIDATES:
         try:
-            info = await data.market_data.get_securities_info(symbol)
+            record = await _fetch_securities_info_raw(data, symbol)
         except Exception as e:
             print(f"  {symbol}: lỗi khi gọi get_securities_info — {e}")
             continue
-        if info is None:
+        if record is None:
             print(f"  {symbol}: không tồn tại qua get_securities_info()")
             continue
-        record = dataclasses.asdict(info)
         print(f"  {symbol}: OK — {record}")
         verified.append(record)
 
@@ -170,9 +192,9 @@ async def find_front_month_contract(data) -> str | None:
         today = date.today()
 
         def _maturity_distance(record: dict) -> float:
-            maturity = _parse_date(record.get("maturity_date"))
+            maturity = _parse_date(record.get("maturityDate"))
             if maturity is None:
-                maturity = _parse_date(record.get("last_trading_date"))
+                maturity = _parse_date(record.get("lastTradingDate"))
             if maturity is None:
                 return float("inf")
             return abs((maturity - today).days)
