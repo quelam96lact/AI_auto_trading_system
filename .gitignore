@@ -14,3 +14,9 @@ scripts/.spike_max_buy_sell.json
 scripts/.spike_place_order.json
 scripts/.spike_cancel_order.json
 scripts/.spike_index_stream_sample.jsonl
+scripts/.spike_derivative_balance.json
+scripts/.spike_derivative_ppmmr.json
+scripts/.spike_derivative_positions.json
+scripts/.spike_derivative_contract_symbol.json
+scripts/.spike_derivative_ohlc_sample.json
+scripts/.spike_derivative_stream_sample.jsonl
