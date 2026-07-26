@@ -107,6 +107,29 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     assert storage.read_positions()["ENGT"].qty == 100
 
 
+async def test_engine_run_calls_real_orders_handle_signal_on_crossover(storage, monkeypatch):
+    import trading.real_orders as real_orders_mod
+
+    cfg = make_cfg()
+    prices = [10] * 20 + [20] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+
+    calls = []
+
+    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
+        calls.append((signal, bar))
+
+    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+
+    await run(cfg, max_messages=len(bars))
+
+    assert len(calls) == 1
+    assert calls[0][0].symbol == "ENGT"
+    assert calls[0][0].side == "BUY"
+    assert calls[0][1].close == 20
+
+
 async def test_engine_alerts_critical_on_risk_halt(storage, monkeypatch):
     import trading.engine.main as engine_main
 

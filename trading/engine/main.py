@@ -6,6 +6,7 @@ import logging
 import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
 
+from trading import real_orders
 from trading.alerts import alert
 from trading.calendar_vn import TZ
 from trading.config import Config, load_config
@@ -40,6 +41,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
 
     strategy = SmaCrossStrategy()
     risk = RiskManager(capital=CAPITAL)
+    real_risk = RiskManager(capital=cfg.real_order_capital)
     marks: dict[str, float] = {}
 
     nc = await nats.connect(cfg.nats_url)
@@ -72,6 +74,9 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 pnl=fill.pnl,
             )
 
+    def on_real_signal(signal, bar) -> None:
+        real_orders.handle_signal(cfg, storage, real_risk, signal, bar)
+
     processed = 0
     try:
         while max_messages is None or processed < max_messages:
@@ -82,7 +87,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 continue
             bar = bar_from_payload(json.loads(msg.data))
             was_halted = risk.halted_date
-            fills = process_bar(bar, broker, strategy, risk, marks)
+            fills = process_bar(bar, broker, strategy, risk, marks, on_signal=on_real_signal)
             persist_fills(fills)
             if risk.halted_date is not None and risk.halted_date != was_halted:
                 alert("CRITICAL", "risk halt: max daily loss reached", date=str(risk.halted_date))
