@@ -20,3 +20,7 @@ scripts/.spike_derivative_positions.json
 scripts/.spike_derivative_contract_symbol.json
 scripts/.spike_derivative_ohlc_sample.json
 scripts/.spike_derivative_stream_sample.jsonl
+scripts/.spike_hnx_upcom_symbols.json
+scripts/.spike_ohlc_hnx_sample.json
+scripts/.spike_ohlc_upcom_sample.json
+scripts/.spike_stream_hnx_upcom_sample.jsonl
