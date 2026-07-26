@@ -170,3 +170,13 @@ Toàn bộ pipeline đã tồn tại trong code — **nhưng hoàn toàn bất �
 - **Phase 3** (`1e75f8a`): `scripts/confirm_real_order.py` — file duy nhất có thể gọi `place_limit_order` thật, luôn gated bởi xác nhận thủ công ("YES" chính xác) + `real_trading_enabled`. Audit độc lập (bằng 1 Explore agent chạy read-only, do phiên đang ở plan mode) xác nhận khớp spec, phát hiện 3 điểm nhỏ (không phải bug) — đã fix qua `PROMPT_EXECUTE_REAL_ORDER_PHASE3_FIXUPS.md`, gộp chung vào cùng commit `1e75f8a`.
 
 **Chưa test thật:** `place_limit_order`/`cancel_order` (bước đặt+huỷ lệnh thật) — Phase 0 chưa chạy hết vì số dư không đủ 1 lô. Đây vẫn là điều kiện bắt buộc trước khi bật `real_trading_enabled=true`, xem runbook "Phase 4" ở cuối `PROMPT_EXECUTE_REAL_ORDER_PHASE3.md`.
+
+## 🐛 Lỗ hổng thiết kế mới phát hiện (2026-07-26) — tín hiệu SELL không tôn trọng T+2,5
+
+User yêu cầu rà soát quy tắc thanh toán VN (cổ phiếu về T+2,5, tiền về T+2) và khả năng margin của tài khoản Cash — trong lúc kiểm tra, phát hiện 1 lỗ hổng thật trong pipeline lệnh thật, không phải giả thuyết:
+
+1. **Số lượng tín hiệu SELL lấy sai nguồn:** `trading/engine/logic.py::process_bar()` gọi `strategy.on_bar(bar, broker)` với `broker` là **PaperBroker mô phỏng** — `SmaCrossStrategy` sinh SELL với `qty = context.position_qty(symbol)` lấy từ vị thế PaperBroker, không liên quan gì tới tài khoản Cash thật. Đây là vấn đề kiến trúc tổng thể của signal-generation (chọn "gắn vào engine đang chạy" ở Phase 2) — **không sửa ở fix này**, cần thiết kế lại rộng hơn nếu muốn giải quyết tận gốc.
+2. **`Storage.read_real_positions()` bỏ qua `sellable_quantity`:** chỉ đọc `quantity` (tổng nắm giữ, gồm cả phần chưa settle T+2,5), trong khi SSI đã trả về đúng số khả dụng để bán qua field `sellable_quantity` (đã lưu sẵn trong `account_position_snapshot` từ Phase 1 account-sync, chỉ là chưa từng được đọc ra dùng).
+3. **`RiskManager.approve()` không có nhánh kiểm tra SELL theo holdings** — chỉ nhánh BUY check capital/max_positions; PaperBroker tự cap sell nội bộ nên không lộ vấn đề này ở paper trading.
+
+**Quyết định (2026-07-26):** không sửa tận gốc nguồn signal (rộng, ngoài phạm vi 1 fix) — thêm 1 lớp bảo vệ đúng ranh giới real-order pipeline: `real_orders.handle_signal()` tự cap số lượng SELL theo `sellable_quantity` thật trước khi ghi `pending_real_orders`, bỏ qua hoàn toàn (không tạo pending order) nếu không có gì khả dụng để bán. Xem `PROMPT_EXECUTE_REAL_ORDER_SELL_SETTLEMENT_FIX.md`.
