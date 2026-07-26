@@ -307,7 +307,7 @@ class Storage:
         sẽ không bao giờ bị ghi đè, hiện vĩnh viễn. Trả về dict[symbol, RealPosition]
         chỉ gồm các symbol có quantity > 0. `sellable_qty` (khác `qty` — tổng nắm giữ)
         là số cổ phiếu THẬT SỰ khả dụng để bán (SSI đã tự trừ phần chưa settle T+2,5) —
-        dùng để cap số lượng SELL ở real_orders.handle_signal(), KHÔNG được bỏ qua.
+        dùng để cap số lượng SELL ở real_orders.handle_crossover(), KHÔNG được bỏ qua.
         """
         with self.conn() as c:
             rows = c.execute(
