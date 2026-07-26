@@ -52,6 +52,24 @@ get_securities_summary_by_index("VN30") trả về 0 mã (204 No Content).
 Board enum chỉ có HOSE/HNX/UPCOM — không có board riêng cho phái sinh.
 ```
 
+**⚠️ CẬP NHẬT QUAN TRỌNG (sau khi viết bản đầu prompt này):** người dùng chụp màn
+hình thật màn "Giao dịch phái sinh" trên nền tảng SSI, xác nhận **quy ước đặt tên
+`VN30F` + năm + tháng (kiểu HNX công khai) KHÔNG PHẢI mã SSI dùng nội bộ** — mã thật
+theo ảnh chụp có dạng khác hẳn, ví dụ **`41I1G8000`** với tooltip xác nhận rõ:
+*"HDTL VN30 đáo hạn 20/08/2026"* (hợp đồng tương lai VN30, đáo hạn 20/08/2026) —
+và đây cũng là mã có OI (khối lượng mở) cao nhất trong nhóm (39,352), đúng nghĩa
+front-month thanh khoản cao nhất, tính từ ngày hôm nay (2026-07-26).
+
+Các mã khác nhìn thấy trong cùng nhóm (cùng "Giao dịch phái sinh", đều có OI thật,
+xếp theo OI giảm dần — nhiều khả năng là chuỗi hợp đồng VN30 các kỳ hạn xa hơn hoặc
+1 series phái sinh khác, KHÔNG chắc chắn 100% ý nghĩa từng mã, không suy diễn thêm):
+`41I1G8000` (OI 39,352), `41I1G9000` (OI 1,140), `41I1GC000` (OI 843), `41I1H3000`
+(OI 36), `41I2G8000` (OI 68), `41I2G9000` (OI 19), `41I2GC000` (OI 42), `41I2H3000`
+(OI 6).
+
+**Bỏ hoàn toàn giả định "VN30F+YYMM" — dùng thẳng các mã thật đã quan sát ở trên
+để verify qua API**, xem Task B đã sửa lại bên dưới.
+
 ---
 
 ## ⚠️ Giới hạn phạm vi
@@ -87,49 +105,45 @@ nhận cả 3 đều sai hướng (trả về index list hoặc cổ phiếu c�
 đồng phái sinh).
 
 **Cách mới:** dùng `data.market_data.get_securities_info(symbol: str) ->
-SecuritiesInfo | None` (tra 1 mã cụ thể) — thử lần lượt các mã ứng viên theo quy
-ước đặt tên hợp đồng tương lai VN30 thật trên HNX (`VN30F` + 2 số năm + 2 số
-tháng, ví dụ `VN30F2508` = hợp đồng đáo hạn tháng 8/2025) cho **tháng hiện tại và
-5 tháng kế tiếp** (đủ để chắc chắn phủ được hợp đồng front-month đang giao dịch dù
-ngày chạy script là ngày nào), tính từ ngày hệ thống thật (`datetime.now()`, KHÔNG
-hardcode 1 tháng cụ thể):
+SecuritiesInfo | None` (tra 1 mã cụ thể) — verify từng mã trong danh sách mã **THẬT
+đã quan sát trực tiếp trên giao diện SSI** (không phải suy đoán quy ước đặt tên):
 
 ```python
-from datetime import date
-
-def _candidate_contract_codes(today: date, months_ahead: int = 6) -> list[str]:
-    codes = []
-    y, m = today.year, today.month
-    for _ in range(months_ahead):
-        codes.append(f"VN30F{y % 100:02d}{m:02d}")
-        m += 1
-        if m > 12:
-            m = 1
-            y += 1
-    return codes
+OBSERVED_CANDIDATES = [
+    # (symbol, open_interest quan sát được trên UI SSI 2026-07-26 — dùng để sắp
+    # xếp ưu tiên, KHÔNG phải dữ liệu lấy qua API, chỉ để chọn thứ tự thử trước)
+    ("41I1G8000", 39_352),
+    ("41I1G9000", 1_140),
+    ("41I1GC000", 843),
+    ("41I1H3000", 36),
+    ("41I2G8000", 68),
+    ("41I2G9000", 19),
+    ("41I2GC000", 42),
+    ("41I2H3000", 6),
+]
 ```
 
-Với mỗi mã ứng viên, gọi `data.market_data.get_securities_info(code)`:
-- Nếu trả về `None` → in `"  {code}: không tồn tại"`, thử mã tiếp theo.
+Với mỗi mã trong `OBSERVED_CANDIDATES` (thử theo đúng thứ tự liệt kê ở trên, OI
+giảm dần), gọi `data.market_data.get_securities_info(symbol)`:
+- Nếu trả về `None` → in `"  {symbol}: không tồn tại qua get_securities_info()"`,
+  thử mã tiếp theo.
 - Nếu trả về `SecuritiesInfo` thật (không `None`) → in đầy đủ record (dùng
-  `dataclasses.asdict()`), coi là ứng viên hợp lệ. Ghi lại TẤT CẢ ứng viên hợp lệ
-  tìm được (không chỉ lấy 1 cái đầu tiên) — vì có thể nhiều hợp đồng đang cùng
-  niêm yết (front-month + các tháng xa hơn).
+  `dataclasses.asdict()`), coi là ứng viên hợp lệ. Thử **hết cả danh sách**, không
+  dừng ở mã đầu tiên hợp lệ — ghi lại toàn bộ ứng viên hợp lệ tìm được.
 
-**Chọn front-month:** trong số các ứng viên hợp lệ, chọn mã có `last_trading_date`
-(hoặc `maturity_date` nếu `last_trading_date` rỗng) **gần nhất trong tương lai** so
-với hôm nay — đây mới là hợp đồng "front-month" thật (sắp đáo hạn nhất, thanh khoản
-cao nhất), không phải mã có tên ngắn nhất như cách cũ (`sorted(..., key=len)[0]`
-trong code hiện tại — **cách cũ này sai logic, phải xoá**, độ dài chuỗi symbol
-không liên quan gì đến việc là front-month hay không).
+**Chọn front-month:** trong số các ứng viên hợp lệ (`get_securities_info()` trả về
+khác `None`), chọn mã `41I1G8000` nếu nó hợp lệ (đã xác nhận qua UI thật: "HDTL
+VN30 đáo hạn 20/08/2026", OI cao nhất — đúng nghĩa front-month tính từ hôm nay
+2026-07-26). Nếu `41I1G8000` không hợp lệ (trả `None`) nhưng có ứng viên hợp lệ
+khác, chọn ứng viên có `last_trading_date` (hoặc `maturity_date` nếu
+`last_trading_date` rỗng) **gần nhất trong tương lai** so với hôm nay.
 
-Nếu KHÔNG có ứng viên nào hợp lệ (toàn bộ 6 tháng thử đều `None`) — in rõ:
+Nếu **KHÔNG có ứng viên nào trong `OBSERVED_CANDIDATES` hợp lệ** — in rõ:
 ```
-Không tìm được mã hợp đồng VN30F nào qua get_securities_info() với các ứng viên
-đã thử: {danh sách 6 mã đã thử}. Có thể quy ước đặt tên khác với giả định
-(VN30F + YY + MM), hoặc API get_securities_info() không hỗ trợ tra cứu hợp đồng
-phái sinh theo cách này — cần tra cứu thủ công trên website SSI/HNX để xác nhận
-mã hợp đồng thật, sau đó gọi lại get_securities_info(<mã đã xác nhận>) để verify.
+Không mã nào trong danh sách quan sát từ UI SSI hợp lệ qua get_securities_info().
+Đã thử: {danh sách 8 mã}. get_securities_info() có thể không hỗ trợ tra cứu hợp
+đồng phái sinh theo symbol dạng này, hoặc mã đã đổi — cần đối chiếu lại UI SSI
+tại thời điểm chạy script, không suy đoán thêm.
 ```
 KHÔNG coi đây là lỗi crash — exit 0, đây là kết quả hợp lệ (phủ định).
 
