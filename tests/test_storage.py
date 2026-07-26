@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -204,3 +204,29 @@ def test_read_real_daily_pnl_sums_same_day(storage):
     )
     assert storage.read_real_daily_pnl("ACC_TEST", day.date()) == 55000.0
     assert storage.read_real_daily_pnl("ACC_TEST", (day + timedelta(days=1)).date()) == 60000.0
+
+
+def test_read_real_daily_pnl_uses_vn_calendar_day_not_utc(storage):
+    # 2026-07-16 01:00 ICT == 2026-07-15 18:00 UTC — a naive `ts::date` cast under a
+    # UTC session timezone would attribute this fill to 2026-07-15, not the VN
+    # calendar day it actually happened on.
+    late_night_ict = datetime(2026, 7, 16, 1, 0, tzinfo=TZ)
+    storage.write_real_order_fill(
+        account_no="ACC_TEST",
+        ts=late_night_ict,
+        symbol="VCB",
+        side="SELL",
+        qty=100,
+        price=55000.0,
+        fee=10.0,
+        pnl=12345.0,
+        ssi_order_id="SSI-4",
+        status="filled",
+    )
+    assert storage.read_real_daily_pnl("ACC_TEST", date(2026, 7, 16)) == 12345.0
+    assert storage.read_real_daily_pnl("ACC_TEST", date(2026, 7, 15)) == 0.0
+
+
+def test_update_pending_order_status_raises_on_unknown_id(storage):
+    with pytest.raises(ValueError):
+        storage.update_pending_order_status(999_999_999, "confirmed")

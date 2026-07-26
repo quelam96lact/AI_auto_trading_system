@@ -246,22 +246,28 @@ class Storage:
         status: str,
         ssi_order_id: str | None = None,
     ) -> None:
-        """Cập nhật status (và ssi_order_id nếu có); set confirmed_at = now() khi status != 'pending'."""
+        """Cập nhật status (và ssi_order_id nếu có); set confirmed_at = now() khi status != 'pending'.
+
+        Raise ValueError nếu order_id không tồn tại — tránh silent no-op khiến caller
+        tưởng đã ghi nhận trạng thái (vd "placed" cho 1 lệnh thật) trong khi DB không đổi gì.
+        """
         with self.conn() as c:
             if ssi_order_id is not None:
-                c.execute(
+                cur = c.execute(
                     "UPDATE pending_real_orders SET status = %s, ssi_order_id = %s, "
                     "confirmed_at = CASE WHEN status = 'pending' AND %s != 'pending' THEN now() ELSE confirmed_at END "
                     "WHERE id = %s",
                     (status, ssi_order_id, status, order_id),
                 )
             else:
-                c.execute(
+                cur = c.execute(
                     "UPDATE pending_real_orders SET status = %s, "
                     "confirmed_at = CASE WHEN status = 'pending' AND %s != 'pending' THEN now() ELSE confirmed_at END "
                     "WHERE id = %s",
                     (status, status, order_id),
                 )
+            if cur.rowcount == 0:
+                raise ValueError(f"pending_real_orders id={order_id} not found — status update did not apply")
 
     def expire_stale_pending_orders(self) -> int:
         """UPDATE status='expired' WHERE status='pending' AND expires_at < now(). Trả về số dòng bị ảnh hưởng."""
@@ -289,11 +295,19 @@ class Storage:
         return {r[0]: Position(r[0], r[1], r[2]) for r in rows}
 
     def read_real_daily_pnl(self, account_no: str, day: date) -> float:
-        """SUM(pnl) từ real_order_fills WHERE account_no = ... AND ts::date = day. Trả về 0.0 nếu không có dòng nào."""
+        """SUM(pnl) từ real_order_fills cho 1 ngày theo giờ Việt Nam.
+
+        Dùng `ts AT TIME ZONE 'Asia/Ho_Chi_Minh'` thay vì `ts::date` — cast trực tiếp
+        phụ thuộc timezone của session/server Postgres (thường mặc định UTC, không cấu
+        hình rõ ràng ở đâu trong dự án), có thể quy sai ngày cho các dòng gần ranh giới
+        nửa đêm. `day` truyền vào luôn là ngày lịch Việt Nam (vd `bar.ts.date()` với
+        `bar.ts` ở TZ Asia/Ho_Chi_Minh), nên phải quy đổi `ts` về cùng timezone trước khi so.
+        Trả về 0.0 nếu không có dòng nào.
+        """
         with self.conn() as c:
             row = c.execute(
                 "SELECT COALESCE(SUM(pnl), 0.0) FROM real_order_fills "
-                "WHERE account_no = %s AND ts::date = %s",
+                "WHERE account_no = %s AND (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %s",
                 (account_no, day),
             ).fetchone()
         return float(row[0])

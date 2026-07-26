@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS pending_real_orders (
   side text NOT NULL,
   quantity integer NOT NULL,
   price double precision NOT NULL,
-  status text NOT NULL DEFAULT 'pending',
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'confirmed', 'expired', 'rejected', 'placed', 'failed')),
   ssi_order_id text,
   confirmed_at timestamptz
 );
@@ -128,5 +129,5 @@ CREATE TABLE IF NOT EXISTS real_order_fills (
   fee double precision NOT NULL DEFAULT 0,
   pnl double precision,
   ssi_order_id text,
-  status text NOT NULL
+  status text NOT NULL CHECK (status IN ('placed', 'cancelled', 'filled'))
 );
