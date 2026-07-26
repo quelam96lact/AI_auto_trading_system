@@ -9,8 +9,8 @@ tự refresh nếu access_token hết hạn.
 Mục đích (PLAN_DERIVATIVE_TRADING.md Phase 0):
 1. Gọi get_derivative_balance/get_derivative_ppmmr/get_derivative_positions/
    get_open_derivative_positions cho account phái sinh "0434228".
-2. Tìm mã hợp đồng VN30F1M thật (front-month) qua get_indexes() hoặc
-   get_securities_info_by_index("VN30").
+2. Tìm mã hợp đồng VN30 front-month thật qua get_securities_info() — verify
+   các mã thực tế quan sát trên UI SSI.
 3. Lưu raw response thật ra scripts/.spike_derivative_*.json để phân tích.
 
 ⚠️ TUYỆT ĐỐI KHÔNG gọi bất kừ method đặt lệnh nào trong script này.
@@ -18,15 +18,31 @@ Mục đích (PLAN_DERIVATIVE_TRADING.md Phase 0):
 Cần env SSI_API_KEY, SSI_API_SECRET.
 """
 
+import base64
 import dataclasses
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from _ssi_spike_common import make_auth
 
 ACCOUNT_NO = "0434228"
 INDEX_NAME = "VN30"
+
+# Các mã phái sinh VN30 thực tế quan sát trên UI SSI (2026-07-26), xếp theo
+# open_interest giảm dần — dùng làm thứ tự ưu tiên thử qua get_securities_info.
+# Giá trị OI chỉ để sắp xếp, KHÔNG lấy từ API; mã đầu tiên (41I1G8000) đã được
+# UI xác nhận là HDTL VN30 đáo hạn 20/08/2026, OI cao nhất -> front-month.
+OBSERVED_CANDIDATES: list[tuple[str, int]] = [
+    ("41I1G8000", 39_352),
+    ("41I1G9000", 1_140),
+    ("41I1GC000", 843),
+    ("41I1H3000", 36),
+    ("41I2G8000", 68),
+    ("41I2G9000", 19),
+    ("41I2GC000", 42),
+    ("41I2H3000", 6),
+]
 
 BALANCE_OUT = Path(__file__).parent / ".spike_derivative_balance.json"
 PPMMR_OUT = Path(__file__).parent / ".spike_derivative_ppmmr.json"
@@ -46,6 +62,25 @@ def _save_json(path: Path, payload) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2, default=_serialize),
         encoding="utf-8",
     )
+
+
+def _decode_jwt_claims(access_token: str) -> dict:
+    """Decode phần payload (giữa) của JWT — không verify signature (chỉ đọc claim)."""
+    payload_b64 = access_token.split(".")[1]
+    payload_b64 += "=" * (-len(payload_b64) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
+
+
+def _parse_date(value: str | None) -> date | None:
+    """Parse ngày từ các định dạng gặp phải: YYYY-MM-DD hoặc YYYY/MM/DD."""
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(value[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 async def fetch_derivative_account(trading) -> None:
@@ -93,72 +128,68 @@ async def fetch_derivative_account(trading) -> None:
 async def find_front_month_contract(data) -> str | None:
     """Tìm symbol thật của hợp đồng VN30 front-month từ response thật.
 
-    Thử nhiều nguồn: get_indexes(), get_securities_info_by_index(),
-    get_securities_summary_by_index(). Không hardcode symbol.
+    Các endpoint get_indexes()/get_securities_info_by_index()/get_securities_summary_by_index()
+    đã xác nhận KHÔNG trả về hợp đồng phái sinh. Thay vào đó dùng
+    get_securities_info(symbol) để verify từng mã thật quan sát trên UI SSI.
     """
     print(f"\nTìm mã hợp đồng {INDEX_NAME} front-month...")
+    print("Thử các mã thật quan sát trên UI SSI qua get_securities_info()...")
 
-    candidates: list[str] = []
-
-    # 1) Thử get_indexes()
-    try:
-        indexes = await data.market_data.get_indexes()
-        print(f" get_indexes() trả về {len(indexes)} index")
-        for idx in indexes:
-            d = dataclasses.asdict(idx) if dataclasses.is_dataclass(idx) else idx
-            print("  ", d)
-            # Các field gợi ý: indexCode, indexName, futureCode,...
-            code = str(d.get("indexCode", d.get("index", d.get("code", ""))))
-            name = str(d.get("indexName", d.get("name", "")))
-            if INDEX_NAME in (code.upper(), name.upper()):
-                future = d.get("futureCode") or d.get("futureSymbol") or d.get("derivativeCode")
-                if future:
-                    candidates.append(str(future))
-    except Exception as e:
-        print(f"!! get_indexes() lỗi: {e}")
-
-    # 2) Thử get_securities_info_by_index(INDEX_NAME)
-    try:
-        securities = await data.market_data.get_securities_info_by_index(INDEX_NAME)
-        print(f" get_securities_info_by_index({INDEX_NAME}) trả về {len(securities)} mã")
-        for s in securities:
-            d = dataclasses.asdict(s) if dataclasses.is_dataclass(s) else s
-            print("  ", d)
-            sym = str(d.get("symbol", d.get("Symbol", d.get("stockSymbol", ""))))
-            # Chỉ chọn symbol bắt đầu VN30F — đó là hợp đồng tương lai VN30.
-            if sym.upper().startswith("VN30F"):
-                candidates.append(sym)
-    except Exception as e:
-        print(f"!! get_securities_info_by_index({INDEX_NAME}) lỗi: {e}")
-
-    # 3) Thử get_securities_summary_by_index(INDEX_NAME) nếu vẫn chưa có
-    if not candidates:
+    verified: list[dict] = []
+    for symbol, _ in OBSERVED_CANDIDATES:
         try:
-            summaries = await data.market_data.get_securities_summary_by_index(INDEX_NAME)
-            print(f" get_securities_summary_by_index({INDEX_NAME}) trả về {len(summaries)} mã")
-            for s in summaries:
-                d = dataclasses.asdict(s) if dataclasses.is_dataclass(s) else s
-                print("  ", d)
-                sym = str(d.get("symbol", d.get("Symbol", d.get("stockSymbol", ""))))
-                if sym.upper().startswith("VN30F"):
-                    candidates.append(sym)
+            info = await data.market_data.get_securities_info(symbol)
         except Exception as e:
-            print(f"!! get_securities_summary_by_index({INDEX_NAME}) lỗi: {e}")
+            print(f"  {symbol}: lỗi khi gọi get_securities_info — {e}")
+            continue
+        if info is None:
+            print(f"  {symbol}: không tồn tại qua get_securities_info()")
+            continue
+        record = dataclasses.asdict(info)
+        print(f"  {symbol}: OK — {record}")
+        verified.append(record)
 
-    if not candidates:
-        print("!! Không tìm được mã hợp đồng VN30F front-month từ API.")
+    if not verified:
+        tried = [s for s, _ in OBSERVED_CANDIDATES]
+        print(
+            "\nKhông mã nào trong danh sách quan sát từ UI SSI hợp lệ qua get_securities_info().\n"
+            f"Đã thử: {tried}. get_securities_info() có thể không hỗ trợ tra cứu hợp "
+            "đồng phái sinh theo symbol dạng này, hoặc mã đã đổi — cần đối chiếu lại "
+            "UI SSI tại thởi điểm chạy script, không suy đoán thêm."
+        )
         return None
 
-    # Ưu tiên symbol ngắn nhất trong các ứng viên bắt đầu VN30F (front-month
-    # thường là mã gần nhất, không phải kỳ hạn xa).
-    front = sorted({c for c in candidates if c.upper().startswith("VN30F")}, key=len)[0]
-    print(f"\n=> Mã hợp đồng VN30 front-month chọn: {front}")
+    # Ưu tiên mã 41I1G8000 nếu hợp lệ (đã xác nhận qua UI là front-month VN30).
+    preferred = "41I1G8000"
+    preferred_record = next((r for r in verified if r.get("symbol") == preferred), None)
+
+    if preferred_record:
+        front = preferred
+        print(f"\n=> Mã hợp đồng VN30 front-month chọn (ưu tiên UI): {front}")
+    else:
+        today = date.today()
+
+        def _maturity_distance(record: dict) -> float:
+            maturity = _parse_date(record.get("maturity_date"))
+            if maturity is None:
+                maturity = _parse_date(record.get("last_trading_date"))
+            if maturity is None:
+                return float("inf")
+            return abs((maturity - today).days)
+
+        best = min(verified, key=_maturity_distance)
+        front = best["symbol"]
+        print(
+            f"\n=> Mã hợp đồng VN30 front-month chọn (maturity gần nhất so với "
+            f"{today.isoformat()}): {front}"
+        )
+
     _save_json(
         CONTRACT_OUT,
         {
             "symbol": front,
             "index": INDEX_NAME,
-            "candidates": sorted(set(candidates)),
+            "candidates": verified,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -170,6 +201,13 @@ async def main() -> None:
     from ssi_sdk import AsyncData, AsyncTrading
 
     auth = await make_auth()
+    claims = _decode_jwt_claims(auth.token_manager.access_token)
+    client_id = claims.get("client_id", "")
+    print(f"client_id (từ JWT): {client_id}")
+    # Các API Portfolio phái sinh (balance/positions) yêu cầu clientId;
+    # set thủ công giống pattern trong scripts/spike_ssi_sdk_account.py.
+    auth.config.client_id = client_id
+
     try:
         trading = AsyncTrading(auth)
         data = AsyncData(auth)
