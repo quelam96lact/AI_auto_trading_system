@@ -180,3 +180,15 @@ User yêu cầu rà soát quy tắc thanh toán VN (cổ phiếu về T+2,5, ti�
 3. **`RiskManager.approve()` không có nhánh kiểm tra SELL theo holdings** — chỉ nhánh BUY check capital/max_positions; PaperBroker tự cap sell nội bộ nên không lộ vấn đề này ở paper trading.
 
 **Quyết định (2026-07-26):** không sửa tận gốc nguồn signal (rộng, ngoài phạm vi 1 fix) — thêm 1 lớp bảo vệ đúng ranh giới real-order pipeline: `real_orders.handle_signal()` tự cap số lượng SELL theo `sellable_quantity` thật trước khi ghi `pending_real_orders`, bỏ qua hoàn toàn (không tạo pending order) nếu không có gì khả dụng để bán. Xem `PROMPT_EXECUTE_REAL_ORDER_SELL_SETTLEMENT_FIX.md`.
+
+## 🔍 Kiểm tra tổng quát toàn pipeline (2026-07-26) — 5 fix mới
+
+User yêu cầu rà soát toàn bộ pipeline: lấy dữ liệu sàn → lưu DB → xử lý tín hiệu → đẩy lệnh → quản trị rủi ro lệnh → quản trị rủi ro tài khoản. Phát hiện thêm nhiều vấn đề, đã viết 5 prompt xử lý (giao tuần tự, audit từng cái trước khi giao cái sau):
+
+1. **`PROMPT_EXECUTE_REAL_ORDER_HALT_PERSISTENCE_FIX.md`** 🔴 **Ưu tiên cao nhất** — `RiskManager.halted_date` (cơ chế ngắt lỗ ngày) chỉ tồn tại trong bộ nhớ tiến trình, không persist. Engine restart giữa lúc đang bị halt (lỗ vượt ngưỡng ngày) → halt biến mất, hệ thống lại cho đặt lệnh thật cùng ngày đã lỗ vượt ngưỡng. Fix: bảng `real_risk_state` mới, khôi phục lúc engine start, lưu khi `real_risk.halted_date` chuyển trạng thái.
+2. **`PROMPT_EXECUTE_REAL_ORDER_PRECHECK_BUYING_POWER_FIX.md`** 🟠 — `scripts/confirm_real_order.py` đi thẳng từ xác nhận thủ công tới `place_limit_order`, không re-check `get_max_buy_sell_at_market_price()` (đã chứng minh hoạt động ở Phase 0 nhưng chưa từng đưa vào production) — lệnh chờ xác nhận tới 15 phút, giá/sức mua có thể đã đổi.
+3. **`PROMPT_EXECUTE_REAL_ORDER_CROSSOVER_DECOUPLE_FIX.md`** 🟡→ giải quyết tận gốc (user chọn mức sửa sâu hơn shallow-fix) — tách `SmaCrossStrategy.compute_crossover()` (thuần MA) khỏi position-gating; `real_orders.handle_crossover()` (đổi tên từ `handle_signal`) tự quyết BUY/SELL dựa hoàn toàn trên vị thế thật, không còn phụ thuộc PaperBroker. Đây là fix rủi ro/phạm vi lớn nhất — đụng `process_bar()`/`SmaCrossStrategy` dùng chung với paper trading.
+4. **`PROMPT_EXECUTE_COLLECTOR_INDEX_STREAMING_SPIKE.md`** 🟡 — spike xác nhận `AsyncStreamingService.subscribe_index(indices)` (method đúng, tra lại source code — TODO cũ đoán sai là `subscribe_symbol_trade`) cho VNINDEX/VN30. Chỉ là spike lấy dữ liệu thật, KHÔNG viết `IndexValue` mapping production ở đây — chờ dữ liệu thật.
+5. **`PROMPT_EXECUTE_REAL_ORDER_LOT_SIZE_GUARD_FIX.md`** 🟢 — check `quantity % 100 == 0` cho BUY trước khi xác nhận (chỉ BUY — SELL được phép bán lô lẻ đang giữ, không áp check này).
+
+**⚠️ Lưu ý thứ tự thực thi:** Fix #1 và #3 đều sửa `trading/engine/main.py` (thêm code gần nhau nhưng khác đoạn) — nên giao tuần tự (audit+merge #1 xong mới giao #3, hoặc ngược lại), tránh xung đột merge nếu chạy song song. Fix #2 và #5 cùng sửa `scripts/confirm_real_order.py` nhưng ở 2 điểm chèn khác nhau (không giao nhau) — vẫn nên giao tuần tự theo thói quen của dự án (mỗi phase audit xong mới giao phase sau), không bắt buộc.
