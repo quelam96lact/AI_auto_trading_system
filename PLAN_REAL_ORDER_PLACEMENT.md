@@ -157,3 +157,16 @@ Ngoài ra, `MaxBuySellResponse.from_dict()` (trong `ssi_sdk/models`) đọc sai 
 
 1. **Bảng DB riêng, không tái sử dụng `orders`/`positions`/`pnl_daily`/`engine_state`.** Lý do: các bảng đó thuộc về `PaperBroker` + được Grafana dashboard/engine loop paper-trading dùng trực tiếp; trộn lẫn lệnh thật vào sẽ tăng rủi ro (bug ở lệnh thật ảnh hưởng số liệu paper, hoặc ngược lại) — vi phạm nguyên tắc "phạm vi phẫu thuật". Thêm 2 bảng mới: `pending_real_orders` (đã có trong bản gốc), `real_order_fills` (mới, để tính `daily_pnl` riêng cho gate của lệnh thật).
 2. **Sinh tín hiệu bằng cách gắn vào engine đang chạy, không viết job riêng.** Được hỏi và user chọn trực tiếp (2026-07-26) — lý do: `SmaCrossStrategy` giữ trạng thái (moving average) trong bộ nhớ theo từng bar; 1 job riêng đọc lại lịch sử bar từ DB mỗi lần chạy sẽ phải viết lại logic replay state (code mới, rủi ro bug), trong khi engine đã tính đúng, sẵn có. Đánh đổi: `trading/engine/main.py`/`logic.py` (paper-trading, đã ổn định) giờ có thêm 1 optional callback — Phase 2 prompt yêu cầu tường minh: test cũ (`test_engine_logic.py`) phải pass nguyên vẹn, thay đổi chỉ được phụ thêm (additive).
+
+## ✅ Phase 1-3 đã code, audit và merge xong (2026-07-26)
+
+Toàn bộ pipeline đã tồn tại trong code — **nhưng hoàn toàn bất động** cho tới khi ai đó tự tay đổi `real_trading_enabled: true` trong `config/config.yaml` (mặc định `false`).
+
+- **Phase 1** (`e866eb9`): schema + config + Storage CRUD. Audit phát hiện 3 vấn đề bảo mật thật (fixed ở `1170e8e`, chạy trên volume Postgres mới để CHECK constraint áp dụng đúng):
+  1. Thiếu `CHECK` constraint trên cột `status` ở cả 2 bảng mới — đã thêm.
+  2. `update_pending_order_status()` âm thầm no-op nếu `id` không khớp dòng nào — giờ raise `ValueError` (fail closed thay vì fail open).
+  3. `read_real_daily_pnl()` cast `ts::date` phụ thuộc timezone session Postgres (mặc định UTC, không cấu hình rõ) thay vì giờ Việt Nam — fixed bằng `AT TIME ZONE 'Asia/Ho_Chi_Minh'`.
+- **Phase 2** (`7c6b13e`): gắn `on_signal` callback vào `process_bar()`, `real_risk` (RiskManager riêng cho lệnh thật) tạo 1 lần ngoài vòng lặp NATS để giữ đúng `halted_date` xuyên suốt phiên. Vẫn 0 lời gọi API đặt lệnh.
+- **Phase 3** (`1e75f8a`): `scripts/confirm_real_order.py` — file duy nhất có thể gọi `place_limit_order` thật, luôn gated bởi xác nhận thủ công ("YES" chính xác) + `real_trading_enabled`. Audit độc lập (bằng 1 Explore agent chạy read-only, do phiên đang ở plan mode) xác nhận khớp spec, phát hiện 3 điểm nhỏ (không phải bug) — đã fix qua `PROMPT_EXECUTE_REAL_ORDER_PHASE3_FIXUPS.md`, gộp chung vào cùng commit `1e75f8a`.
+
+**Chưa test thật:** `place_limit_order`/`cancel_order` (bước đặt+huỷ lệnh thật) — Phase 0 chưa chạy hết vì số dư không đủ 1 lô. Đây vẫn là điều kiện bắt buộc trước khi bật `real_trading_enabled=true`, xem runbook "Phase 4" ở cuối `PROMPT_EXECUTE_REAL_ORDER_PHASE3.md`.
