@@ -7,7 +7,7 @@ from ssi_sdk.enums import OrderSide
 
 from trading.calendar_vn import TZ
 from trading.config import Config
-from trading.storage.db import Storage
+from trading.storage.db import RealPosition, Storage
 
 from scripts.confirm_real_order import confirm
 
@@ -195,6 +195,47 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
     assert args["price"] == 50_000.0
     assert args["ssi_order_id"] == "SSI-123"
     assert args["status"] == "placed"
+    assert args["pnl"] is None
+    fake_auth.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_confirm_real_mode_computes_pnl_on_sell(cfg, pending_order):
+    pending_order["side"] = "SELL"
+    pending_order["price"] = 55_000.0
+    pending_order["quantity"] = 100
+    cfg_real = with_real_trading_enabled(cfg)
+    storage = make_storage(pending_order)
+    storage.read_real_positions.return_value = {
+        "VCB": RealPosition("VCB", 100, 50_000.0, 100)
+    }
+    placed = MagicMock()
+    placed.order_id = "SSI-SELL-123"
+    placed.client_request_id = "CR-SELL-123"
+    placed.status = "MATCHED"
+    fake_place = AsyncMock(return_value=placed)
+    fake_mbs = AsyncMock(
+        return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=1000)
+    )
+
+    fake_auth = MagicMock()
+    fake_auth.config = MagicMock()
+    fake_auth.close = AsyncMock()
+
+    with patch("scripts.confirm_real_order.alert") as mock_alert:
+        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
+            await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+
+    fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
+    fake_place.assert_called_once_with("ACC_REAL", "VCB", OrderSide.SELL, 100, 55_000.0)
+    storage.update_pending_order_status.assert_called_once_with(42, "placed", ssi_order_id="SSI-SELL-123")
+    storage.write_real_order_fill.assert_called_once()
+    args = storage.write_real_order_fill.call_args.kwargs
+    assert args["side"] == "SELL"
+    assert args["price"] == 55_000.0
+    assert args["qty"] == 100
+    assert args["pnl"] == 500_000.0
+    mock_alert.assert_called_once()
     fake_auth.close.assert_awaited_once()
 
 

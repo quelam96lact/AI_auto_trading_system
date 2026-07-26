@@ -153,6 +153,13 @@ async def confirm(
                 order["price"],
             )
 
+        pnl = None
+        if order["side"] == "SELL":
+            positions = storage.read_real_positions(order["account_no"])
+            real_pos = positions.get(order["symbol"])
+            if real_pos is not None:
+                pnl = (order["price"] - real_pos.avg_price) * order["quantity"]
+
         storage.update_pending_order_status(order_id, "placed", ssi_order_id=placed.order_id)
         storage.write_real_order_fill(
             account_no=order["account_no"],
@@ -162,7 +169,7 @@ async def confirm(
             qty=order["quantity"],
             price=order["price"],
             fee=0.0,
-            pnl=None,
+            pnl=pnl,
             ssi_order_id=placed.order_id,
             status="placed",
         )
