@@ -124,6 +124,20 @@ async def test_confirm_dry_run_does_not_call_place_order(cfg, pending_order):
 
 
 @pytest.mark.asyncio
+async def test_confirm_rejects_buy_with_invalid_lot_size(cfg, pending_order):
+    pending_order["quantity"] = 137
+    pending_order["side"] = "BUY"
+    storage = make_storage(pending_order)
+    with patch("scripts.confirm_real_order.alert") as mock_alert:
+        with pytest.raises(SystemExit) as exc:
+            await confirm(cfg, storage, 42, "YES")
+    assert exc.value.code == 1
+    storage.update_pending_order_status.assert_called_once_with(42, "failed")
+    storage.write_real_order_fill.assert_not_called()
+    mock_alert.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_confirm_expired_order_does_nothing(cfg, pending_order):
     """Order đã hết hạn (expires_at trong quá khứ) → confirm() không làm gì thêm,
     không tự đổi status. Việc đánh dấu 'expired' là trách nhiệm của

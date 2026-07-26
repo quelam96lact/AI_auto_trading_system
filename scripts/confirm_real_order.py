@@ -72,6 +72,15 @@ async def confirm(
 
     _print_order(order)
 
+    if order["side"] == "BUY" and order["quantity"] % 100 != 0:
+        print(
+            f"!! Lỗi dữ liệu: lệnh BUY số lượng {order['quantity']} không phải bội số "
+            f"100 (lô tối thiểu HOSE/HNX). Không xác nhận lệnh này — kiểm tra lại "
+            f"trading/real_orders.py, có thể có bug ở nơi sinh pending order."
+        )
+        storage.update_pending_order_status(order_id, "failed")
+        sys.exit(1)
+
     if confirm_input != "YES":
         storage.update_pending_order_status(order_id, "rejected")
         print("Đã huỷ, không đặt lệnh.")
