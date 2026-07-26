@@ -42,6 +42,7 @@ async def confirm(
     order_id: int,
     confirm_input: str,
     place_order_fn=None,
+    max_buy_sell_fn=None,
 ) -> None:
     """Xác nhận (hoặc từ chối) 1 pending order.
 
@@ -53,6 +54,8 @@ async def confirm(
             nào khác để từ chối.
         place_order_fn: optional callable để inject fake place_order trong test.
             Nếu None, dùng `AsyncTrading.trading.place_limit_order` thật.
+        max_buy_sell_fn: optional callable để inject fake max buy/sell trong test.
+            Nếu None, dùng `AsyncTrading.trading.get_max_buy_sell_at_market_price` thật.
     """
     order = storage.get_pending_order(order_id)
     if order is None:
@@ -97,6 +100,31 @@ async def confirm(
         auth = await ensure_authenticated(cfg, storage)
         auth.config.private_key = cfg.ssi_private_key
         trading_client = AsyncTrading(auth)
+
+        if max_buy_sell_fn is None:
+            mbs = await trading_client.trading.get_max_buy_sell_at_market_price(
+                order["account_no"], order["symbol"]
+            )
+        else:
+            mbs = await max_buy_sell_fn(order["account_no"], order["symbol"])
+
+        available = mbs.max_buy_quantity if order["side"] == "BUY" else mbs.max_sell_quantity
+        if available < order["quantity"]:
+            print(
+                f"!! DỪNG — sức {'mua' if order['side'] == 'BUY' else 'bán'} thật hiện tại "
+                f"({available}) < số lượng lệnh ({order['quantity']}). KHÔNG đặt lệnh."
+            )
+            storage.update_pending_order_status(order_id, "failed")
+            alert(
+                "CRITICAL",
+                "real order aborted - insufficient real buying/selling power at confirm time",
+                id=order_id,
+                symbol=order["symbol"],
+                side=order["side"],
+                requested_qty=order["quantity"],
+                available_qty=available,
+            )
+            sys.exit(1)
 
         side = OrderSide.BUY if order["side"] == "BUY" else OrderSide.SELL
         if place_order_fn is None:

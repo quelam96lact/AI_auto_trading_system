@@ -151,6 +151,9 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
     placed.client_request_id = "CR-123"
     placed.status = "MATCHED"
     fake_place = AsyncMock(return_value=placed)
+    fake_mbs = AsyncMock(
+        return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=1000)
+    )
 
     fake_auth = MagicMock()
     fake_auth.config = MagicMock()
@@ -158,7 +161,9 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
 
     with patch("scripts.confirm_real_order.alert") as mock_alert:
         with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place)
+            await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+
+    fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
 
     fake_place.assert_called_once_with("ACC_REAL", "VCB", OrderSide.BUY, 100, 50_000.0)
     mock_alert.assert_called_once()
@@ -184,6 +189,9 @@ async def test_confirm_real_mode_marks_failed_on_exception(cfg, pending_order):
     cfg_real = with_real_trading_enabled(cfg)
     storage = make_storage(pending_order)
     fake_place = AsyncMock(side_effect=RuntimeError("SSI down"))
+    fake_mbs = AsyncMock(
+        return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=1000)
+    )
 
     fake_auth = MagicMock()
     fake_auth.config = MagicMock()
@@ -192,7 +200,9 @@ async def test_confirm_real_mode_marks_failed_on_exception(cfg, pending_order):
     with patch("scripts.confirm_real_order.alert") as mock_alert:
         with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
             with pytest.raises(SystemExit) as exc:
-                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place)
+                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+
+    fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
 
     assert exc.value.code == 1
     storage.update_pending_order_status.assert_called_once_with(42, "failed")
@@ -202,3 +212,66 @@ async def test_confirm_real_mode_marks_failed_on_exception(cfg, pending_order):
     alert_args = mock_alert.call_args
     assert alert_args.args[0] == "CRITICAL"
     assert "SSI down" in alert_args.kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_real_mode_aborts_when_insufficient_buy_power(cfg, pending_order):
+    cfg_real = with_real_trading_enabled(cfg)
+    storage = make_storage(pending_order)
+    fake_place = AsyncMock()
+    fake_mbs = AsyncMock(return_value=MagicMock(max_buy_quantity=50, max_sell_quantity=1000))
+
+    fake_auth = MagicMock()
+    fake_auth.config = MagicMock()
+    fake_auth.close = AsyncMock()
+
+    with patch("scripts.confirm_real_order.alert") as mock_alert:
+        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
+            with pytest.raises(SystemExit) as exc:
+                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+
+    assert exc.value.code == 1
+    fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
+    fake_place.assert_not_called()
+    storage.update_pending_order_status.assert_called_once_with(42, "failed")
+    storage.write_real_order_fill.assert_not_called()
+    mock_alert.assert_called_once()
+    alert_args = mock_alert.call_args
+    assert alert_args.args[0] == "CRITICAL"
+    assert alert_args.kwargs["id"] == 42
+    assert alert_args.kwargs["symbol"] == "VCB"
+    assert alert_args.kwargs["side"] == "BUY"
+    assert alert_args.kwargs["requested_qty"] == 100
+    assert alert_args.kwargs["available_qty"] == 50
+
+
+@pytest.mark.asyncio
+async def test_confirm_real_mode_aborts_when_insufficient_sell_power(cfg, pending_order):
+    pending_order["side"] = "SELL"
+    cfg_real = with_real_trading_enabled(cfg)
+    storage = make_storage(pending_order)
+    fake_place = AsyncMock()
+    fake_mbs = AsyncMock(return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=30))
+
+    fake_auth = MagicMock()
+    fake_auth.config = MagicMock()
+    fake_auth.close = AsyncMock()
+
+    with patch("scripts.confirm_real_order.alert") as mock_alert:
+        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
+            with pytest.raises(SystemExit) as exc:
+                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+
+    assert exc.value.code == 1
+    fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
+    fake_place.assert_not_called()
+    storage.update_pending_order_status.assert_called_once_with(42, "failed")
+    storage.write_real_order_fill.assert_not_called()
+    mock_alert.assert_called_once()
+    alert_args = mock_alert.call_args
+    assert alert_args.args[0] == "CRITICAL"
+    assert alert_args.kwargs["id"] == 42
+    assert alert_args.kwargs["symbol"] == "VCB"
+    assert alert_args.kwargs["side"] == "SELL"
+    assert alert_args.kwargs["requested_qty"] == 100
+    assert alert_args.kwargs["available_qty"] == 30
