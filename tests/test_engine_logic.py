@@ -5,7 +5,7 @@ from trading.engine.logic import bar_from_payload, process_bar
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
-from trading.strategy import Signal
+from trading.strategies.sma_cross import Crossover
 from trading.strategies.sma_cross import SmaCrossStrategy
 
 
@@ -50,41 +50,67 @@ def test_bar_from_payload_roundtrip():
     assert bar.symbol == "VCB" and bar.close == 10.5 and bar.ts.tzinfo is not None
 
 
-def test_process_bar_calls_on_signal_when_signal_fires():
+def test_process_bar_calls_on_crossover_when_crossover_fires():
     broker = PaperBroker(capital=100_000_000)
     strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
     calls = []
 
-    def on_signal(signal: Signal, bar: Bar) -> None:
-        calls.append((signal, bar))
+    def on_crossover(crossover: Crossover, bar: Bar) -> None:
+        calls.append((crossover, bar))
 
     prices = [10, 10, 10, 10, 20, 20]
     bars = [bar_at(i, p) for i, p in enumerate(prices)]
     for b in bars:
-        process_bar(b, broker, strategy, risk, marks, on_signal=on_signal)
+        process_bar(b, broker, strategy, risk, marks, on_crossover=on_crossover)
 
     assert len(calls) == 1
-    assert calls[0][0].symbol == "VCB"
-    assert calls[0][0].side == "BUY"
-    assert calls[0][0].qty == 100
+    assert calls[0][0] == "bull"
     assert calls[0][1].close == 20
 
 
-def test_process_bar_does_not_call_on_signal_when_no_signal():
+def test_process_bar_does_not_call_on_crossover_when_no_crossover():
     broker = PaperBroker(capital=100_000_000)
     strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
     calls = []
 
-    def on_signal(signal: Signal, bar: Bar) -> None:
-        calls.append((signal, bar))
+    def on_crossover(crossover: Crossover, bar: Bar) -> None:
+        calls.append((crossover, bar))
 
     prices = [10, 10, 10]
     bars = [bar_at(i, p) for i, p in enumerate(prices)]
     for b in bars:
-        process_bar(b, broker, strategy, risk, marks, on_signal=on_signal)
+        process_bar(b, broker, strategy, risk, marks, on_crossover=on_crossover)
 
     assert len(calls) == 0
+
+
+def test_process_bar_calls_on_crossover_even_when_paper_signal_suppressed():
+    """Đây là bằng chứng trực tiếp lỗ hổng cũ đã được giải quyết: bearish crossover
+    xảy ra ngay lần đầu (PaperBroker chưa từng mua, held=0) nên on_bar() trả None,
+    nhưng on_crossover VẪN phải được gọi để real_orders có thể bán vị thế thật.
+    """
+    broker = PaperBroker(capital=100_000_000)
+    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    risk = RiskManager(capital=100_000_000)
+    marks: dict[str, float] = {}
+    calls = []
+
+    def on_crossover(crossover: Crossover, bar: Bar) -> None:
+        calls.append((crossover, bar))
+
+    # Prices rise just enough that by the time history fills (bar #3, the
+    # first-ever crossover computation) cur_above is already True — this is
+    # recorded as None (no prior prev_above to compare against), NOT "bull",
+    # so PaperBroker never buys. The drop on bar #4 then produces the first
+    # real crossover ever detected, and it's bearish, with held still 0.
+    prices = [10, 10, 20, 20, 5]
+    bars = [bar_at(i, p) for i, p in enumerate(prices)]
+    for b in bars:
+        process_bar(b, broker, strategy, risk, marks, on_crossover=on_crossover)
+
+    assert any(c[0] == "bear" for c in calls), f"expected bear crossover, got {calls}"
+    assert broker.positions.get("VCB") is None, "PaperBroker must never have bought"

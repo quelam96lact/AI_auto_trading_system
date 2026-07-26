@@ -6,24 +6,26 @@ from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
-from trading.strategy import Signal, Strategy
+from trading.strategies.sma_cross import Crossover, SmaCrossStrategy
 
 
 def process_bar(
     bar: Bar,
     broker: PaperBroker,
-    strategy: Strategy,
+    strategy: SmaCrossStrategy,
     risk: RiskManager,
     marks: dict[str, float],
-    on_signal: Callable[[Signal, Bar], None] | None = None,
+    on_crossover: Callable[[Crossover, Bar], None] | None = None,
 ) -> list[Fill]:
     fills = broker.on_bar(bar)
     marks[bar.symbol] = bar.close
 
     signal = strategy.on_bar(bar, broker)
+    crossover = strategy.last_crossover(bar.symbol)
+    if on_crossover is not None and crossover is not None:
+        on_crossover(crossover, bar)
+
     if signal is not None:
-        if on_signal is not None:
-            on_signal(signal, bar)
         daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
         if risk.approve(signal, bar.close, broker.positions, daily_pnl, bar.ts.date()):
             broker.submit(signal)

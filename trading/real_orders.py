@@ -5,36 +5,42 @@ from trading.config import Config
 from trading.models import Bar
 from trading.risk import RiskManager
 from trading.storage.db import Storage
+from trading.strategies.sma_cross import Crossover
 from trading.strategy import Signal
 
 PENDING_ORDER_TTL_MINUTES = 15
+BUY_QTY = 100  # lô tối thiểu HOSE/HNX — KHÔNG lấy theo SmaCrossStrategy.qty (đó là
+               # tham số mô phỏng cho paper trading, không nên quyết định khối lượng
+               # lệnh thật; xem PLAN_REAL_ORDER_PLACEMENT.md).
 
 
-def handle_signal(
-    cfg: Config,
-    storage: Storage,
-    risk: RiskManager,
-    signal: Signal,
-    bar: Bar,
+def handle_crossover(
+    cfg: Config, storage: Storage, risk: RiskManager, crossover: Crossover, bar: Bar
 ) -> None:
-    """Gate 1 Signal qua RiskManager RIÊNG cho lệnh thật; nếu duyệt, ghi pending_real_orders + Telegram.
+    """Gate 1 sự kiện crossover (từ SmaCrossStrategy.last_crossover() — thuần kỹ
+    thuật, KHÔNG liên quan PaperBroker) qua RiskManager riêng cho lệnh thật, dựa
+    HOÀN TOÀN trên vị thế THẬT của tài khoản Cash.
 
     KHÔNG gọi bất kỳ API đặt lệnh nào — chỉ ghi DB + cảnh báo. Việc đặt lệnh thật
-    là scripts/confirm_real_order.py (Phase 3), chạy thủ công bởi ngườ dùng.
+    là scripts/confirm_real_order.py, chạy thủ công bởi ngườ dùng.
     """
     positions = storage.read_real_positions(cfg.real_order_account)
+    real_pos = positions.get(bar.symbol)
+
+    if crossover == "bull":
+        if real_pos is not None and real_pos.qty > 0:
+            return  # tài khoản thật đã nắm giữ mã này rồi, không mua thêm
+        signal = Signal(symbol=bar.symbol, side="BUY", qty=BUY_QTY)
+    elif crossover == "bear":
+        sellable = real_pos.sellable_qty if real_pos is not None else 0
+        if sellable <= 0:
+            return  # không nắm giữ, hoặc chưa settle T+2.5 — không có gì để bán
+        signal = Signal(symbol=bar.symbol, side="SELL", qty=sellable)
+    else:
+        return
+
     today = bar.ts.date()
     daily_pnl = storage.read_real_daily_pnl(cfg.real_order_account, today)
-
-    if signal.side == "SELL":
-        pos = positions.get(signal.symbol)
-        sellable = pos.sellable_qty if pos is not None else 0
-        if sellable <= 0:
-            # Không có gì khả dụng để bán (chưa nắm giữ, hoặc cổ phiếu chưa settle T+2,5) —
-            # không tạo pending order, không cố gửi lệnh biết trước sẽ sai/bị SSI từ chối.
-            return
-        if signal.qty > sellable:
-            signal = Signal(symbol=signal.symbol, side=signal.side, qty=sellable)
 
     if not risk.approve(signal, bar.close, positions, daily_pnl, today):
         return

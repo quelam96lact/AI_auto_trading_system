@@ -75,8 +75,8 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 pnl=fill.pnl,
             )
 
-    def on_real_signal(signal, bar) -> None:
-        real_orders.handle_signal(cfg, storage, real_risk, signal, bar)
+    def on_real_crossover(crossover, bar) -> None:
+        real_orders.handle_crossover(cfg, storage, real_risk, crossover, bar)
 
     processed = 0
     try:
@@ -89,7 +89,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
             bar = bar_from_payload(json.loads(msg.data))
             was_halted = risk.halted_date
             was_real_halted = real_risk.halted_date
-            fills = process_bar(bar, broker, strategy, risk, marks, on_signal=on_real_signal)
+            fills = process_bar(bar, broker, strategy, risk, marks, on_crossover=on_real_crossover)
             persist_fills(fills)
             if risk.halted_date is not None and risk.halted_date != was_halted:
                 alert("CRITICAL", "risk halt: max daily loss reached", date=str(risk.halted_date))

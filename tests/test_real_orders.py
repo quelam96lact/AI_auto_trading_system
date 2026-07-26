@@ -6,10 +6,13 @@ import pytest
 from trading.calendar_vn import TZ
 from trading.config import Config
 from trading.models import Bar
-from trading.real_orders import PENDING_ORDER_TTL_MINUTES, handle_signal
+from trading.real_orders import (
+    BUY_QTY,
+    PENDING_ORDER_TTL_MINUTES,
+    handle_crossover,
+)
 from trading.risk import RiskManager
 from trading.storage.db import RealPosition
-from trading.strategy import Signal
 
 
 @pytest.fixture
@@ -41,24 +44,27 @@ def bar():
     return Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 50_000, 50_000, 50_000, 50_000, 100)
 
 
-def test_handle_signal_writes_pending_order_when_approved(cfg, bar):
+def _make_storage():
     storage = MagicMock()
     storage.read_real_positions.return_value = {}
     storage.read_real_daily_pnl.return_value = 0.0
     storage.create_pending_order.return_value = 42
+    return storage
 
+
+def test_handle_crossover_buy_when_not_held(cfg, bar):
+    storage = _make_storage()
     risk = RiskManager(capital=cfg.real_order_capital)
-    signal = Signal(symbol="VCB", side="BUY", qty=100)
 
     with patch("trading.real_orders.alert") as mock_alert:
-        handle_signal(cfg, storage, risk, signal, bar)
+        handle_crossover(cfg, storage, risk, "bull", bar)
 
     storage.create_pending_order.assert_called_once()
     args = storage.create_pending_order.call_args.kwargs
     assert args["account_no"] == "ACC_REAL"
     assert args["symbol"] == "VCB"
     assert args["side"] == "BUY"
-    assert args["quantity"] == 100
+    assert args["quantity"] == BUY_QTY
     assert args["price"] == 50_000
     expires_at = args["expires_at"]
     assert expires_at.tzinfo is not None
@@ -71,51 +77,72 @@ def test_handle_signal_writes_pending_order_when_approved(cfg, bar):
     assert alert_kwargs["confirm_cmd"] == "uv run python scripts/confirm_real_order.py 42"
 
 
-def test_handle_signal_does_nothing_when_risk_rejects(cfg, bar):
-    storage = MagicMock()
-    storage.read_real_positions.return_value = {}
-    storage.read_real_daily_pnl.return_value = 0.0
-
-    risk = RiskManager(capital=1.0)
-    signal = Signal(symbol="VCB", side="BUY", qty=100)
+def test_handle_crossover_skips_buy_when_already_held(cfg, bar):
+    storage = _make_storage()
+    storage.read_real_positions.return_value = {
+        "VCB": RealPosition("VCB", 100, 50_000.0, 100)
+    }
+    risk = RiskManager(capital=cfg.real_order_capital)
 
     with patch("trading.real_orders.alert") as mock_alert:
-        handle_signal(cfg, storage, risk, signal, bar)
+        handle_crossover(cfg, storage, risk, "bull", bar)
 
     storage.create_pending_order.assert_not_called()
     mock_alert.assert_not_called()
 
 
-def test_handle_signal_caps_sell_quantity_to_sellable_qty(cfg, bar):
-    storage = MagicMock()
+def test_handle_crossover_sell_caps_to_sellable_qty(cfg, bar):
+    storage = _make_storage()
     storage.read_real_positions.return_value = {
         "VCB": RealPosition("VCB", 100, 50_000.0, 30)
     }
-    storage.read_real_daily_pnl.return_value = 0.0
-    storage.create_pending_order.return_value = 42
-
     risk = RiskManager(capital=cfg.real_order_capital)
-    signal = Signal(symbol="VCB", side="SELL", qty=100)
 
     with patch("trading.real_orders.alert") as mock_alert:
-        handle_signal(cfg, storage, risk, signal, bar)
+        handle_crossover(cfg, storage, risk, "bear", bar)
 
     storage.create_pending_order.assert_called_once()
     args = storage.create_pending_order.call_args.kwargs
+    assert args["side"] == "SELL"
     assert args["quantity"] == 30
     mock_alert.assert_called_once()
 
 
-def test_handle_signal_skips_sell_when_nothing_sellable(cfg, bar):
-    storage = MagicMock()
+def test_handle_crossover_skips_sell_when_nothing_sellable(cfg, bar):
+    storage = _make_storage()
     storage.read_real_positions.return_value = {}
-    storage.read_real_daily_pnl.return_value = 0.0
-
     risk = RiskManager(capital=cfg.real_order_capital)
-    signal = Signal(symbol="VCB", side="SELL", qty=100)
 
     with patch("trading.real_orders.alert") as mock_alert:
-        handle_signal(cfg, storage, risk, signal, bar)
+        handle_crossover(cfg, storage, risk, "bear", bar)
 
     storage.create_pending_order.assert_not_called()
     mock_alert.assert_not_called()
+
+
+def test_handle_crossover_does_nothing_when_risk_rejects(cfg, bar):
+    storage = _make_storage()
+    storage.read_real_positions.return_value = {}
+    risk = RiskManager(capital=1.0)
+
+    with patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_not_called()
+
+
+def test_handle_crossover_skips_buy_when_position_qty_is_zero(cfg, bar):
+    storage = _make_storage()
+    storage.read_real_positions.return_value = {
+        "VCB": RealPosition("VCB", 0, 50_000.0, 0)
+    }
+    risk = RiskManager(capital=cfg.real_order_capital)
+
+    with patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar)
+
+    storage.create_pending_order.assert_called_once()
+    args = storage.create_pending_order.call_args.kwargs
+    assert args["side"] == "BUY"
+    assert args["quantity"] == BUY_QTY

@@ -46,3 +46,26 @@ def test_sell_signal_when_holding_and_fast_crosses_below():
     prices = [10, 10, 10, 10, 20, 20, 10, 10]
     signals = [s.on_bar(bar_at(i, p), ctx) for i, p in enumerate(prices)]
     assert any(sig is not None and sig.side == "SELL" for sig in signals)
+
+
+def test_compute_crossover_reports_bear_even_when_never_bought():
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    # Build enough history with rising prices so fast MA is above slow MA,
+    # then reverse down to trigger a bearish crossover. We never call on_bar,
+    # so no position context is involved.
+    prices = [10, 10, 10, 10, 20, 20, 10, 10]
+    crossovers = [s.compute_crossover(bar_at(i, p)) for i, p in enumerate(prices)]
+
+    # Crossover happens at bar #6, but because last_crossover only reflects the
+    # most recent compute_crossover() call, by the end of the loop (after a
+    # non-crossover bar) it is None. Assert that the crossover did fire during
+    # the series by checking the returned values directly.
+    assert "bear" in crossovers
+    assert crossovers.index("bear") < len(prices) - 1
+
+
+def test_last_crossover_returns_none_before_enough_history():
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    for i, p in enumerate([10, 10]):
+        s.compute_crossover(bar_at(i, p))
+    assert s.last_crossover("VCB") is None

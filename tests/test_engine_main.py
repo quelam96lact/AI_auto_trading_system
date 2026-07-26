@@ -108,7 +108,7 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     assert storage.read_positions()["ENGT"].qty == 100
 
 
-async def test_engine_run_calls_real_orders_handle_signal_on_crossover(storage, monkeypatch):
+async def test_engine_run_calls_real_orders_handle_crossover_on_crossover(storage, monkeypatch):
     import trading.real_orders as real_orders_mod
 
     cfg = make_cfg()
@@ -118,16 +118,15 @@ async def test_engine_run_calls_real_orders_handle_signal_on_crossover(storage, 
 
     calls = []
 
-    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
-        calls.append((signal, bar))
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
+        calls.append((crossover, bar))
 
-    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+    monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
 
     await run(cfg, max_messages=len(bars))
 
     assert len(calls) == 1
-    assert calls[0][0].symbol == "ENGT"
-    assert calls[0][0].side == "BUY"
+    assert calls[0][0] == "bull"
     assert calls[0][1].close == 20
 
 
@@ -157,13 +156,13 @@ async def test_engine_run_persists_real_risk_halt_on_transition(storage, monkeyp
 
     halt_day = None
 
-    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
         nonlocal halt_day
         if halt_day is None:
             halt_day = bar.ts.date()
             risk_arg.halted_date = halt_day
 
-    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+    monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
 
     alerts_seen = []
     monkeypatch.setattr(
@@ -190,10 +189,10 @@ async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatc
 
     signals_seen = []
 
-    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
-        signals_seen.append((risk_arg.halted_date, signal, bar))
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
+        signals_seen.append((risk_arg.halted_date, crossover, bar))
 
-    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+    monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
 
     cfg = make_cfg(real_order_account="ACC_REAL_RESTORE")
     halted_day = date(2026, 7, 15)
@@ -206,5 +205,5 @@ async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatc
     await run(cfg, max_messages=len(bars))
 
     assert signals_seen
-    for halted_date, signal, bar in signals_seen:
+    for halted_date, crossover, bar in signals_seen:
         assert halted_date == halted_day, "real_risk.halted_date should be restored from DB on startup"
