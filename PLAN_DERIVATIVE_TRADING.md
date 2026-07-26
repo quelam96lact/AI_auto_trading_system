@@ -106,11 +106,69 @@ Tóm tắt các câu hỏi Phase 0 phải trả lời bằng dữ liệu thật:
 5. `subscribe_symbol("<mã hợp đồng thật>")` qua `AsyncStream` trong giờ giao dịch —
    message thật nhận được có cùng shape `B`/`MI` như cổ phiếu, hay khác?
 
+## ✅ Phase 0 — Kết quả thật (2026-07-26, đã chạy qua 2 vòng fixup)
+
+Chạy 2 script spike thật (`scripts/spike_ssi_sdk_derivative_account.py`,
+`scripts/spike_ssi_sdk_derivative_ohlc_stream.py`) đối với tài khoản phái sinh
+`0434228`. Cần 2 vòng fixup mới chạy sạch — xem `PROMPT_EXECUTE_DERIVATIVE_PHASE0_SPIKE.md`,
+`PROMPT_EXECUTE_DERIVATIVE_PHASE0_SPIKE_FIXUP.md`,
+`PROMPT_EXECUTE_DERIVATIVE_PHASE0_SPIKE_FIXUP2.md` cho chi tiết từng bug.
+
+### 1. Balance/margin/positions — tài khoản trống, chưa từng giao dịch
+`get_derivative_balance`/`get_derivative_ppmmr`/`get_derivative_positions`/
+`get_open_derivative_positions` đều trả `200` thật: `account_balance=0`,
+mọi field PnL/ký quỹ đều `0`, `open_positions=[]`, `closed_positions=[]`. Riêng
+`used_limit_warning_level1/2/3_ssi/vsdc` (85/90/95) là ngưỡng cảnh báo tĩnh, không
+phải % sử dụng thật hiện tại (account chưa có gì để dùng).
+
+**2 bug SDK thật đã xác nhận + fix (bypass, không sửa SDK bên thứ 3):**
+- `get_derivative_balance`/`get_derivative_positions`/`get_open_derivative_positions`
+  cần `auth.config.client_id` (decode từ JWT) — không set sẽ lỗi 400 "ClientId field
+  is required". `get_derivative_ppmmr` không cần.
+- `get_derivative_positions()` type hint SDK khai `list[AllDerivativePosition]`
+  nhưng thực tế trả về **1 object `AllDerivativePosition`** (field `open_positions`/
+  `closed_positions`), không phải list — code cũ coi nó là list nên crash.
+
+### 2. Mã hợp đồng front-month thật: `41I1G8000`
+**Không phải quy ước công khai `VN30F+năm+tháng`** — SSI dùng mã nội bộ khác hẳn.
+Xác nhận qua 2 nguồn độc lập: UI SSI (tooltip "HDTL VN30 đáo hạn 20/08/2026") và
+API thật (`get_securities_info` raw response: `lastTradingDate: "2026/08/20"`, OI
+cao nhất trong nhóm 8 mã cùng loại).
+
+**Bug SDK thật thứ 3 đã xác nhận + fix:** `get_securities_info()` crash với **mọi**
+mã phái sinh — `SecuritiesInfo.from_list()` gọi `Board(item["board"])`, nhưng
+`ssi_sdk.enums.Board` chỉ định nghĩa `HOSE, HNX, UPCOM`, thiếu giá trị
+`"DERIVATIVES"` mà API trả về thật. Fix bằng cách bypass: gọi thẳng REST endpoint
+`/api/v3/data/securitiesByBoard` qua `market_data._rest.get(...)`, tự đọc raw dict
+(field `maturityDate`/`lastTradingDate` dạng `YYYY/MM/DD`), không qua bước parse
+`Board(...)` bị lỗi. Cùng loại bug đã gặp với `EquityAccountBalance` trước đây —
+mẫu hình xử lý giống nhau.
+
+`board: "DERIVATIVES"`, `lotSize: "1"` (khác lô 100 cổ phiếu — phái sinh giao dịch
+theo hợp đồng, không phải cổ phiếu).
+
+### 3. Giá/stream — CHƯA CÓ dữ liệu thật (chạy ngoài giờ giao dịch)
+`get_ohlc_1minute("41I1G8000")` → `204`, 0 bar. WebSocket connect + subscribe
+thành công (`"Subscribed to 1 topic(s)"`) nhưng chỉ nhận 3 message ack subscribe,
+không có tick giá/khớp lệnh thật nào — **hợp lý vì script chạy lúc ~20:49, ngoài
+giờ giao dịch phái sinh**, không phải lỗi. Ghi chú nhỏ không chặn: nhận đúng 3 lần
+ack giống hệt nhau cho 1 lần subscribe (hơi lạ, không rõ nguyên nhân, không ảnh
+hưởng tới việc lấy dữ liệu thật khi có phiên).
+
+**Quyết định (2026-07-26):** chờ chạy lại 2 script này trong giờ giao dịch phiên
+tới để lấy dữ liệu bar/tick thật, RỒI MỚI viết Phase 1 — không thiết kế
+`SmaCrossStrategy`/chiến lược tín hiệu khi chưa biết hình dạng bar thật, đúng
+nguyên tắc đã chốt từ đầu plan này.
+
 ## Sau Phase 0 (chưa làm, chỉ định hướng)
 
-Dựa trên dữ liệu thật thu được, viết plan Phase 1 riêng cho: thiết kế `Position`
-model cho phái sinh (long/short/net), risk model ký quỹ (margin call thay vì
-max_daily_loss_pct đơn thuần), và quyết định có đặt lệnh thật cho phái sinh hay
-chỉ dừng ở mức giám sát/cảnh báo trước. Việc tái sử dụng `SmaCrossStrategy` (đã
-chốt hướng) cũng cần thiết kế lại phần SELL-to-open (bán khống) ở Phase 1, không
-phải Phase 0.
+Dựa trên dữ liệu thật thu được (đã đủ cho phần balance/margin/position/contract,
+còn thiếu phần giá/stream), viết plan Phase 1 riêng cho: thiết kế `Position` model
+cho phái sinh (long/short/net, dùng `DerivativePosition` — KHÔNG dùng lại
+`RealPosition`/`sellable_qty` vì đó là khái niệm settlement T+2,5 của cổ phiếu,
+không áp dụng cho phái sinh T+0), risk model ký quỹ (margin call dựa trên
+`DerivativePPMMR` thay vì `max_daily_loss_pct` đơn thuần), và quyết định có đặt
+lệnh thật cho phái sinh hay chỉ dừng ở mức giám sát/cảnh báo trước. Việc tái sử
+dụng `SmaCrossStrategy` (đã chốt hướng) cũng cần thiết kế lại phần SELL-to-open
+(bán khống) ở Phase 1, không phải Phase 0 — và cần dữ liệu bar thật (đang chờ
+phiên giao dịch tới) trước khi thiết kế chi tiết phần này.
