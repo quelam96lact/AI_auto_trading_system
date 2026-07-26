@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from importlib.resources import files
 
@@ -6,6 +7,14 @@ import psycopg
 
 from trading.broker import Fill, Position
 from trading.models import Bar, IndexValue
+
+
+@dataclass(frozen=True)
+class RealPosition:
+    symbol: str
+    qty: int
+    avg_price: float
+    sellable_qty: int
 
 _UPSERT_BAR = """
 INSERT INTO {table} (symbol, ts, open, high, low, close, volume, source)
@@ -278,21 +287,23 @@ class Storage:
             )
         return cur.rowcount
 
-    def read_real_positions(self, account_no: str) -> dict[str, Position]:
+    def read_real_positions(self, account_no: str) -> dict[str, RealPosition]:
         """Đọc account_position_snapshot, lấy ts mới nhất theo account_no.
 
         KHÔNG correlate thêm theo symbol — nếu correlate cả symbol, mã đã bán hết
-        sẽ không bao giờ bị ghi đè, hiện vĩnh viễn. Trả về dict[symbol, Position]
-        chỉ gồm các symbol có quantity > 0.
+        sẽ không bao giờ bị ghi đè, hiện vĩnh viễn. Trả về dict[symbol, RealPosition]
+        chỉ gồm các symbol có quantity > 0. `sellable_qty` (khác `qty` — tổng nắm giữ)
+        là số cổ phiếu THẬT SỰ khả dụng để bán (SSI đã tự trừ phần chưa settle T+2,5) —
+        dùng để cap số lượng SELL ở real_orders.handle_signal(), KHÔNG được bỏ qua.
         """
         with self.conn() as c:
             rows = c.execute(
-                "SELECT symbol, quantity, cost_price FROM account_position_snapshot "
+                "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
                 "WHERE account_no = %s AND ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = %s) "
                 "AND quantity > 0",
                 (account_no, account_no),
             ).fetchall()
-        return {r[0]: Position(r[0], r[1], r[2]) for r in rows}
+        return {r[0]: RealPosition(r[0], r[1], r[2], r[3]) for r in rows}
 
     def read_real_daily_pnl(self, account_no: str, day: date) -> float:
         """SUM(pnl) từ real_order_fills cho 1 ngày theo giờ Việt Nam.

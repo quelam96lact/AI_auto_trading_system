@@ -6,7 +6,7 @@ import pytest
 from trading.broker import Position
 from trading.calendar_vn import TZ
 from trading.models import Bar
-from trading.storage.db import Storage
+from trading.storage.db import RealPosition, Storage
 
 DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@localhost:5432/trading")
 pytestmark = pytest.mark.integration
@@ -161,7 +161,19 @@ def test_read_real_positions_ignores_older_snapshot_for_sold_symbol(storage):
     got = storage.read_real_positions("ACC_TEST")
     assert "VCB" not in got
     assert "HPG" in got
-    assert got["HPG"] == Position("HPG", 50, 20000.0)
+    assert got["HPG"] == RealPosition("HPG", 50, 20000.0, 50)
+
+
+def test_read_real_positions_reports_sellable_qty_lower_than_qty(storage):
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    storage.save_account_positions(
+        "ACC_TEST",
+        ts,
+        [{"symbol": "VCB", "quantity": 100, "cost_price": 50000.0, "sellable_quantity": 30}],
+    )
+    got = storage.read_real_positions("ACC_TEST")
+    assert "VCB" in got
+    assert got["VCB"] == RealPosition("VCB", 100, 50000.0, 30)
 
 
 def test_read_real_daily_pnl_sums_same_day(storage):

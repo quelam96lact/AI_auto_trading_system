@@ -26,6 +26,16 @@ def handle_signal(
     today = bar.ts.date()
     daily_pnl = storage.read_real_daily_pnl(cfg.real_order_account, today)
 
+    if signal.side == "SELL":
+        pos = positions.get(signal.symbol)
+        sellable = pos.sellable_qty if pos is not None else 0
+        if sellable <= 0:
+            # Không có gì khả dụng để bán (chưa nắm giữ, hoặc cổ phiếu chưa settle T+2,5) —
+            # không tạo pending order, không cố gửi lệnh biết trước sẽ sai/bị SSI từ chối.
+            return
+        if signal.qty > sellable:
+            signal = Signal(symbol=signal.symbol, side=signal.side, qty=sellable)
+
     if not risk.approve(signal, bar.close, positions, daily_pnl, today):
         return
 

@@ -8,6 +8,7 @@ from trading.config import Config
 from trading.models import Bar
 from trading.real_orders import PENDING_ORDER_TTL_MINUTES, handle_signal
 from trading.risk import RiskManager
+from trading.storage.db import RealPosition
 from trading.strategy import Signal
 
 
@@ -77,6 +78,41 @@ def test_handle_signal_does_nothing_when_risk_rejects(cfg, bar):
 
     risk = RiskManager(capital=1.0)
     signal = Signal(symbol="VCB", side="BUY", qty=100)
+
+    with patch("trading.real_orders.alert") as mock_alert:
+        handle_signal(cfg, storage, risk, signal, bar)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_not_called()
+
+
+def test_handle_signal_caps_sell_quantity_to_sellable_qty(cfg, bar):
+    storage = MagicMock()
+    storage.read_real_positions.return_value = {
+        "VCB": RealPosition("VCB", 100, 50_000.0, 30)
+    }
+    storage.read_real_daily_pnl.return_value = 0.0
+    storage.create_pending_order.return_value = 42
+
+    risk = RiskManager(capital=cfg.real_order_capital)
+    signal = Signal(symbol="VCB", side="SELL", qty=100)
+
+    with patch("trading.real_orders.alert") as mock_alert:
+        handle_signal(cfg, storage, risk, signal, bar)
+
+    storage.create_pending_order.assert_called_once()
+    args = storage.create_pending_order.call_args.kwargs
+    assert args["quantity"] == 30
+    mock_alert.assert_called_once()
+
+
+def test_handle_signal_skips_sell_when_nothing_sellable(cfg, bar):
+    storage = MagicMock()
+    storage.read_real_positions.return_value = {}
+    storage.read_real_daily_pnl.return_value = 0.0
+
+    risk = RiskManager(capital=cfg.real_order_capital)
+    signal = Signal(symbol="VCB", side="SELL", qty=100)
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_signal(cfg, storage, risk, signal, bar)
