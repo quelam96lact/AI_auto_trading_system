@@ -75,6 +75,11 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 pnl=fill.pnl,
             )
 
+    def expire_stale_real_orders() -> None:
+        n = storage.expire_stale_pending_orders()
+        if n > 0:
+            alert("WARN", "real pending orders expired without confirmation", count=n)
+
     def on_real_crossover(crossover, bar) -> None:
         real_orders.handle_crossover(cfg, storage, real_risk, crossover, bar)
 
@@ -84,6 +89,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
             try:
                 msg = await sub.next_msg(timeout=60)
             except nats.errors.TimeoutError:
+                expire_stale_real_orders()
                 storage.beat("engine")
                 continue
             bar = bar_from_payload(json.loads(msg.data))
@@ -97,6 +103,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                 storage.save_real_risk_halt(real_risk.halted_date)
                 alert("CRITICAL", "REAL risk halt: max daily loss reached", date=str(real_risk.halted_date))
             await msg.ack()
+            expire_stale_real_orders()
             storage.beat("engine")
             processed += 1
     finally:

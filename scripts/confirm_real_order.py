@@ -24,6 +24,12 @@ from trading.config import Config, load_config
 from trading.storage.db import Storage
 
 
+FEE_RATE_ESTIMATE = 0.0015  # 0.15% giá trị lệnh — ƯỚC TÍNH theo biểu phí môi giới
+# đã ký của tài khoản, KHÔNG PHẢI phí thật từ SSI. SDK hiện không có field phí
+# per-order (PlaceOrderResponse/Order chỉ có id/status/giá/số lượng, EquityPPMMR.fees
+# chỉ là tổng luỹ kế cấp tài khoản) — xem PLAN_REAL_ORDER_PLACEMENT.md.
+
+
 def _print_order(order: dict) -> None:
     print(f"Pending order #{order['id']}:")
     print(f"  account_no: {order['account_no']}")
@@ -160,6 +166,8 @@ async def confirm(
             if real_pos is not None:
                 pnl = (order["price"] - real_pos.avg_price) * order["quantity"]
 
+        fee = order["price"] * order["quantity"] * FEE_RATE_ESTIMATE
+
         storage.update_pending_order_status(order_id, "placed", ssi_order_id=placed.order_id)
         storage.write_real_order_fill(
             account_no=order["account_no"],
@@ -168,7 +176,7 @@ async def confirm(
             side=order["side"],
             qty=order["quantity"],
             price=order["price"],
-            fee=0.0,
+            fee=fee,
             pnl=pnl,
             ssi_order_id=placed.order_id,
             status="placed",

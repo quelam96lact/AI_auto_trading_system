@@ -183,6 +183,25 @@ async def test_engine_run_persists_real_risk_halt_on_transition(storage, monkeyp
     assert storage.read_real_risk_halt() == halt_day
 
 
+async def test_engine_run_expires_stale_pending_real_order(storage):
+    cfg = make_cfg()
+    order_id = storage.create_pending_order(
+        account_no="ACC_REAL_EXPIRE",
+        symbol="ENGT",
+        side="BUY",
+        quantity=100,
+        price=10_000.0,
+        expires_at=datetime.now(TZ) - timedelta(minutes=1),
+    )
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+
+    await run(cfg, max_messages=1)
+
+    assert storage.get_pending_order(order_id)["status"] == "expired"
+
+
 async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatch):
     import trading.engine.main as engine_main
     import trading.real_orders as real_orders_mod
