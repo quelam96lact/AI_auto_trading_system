@@ -22,6 +22,7 @@ def storage():
         c.execute("DELETE FROM account_position_snapshot WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM pending_real_orders WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_TEST'")
+        c.execute("DELETE FROM real_risk_state WHERE id = 1")
     return s
 
 
@@ -242,3 +243,19 @@ def test_read_real_daily_pnl_uses_vn_calendar_day_not_utc(storage):
 def test_update_pending_order_status_raises_on_unknown_id(storage):
     with pytest.raises(ValueError):
         storage.update_pending_order_status(999_999_999, "confirmed")
+
+
+def test_save_and_read_real_risk_halt(storage):
+    day = date(2026, 7, 15)
+    storage.save_real_risk_halt(day)
+    assert storage.read_real_risk_halt() == day
+
+
+def test_read_real_risk_halt_returns_none_when_never_set(storage):
+    assert storage.read_real_risk_halt() is None
+
+
+def test_save_real_risk_halt_upsert(storage):
+    storage.save_real_risk_halt(date(2026, 7, 15))
+    storage.save_real_risk_halt(date(2026, 7, 16))
+    assert storage.read_real_risk_halt() == date(2026, 7, 16)

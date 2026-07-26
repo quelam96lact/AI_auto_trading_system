@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 import nats
@@ -16,7 +16,7 @@ DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@localhost:5432/trad
 pytestmark = pytest.mark.integration
 
 
-def make_cfg() -> Config:
+def make_cfg(real_order_account: str = "") -> Config:
     return Config(
         symbols=["ENGT"],
         indices=[],
@@ -35,7 +35,7 @@ def make_cfg() -> Config:
         ssi_private_key="pk",
         real_trading_enabled=False,
         real_order_capital=0,
-        real_order_account="",
+        real_order_account=real_order_account,
     )
 
 
@@ -47,6 +47,7 @@ def storage():
         c.execute("DELETE FROM positions WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM orders WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM engine_state WHERE id = 1")
+        c.execute("DELETE FROM real_risk_state WHERE id = 1")
     return s
 
 
@@ -148,3 +149,62 @@ async def test_engine_alerts_critical_on_risk_halt(storage, monkeypatch):
     await run(cfg, max_messages=len(bars))
 
     assert ("CRITICAL", "risk halt: max daily loss reached") in alerts_seen
+
+
+async def test_engine_run_persists_real_risk_halt_on_transition(storage, monkeypatch):
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    halt_day = None
+
+    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
+        nonlocal halt_day
+        if halt_day is None:
+            halt_day = bar.ts.date()
+            risk_arg.halted_date = halt_day
+
+    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg)),
+    )
+
+    cfg = make_cfg(real_order_account="ACC_REAL_HALT")
+    prices = [10] * 20 + [20] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+
+    await run(cfg, max_messages=len(bars))
+
+    assert halt_day is not None
+    assert ("CRITICAL", "REAL risk halt: max daily loss reached") in alerts_seen
+    assert storage.read_real_risk_halt() == halt_day
+
+
+async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatch):
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    signals_seen = []
+
+    def fake_handle_signal(cfg_arg, storage_arg, risk_arg, signal, bar):
+        signals_seen.append((risk_arg.halted_date, signal, bar))
+
+    monkeypatch.setattr(real_orders_mod, "handle_signal", fake_handle_signal)
+
+    cfg = make_cfg(real_order_account="ACC_REAL_RESTORE")
+    halted_day = date(2026, 7, 15)
+    storage.save_real_risk_halt(halted_day)
+
+    prices = [10] * 20 + [20] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+
+    await run(cfg, max_messages=len(bars))
+
+    assert signals_seen
+    for halted_date, signal, bar in signals_seen:
+        assert halted_date == halted_day, "real_risk.halted_date should be restored from DB on startup"

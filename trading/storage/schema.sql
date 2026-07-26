@@ -131,3 +131,10 @@ CREATE TABLE IF NOT EXISTS real_order_fills (
   ssi_order_id text,
   status text NOT NULL CHECK (status IN ('placed', 'cancelled', 'filled'))
 );
+
+CREATE TABLE IF NOT EXISTS real_risk_state (
+  id integer PRIMARY KEY DEFAULT 1,
+  halted_date date,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (id = 1)
+);

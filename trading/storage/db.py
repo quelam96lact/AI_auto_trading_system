@@ -114,6 +114,19 @@ class Storage:
             row = c.execute("SELECT cash, realized_pnl FROM engine_state WHERE id = 1").fetchone()
         return (row[0], row[1]) if row else None
 
+    def save_real_risk_halt(self, halted_date: date) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO real_risk_state (id, halted_date, updated_at) VALUES (1, %s, now()) "
+                "ON CONFLICT (id) DO UPDATE SET halted_date = EXCLUDED.halted_date, updated_at = now()",
+                (halted_date,),
+            )
+
+    def read_real_risk_halt(self) -> date | None:
+        with self.conn() as c:
+            row = c.execute("SELECT halted_date FROM real_risk_state WHERE id = 1").fetchone()
+        return row[0] if row else None
+
     def write_order(self, fill: Fill, mode: str = "paper") -> None:
         with self.conn() as c:
             c.execute(
