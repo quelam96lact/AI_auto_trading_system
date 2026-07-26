@@ -44,6 +44,8 @@ Chạy: uv run --with ssi-sdk python scripts/confirm_real_order.py <id>
 
 1. Load config qua `load_config("config/config.yaml")` (hoặc pattern tương tự `trading/engine/main.py::main()` — đọc file đó để khớp style CLI argparse).
 2. `storage.get_pending_order(id)` — nếu không tồn tại: in lỗi rõ, exit code khác 0.
+
+**Lưu ý (đã đổi sau khi viết prompt này):** `storage.update_pending_order_status()` giờ raise `ValueError` nếu `id` không khớp dòng nào (thay vì âm thầm no-op — fix bảo mật, xem `PLAN_REAL_ORDER_PLACEMENT.md`). Vì bước 2 đã đọc dòng này thành công ngay trước đó, tình huống này chỉ xảy ra do race condition (vd 2 người chạy script cùng lúc trên cùng `id`) — không cần xử lý đặc biệt, để exception tự nổi lên (traceback rõ ràng) là đủ, KHÔNG bắt và nuốt lỗi này.
 3. Kiểm tra `status == 'pending'` và `expires_at > now()` — nếu không (đã hết hạn/đã xử lý), in rõ trạng thái hiện tại, exit, **không làm gì thêm**.
 4. In đầy đủ chi tiết lệnh (account_no, symbol, side, quantity, price, tạo lúc nào, hết hạn lúc nào).
 5. Hỏi xác nhận qua `input()`: `"Nhập YES để xác nhận đặt lệnh THẬT (Enter/bất kỳ để huỷ): "`.
