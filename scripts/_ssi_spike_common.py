@@ -6,10 +6,19 @@ gần như giống hệt nhau (rule of three — 2 bản trước đó cố tìn
 vì chưa đủ bằng chứng cần thiết, xem lịch sử; 3 bản là đủ lý do gộp).
 """
 
+import io
 import json
 import os
 import sys
 from pathlib import Path
+
+# Windows cmd/ps mặc định cp1252 gây UnicodeEncodeError khi print tiếng Việt.
+# Force UTF-8 cho stdout/stderr nếu chưa phải UTF-8, giúp các script spike
+# hiển thị được mà không crash khi gặp ký tự tiếng Việt.
+if sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 TOKEN_FILE = Path(__file__).parent / ".ssi_sdk_token.json"
 
