@@ -77,30 +77,57 @@ async def fetch_ohlc_5m_2months(symbol: str) -> None:
     async with await make_auth() as auth:
         data = AsyncData(auth)
         to_date = datetime.now(VN_TZ).date()
-        from_date = to_date - timedelta(days=60)
-        from_str = f"{from_date:%Y/%m/%d} 00:00:00"
-        to_str = f"{to_date:%Y/%m/%d} 23:59:59"
-        print(f"\nGọi get_ohlc_5minute_historical({symbol}, {from_str} -> {to_str})...")
-        all_rows = []
-        page = 1
-        while True:
-            rows = await data.market_data.get_ohlc_5minute_historical(
-                symbol, from_str, to_str, page=page, size=1000
-            )
-            all_rows.extend(rows)
-            print(f"  page {page}: {len(rows)} bar")
-            if len(rows) < 1000:
-                break
-            page += 1
-            if page > 20:
-                print(f"  !! dừng ở page {page} — vượt guard 20 trang, kiểm tra lại")
-                break
+        start_date = to_date - timedelta(days=60)
+
+        bars_by_ts: dict[str, dict] = {}  # key = trading_date string, dedupe tự nhiên
+        chunk_start = start_date
+        while chunk_start <= to_date:
+            chunk_end = min(chunk_start + timedelta(days=6), to_date)  # chunk 7 ngày
+            from_str = f"{chunk_start:%Y/%m/%d} 00:00:00"
+            to_str = f"{chunk_end:%Y/%m/%d} 23:59:59"
+            # Server thỉnh thoảng trả response truncated khi gọi nhiều lần liên
+            # tiếp — retry nếu bar mới nhất không vượt quá ngày đầu chunk
+            # (chunk 7 ngày trong phiên hợp lệ phải có bar sau ngày đầu).
+            rows: list = []
+            for attempt in range(4):
+                await asyncio.sleep(0.25)  # throttle nhẹ giữa các call
+                rows = await data.market_data.get_ohlc_5minute_historical(
+                    symbol, from_str, to_str, page=1, size=1000
+                )
+                if not rows:
+                    break  # chunk rỗng hợp lệ (hợp đồng chưa list / nghỉ lễ)
+                newest_date = max(r.trading_date[:10] for r in rows)
+                if newest_date > f"{chunk_start:%Y/%m/%d}" or attempt == 3:
+                    break
+                print(
+                    f"  !! chunk trả newest={newest_date} <= chunk_start — "
+                    f"server truncated, retry {attempt + 1}/3..."
+                )
+            print(f"Gọi chunk {from_str} -> {to_str}...")
+            print(f"  nhận {len(rows)} bar (chunk 7 ngày, kỳ vọng << 1000)")
+            if len(rows) >= 1000:
+                print(
+                    "  !! CẢNH BÁO: chunk 7 ngày trả về đúng 1000 bar — "
+                    "có thể đã bị cắt/trùng do vượt 1 trang. Cần giảm chunk nhỏ hơn."
+                )
+            if rows:
+                newest_date = max(r.trading_date[:10] for r in rows)
+                if newest_date <= f"{chunk_start:%Y/%m/%d}":
+                    print(
+                        f"  !! CẢNH BÁO: sau 3 retry vẫn truncated (newest={newest_date}) — "
+                        "dữ liệu cuối chunk có thể thiếu, báo lại để quyết định."
+                    )
+            for r in rows:
+                bars_by_ts[r.trading_date] = r  # dedupe theo timestamp, ghi đè nếu trùng
+            chunk_start = chunk_end + timedelta(days=1)
+
+        all_rows = sorted(bars_by_ts.values(), key=lambda r: r.trading_date)
         payload = [dataclasses.asdict(r) for r in all_rows]
         OHLC_5M_2M_OUT.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
-        print(f"Tổng {len(all_rows)} bar 5 phút (2 tháng) → {OHLC_5M_2M_OUT}")
+        print(f"Tổng {len(all_rows)} bar 5 phút DUY NHẤT (2 tháng) → {OHLC_5M_2M_OUT}")
         if all_rows:
             print("Bar đầu:", payload[0])
             print("Bar cuối:", payload[-1])

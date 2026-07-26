@@ -60,24 +60,50 @@ async def discover_symbols(data) -> dict[str, list[str]]:
 
 async def fetch_daily_10y(data, symbol: str) -> list:
     to_date = datetime.now(VN_TZ).date()
-    from_date = to_date.replace(year=to_date.year - 10)
-    from_str = f"{from_date:%Y/%m/%d}"
-    to_str = f"{to_date:%Y/%m/%d}"
-    all_rows = []
-    page = 1
-    while True:
-        rows = await data.market_data.get_ohlc_1day_historical(
-            symbol, from_str, to_str, page=page, size=1000
-        )
-        all_rows.extend(rows)
-        print(f"  page {page}: {len(rows)} bar")
-        if len(rows) < 1000:
-            break
-        page += 1
-        if page > 20:
-            print(f"  !! dừng ở page {page} — vượt guard 20 trang, kiểm tra lại")
-            break
-    return all_rows
+    start_date = to_date.replace(year=to_date.year - 10)
+
+    bars_by_ts: dict[str, dict] = {}  # key = trading_date string, dedupe tự nhiên
+    chunk_start = start_date
+    while chunk_start <= to_date:
+        chunk_end = min(chunk_start + timedelta(days=89), to_date)  # chunk ~90 ngày
+        from_str = f"{chunk_start:%Y/%m/%d} 00:00:00"
+        to_str = f"{chunk_end:%Y/%m/%d} 23:59:59"
+        # Server thỉnh thoảng trả response truncated (chỉ vài bar đầu chunk hoặc
+        # dữ liệu của chunk trước) khi gọi nhiều lần liên tiếp — retry nếu newest
+        # không vượt quá chunk_start (chunk 90 ngày hợp lệ phải có bar sau ngày đầu).
+        rows: list = []
+        for attempt in range(4):
+            await asyncio.sleep(0.25)  # throttle nhẹ giữa các call
+            rows = await data.market_data.get_ohlc_1day_historical(
+                symbol, from_str, to_str, page=1, size=1000
+            )
+            if not rows:
+                break  # chunk rỗng hợp lệ (mã chưa list / nghỉ giao dịch dài)
+            newest = max(r.trading_date for r in rows)
+            if newest > f"{chunk_start:%Y/%m/%d}" or attempt == 3:
+                break
+            print(
+                f"    !! chunk trả newest={newest} <= chunk_start — "
+                f"server truncated, retry {attempt + 1}/3..."
+            )
+        print(f"  chunk {from_str} -> {to_str}: {len(rows)} bar")
+        if len(rows) >= 1000:
+            print(
+                "    !! CẢNH BÁO: chunk ~90 ngày trả về đúng 1000 bar — "
+                "có thể đã bị cắt/trùng do vượt 1 trang. Cần giảm chunk nhỏ hơn."
+            )
+        if rows:
+            newest = max(r.trading_date for r in rows)
+            if newest <= f"{chunk_start:%Y/%m/%d}":
+                print(
+                    f"    !! CẢNH BÁO: sau 3 retry vẫn truncated (newest={newest}) — "
+                    "dữ liệu cuối chunk có thể thiếu, báo lại để quyết định."
+                )
+        for r in rows:
+            bars_by_ts[r.trading_date] = r  # dedupe theo timestamp, ghi đè nếu trùng
+        chunk_start = chunk_end + timedelta(days=1)
+
+    return sorted(bars_by_ts.values(), key=lambda r: r.trading_date)
 
 
 async def fetch_all(data, symbols_by_board: dict[str, list[str]]) -> None:
