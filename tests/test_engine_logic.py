@@ -23,7 +23,7 @@ def bar_at(i, close, sym="VCB"):
 
 def test_process_bar_submits_and_next_bar_fills():
     broker = PaperBroker(capital=100_000_000)
-    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
 
@@ -52,7 +52,7 @@ def test_bar_from_payload_roundtrip():
 
 def test_process_bar_calls_on_crossover_when_crossover_fires():
     broker = PaperBroker(capital=100_000_000)
-    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
     calls = []
@@ -72,7 +72,7 @@ def test_process_bar_calls_on_crossover_when_crossover_fires():
 
 def test_process_bar_does_not_call_on_crossover_when_no_crossover():
     broker = PaperBroker(capital=100_000_000)
-    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
     calls = []
@@ -94,7 +94,7 @@ def test_process_bar_calls_on_crossover_even_when_paper_signal_suppressed():
     nhưng on_crossover VẪN phải được gọi để real_orders có thể bán vị thế thật.
     """
     broker = PaperBroker(capital=100_000_000)
-    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    strategy = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     risk = RiskManager(capital=100_000_000)
     marks: dict[str, float] = {}
     calls = []

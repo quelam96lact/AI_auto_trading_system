@@ -26,22 +26,24 @@ def bar_at(i, close):
 
 
 def test_no_signal_before_enough_history():
-    s = SmaCrossStrategy(fast=2, slow=4)
+    s = SmaCrossStrategy(fast=2, slow=4, atr_period=1, atr_pct_threshold=0.0)
     ctx = FakeContext()
     for i, price in enumerate([10, 10, 10]):
         assert s.on_bar(bar_at(i, price), ctx) is None
 
 
 def test_buy_signal_on_fast_crossing_above_slow():
-    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     ctx = FakeContext(qty=0)
     prices = [10, 10, 10, 10, 20, 20]
     signals = [s.on_bar(bar_at(i, p), ctx) for i, p in enumerate(prices)]
-    assert any(sig is not None and sig.side == "BUY" and sig.qty == 100 for sig in signals)
+    assert any(
+        sig is not None and sig.side == "BUY" and sig.qty == 100 for sig in signals
+    )
 
 
 def test_sell_signal_when_holding_and_fast_crosses_below():
-    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     ctx = FakeContext(qty=100)
     prices = [10, 10, 10, 10, 20, 20, 10, 10]
     signals = [s.on_bar(bar_at(i, p), ctx) for i, p in enumerate(prices)]
@@ -49,7 +51,7 @@ def test_sell_signal_when_holding_and_fast_crosses_below():
 
 
 def test_compute_crossover_reports_bear_even_when_never_bought():
-    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     # Build enough history with rising prices so fast MA is above slow MA,
     # then reverse down to trigger a bearish crossover. We never call on_bar,
     # so no position context is involved.
@@ -65,7 +67,46 @@ def test_compute_crossover_reports_bear_even_when_never_bought():
 
 
 def test_last_crossover_returns_none_before_enough_history():
-    s = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    s = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
     for i, p in enumerate([10, 10]):
         s.compute_crossover(bar_at(i, p))
     assert s.last_crossover("VCB") is None
+
+
+# Same MA shape used by the tests above (fast=2, slow=4): flat at 10, jumps to
+# 20 (bull crossover), then back to 10 (bear crossover). The jump itself
+# produces a large True Range (|high-prev_close| = 10), so atr_pct_threshold
+# alone decides whether the crossover is reported.
+_CROSSOVER_PRICES = [10, 10, 10, 10, 20, 20, 10, 10]
+
+
+def test_crossover_suppressed_when_atr_pct_below_threshold():
+    # atr/close peaks at 1.0 (bear leg: TR=10 on close=10) -> threshold=1.5
+    # is unreachable by either leg -> every crossover, bull and bear, must be
+    # suppressed.
+    s = SmaCrossStrategy(fast=2, slow=4, atr_period=1, atr_pct_threshold=1.5)
+    crossovers = [
+        s.compute_crossover(bar_at(i, p)) for i, p in enumerate(_CROSSOVER_PRICES)
+    ]
+    assert "bull" not in crossovers
+    assert "bear" not in crossovers
+
+
+def test_crossover_fires_when_atr_pct_above_threshold():
+    s = SmaCrossStrategy(fast=2, slow=4, atr_period=1, atr_pct_threshold=0.005)
+    crossovers = [
+        s.compute_crossover(bar_at(i, p)) for i, p in enumerate(_CROSSOVER_PRICES)
+    ]
+    assert "bull" in crossovers
+    assert "bear" in crossovers
+
+
+def test_crossover_suppressed_during_atr_warmup():
+    # atr_period longer than the whole series -> ATR never leaves warm-up
+    # (always None) -> every crossover suppressed regardless of threshold.
+    s = SmaCrossStrategy(fast=2, slow=4, atr_period=20, atr_pct_threshold=0.0)
+    crossovers = [
+        s.compute_crossover(bar_at(i, p)) for i, p in enumerate(_CROSSOVER_PRICES)
+    ]
+    assert "bull" not in crossovers
+    assert "bear" not in crossovers
