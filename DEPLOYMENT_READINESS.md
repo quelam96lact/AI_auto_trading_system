@@ -1,7 +1,21 @@
 # Deployment Readiness Report — VPS Ubuntu
 
-**Date:** 2026-07-21  
+**Date:** 2026-07-21 (see 2026-08-01 update below)
 **Assessment:** ⚠️ **PARTIALLY READY** (requires 5-7 tasks before production)
+
+## Update — 2026-08-01
+
+Critical-phase items below are now done: `README.md`, `DEPLOYMENT.md`,
+`.env.example`, `scripts/backup_db.sh` (pg_dump + retention, see
+`DEPLOYMENT.md` §6), and `docker-compose.yml` now has per-service
+`mem_limit`/`cpus` limits and binds Postgres/NATS to `127.0.0.1` only. Also
+fixed a real deploy blocker found in the process: the `engine`/`collector`
+containers were missing several required `SSI_*`/`TELEGRAM_*` env vars and
+would have crashed on startup or silently never alerted. Still open: SSL/TLS
++ nginx reverse proxy (needs a real domain — see `DEPLOYMENT.md` §4),
+systemd unit files (not needed — `restart: unless-stopped` covers it), and
+CI/CD. See `docs/superpowers/specs/2026-08-01-derivative-monitoring-design.md`
+and 1DevTool task `t-fzy7p8ne7yehc` for full context.
 
 ---
 

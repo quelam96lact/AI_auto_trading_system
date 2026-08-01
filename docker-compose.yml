@@ -5,7 +5,7 @@ services:
       POSTGRES_USER: trading
       POSTGRES_PASSWORD: trading
       POSTGRES_DB: trading
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trading"]
@@ -13,22 +13,34 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
   nats:
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data"]
-    ports: ["4222:4222"]
+    ports: ["127.0.0.1:4222:4222"]
     volumes: [natsdata:/data]
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
   engine:
     build: .
     command: python -m trading.engine.main --config config/config.yaml
     environment:
       DB_DSN: postgresql://trading:trading@postgres:5432/trading
+      SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
+      SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
+      SSI_API_KEY: ${SSI_API_KEY}
+      SSI_API_SECRET: ${SSI_API_SECRET}
       SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
   collector:
     build: .
     command: python -m trading.collector.main --config config/config.yaml
@@ -39,6 +51,9 @@ services:
       SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
       SSI_API_KEY: ${SSI_API_KEY}
       SSI_API_SECRET: ${SSI_API_SECRET}
+      SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -46,6 +61,8 @@ services:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
   grafana:
     image: grafana/grafana:11.2.0
     ports: ["3000:3000"]
@@ -56,6 +73,8 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
 volumes:
   pgdata:
   natsdata:
