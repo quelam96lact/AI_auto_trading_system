@@ -16,6 +16,7 @@ class RealPosition:
     avg_price: float
     sellable_qty: int
 
+
 _UPSERT_BAR = """
 INSERT INTO {table} (symbol, ts, open, high, low, close, volume, source)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -35,7 +36,9 @@ class Storage:
             yield c
 
     def init_schema(self) -> None:
-        sql = files("trading.storage").joinpath("schema.sql").read_text(encoding="utf-8")
+        sql = (
+            files("trading.storage").joinpath("schema.sql").read_text(encoding="utf-8")
+        )
         with self.conn() as c:
             c.execute(sql)
 
@@ -45,7 +48,10 @@ class Storage:
         with self.conn() as c:
             c.cursor().executemany(
                 _UPSERT_BAR.format(table=table),
-                [(b.symbol, b.ts, b.open, b.high, b.low, b.close, b.volume, b.source) for b in bars],
+                [
+                    (b.symbol, b.ts, b.open, b.high, b.low, b.close, b.volume, b.source)
+                    for b in bars
+                ],
             )
 
     def write_bars(self, bars: list[Bar]) -> None:
@@ -65,7 +71,9 @@ class Storage:
 
     def last_bar_ts(self, symbol: str) -> datetime | None:
         with self.conn() as c:
-            row = c.execute("SELECT max(ts) FROM bars WHERE symbol = %s", (symbol,)).fetchone()
+            row = c.execute(
+                "SELECT max(ts) FROM bars WHERE symbol = %s", (symbol,)
+            ).fetchone()
         return row[0]
 
     def write_index_values(self, vals: list[IndexValue]) -> None:
@@ -97,7 +105,9 @@ class Storage:
 
     def read_positions(self) -> dict[str, Position]:
         with self.conn() as c:
-            rows = c.execute("SELECT symbol, qty, avg_price FROM positions WHERE qty > 0").fetchall()
+            rows = c.execute(
+                "SELECT symbol, qty, avg_price FROM positions WHERE qty > 0"
+            ).fetchall()
         return {r[0]: Position(r[0], r[1], r[2]) for r in rows}
 
     def write_engine_state(self, cash: float, realized_pnl: float) -> None:
@@ -111,7 +121,9 @@ class Storage:
 
     def read_engine_state(self) -> tuple[float, float] | None:
         with self.conn() as c:
-            row = c.execute("SELECT cash, realized_pnl FROM engine_state WHERE id = 1").fetchone()
+            row = c.execute(
+                "SELECT cash, realized_pnl FROM engine_state WHERE id = 1"
+            ).fetchone()
         return (row[0], row[1]) if row else None
 
     def save_real_risk_halt(self, halted_date: date) -> None:
@@ -124,7 +136,9 @@ class Storage:
 
     def read_real_risk_halt(self) -> date | None:
         with self.conn() as c:
-            row = c.execute("SELECT halted_date FROM real_risk_state WHERE id = 1").fetchone()
+            row = c.execute(
+                "SELECT halted_date FROM real_risk_state WHERE id = 1"
+            ).fetchone()
         return row[0] if row else None
 
     def write_order(self, fill: Fill, mode: str = "paper") -> None:
@@ -132,10 +146,25 @@ class Storage:
             c.execute(
                 "INSERT INTO orders (ts, symbol, side, qty, price, fee, pnl, mode) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (fill.ts, fill.symbol, fill.side, fill.qty, fill.price, fill.fee, fill.pnl, mode),
+                (
+                    fill.ts,
+                    fill.symbol,
+                    fill.side,
+                    fill.qty,
+                    fill.price,
+                    fill.fee,
+                    fill.pnl,
+                    mode,
+                ),
             )
 
-    def save_ssi_token(self, access_token: str, expires_at: int, refresh_token: str, refresh_token_expires_at: int) -> None:
+    def save_ssi_token(
+        self,
+        access_token: str,
+        expires_at: int,
+        refresh_token: str,
+        refresh_token_expires_at: int,
+    ) -> None:
         with self.conn() as c:
             c.execute(
                 "INSERT INTO ssi_auth_state (id, access_token, expires_at, refresh_token, refresh_token_expires_at, updated_at) "
@@ -180,10 +209,20 @@ class Storage:
                 "account_balance = EXCLUDED.account_balance, total_debt = EXCLUDED.total_debt, "
                 "withdrawable = EXCLUDED.withdrawable, buy_unmatched = EXCLUDED.buy_unmatched, "
                 "sell_unmatched = EXCLUDED.sell_unmatched",
-                (account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched),
+                (
+                    account_no,
+                    ts,
+                    account_balance,
+                    total_debt,
+                    withdrawable,
+                    buy_unmatched,
+                    sell_unmatched,
+                ),
             )
 
-    def save_account_positions(self, account_no: str, ts: datetime, positions: list[dict]) -> None:
+    def save_account_positions(
+        self, account_no: str, ts: datetime, positions: list[dict]
+    ) -> None:
         """positions: list of symbol/quantity/cost_price/sellable_quantity dicts."""
         if not positions:
             return
@@ -208,7 +247,106 @@ class Storage:
                 ],
             )
 
-    def update_pnl_daily(self, day: date, realized_delta: float, fee_delta: float, unrealized: float) -> None:
+    def save_derivative_balance(
+        self,
+        account_no: str,
+        ts: datetime,
+        account_balance: float,
+        floating_pl: float,
+        trading_pl: float,
+        total_pl: float,
+        withdrawable: float,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO derivative_balance_snapshot "
+                "(account_no, ts, account_balance, floating_pl, trading_pl, total_pl, withdrawable) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts) DO UPDATE SET "
+                "account_balance = EXCLUDED.account_balance, floating_pl = EXCLUDED.floating_pl, "
+                "trading_pl = EXCLUDED.trading_pl, total_pl = EXCLUDED.total_pl, "
+                "withdrawable = EXCLUDED.withdrawable",
+                (
+                    account_no,
+                    ts,
+                    account_balance,
+                    floating_pl,
+                    trading_pl,
+                    total_pl,
+                    withdrawable,
+                ),
+            )
+
+    def save_derivative_margin(
+        self,
+        account_no: str,
+        ts: datetime,
+        rc_call: bool,
+        account_ratio_ssi: float,
+        account_ratio_vsdc: float,
+        used_limit_warning_level1_ssi: float,
+        used_limit_warning_level2_ssi: float,
+        used_limit_warning_level3_ssi: float,
+        total_equity: float,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO derivative_margin_snapshot "
+                "(account_no, ts, rc_call, account_ratio_ssi, account_ratio_vsdc, "
+                "used_limit_warning_level1_ssi, used_limit_warning_level2_ssi, "
+                "used_limit_warning_level3_ssi, total_equity) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts) DO UPDATE SET "
+                "rc_call = EXCLUDED.rc_call, account_ratio_ssi = EXCLUDED.account_ratio_ssi, "
+                "account_ratio_vsdc = EXCLUDED.account_ratio_vsdc, "
+                "used_limit_warning_level1_ssi = EXCLUDED.used_limit_warning_level1_ssi, "
+                "used_limit_warning_level2_ssi = EXCLUDED.used_limit_warning_level2_ssi, "
+                "used_limit_warning_level3_ssi = EXCLUDED.used_limit_warning_level3_ssi, "
+                "total_equity = EXCLUDED.total_equity",
+                (
+                    account_no,
+                    ts,
+                    rc_call,
+                    account_ratio_ssi,
+                    account_ratio_vsdc,
+                    used_limit_warning_level1_ssi,
+                    used_limit_warning_level2_ssi,
+                    used_limit_warning_level3_ssi,
+                    total_equity,
+                ),
+            )
+
+    def save_derivative_positions(
+        self, account_no: str, ts: datetime, positions: list[dict]
+    ) -> None:
+        """positions: list of symbol/long/short/net/floating_pl dicts."""
+        if not positions:
+            return
+        with self.conn() as c:
+            c.cursor().executemany(
+                "INSERT INTO derivative_position_snapshot "
+                "(account_no, ts, symbol, long, short, net, floating_pl) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts, symbol) DO UPDATE SET "
+                "long = EXCLUDED.long, short = EXCLUDED.short, net = EXCLUDED.net, "
+                "floating_pl = EXCLUDED.floating_pl",
+                [
+                    (
+                        account_no,
+                        ts,
+                        p["symbol"],
+                        p["long"],
+                        p["short"],
+                        p["net"],
+                        p["floating_pl"],
+                    )
+                    for p in positions
+                ],
+            )
+
+    def update_pnl_daily(
+        self, day: date, realized_delta: float, fee_delta: float, unrealized: float
+    ) -> None:
         with self.conn() as c:
             c.execute(
                 "INSERT INTO pnl_daily (date, realized, unrealized, fees) VALUES (%s, %s, %s, %s) "
@@ -289,7 +427,9 @@ class Storage:
                     (status, status, order_id),
                 )
             if cur.rowcount == 0:
-                raise ValueError(f"pending_real_orders id={order_id} not found — status update did not apply")
+                raise ValueError(
+                    f"pending_real_orders id={order_id} not found — status update did not apply"
+                )
 
     def expire_stale_pending_orders(self) -> int:
         """UPDATE status='expired' WHERE status='pending' AND expires_at < now(). Trả về số dòng bị ảnh hưởng."""
@@ -355,5 +495,16 @@ class Storage:
                 "INSERT INTO real_order_fills "
                 "(ts, account_no, symbol, side, qty, price, fee, pnl, ssi_order_id, status) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (ts, account_no, symbol, side, qty, price, fee, pnl, ssi_order_id, status),
+                (
+                    ts,
+                    account_no,
+                    symbol,
+                    side,
+                    qty,
+                    price,
+                    fee,
+                    pnl,
+                    ssi_order_id,
+                    status,
+                ),
             )

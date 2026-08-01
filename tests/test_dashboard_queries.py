@@ -23,6 +23,12 @@ def storage():
         c.execute("DELETE FROM heartbeat WHERE service = 'dash_test'")
         c.execute("DELETE FROM account_balance_snapshot WHERE account_no = 'DASH_ACC'")
         c.execute("DELETE FROM account_position_snapshot WHERE account_no = 'DASH_ACC'")
+        c.execute(
+            "DELETE FROM derivative_balance_snapshot WHERE account_no = 'DASH_ACC'"
+        )
+        c.execute(
+            "DELETE FROM derivative_margin_snapshot WHERE account_no = 'DASH_ACC'"
+        )
     return s
 
 
@@ -127,3 +133,37 @@ def test_real_positions_panel_query(storage):
     # thay vì "latest per account" thì nó sẽ kẹt lại vĩnh viễn ở đây (bug đã
     # sửa, xem PLAN_ACCOUNT_DATA_SYNC.md).
     assert all(r[1] != "DASH_SOLD" for r in rows)
+
+
+def test_derivative_margin_panel_query(storage):
+    ts = datetime(2026, 8, 1, 9, 0, tzinfo=TZ)
+    storage.save_derivative_balance(
+        account_no="DASH_ACC",
+        ts=ts,
+        account_balance=100000.0,
+        floating_pl=500.0,
+        trading_pl=0.0,
+        total_pl=500.0,
+        withdrawable=99500.0,
+    )
+    storage.save_derivative_margin(
+        account_no="DASH_ACC",
+        ts=ts,
+        rc_call=False,
+        account_ratio_ssi=40.0,
+        account_ratio_vsdc=35.0,
+        used_limit_warning_level1_ssi=85.0,
+        used_limit_warning_level2_ssi=90.0,
+        used_limit_warning_level3_ssi=95.0,
+        total_equity=100500.0,
+    )
+    with storage.conn() as c:
+        rows = c.execute(
+            "SELECT b.account_no, b.ts, b.account_balance, b.floating_pl, b.total_pl, "
+            "m.rc_call, m.account_ratio_ssi, m.account_ratio_vsdc "
+            "FROM derivative_balance_snapshot b "
+            "JOIN derivative_margin_snapshot m ON m.account_no = b.account_no AND m.ts = b.ts "
+            "WHERE b.ts = (SELECT max(ts) FROM derivative_balance_snapshot "
+            "WHERE account_no = b.account_no) AND b.account_no = 'DASH_ACC'"
+        ).fetchall()
+    assert rows == [("DASH_ACC", ts, 100000.0, 500.0, 500.0, False, 40.0, 35.0)]

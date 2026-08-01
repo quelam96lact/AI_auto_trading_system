@@ -2,6 +2,7 @@ symbols: [VCB, HPG, TCB]
 indices: [VNINDEX, VN30]
 bar_interval_minutes: 5
 ssi_equity_accounts: ["0434221", "0434226"]
+ssi_derivative_account: "0434228"
 holidays: ['2026-09-02']
 real_trading_enabled: false
 real_order_capital: 21459

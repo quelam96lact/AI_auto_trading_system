@@ -25,6 +25,7 @@ class Config:
     real_trading_enabled: bool
     real_order_capital: float
     real_order_account: str
+    ssi_derivative_account: str = ""
 
 
 def load_config(path: str) -> Config:
@@ -49,4 +50,5 @@ def load_config(path: str) -> Config:
         real_trading_enabled=bool(raw.get("real_trading_enabled", False)),
         real_order_capital=float(raw["real_order_capital"]),
         real_order_account=str(raw["real_order_account"]),
+        ssi_derivative_account=str(raw.get("ssi_derivative_account", "")),
     )

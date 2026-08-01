@@ -1,0 +1,122 @@
+from datetime import datetime
+
+from trading.alerts import alert
+from trading.calendar_vn import TZ
+from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
+from trading.config import Config
+from trading.storage.db import Storage
+
+
+def margin_alert_level(
+    rc_call: bool,
+    account_ratio_ssi: float,
+    account_ratio_vsdc: float,
+    level1: float,
+    level2: float,
+    level3: float,
+) -> str | None:
+    """Map margin usage to an alert level. Field names verified real against
+    the installed ssi-sdk (DerivativePPMMR), but semantics under real non-zero
+    margin usage are unverified (account has never been funded/traded — see
+    docs/superpowers/specs/2026-08-01-derivative-monitoring-design.md).
+    Compares both ssi/vsdc ratios against the ssi warning levels (single set
+    of thresholds, worse-of-two-ratios) — simplification, re-check once the
+    account carries a real position."""
+    if rc_call:
+        return "CRITICAL"
+    ratio = max(account_ratio_ssi, account_ratio_vsdc)
+    if ratio >= level3:
+        return "CRITICAL"
+    if ratio >= level2 or ratio >= level1:
+        return "WARN"
+    return None
+
+
+async def _sync_balance(
+    portfolio, account_no: str, ts: datetime, storage: Storage
+) -> None:
+    balance = await portfolio.get_derivative_balance(account_no)
+    storage.save_derivative_balance(
+        account_no=account_no,
+        ts=ts,
+        account_balance=float(balance.account_balance or 0),
+        floating_pl=float(balance.floating_pl or 0),
+        trading_pl=float(balance.trading_pl or 0),
+        total_pl=float(balance.total_pl or 0),
+        withdrawable=float(balance.withdrawable or 0),
+    )
+
+
+async def _sync_margin(
+    portfolio, account_no: str, ts: datetime, storage: Storage
+) -> None:
+    ppmmr = await portfolio.get_derivative_ppmmr(account_no)
+    rc_call = bool(ppmmr.rc_call)
+    ratio_ssi = float(ppmmr.account_ratio_ssi or 0)
+    ratio_vsdc = float(ppmmr.account_ratio_vsdc or 0)
+    level1 = float(ppmmr.used_limit_warning_level1_ssi or 0)
+    level2 = float(ppmmr.used_limit_warning_level2_ssi or 0)
+    level3 = float(ppmmr.used_limit_warning_level3_ssi or 0)
+
+    storage.save_derivative_margin(
+        account_no=account_no,
+        ts=ts,
+        rc_call=rc_call,
+        account_ratio_ssi=ratio_ssi,
+        account_ratio_vsdc=ratio_vsdc,
+        used_limit_warning_level1_ssi=level1,
+        used_limit_warning_level2_ssi=level2,
+        used_limit_warning_level3_ssi=level3,
+        total_equity=float(ppmmr.total_equity or 0),
+    )
+
+    level = margin_alert_level(rc_call, ratio_ssi, ratio_vsdc, level1, level2, level3)
+    if level is not None:
+        alert(
+            level,
+            "derivative margin usage elevated",
+            account_no=account_no,
+            rc_call=rc_call,
+            account_ratio_ssi=ratio_ssi,
+            account_ratio_vsdc=ratio_vsdc,
+        )
+
+
+async def _sync_positions(
+    portfolio, account_no: str, ts: datetime, storage: Storage
+) -> None:
+    # SDK type hint says list[AllDerivativePosition]; Phase 0 confirmed the
+    # real runtime response is a single AllDerivativePosition object.
+    all_positions = await portfolio.get_derivative_positions(account_no)
+    rows = [
+        {
+            "symbol": p.symbol,
+            "long": p.long,
+            "short": p.short,
+            "net": p.net,
+            "floating_pl": p.floating_pl,
+        }
+        for p in (all_positions.open_positions or [])
+    ]
+    storage.save_derivative_positions(account_no, ts, rows)
+
+
+async def sync_derivative_data(cfg: Config, storage: Storage) -> None:
+    if not cfg.ssi_derivative_account:
+        return
+
+    from ssi_sdk.services.portfolio import AsyncPortfolioService
+
+    auth = await ensure_authenticated(cfg, storage)
+    try:
+        client_id = decode_client_id(auth.token_manager.access_token)
+        auth.config.client_id = client_id
+        portfolio = AsyncPortfolioService(auth.rest_client, auth.config)
+        account_no = cfg.ssi_derivative_account
+        now = datetime.now(TZ)
+
+        await _sync_balance(portfolio, account_no, now, storage)
+        await _sync_margin(portfolio, account_no, now, storage)
+        await _sync_positions(portfolio, account_no, now, storage)
+    finally:
+        await auth.close()

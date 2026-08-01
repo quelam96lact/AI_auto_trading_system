@@ -80,6 +80,19 @@
           "format": "table"
         }
       ]
+    },
+    {
+      "id": 7,
+      "title": "Derivative Margin",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "targets": [
+        {
+          "rawSql": "SELECT b.account_no, b.ts, b.account_balance, b.floating_pl, b.total_pl, m.rc_call, m.account_ratio_ssi, m.account_ratio_vsdc FROM derivative_balance_snapshot b JOIN derivative_margin_snapshot m ON m.account_no = b.account_no AND m.ts = b.ts WHERE b.ts = (SELECT max(ts) FROM derivative_balance_snapshot WHERE account_no = b.account_no)",
+          "format": "table"
+        }
+      ]
     }
   ]
 }

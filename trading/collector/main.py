@@ -7,6 +7,7 @@ from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ, is_trading_time
 from trading.collector.account_sync import sync_account_data
 from trading.collector.backfill import SSIRestClient, run_backfill
+from trading.collector.derivative_sync import sync_derivative_data
 from trading.collector.feed import SSIFeed
 from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
@@ -82,6 +83,12 @@ async def run(cfg) -> None:
                     await sync_account_data(cfg, storage)
                 except Exception as e:
                     alert("WARN", "account sync failed, skipping", error=str(e)[:100])
+                try:
+                    await sync_derivative_data(cfg, storage)
+                except Exception as e:
+                    alert(
+                        "WARN", "derivative sync failed, skipping", error=str(e)[:100]
+                    )
             if (now.hour, now.minute) >= (
                 EOD_HOUR,
                 EOD_MINUTE,

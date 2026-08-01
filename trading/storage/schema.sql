@@ -103,6 +103,41 @@ CREATE TABLE IF NOT EXISTS account_position_snapshot (
   PRIMARY KEY (account_no, ts, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS derivative_balance_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  account_balance double precision NOT NULL,
+  floating_pl double precision NOT NULL,
+  trading_pl double precision NOT NULL,
+  total_pl double precision NOT NULL,
+  withdrawable double precision NOT NULL,
+  PRIMARY KEY (account_no, ts)
+);
+
+CREATE TABLE IF NOT EXISTS derivative_margin_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  rc_call boolean NOT NULL,
+  account_ratio_ssi double precision NOT NULL,
+  account_ratio_vsdc double precision NOT NULL,
+  used_limit_warning_level1_ssi double precision NOT NULL,
+  used_limit_warning_level2_ssi double precision NOT NULL,
+  used_limit_warning_level3_ssi double precision NOT NULL,
+  total_equity double precision NOT NULL,
+  PRIMARY KEY (account_no, ts)
+);
+
+CREATE TABLE IF NOT EXISTS derivative_position_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  symbol text NOT NULL,
+  long integer NOT NULL,
+  short integer NOT NULL,
+  net integer NOT NULL,
+  floating_pl double precision NOT NULL,
+  PRIMARY KEY (account_no, ts, symbol)
+);
+
 CREATE TABLE IF NOT EXISTS pending_real_orders (
   id bigserial PRIMARY KEY,
   created_at timestamptz NOT NULL DEFAULT now(),
