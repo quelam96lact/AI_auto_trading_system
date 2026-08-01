@@ -232,27 +232,33 @@ class SSIRestClient:
         return _ohlc_rows_to_bars(rows)
 
     async def _paged_intraday(self, data, symbol: str, frm: date, to: date):
-        # Response KHÔNG expose totalRecord (khác SDK cũ) — heuristic: nếu
-        # trang trả đủ `size` dòng thì có thể còn trang sau, gọi tiếp;
-        # nếu trả ít hơn `size` thì chắc chắn hết.
+        # `page` KHÔNG phải OFFSET cursor chuẩn (xác nhận thật, commit
+        # 95f563f): gọi lại cùng khoảng frm..to với page tăng dần chủ yếu trả
+        # lặp lại cửa sổ dữ liệu mới nhất thay vì tiến về dữ liệu cũ hơn, làm
+        # mất dữ liệu cũ nhất một cách âm thầm. Thay bằng chunk theo ngày (7
+        # ngày/chunk, luôn dưới `size`) + dedupe theo trading_date — cùng
+        # pattern đã chứng minh đúng ở spike_ssi_sdk_derivative_ohlc_stream.py.
         size = 1000
-        all_rows, page = [], 1
-        while True:
+        by_ts: dict[str, object] = {}
+        chunk_start = frm
+        while chunk_start <= to:
+            chunk_end = min(chunk_start + timedelta(days=6), to)
             rows = await data.market_data.get_ohlc_5minute_historical(
                 symbol,
-                self._fmt_intraday(frm, end_of_day=False),
-                self._fmt_intraday(to, end_of_day=True),
-                page=page,
+                self._fmt_intraday(chunk_start, end_of_day=False),
+                self._fmt_intraday(chunk_end, end_of_day=True),
+                page=1,
                 size=size,
             )
-            all_rows.extend(rows)
-            if len(rows) < size:
-                break
-            page += 1
-        return all_rows
+            for r in rows:
+                by_ts[r.trading_date] = r
+            chunk_start = chunk_end + timedelta(days=1)
+        return list(by_ts.values())
 
 
-async def run_backfill(storage, client, symbols: list[str], today: date) -> dict[str, int]:
+async def run_backfill(
+    storage, client, symbols: list[str], today: date
+) -> dict[str, int]:
     counts: dict[str, int] = {}
     try:
         for sym in symbols:
