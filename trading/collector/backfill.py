@@ -259,9 +259,11 @@ class SSIRestClient:
 async def run_backfill(
     storage, client, symbols: list[str], today: date
 ) -> dict[str, int]:
+    from trading.alerts import alert
+
     counts: dict[str, int] = {}
-    try:
-        for sym in symbols:
+    for sym in symbols:
+        try:
             last = storage.last_bar_ts(sym)
             frm = last.astimezone(TZ).date() if last else today - timedelta(days=7)
             intraday = [
@@ -272,10 +274,13 @@ async def run_backfill(
             storage.write_bars(intraday)
             storage.write_daily(await client.daily_ohlc(sym, frm, today))
             counts[sym] = len(intraday)
-    except Exception as e:
-        from trading.alerts import alert
-
-        alert("WARN", "backfill failed, skipping", error=str(e)[:100])
+        except Exception as e:
+            alert(
+                "WARN",
+                "backfill failed for symbol, skipping",
+                symbol=sym,
+                error=str(e)[:100],
+            )
     return counts
 
 

@@ -46,6 +46,45 @@ async def test_run_backfill_writes_missing_bars():
     assert counts["VCB"] == 2 and len(st.bars) == 2 and len(st.daily) == 1
 
 
+class FailingDailyClient:
+    """Mô phỏng đúng lỗi thật quan sát 2026-08-07: get_ohlc_5minute_historical
+    (intraday) trả 200 OK bình thường, nhưng get_ohlc_1day_historical (daily)
+    trả 500 cho 1 mã cụ thể."""
+
+    def __init__(self, fail_symbol: str):
+        self.fail_symbol = fail_symbol
+        self.intraday_calls: list[str] = []
+
+    async def daily_ohlc(self, symbol, frm, to):
+        if symbol == self.fail_symbol:
+            raise RuntimeError("API error: 500")
+        return [Bar(symbol, datetime(2026, 7, 14, tzinfo=TZ), 1, 2, 1, 2, 10)]
+
+    async def intraday_ohlc(self, symbol, frm, to):
+        self.intraday_calls.append(symbol)
+        return [Bar(symbol, datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 1, 2, 1, 2, 10)]
+
+
+async def test_run_backfill_continues_after_one_symbol_fails():
+    st = FakeStorage(last=None)
+    client = FailingDailyClient(fail_symbol="VCB")
+
+    counts = await run_backfill(
+        st, client, ["VCB", "HPG", "TCB"], today=date(2026, 8, 7)
+    )
+
+    # Bug thật 2026-08-07: 1 try/except bọc ngoài TOÀN BỘ vòng lặp khiến VCB
+    # lỗi giữa chừng làm HPG/TCB không bao giờ được gọi tới - production chỉ
+    # backfill được VCB (nhờ intraday_ohlc chạy trước dòng lỗi), HPG/TCB có 0 bar.
+    assert client.intraday_calls == [
+        "VCB",
+        "HPG",
+        "TCB",
+    ], "phai goi intraday_ohlc cho CA 3 ma, khong duoc dung lai o VCB"
+    assert counts.get("HPG") == 1
+    assert counts.get("TCB") == 1
+
+
 def test_parse_intraday_fixture():
     raw = json.loads((FIXTURES / "ssi_intraday_ohlc.json").read_text(encoding="utf-8"))
     bars = parse_intraday_response(raw)
