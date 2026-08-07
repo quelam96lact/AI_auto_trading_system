@@ -30,7 +30,9 @@ class SSIFeedLegacy:
         self._sdk_cfg = _SdkCfg()
         self._client_cls = MarketDataClient
         self._stream_cls = MarketDataStream
-        self._make_stream = lambda: MarketDataStream(self._sdk_cfg, MarketDataClient(self._sdk_cfg))
+        self._make_stream = lambda: MarketDataStream(
+            self._sdk_cfg, MarketDataClient(self._sdk_cfg)
+        )
         self._common(on_raw, cfg.symbols, backoff_base=1.0)
 
     def _init_for_test(self, stream_cls, on_raw, symbols, backoff_base):
@@ -65,12 +67,16 @@ class SSIFeedLegacy:
                 stream = self._make_stream()
                 prev_close = getattr(stream, "_on_close", None)
                 if prev_close is not None or hasattr(stream, "_on_close"):
+
                     def _closed(prev=prev_close, dead=dead):
                         dead.set()
                         if callable(prev):
                             prev()
+
                     stream._on_close = _closed
-                stream.start(self.on_raw, lambda e: dead.set(), build_channel(self.symbols))
+                stream.start(
+                    self.on_raw, lambda e: dead.set(), build_channel(self.symbols)
+                )
             except Exception:
                 dead.set()
             if self._stop.is_set():
@@ -143,8 +149,12 @@ class SSIFeed:
                 await self._stream.streaming.subscribe_symbol_ohlcv(
                     self._cfg.symbols, Timeframe.MINUTE_5
                 )
-                # TODO index streaming: decide whether subscribe_symbol_trade(cfg.indices)
-                # is valid for VNINDEX/VN30 before mapping TradeMessage to IndexValue.
+                # Index streaming (VNINDEX/VN30): điều tra thật 2026-08-07 kết luận
+                # KHÔNG có kênh WS/REST nào trong ssi-sdk trả giá trị index real-time
+                # (subscribe_index/subscribe_symbol -> rỗng; subscribe_symbol_ohlcv trên
+                # mã index -> server hiểu nhầm thành board, trả nến cổ phiếu thành viên;
+                # get_index_summary REST -> chỉ EOD hôm trước). Xem PLAN_INDEX_STREAMING.md.
+                # KHÔNG map IndexValue cho tới khi có nguồn dữ liệu thật khác.
                 connected_at = asyncio.get_event_loop().time()
                 await self._stream.streaming.wait()
             except Exception as e:
@@ -156,7 +166,9 @@ class SSIFeed:
                 self._stream = None
             if self._stop.is_set():
                 return
-            alive = (asyncio.get_event_loop().time() - connected_at) if connected_at else 0
+            alive = (
+                (asyncio.get_event_loop().time() - connected_at) if connected_at else 0
+            )
             backoff = self._backoff_base if alive >= 60.0 else min(backoff * 2, 60.0)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=backoff)

@@ -61,8 +61,9 @@ async def run(cfg) -> None:
         if bar is not None:
             wd.beat()
             asyncio.create_task(persist([bar]))
-        # TODO index streaming: if TradeMessage is proven valid for indices,
-        # handle it separately here and write IndexValue rows.
+        # Index streaming (VNINDEX/VN30): không có nguồn dữ liệu real-time nào
+        # trong ssi-sdk hiện tại — xem PLAN_INDEX_STREAMING.md (điều tra thật
+        # 2026-08-07). Không viết IndexValue cho tới khi có nguồn dữ liệu khác.
 
     feed = SSIFeed(cfg, storage, on_message=on_stream_message)
     feed.start()
