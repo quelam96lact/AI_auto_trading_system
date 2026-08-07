@@ -5,6 +5,7 @@ from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.trailing_stop import TrailingStopManager
 
 
 @dataclass
@@ -22,6 +23,7 @@ def run_backtest(
     bars: list[Bar],
     strategy: SmaCrossStrategy,
     risk: RiskManager,
+    trailing_stop: TrailingStopManager,
     capital: float,
 ) -> BacktestReport:
     broker = PaperBroker(capital)
@@ -30,11 +32,26 @@ def run_backtest(
     equity_curve: list[float] = [capital]
 
     for bar in bars:
-        all_fills.extend(broker.on_bar(bar))
+        fills = broker.on_bar(bar)
+        all_fills.extend(fills)
         marks[bar.symbol] = bar.close
+        for f in fills:
+            if f.side == "BUY":
+                trailing_stop.on_position_opened(f.symbol, f.price)
+            else:
+                trailing_stop.on_position_closed(f.symbol)
 
         signal = strategy.on_bar(bar, broker)
-        if signal is not None:
+
+        stop_price = None
+        if broker.position_qty(bar.symbol) > 0:
+            stop_price = trailing_stop.check(bar, strategy.last_atr(bar.symbol))
+
+        if stop_price is not None:
+            forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
+            trailing_stop.on_position_closed(bar.symbol)
+            all_fills.append(forced)
+        elif signal is not None:
             daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
             sized = risk.approve_sized(
                 signal,
@@ -111,7 +128,8 @@ def main() -> None:
 
     strategy = STRATEGIES[args.strategy]()
     risk = RiskManager(capital=args.capital)
-    report = run_backtest(bars, strategy, risk, args.capital)
+    trailing_stop = TrailingStopManager()
+    report = run_backtest(bars, strategy, risk, trailing_stop, args.capital)
 
     print(f"Bars replayed: {len(bars)}")
     print(f"Trades: {report.trades}  Win rate: {report.win_rate:.1%}")

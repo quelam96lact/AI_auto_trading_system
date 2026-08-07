@@ -15,6 +15,7 @@ from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.trailing_stop import TrailingStopManager
 
 CAPITAL = 100_000_000.0
 
@@ -41,6 +42,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
 
     strategy = SmaCrossStrategy()
     risk = RiskManager(capital=CAPITAL)
+    trailing_stop = TrailingStopManager()
     real_risk = RiskManager(capital=cfg.real_order_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     marks: dict[str, float] = {}
@@ -95,13 +97,32 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
             bar = bar_from_payload(json.loads(msg.data))
             was_halted = risk.halted_date
             was_real_halted = real_risk.halted_date
-            fills = process_bar(bar, broker, strategy, risk, marks, on_crossover=on_real_crossover)
+            fills = process_bar(
+                bar,
+                broker,
+                strategy,
+                risk,
+                trailing_stop,
+                marks,
+                on_crossover=on_real_crossover,
+            )
             persist_fills(fills)
             if risk.halted_date is not None and risk.halted_date != was_halted:
-                alert("CRITICAL", "risk halt: max daily loss reached", date=str(risk.halted_date))
-            if real_risk.halted_date is not None and real_risk.halted_date != was_real_halted:
+                alert(
+                    "CRITICAL",
+                    "risk halt: max daily loss reached",
+                    date=str(risk.halted_date),
+                )
+            if (
+                real_risk.halted_date is not None
+                and real_risk.halted_date != was_real_halted
+            ):
                 storage.save_real_risk_halt(real_risk.halted_date)
-                alert("CRITICAL", "REAL risk halt: max daily loss reached", date=str(real_risk.halted_date))
+                alert(
+                    "CRITICAL",
+                    "REAL risk halt: max daily loss reached",
+                    date=str(real_risk.halted_date),
+                )
             await msg.ack()
             expire_stale_real_orders()
             storage.beat("engine")

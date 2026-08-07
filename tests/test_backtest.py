@@ -5,6 +5,7 @@ from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.risk import RiskManager
 from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.trailing_stop import TrailingStopManager
 
 CAP = 100_000_000
 
@@ -22,11 +23,13 @@ def test_deterministic_same_input_same_output():
     bars = make_bars(prices)
     strategy = SmaCrossStrategy(fast=10, slow=20, qty=100)
     risk = RiskManager(capital=CAP)
-    r1 = run_backtest(bars, strategy, risk, CAP)
+    trailing_stop = TrailingStopManager()
+    r1 = run_backtest(bars, strategy, risk, trailing_stop, CAP)
 
     strategy2 = SmaCrossStrategy(fast=10, slow=20, qty=100)
     risk2 = RiskManager(capital=CAP)
-    r2 = run_backtest(bars, strategy2, risk2, CAP)
+    trailing_stop2 = TrailingStopManager()
+    r2 = run_backtest(bars, strategy2, risk2, trailing_stop2, CAP)
 
     assert r1 == r2
 
@@ -44,6 +47,7 @@ def test_report_has_at_least_one_round_trip_trade():
         # nguong o day chi de test nay khong bi chan boi 1 tinh huong tong
         # hop bien do lon bat thuong - KHONG doi default cua RiskManager.
         RiskManager(capital=CAP, max_daily_loss_pct=0.5),
+        TrailingStopManager(),
         CAP,
     )
     assert r.trades >= 1
@@ -57,6 +61,7 @@ def test_ending_cash_reflects_fees_when_no_trades():
         bars,
         SmaCrossStrategy(fast=10, slow=20, qty=100),
         RiskManager(capital=CAP),
+        TrailingStopManager(),
         CAP,
     )
     assert r.ending_cash == CAP
