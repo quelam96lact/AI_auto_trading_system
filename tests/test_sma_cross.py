@@ -110,3 +110,17 @@ def test_crossover_suppressed_during_atr_warmup():
     ]
     assert "bull" not in crossovers
     assert "bear" not in crossovers
+
+
+def test_compute_crossover_does_not_crash_on_zero_close():
+    # A degenerate/malformed bar with close=0 lands exactly on a real bear
+    # crossover (fast MA drops to 0, below slow MA) - must not crash the
+    # ATR% check (atr / bar.close). A single bad bar must not be able to
+    # take down the whole engine loop, which has no exception handling
+    # around process_bar().
+    s = SmaCrossStrategy(fast=1, slow=3, atr_period=1, atr_pct_threshold=0.005)
+    prices = [10, 10, 10, 20, 0]
+    crossovers = [s.compute_crossover(bar_at(i, p)) for i, p in enumerate(prices)]
+    # must not raise ZeroDivisionError, and a close<=0 bar can't validly pass
+    # the ATR% check either way, so it's suppressed rather than trusted.
+    assert crossovers[-1] is None

@@ -36,9 +36,10 @@ class SmaCrossStrategy:
         với PaperBroker.
 
         Lọc theo ATR%: crossover bị ép về None (cả bull lẫn bear) nếu ATR chưa đủ
-        dữ liệu (warm-up) hoặc atr/close < atr_pct_threshold — tránh trade lúc thị
-        trường đi ngang. atr.update() luôn gọi mỗi bar, kể cả lúc MA đang warm-up,
-        để state ATR tích lũy độc lập với MA.
+        dữ liệu (warm-up), close<=0 (bar dị dạng, không tính được tỷ lệ % hợp lệ —
+        chặn an toàn thay vì crash chia cho 0), hoặc atr/close < atr_pct_threshold
+        — tránh trade lúc thị trường đi ngang. atr.update() luôn gọi mỗi bar, kể cả
+        lúc MA đang warm-up, để state ATR tích lũy độc lập với MA.
         """
         atr = self._atr.update(bar)
 
@@ -65,7 +66,7 @@ class SmaCrossStrategy:
             crossover = "bear"
 
         if crossover is not None and (
-            atr is None or atr / bar.close < self.atr_pct_threshold
+            atr is None or bar.close <= 0 or atr / bar.close < self.atr_pct_threshold
         ):
             crossover = None
 
