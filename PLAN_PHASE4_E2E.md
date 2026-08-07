@@ -139,6 +139,26 @@ docker compose logs collector | Select-String -Pattern "error|Error" | Measure-O
 
 ✅ **Toàn bộ runbook đã sẵn sàng** — không còn mảnh nào thiếu. `scripts/load_token_to_db.py` đã viết + smoke test (syntax + import hợp lệ), không cần credentials thật để viết, chỉ cần khi bạn chạy thật.
 
+## ⚠️ Lần thử 2026-08-07 (15 phút cuối phiên chiều) — CHẶN BỞI LỖI MẠNG DOCKER, chưa lấy được bar nào
+
+Thử smoke test rút gọn (không phải full runbook — chỉ còn ~30 phút cuối
+phiên). Container `collector` build/start thành công, nhưng **mọi request ra
+ngoài đều lỗi `[Errno -3] Temporary failure in name resolution`** — kể cả
+`socket.gethostbyname('google.com')` chạy trực tiếp trong container (test
+thủ công xác nhận, không phải suy đoán). Đã có sẵn `dns: [8.8.8.8, 8.8.4.4]`
+trong `docker-compose.yml`'s `collector` service nhưng không giải quyết được
+— đây là lỗi Docker Desktop (WSL2 backend trên Windows) không forward được
+DNS ra ngoài, không phải lỗi code/config trong repo này.
+
+**Trước lần thử tiếp theo, PHẢI xác nhận DNS container hoạt động trước:**
+```powershell
+docker run --rm alpine nslookup fc-tradeapi.ssi.com.vn
+```
+Nếu lỗi → restart Docker Desktop hoàn toàn (không chỉ container), hoặc
+`wsl --shutdown` rồi mở lại Docker Desktop, trước khi chạy lại runbook này.
+Đừng lặp lại việc mất thời gian giữa giờ giao dịch để debug lỗi này lần nữa
+— kiểm tra DNS TRƯỚC 08:55, không phải sau khi start collector.
+
 **Thứ tự chạy Bước 0 (làm sát giờ, không làm từ tối hôm trước — xem lý do ở mục "Chuẩn bị trước 08:55"):**
 ```powershell
 docker compose up -d postgres
