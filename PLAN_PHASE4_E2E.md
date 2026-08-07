@@ -145,19 +145,26 @@ Thử smoke test rút gọn (không phải full runbook — chỉ còn ~30 phút
 phiên). Container `collector` build/start thành công, nhưng **mọi request ra
 ngoài đều lỗi `[Errno -3] Temporary failure in name resolution`** — kể cả
 `socket.gethostbyname('google.com')` chạy trực tiếp trong container (test
-thủ công xác nhận, không phải suy đoán). Đã có sẵn `dns: [8.8.8.8, 8.8.4.4]`
-trong `docker-compose.yml`'s `collector` service nhưng không giải quyết được
-— đây là lỗi Docker Desktop (WSL2 backend trên Windows) không forward được
-DNS ra ngoài, không phải lỗi code/config trong repo này.
+thủ công xác nhận, không phải suy đoán). Ban đầu nghi là lỗi Docker Desktop
+(WSL2 backend) không forward được DNS ra ngoài — **sau đó điều tra sâu hơn
+cùng ngày xác định sai**: root cause thật là dòng `dns: [8.8.8.8, 8.8.4.4]`
+hardcode trong `docker-compose.yml`'s `collector` service. Mạng máy này chặn
+UDP 53 đi thẳng ra ngoài tới DNS server công cộng, nhưng resolver mặc định
+của Docker (127.0.0.11, proxy qua DNS thật của host) hoạt động bình thường.
+Xác nhận qua so sánh trực tiếp: `docker run --rm alpine nslookup ...` (không
+override) chạy OK, còn `docker run --rm --dns=8.8.8.8 --dns=8.8.4.4 alpine
+nslookup ...` timeout y hệt lỗi collector gặp phải. **Đã sửa bằng cách xoá
+hẳn dòng `dns:` override (commit `dd538b7`)** — không cần restart Docker
+Desktop hay `wsl --shutdown`. Sau fix: token refresh, REST backfill,
+WebSocket connect đều thành công thật (cùng ngày 2026-08-07, xem
+`docs/superpowers/... golive-prep-status`).
 
-**Trước lần thử tiếp theo, PHẢI xác nhận DNS container hoạt động trước:**
+**Trước lần thử tiếp theo, chỉ cần xác nhận collector build từ code đã có fix
+này** (không còn dòng `dns:` trong `docker-compose.yml`). Nếu vẫn gặp lỗi DNS
+sau fix, mới cần nghi ngờ lại Docker Desktop/WSL2 và thử:
 ```powershell
 docker run --rm alpine nslookup fc-tradeapi.ssi.com.vn
 ```
-Nếu lỗi → restart Docker Desktop hoàn toàn (không chỉ container), hoặc
-`wsl --shutdown` rồi mở lại Docker Desktop, trước khi chạy lại runbook này.
-Đừng lặp lại việc mất thời gian giữa giờ giao dịch để debug lỗi này lần nữa
-— kiểm tra DNS TRƯỚC 08:55, không phải sau khi start collector.
 
 **Thứ tự chạy Bước 0 (làm sát giờ, không làm từ tối hôm trước — xem lý do ở mục "Chuẩn bị trước 08:55"):**
 ```powershell

@@ -85,6 +85,62 @@ async def test_run_backfill_continues_after_one_symbol_fails():
     assert counts.get("TCB") == 1
 
 
+class FakeMarketDataDaily:
+    """Bat params thuc te truyen vao get_ohlc_1day_historical de kiem tra format."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.market_data = self
+
+    async def get_ohlc_1day_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        self.calls.append((symbol, from_str, to_str))
+        return []
+
+
+async def test_daily_ohlc_includes_time_component_in_date_params():
+    # Bug that xac nhan 2026-08-07 (test truc tiep len SSI API bang token
+    # dang song): daily OHLC cung yeu cau from/to co "HH:MM:SS" giong het
+    # intraday (_fmt_intraday) - thieu gio bi server tra "400213 Invalid
+    # Date/Timestamp" (SDK boc thanh HTTP 500). _fmt_day() cu chi format
+    # "%Y/%m/%d" khong co gio -> tat ca 3 ma (VCB/HPG/TCB) deu 500 tren daily,
+    # khong phai loi rieng cua VCB nhu tuong ban dau (bug loop-abort cu che mat).
+    client = SSIRestClient.__new__(SSIRestClient)  # khong can cfg/storage that
+    fake = FakeMarketDataDaily()
+    client._data = fake
+
+    await client.daily_ohlc("VCB", date(2026, 7, 31), date(2026, 8, 7))
+
+    _, frm_str, to_str = fake.calls[0]
+    assert frm_str == "2026/07/31 00:00:00", "thieu gio -> SSI tra loi 400213"
+    assert to_str == "2026/08/07 23:59:59", "thieu gio -> SSI tra loi 400213"
+
+
+class _DailyRow:
+    """Gia lap OHLCData that SSI tra ve cho timeFrame=1d: tradingDate KHONG
+    kem gio (khac intraday), xac nhan that 2026-08-07 qua call truc tiep len
+    API: {"symbol":"VCB","tradingDate":"2026/08/07","open":"58700",...}."""
+
+    def __init__(self):
+        self.symbol = "VCB"
+        self.trading_date = "2026/08/07"
+        self.open_price = "58700"
+        self.high_price = "60800"
+        self.low_price = "58700"
+        self.close_price = "59700"
+        self.volume = "6522200"
+
+
+def test_ohlc_rows_to_bars_handles_daily_trading_date_without_time():
+    # Bug that xac nhan 2026-08-07: sau khi fix loi 400213 o tren, daily OHLC
+    # tra 200 OK nhung tradingDate chi la "YYYY/MM/DD" (khong co gio) trong khi
+    # _parse_trading_date cu chi chap nhan "YYYY/MM/DD HH:mm:ss" cua intraday ->
+    # crash "time data '2026/08/07' does not match format '%Y/%m/%d %H:%M:%S'".
+    bars = _ohlc_rows_to_bars([_DailyRow()])
+    assert bars[0].ts == datetime(2026, 8, 7, tzinfo=TZ)
+
+
 def test_parse_intraday_fixture():
     raw = json.loads((FIXTURES / "ssi_intraday_ohlc.json").read_text(encoding="utf-8"))
     bars = parse_intraday_response(raw)

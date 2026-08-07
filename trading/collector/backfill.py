@@ -155,9 +155,14 @@ class SSIRestClientLegacy:
 
 
 def _parse_trading_date(s: str) -> datetime:
-    # Xác nhận thật 2026-07-25: "YYYY/MM/DD HH:mm:ss" (xem
-    # tests/fixtures/ssi_sdk_ohlc_5m_vcb.json), gán TZ VN.
-    dt = datetime.strptime(s, "%Y/%m/%d %H:%M:%S")
+    # Intraday: "YYYY/MM/DD HH:mm:ss" (xác nhận thật 2026-07-25, xem
+    # tests/fixtures/ssi_sdk_ohlc_5m_vcb.json). Daily: chỉ "YYYY/MM/DD",
+    # KHÔNG có giờ (xác nhận thật 2026-08-07, gọi trực tiếp API timeFrame=1d)
+    # -> gán 00:00 giờ VN, giống quy ước daily cũ ở parse_daily_response.
+    try:
+        dt = datetime.strptime(s, "%Y/%m/%d %H:%M:%S")
+    except ValueError:
+        dt = datetime.strptime(s, "%Y/%m/%d")
     return dt.replace(tzinfo=TZ)
 
 
@@ -209,20 +214,21 @@ class SSIRestClient:
             await self._auth.close()
 
     @staticmethod
-    def _fmt_day(d: date) -> str:
-        return d.strftime("%Y/%m/%d")
-
-    @staticmethod
     def _fmt_intraday(d: date, end_of_day: bool) -> str:
-        # intraday BẮT BUỘC có giờ (đã xác nhận thật — thiếu giờ bị lỗi
-        # 400213 "Invalid Date/Timestamp")
+        # intraday/daily BẮT BUỘC có giờ (đã xác nhận thật — thiếu giờ bị lỗi
+        # 400213 "Invalid Date/Timestamp", SDK bọc thành HTTP 500). Xác nhận
+        # thật 2026-08-07: daily_ohlc cũng bị lỗi y hệt vì trước đó dùng
+        # _fmt_day() (chỉ "%Y/%m/%d", thiếu giờ) — không phải lỗi riêng của
+        # VCB như tưởng ban đầu, cả 3 mã (VCB/HPG/TCB) đều 500 trên daily.
         t = "23:59:59" if end_of_day else "00:00:00"
         return f"{d:%Y/%m/%d} {t}"
 
     async def daily_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
         data = await self._ensure_data()
         rows = await data.market_data.get_ohlc_1day_historical(  # tên xác nhận Task 1.2
-            symbol, self._fmt_day(frm), self._fmt_day(to)
+            symbol,
+            self._fmt_intraday(frm, end_of_day=False),
+            self._fmt_intraday(to, end_of_day=True),
         )
         return _ohlc_rows_to_bars(rows)
 
