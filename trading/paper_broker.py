@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from trading.broker import Fill, Position
 from trading.models import Bar
 from trading.strategy import Signal
@@ -30,6 +32,22 @@ class PaperBroker:
 
     def submit(self, signal: Signal) -> None:
         self._pending[signal.symbol] = signal
+
+    def force_exit(self, symbol: str, price: float, ts: datetime) -> Fill:
+        """Đóng TOÀN BỘ vị thế đang giữ ngay lập tức tại `price` — dùng bởi
+        trailing stop. KHÔNG qua hàng đợi self._pending như submit()/on_bar()
+        (không có độ trễ 1 bar). Giả định caller đã xác nhận vị thế đang mở
+        (qty > 0) trước khi gọi, giống cách on_bar()'s SELL branch giả định."""
+        pos = self.positions[symbol]
+        qty = pos.qty
+        gross = price * qty
+        fee = gross * self.fee_rate + gross * self.sell_tax_rate
+        pnl = (price - pos.avg_price) * qty - fee
+        self.realized_pnl += pnl
+        self.cash += gross - fee
+        pos.qty = 0
+        pos.avg_price = 0.0
+        return Fill(symbol, "SELL", qty, price, fee, ts, pnl)
 
     def on_bar(self, bar: Bar) -> list[Fill]:
         signal = self._pending.pop(bar.symbol, None)

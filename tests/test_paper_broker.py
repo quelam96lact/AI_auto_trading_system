@@ -52,6 +52,25 @@ def test_unrealized_pnl_uses_marks():
     assert abs(b.unrealized_pnl({"VCB": 12.0}) - expected) < 1e-6
 
 
+def test_force_exit_closes_full_position_and_computes_pnl():
+    b = PaperBroker(capital=100_000_000)
+    b.submit(Signal("VCB", "BUY", 100))
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0))
+    entry_price = b.positions["VCB"].avg_price
+
+    fill = b.force_exit("VCB", price=9.0, ts=datetime(2026, 7, 15, 9, 10, tzinfo=TZ))
+
+    expected_fee = 9.0 * 100 * (b.fee_rate + b.sell_tax_rate)
+    expected_pnl = (9.0 - entry_price) * 100 - expected_fee
+    assert fill.symbol == "VCB" and fill.side == "SELL" and fill.qty == 100
+    assert abs(fill.price - 9.0) < 1e-9
+    assert abs(fill.fee - expected_fee) < 1e-9
+    assert fill.pnl is not None and abs(fill.pnl - expected_pnl) < 1e-6
+    assert b.position_qty("VCB") == 0
+    assert b.positions["VCB"].avg_price == 0.0
+    assert b.realized_pnl == fill.pnl
+
+
 def test_restore_resumes_cash_positions_and_realized_pnl():
     positions = {"VCB": Position("VCB", 100, 10.0)}
     b = PaperBroker.restore(
