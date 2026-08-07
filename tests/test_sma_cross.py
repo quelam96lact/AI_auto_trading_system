@@ -124,3 +124,20 @@ def test_compute_crossover_does_not_crash_on_zero_close():
     # must not raise ZeroDivisionError, and a close<=0 bar can't validly pass
     # the ATR% check either way, so it's suppressed rather than trusted.
     assert crossovers[-1] is None
+
+
+def test_last_atr_returns_value_computed_by_compute_crossover():
+    strategy = SmaCrossStrategy(fast=2, slow=4, atr_period=1, atr_pct_threshold=0.0)
+    assert strategy.last_atr("VCB") is None  # chua co bar nao
+
+    bar1 = bar_at(0, 10)
+    strategy.compute_crossover(bar1)
+    assert (
+        strategy.last_atr("VCB") == 0.0
+    )  # bar dau, TR = high-low = 0 (bar_at dung open=high=low=close)
+
+    bar2 = bar_at(1, 20)
+    strategy.compute_crossover(bar2)
+    assert (
+        strategy.last_atr("VCB") == 10.0
+    )  # TR = |20-10| = 10, atr_period=1 -> atr = TR

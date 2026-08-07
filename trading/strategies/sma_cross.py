@@ -24,6 +24,7 @@ class SmaCrossStrategy:
         self._closes: dict[str, deque] = {}
         self._prev_above: dict[str, bool | None] = {}
         self._last_crossover: dict[str, Crossover | None] = {}
+        self._last_atr: dict[str, float | None] = {}
         self._atr = AtrCalculator(period=atr_period)
 
     def compute_crossover(self, bar: Bar) -> Crossover | None:
@@ -42,6 +43,7 @@ class SmaCrossStrategy:
         lúc MA đang warm-up, để state ATR tích lũy độc lập với MA.
         """
         atr = self._atr.update(bar)
+        self._last_atr[bar.symbol] = atr
 
         closes = self._closes.setdefault(bar.symbol, deque(maxlen=self.slow))
         closes.append(bar.close)
@@ -76,6 +78,10 @@ class SmaCrossStrategy:
     def last_crossover(self, symbol: str) -> Crossover | None:
         """Crossover vừa tính ở lần compute_crossover() gần nhất cho symbol này."""
         return self._last_crossover.get(symbol)
+
+    def last_atr(self, symbol: str) -> float | None:
+        """ATR vừa tính ở lần compute_crossover() gần nhất cho symbol này."""
+        return self._last_atr.get(symbol)
 
     def on_bar(self, bar: Bar, context: Context) -> Signal | None:
         crossover = self.compute_crossover(bar)
