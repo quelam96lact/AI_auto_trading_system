@@ -54,9 +54,6 @@ services:
       SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
