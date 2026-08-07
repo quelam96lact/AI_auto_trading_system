@@ -4,7 +4,7 @@ from trading.broker import Fill
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
-from trading.strategy import Strategy
+from trading.strategies.sma_cross import SmaCrossStrategy
 
 
 @dataclass
@@ -20,7 +20,7 @@ class BacktestReport:
 
 def run_backtest(
     bars: list[Bar],
-    strategy: Strategy,
+    strategy: SmaCrossStrategy,
     risk: RiskManager,
     capital: float,
 ) -> BacktestReport:
@@ -36,8 +36,16 @@ def run_backtest(
         signal = strategy.on_bar(bar, broker)
         if signal is not None:
             daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
-            if risk.approve(signal, bar.close, broker.positions, daily_pnl, bar.ts.date()):
-                broker.submit(signal)
+            sized = risk.approve_sized(
+                signal,
+                bar.close,
+                strategy.last_atr(bar.symbol),
+                broker.positions,
+                daily_pnl,
+                bar.ts.date(),
+            )
+            if sized is not None:
+                broker.submit(sized)
 
         equity = broker.cash + sum(
             p.qty * marks.get(s, p.avg_price) for s, p in broker.positions.items()
@@ -72,7 +80,6 @@ from trading.calendar_vn import TZ
 from trading.config import load_config
 from trading.resample import resample_bars
 from trading.storage.db import Storage
-from trading.strategies.sma_cross import SmaCrossStrategy
 
 STRATEGIES = {"sma_cross": lambda: SmaCrossStrategy()}
 _TF_MINUTES = {"15m": 15, "1h": 60}
@@ -97,7 +104,9 @@ def main() -> None:
     bars: list[Bar] = []
     for sym in args.symbols.split(","):
         rows = storage.read_bars(sym, frm, to)
-        bars.extend(rows if args.tf == "5m" else resample_bars(rows, _TF_MINUTES[args.tf]))
+        bars.extend(
+            rows if args.tf == "5m" else resample_bars(rows, _TF_MINUTES[args.tf])
+        )
     bars.sort(key=lambda b: (b.ts, b.symbol))
 
     strategy = STRATEGIES[args.strategy]()
@@ -106,8 +115,12 @@ def main() -> None:
 
     print(f"Bars replayed: {len(bars)}")
     print(f"Trades: {report.trades}  Win rate: {report.win_rate:.1%}")
-    print(f"Realized PnL: {report.realized_pnl:,.0f}  Unrealized PnL: {report.unrealized_pnl:,.0f}")
-    print(f"Ending cash: {report.ending_cash:,.0f}  Max drawdown: {report.max_drawdown:.1%}")
+    print(
+        f"Realized PnL: {report.realized_pnl:,.0f}  Unrealized PnL: {report.unrealized_pnl:,.0f}"
+    )
+    print(
+        f"Ending cash: {report.ending_cash:,.0f}  Max drawdown: {report.max_drawdown:.1%}"
+    )
 
 
 if __name__ == "__main__":

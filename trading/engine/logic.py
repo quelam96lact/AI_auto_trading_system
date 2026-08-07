@@ -27,8 +27,16 @@ def process_bar(
 
     if signal is not None:
         daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
-        if risk.approve(signal, bar.close, broker.positions, daily_pnl, bar.ts.date()):
-            broker.submit(signal)
+        sized = risk.approve_sized(
+            signal,
+            bar.close,
+            strategy.last_atr(bar.symbol),
+            broker.positions,
+            daily_pnl,
+            bar.ts.date(),
+        )
+        if sized is not None:
+            broker.submit(sized)
 
     return fills
 

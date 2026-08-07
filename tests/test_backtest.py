@@ -37,7 +37,13 @@ def test_report_has_at_least_one_round_trip_trade():
     r = run_backtest(
         bars,
         SmaCrossStrategy(fast=10, slow=20, qty=100),
-        RiskManager(capital=CAP),
+        # max_daily_loss_pct mac dinh (3%) khong con phu hop sau khi BUY qty
+        # duoc ATR sizing quyet dinh (lon hon nhieu so voi fixed-100 truoc
+        # day) - swing gia 20->10 tren qty lon trong test nay tao unrealized
+        # loss ~7% von, se bi halt truoc khi kip SELL round-trip. Noi len
+        # nguong o day chi de test nay khong bi chan boi 1 tinh huong tong
+        # hop bien do lon bat thuong - KHONG doi default cua RiskManager.
+        RiskManager(capital=CAP, max_daily_loss_pct=0.5),
         CAP,
     )
     assert r.trades >= 1
