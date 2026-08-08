@@ -1,86 +1,86 @@
-# Spec: Derivative (VN30F1M) paper-trading signal — Phase 1
+# Spec: Tín hiệu paper-trading phái sinh (VN30F1M) — Phase 1
 
-**Date:** 2026-08-08
-**Scope:** `PLAN_DERIVATIVE_TRADING.md` Phase 1 — paper-trading position
-model + risk gating + backtest entrypoint for the derivative contract
-`41I1G8000` (VN30F1M front-month). **No real order placement, no live
-collector/engine wiring.** Scoped via brainstorming with the user on
-2026-08-08.
+**Ngày viết:** 2026-08-08
+**Phạm vi:** `PLAN_DERIVATIVE_TRADING.md` Phase 1 — model vị thế paper-trading
++ risk gating + entrypoint backtest cho hợp đồng phái sinh `41I1G8000`
+(VN30F1M front-month). **KHÔNG đặt lệnh thật, KHÔNG wire vào
+collector/engine đang chạy live.** Chốt phạm vi qua buổi brainstorming với
+user ngày 2026-08-08.
 
-## Why
+## Vì sao
 
-Phase 0 (`PLAN_DERIVATIVE_TRADING.md`) confirmed real account/margin/position
-data (account empty, never traded), the real front-month contract code
-(`41I1G8000`), and — in a later session (2026-08-07) — real OHLC REST data
-(1m and 5m, `scripts/.spike_derivative_ohlc_sample.json` /
-`.spike_derivative_ohlc_5m_2m_sample.json`) and real TRADE/QUOTE/ROOM stream
-data (`scripts/.spike_derivative_stream_sample.jsonl`). The plan explicitly
-deferred designing a strategy until real bar data existed; that data now
-exists, so Phase 1 can be scoped for real. Real order placement stays a
-separate, later decision per the plan's own risk framing (leverage risk
-higher than equities) — the derivative margin account is still at $0 and has
-never traded, so there is no real margin-per-contract figure to design a
-live margin-call model against yet.
+Phase 0 (`PLAN_DERIVATIVE_TRADING.md`) đã xác nhận dữ liệu thật về
+account/margin/position (account trống, chưa từng giao dịch), mã hợp đồng
+front-month thật (`41I1G8000`), và — ở 1 phiên sau (2026-08-07) — dữ liệu
+OHLC REST thật (1m và 5m, `scripts/.spike_derivative_ohlc_sample.json` /
+`.spike_derivative_ohlc_5m_2m_sample.json`) cùng dữ liệu stream
+TRADE/QUOTE/ROOM thật (`scripts/.spike_derivative_stream_sample.jsonl`).
+Plan gốc đã chủ động hoãn thiết kế chiến lược tới khi có dữ liệu bar thật —
+giờ dữ liệu đó đã có, nên Phase 1 có thể chốt phạm vi thật sự. Việc đặt lệnh
+thật vẫn là 1 quyết định riêng, để sau, đúng tinh thần thận trọng của plan
+gốc (rủi ro đòn bẩy cao hơn cổ phiếu) — tài khoản ký quỹ phái sinh vẫn đang
+$0, chưa từng giao dịch, nên chưa có số ký quỹ thật/hợp đồng nào để thiết kế
+margin-call model theo dữ liệu thật.
 
-## Decisions (from brainstorming)
+## Các quyết định đã chốt (từ buổi brainstorming)
 
-- **Paper-trading + signal/alert only.** No `place_order`/`cancel_order`
-  call anywhere in this phase. Mirrors the caution already applied to
-  `PLAN_REAL_ORDER_PLACEMENT.md` (dry-run before real capital), taken
-  further here because derivatives are leveraged.
-- **Backtest-only data source**, not live streaming. Reuses the existing
-  `bars`/`bars_daily` tables (schema is already generic by symbol — no
-  derivative-specific columns needed) fed via the existing
-  `trading/collector/backfill.py::intraday_ohlc()`/`daily_ohlc()` REST
-  fetchers pointed at `"41I1G8000"`. Live collector/engine wiring (streaming
-  bars, NATS, engine loop) is explicitly deferred to a later phase — smaller
-  surface area, doesn't touch code currently running live for equities.
-- **Reuse `SmaCrossStrategy.compute_crossover()` unmodified.** It already
-  has no position-gating logic (decoupled in the `real_orders.py`
-  crossover-decouple fix) — it can be called directly for the derivative
-  contract without changing `trading/strategies/sma_cross.py` at all. All
-  new long/short position-gating logic lives in new modules, analogous to
-  how `real_orders.handle_crossover()` layers its own gating on top of the
-  same pure function.
-- **New position/broker/risk modules, not modified shared ones.** A
-  derivative position's `qty` can be negative (net short) — a concept that
-  doesn't exist in `trading/broker.py::Position`/`trading/paper_broker.py`
-  (equity `PaperBroker` never goes short, and `RealPosition.sellable_qty` is
-  a T+2.5-settlement concept that doesn't apply to T+0 derivatives).
-  Bolting sign-handling onto the existing equity classes risks a regression
-  in code paths used by live equity paper trading and `real_orders.py`.
-- **Simple risk limits, not a real margin-call model.** `max_contracts`
-  (flat cap on open contracts) + `max_daily_loss_pct` (same shape as
-  `RiskManager.max_daily_loss_pct`) — explicitly NOT a percentage of real
-  margin usage, because there is no real per-contract margin figure to
-  verify against yet (account has never traded). This is a documented
-  known gap, not a guess presented as fact — a real margin-call model needs
-  the account's first real trade before it can be designed against real
-  numbers, consistent with this project's "verify against real data, don't
-  guess SDK/account behavior" convention.
-- **`lot_size = 1`** (confirmed real from Phase 0, unlike equities' lot of
-  100) — achieved by constructing `SmaCrossStrategy(qty=1, ...)` via its
-  existing constructor parameter, no strategy code change needed.
-- **No ATR position sizing, no trailing stop in Phase 1.** Both exist for
-  equities (`RiskManager.approve_sized()`, `TrailingStopManager`) but adding
-  them here means deciding how they interact with a *signed* position — out
-  of scope for a first version. Fixed `qty=1` contract per position,
-  crossover-only exit (bull closes short/opens long, bear closes
-  long/opens short).
-- **No contract roll-over.** `"41I1G8000"` is hardcoded for this phase. When
-  the contract nears its 2026-08-20 expiry, the next front-month contract
-  code must be re-confirmed against real data before use — not assumed to
-  follow a naming pattern (Phase 0 already found SSI's internal code is
-  *not* the public `VN30F+YYMM` convention).
-- **Fee is an unverified placeholder, explicitly marked.** SSI's derivative
-  fee schedule (flat per-contract, not `%` of notional like equities) has
-  not been confirmed from real data — acceptable here because this phase is
-  paper-only (no real money), but must not be treated as accurate if this
-  code is ever extended toward real order placement.
+- **Chỉ paper-trading + tín hiệu/cảnh báo.** Không gọi `place_order`/
+  `cancel_order` ở đâu trong phase này. Thận trọng theo đúng tinh thần đã áp
+  dụng cho `PLAN_REAL_ORDER_PLACEMENT.md` (dry-run trước khi dùng tiền
+  thật), nhưng ở mức cao hơn vì phái sinh có đòn bẩy.
+- **Chỉ dùng dữ liệu backtest**, không streaming live. Tái sử dụng bảng
+  `bars`/`bars_daily` đã có (schema đã generic theo symbol — không cần cột
+  riêng cho phái sinh), nạp qua các hàm fetch REST đã có
+  `trading/collector/backfill.py::intraday_ohlc()`/`daily_ohlc()` trỏ vào
+  `"41I1G8000"`. Việc wire live (streaming bar, NATS, vòng lặp engine) chủ
+  động hoãn sang phase sau — phạm vi nhỏ hơn, không đụng code đang chạy live
+  cho cổ phiếu.
+- **Tái sử dụng nguyên `SmaCrossStrategy.compute_crossover()`, không sửa.**
+  Hàm này vốn đã không chứa logic gating theo vị thế (đã tách ra ở fix
+  crossover-decouple của `real_orders.py`) — có thể gọi thẳng cho hợp đồng
+  phái sinh mà không cần đổi gì trong `trading/strategies/sma_cross.py`.
+  Toàn bộ logic gating long/short mới nằm ở module mới, giống cách
+  `real_orders.handle_crossover()` tự xây lớp gating riêng trên cùng 1 hàm
+  thuần đó.
+- **Module vị thế/broker/risk mới, không sửa module chung.** `qty` của 1 vị
+  thế phái sinh có thể ÂM (net short) — khái niệm không tồn tại ở
+  `trading/broker.py::Position`/`trading/paper_broker.py` (`PaperBroker` cổ
+  phiếu không bao giờ bán khống, còn `RealPosition.sellable_qty` là khái
+  niệm settlement T+2,5 không áp dụng cho phái sinh T+0). Gắn thêm xử lý dấu
+  âm vào class cổ phiếu hiện có sẽ có rủi ro gây regression cho code đang
+  chạy live (paper trading cổ phiếu + `real_orders.py`).
+- **Giới hạn risk đơn giản, không phải margin-call model thật.**
+  `max_contracts` (giới hạn cứng số hợp đồng đang mở) + `max_daily_loss_pct`
+  (giống hệt hình dạng `RiskManager.max_daily_loss_pct`) — **không** phải %
+  ký quỹ thật đang dùng, vì chưa có số ký quỹ/hợp đồng thật để đối chiếu
+  (account chưa từng giao dịch). Đây là khoảng trống được ghi nhận rõ ràng,
+  không phải đoán rồi trình bày như sự thật — margin-call model thật cần đợi
+  lệnh thật đầu tiên của account mới thiết kế được theo số liệu thật, đúng
+  nguyên tắc "verify bằng dữ liệu thật, không đoán hành vi SDK/account" của
+  dự án.
+- **`lot_size = 1`** (đã xác nhận thật từ Phase 0, khác lô 100 của cổ
+  phiếu) — đạt được bằng cách khởi tạo `SmaCrossStrategy(qty=1, ...)` qua
+  tham số constructor có sẵn, không cần sửa code strategy.
+- **Không có ATR position sizing, không có trailing stop ở Phase 1.** Cả 2
+  đã có cho cổ phiếu (`RiskManager.approve_sized()`, `TrailingStopManager`)
+  nhưng thêm vào đây nghĩa là phải quyết định cách chúng tương tác với vị
+  thế CÓ DẤU — ngoài phạm vi bản đầu tiên này. Mỗi vị thế cố định
+  `qty=1` hợp đồng, thoát vị thế chỉ theo crossover (bull đóng short/mở
+  long, bear đóng long/mở short).
+- **Không tự động roll hợp đồng.** `"41I1G8000"` hardcode cho phase này. Khi
+  hợp đồng gần đáo hạn (2026-08-20), mã hợp đồng front-month kế tiếp phải
+  được xác nhận lại bằng dữ liệu thật trước khi dùng — không giả định theo
+  quy tắc đặt tên (Phase 0 đã phát hiện mã nội bộ SSI KHÔNG theo quy ước
+  công khai `VN30F+YYMM`).
+- **Phí giao dịch là placeholder chưa xác nhận, ghi rõ trong code.** Biểu
+  phí phái sinh của SSI (phí cố định/hợp đồng, không phải % giá trị như cổ
+  phiếu) chưa được xác nhận bằng dữ liệu thật — chấp nhận được vì phase này
+  hoàn toàn paper (không tiền thật), nhưng không được coi là số đúng nếu
+  sau này mở rộng hướng tới đặt lệnh thật.
 
-## Design
+## Thiết kế
 
-### `trading/derivative_position.py` (new)
+### `trading/derivative_position.py` (mới)
 
 ```python
 @dataclass
@@ -104,14 +104,13 @@ class DerivativePaperBroker:
         |qty|)."""
 ```
 
-No `submit()`/`on_bar()` pending-signal queue like equity `PaperBroker` —
-Phase 1 fills immediately at the bar's `close` (simplification: no
-open/slippage modeling for the derivative fill price yet, since real fill
-behavior for derivatives has never been observed — documented as a known
-simplification, consistent with "don't model behavior we haven't verified
-real data for").
+Không có hàng đợi `submit()`/`on_bar()` kiểu equity `PaperBroker` — Phase 1
+khớp lệnh ngay tại giá `close` của bar (đơn giản hoá có chủ đích: chưa mô
+phỏng open/slippage cho giá khớp phái sinh, vì hành vi khớp lệnh thật của
+phái sinh chưa từng được quan sát — ghi nhận rõ đây là đơn giản hoá đã biết,
+đúng nguyên tắc "không mô phỏng hành vi chưa verify bằng dữ liệu thật").
 
-### `trading/derivative_risk.py` (new)
+### `trading/derivative_risk.py` (mới)
 
 ```python
 @dataclass
@@ -123,14 +122,14 @@ class DerivativeRiskManager:
 
     def approve_open(self, side: Literal["long", "short"], current_qty: int,
                       daily_pnl: float, today: date) -> bool:
-        """Same halt-check shape as RiskManager._halt_check(). Blocks a new
-        open (long or short) if already halted today, or if opening would
-        exceed max_contracts. Does NOT gate closes — closing an existing
-        position is always allowed, same principle as equity RiskManager
-        never blocking a SELL of an already-held position."""
+        """Cùng hình dạng halt-check như RiskManager._halt_check(). Chặn 1
+        lệnh mở mới (long hoặc short) nếu hôm nay đã bị halt, hoặc nếu mở
+        thêm sẽ vượt max_contracts. KHÔNG gate lệnh đóng — đóng vị thế đang
+        có luôn được phép, cùng nguyên tắc RiskManager cổ phiếu không bao
+        giờ chặn SELL 1 vị thế đang giữ."""
 ```
 
-### `trading/derivative_backtest.py` (new, parallels `trading/backtest.py`)
+### `trading/derivative_backtest.py` (mới, song song `trading/backtest.py`)
 
 ```python
 def run_derivative_backtest(
@@ -138,67 +137,67 @@ def run_derivative_backtest(
     strategy: SmaCrossStrategy,
     risk: DerivativeRiskManager,
     capital: float,
-) -> BacktestReport:  # reuse existing BacktestReport dataclass from backtest.py
+) -> BacktestReport:  # tái dùng dataclass BacktestReport đã có ở backtest.py
 ```
 
-Per-bar loop:
+Vòng lặp mỗi bar:
 1. `crossover = strategy.compute_crossover(bar)`.
 2. `net = broker.position_qty(bar.symbol)`.
 3. `bull` + `net < 0` → `broker.close(...)` (cover short).
-   `bull` + `net == 0` → if `risk.approve_open("long", net, daily_pnl, today)`: `broker.open_long(..., qty=strategy.qty, ...)`.
+   `bull` + `net == 0` → nếu `risk.approve_open("long", net, daily_pnl, today)`: `broker.open_long(..., qty=strategy.qty, ...)`.
    `bear` + `net > 0` → `broker.close(...)`.
-   `bear` + `net == 0` → if `risk.approve_open("short", ...)`: `broker.open_short(...)`.
-   (`net != 0` and crossover direction already matches current side → no-op, same as equity strategy never re-entering an already-held side.)
-4. Track equity curve using signed qty (`cash + qty * mark_price`, where a
-   short position's mark contribution is `-qty * (avg_price - mark)`
-   equivalent — implemented directly from `DerivativePosition`, not copied
-   from equity's `unrealized_pnl()` which assumes `qty >= 0`).
+   `bear` + `net == 0` → nếu `risk.approve_open("short", ...)`: `broker.open_short(...)`.
+   (`net != 0` và chiều crossover đã khớp với chiều đang giữ → không làm
+   gì, giống cách strategy cổ phiếu không bao giờ vào lại 1 chiều đang giữ.)
+4. Theo dõi equity curve dùng qty có dấu (`cash + qty * mark_price`, trong
+   đó đóng góp unrealized của vị thế short tương đương
+   `-qty * (avg_price - mark)`) — implement thẳng từ `DerivativePosition`,
+   không copy từ `unrealized_pnl()` của equity (hàm đó giả định `qty >= 0`).
 
-A CLI entrypoint (`if __name__ == "__main__":` block, same shape as
-`backtest.py::main()`) reads bars for `"41I1G8000"` from `Storage.read_bars()`
-over a `--from`/`--to` range, requiring that range to already be backfilled
-into the DB via `intraday_ohlc()`/`daily_ohlc()` pointed at that symbol (a
-one-line addition wherever the existing backfill script's symbol list is
-read from config/CLI arg — not a new fetching mechanism).
+1 entrypoint CLI (block `if __name__ == "__main__":`, cùng hình dạng
+`backtest.py::main()`) đọc bar cho `"41I1G8000"` từ `Storage.read_bars()`
+theo khoảng `--from`/`--to`, yêu cầu khoảng đó đã được backfill sẵn vào DB
+qua `intraday_ohlc()`/`daily_ohlc()` trỏ vào symbol này (chỉ cần thêm 1 dòng
+ở chỗ danh sách symbol backfill hiện đang đọc từ config/CLI arg — không
+phải cơ chế fetch mới).
 
 ## Testing
 
-- `tests/test_derivative_position.py` (new): `DerivativePaperBroker` —
-  `open_long()` then `close()` computes correct long PnL/fee/cash;
-  `open_short()` then `close()` computes correct short PnL (price drop =
-  profit) /fee/cash; `position_qty()` returns negative after `open_short()`.
-- `tests/test_derivative_risk.py` (new): `approve_open()` blocks a second
-  open beyond `max_contracts`; blocks any open once halted; halt triggers
-  when `daily_pnl <= -capital * max_daily_loss_pct`; does not gate `close`
-  (no `approve_close` needed — closes aren't gated at all, so this is a test
-  of absence, not a method).
-- `tests/test_derivative_backtest.py` (new): synthetic bar sequence (reuse
-  the `_gen_ohlc_rows`-style helper pattern already in the test suite)
-  proving the full cycle bull→long→bear→close→short→bull→cover produces the
-  expected `Fill` sequence and signs; a halted-day test where a loss beyond
-  `max_daily_loss_pct` blocks a would-be new open but still allows an
-  in-progress position to close.
-- One test in `tests/test_derivative_backtest.py` loads
-  `scripts/.spike_derivative_ohlc_5m_2m_sample.json` directly (real captured
-  data, gitignored — test should skip gracefully if the file is absent
-  rather than fail, since it's not checked into git) and runs
-  `run_derivative_backtest()` against it end-to-end as a smoke test against
-  real response shape, not just synthetic bars.
+- `tests/test_derivative_position.py` (mới): `DerivativePaperBroker` —
+  `open_long()` rồi `close()` tính đúng PnL/phí/cash cho long; `open_short()`
+  rồi `close()` tính đúng PnL cho short (giá giảm = lãi) /phí/cash;
+  `position_qty()` trả về số âm sau `open_short()`.
+- `tests/test_derivative_risk.py` (mới): `approve_open()` chặn lệnh mở thứ 2
+  vượt `max_contracts`; chặn mọi lệnh mở khi đã halt; halt kích hoạt khi
+  `daily_pnl <= -capital * max_daily_loss_pct`; không gate `close` (không
+  cần `approve_close` — lệnh đóng không bị gate gì cả, nên đây là test cho
+  sự vắng mặt của gating, không phải test 1 method).
+- `tests/test_derivative_backtest.py` (mới): chuỗi bar tổng hợp (tái dùng
+  pattern helper kiểu `_gen_ohlc_rows` đã có sẵn trong test suite) chứng
+  minh đủ chu trình bull→long→bear→close→short→bull→cover cho đúng chuỗi
+  `Fill` và đúng dấu; 1 test ngày bị halt trong đó lỗ vượt
+  `max_daily_loss_pct` chặn 1 lệnh mở mới nhưng vẫn cho phép vị thế đang mở
+  được đóng.
+- 1 test trong `tests/test_derivative_backtest.py` đọc trực tiếp
+  `scripts/.spike_derivative_ohlc_5m_2m_sample.json` (dữ liệu thật đã
+  capture, gitignored — test nên skip gọn nếu file không tồn tại thay vì
+  fail, vì file này không commit vào git) và chạy
+  `run_derivative_backtest()` trên đó từ đầu tới cuối như 1 smoke test đối
+  chiếu hình dạng response thật, không chỉ bar tổng hợp.
 
-## Out of scope (explicit)
+## Ngoài phạm vi (nói rõ)
 
-- Real order placement for derivatives — separate future decision, needs a
-  real margin-call model backed by the account's first real trade.
-- Live collector/engine wiring (streaming bars from `derivative_sync.py`'s
-  account-sync path or the WebSocket TRADE channel into `bars`/NATS/engine
-  loop) — deferred to a later phase.
-- ATR position sizing and trailing stop for derivative positions — deferred;
-  Phase 1 stays fixed `qty=1`, crossover-only exit.
-- Contract roll-over automation — hardcoded `"41I1G8000"` only.
-- Verifying the real derivative fee schedule — placeholder value used,
-  explicitly marked, acceptable because this phase never touches real
-  money.
-- Any change to `trading/strategies/sma_cross.py`, `trading/paper_broker.py`,
+- Đặt lệnh thật cho phái sinh — quyết định riêng để sau, cần margin-call
+  model thật dựa trên lệnh thật đầu tiên của account.
+- Wire live vào collector/engine (streaming bar từ path account-sync của
+  `derivative_sync.py` hoặc kênh WebSocket TRADE vào `bars`/NATS/vòng lặp
+  engine) — hoãn sang phase sau.
+- ATR position sizing và trailing stop cho vị thế phái sinh — hoãn lại;
+  Phase 1 giữ cố định `qty=1`, thoát vị thế chỉ theo crossover.
+- Tự động roll hợp đồng — chỉ hardcode `"41I1G8000"`.
+- Xác nhận biểu phí phái sinh thật — dùng giá trị placeholder, ghi rõ trong
+  code, chấp nhận được vì phase này không đụng tiền thật.
+- Không sửa `trading/strategies/sma_cross.py`, `trading/paper_broker.py`,
   `trading/risk.py`, `trading/backtest.py`, `trading/engine/*`,
-  `trading/collector/derivative_sync.py` — all equity/monitoring code paths
-  stay untouched.
+  `trading/collector/derivative_sync.py` — mọi code path cổ phiếu/monitoring
+  giữ nguyên không đổi.
