@@ -1,11 +1,14 @@
 import argparse
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from trading.backtest import BacktestReport
 from trading.broker import Fill
 from trading.calendar_vn import TZ
 from trading.config import load_config
-from trading.derivative_position import DerivativePaperBroker
+from trading.derivative_position import (
+    DERIVATIVE_CONTRACT_MULTIPLIER,
+    DerivativePaperBroker,
+)
 from trading.derivative_risk import DerivativeRiskManager
 from trading.models import Bar
 from trading.storage.db import Storage
@@ -37,17 +40,29 @@ def run_derivative_backtest(
     stop_loss_points: float = 0.0,
     take_profit_points: float = 0.0,
     intraday_close_time: time | None = None,
+    eod_keep_min_profit_points: float = 0.0,
 ) -> BacktestReport:
     broker = DerivativePaperBroker(capital)
     marks: dict[str, float] = {}
     all_fills: list[Fill] = []
     equity_curve: list[float] = [capital]
+    current_day: date | None = None
+    day_start_realized: float = 0.0
 
     for bar in bars:
         crossover = strategy.compute_crossover(bar)
         marks[bar.symbol] = bar.close
         net = broker.position_qty(bar.symbol)
-        daily_pnl = broker.realized_pnl + _unrealized(broker, marks)
+        # daily_pnl tinh theo NGAY: realized phat sinh trong ngay hien tai
+        # (snapshot realized dau ngay, reset khi doi ngay) + unrealized dang
+        # mo - khong tich luy tu dau backtest (bug da fix - xem plan
+        # 2026-08-09-derivative-daily-loss-and-eod-threshold-fix.md).
+        if bar.ts.date() != current_day:
+            current_day = bar.ts.date()
+            day_start_realized = broker.realized_pnl
+        daily_pnl = (
+            broker.realized_pnl - day_start_realized + _unrealized(broker, marks)
+        )
         today = bar.ts.date()
 
         # Exit SL/TP (kiem tra TRUOC logic crossover; SL uu tien khi trung bar
@@ -76,14 +91,16 @@ def run_derivative_backtest(
                 continue
 
         # Ep dong vi the tai/sau gio cat (intraday_close_time) - truoc logic
-        # crossover, khong mo lai cung bar. Theo yeu cau user: CHI dong lenh
-        # dang LO (unrealized <= 0); lenh dang LAI thi giu qua dem (loi nhuan
-        # ky vong bu gap risk + lai D+), tiep tuc quan ly binh thuong.
+        # crossover, khong mo lai cung bar. Theo yeu cau user: lenh dang LAI
+        # duoc giu qua dem, NHUNG chi khi lai du bu chi phi qua dem (nguong
+        # eod_keep_min_profit_points, tinh bang diem x he so nhan; user truyen
+        # gia tri uoc luong D+ + phi dong, engine khong tu gia dinh chi phi).
         if (
             net != 0
             and intraday_close_time is not None
             and bar.ts.astimezone(TZ).time() >= intraday_close_time
-            and _unrealized(broker, marks) <= 0
+            and _unrealized(broker, marks)
+            <= eod_keep_min_profit_points * DERIVATIVE_CONTRACT_MULTIPLIER
         ):
             fill = broker.close(bar.symbol, bar.close, bar.ts)
             all_fills.append(fill)
