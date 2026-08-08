@@ -104,8 +104,9 @@ bằng engine thật với xử lý gap như trailing stop):
 
 ### 2c. Điểm yếu đã đo được (cần theo dõi)
 
-- **Tập trung lợi nhuận cực cao:** 5/21 lệnh > +2tr chiếm 161% tổng PnL —
-  16 lệnh thua còn lại tổng -8.9tr. SL=5 giải quyết trực tiếp vấn đề này.
+- **Tập trung lợi nhuận cực cao:** 5/21 lệnh > +2tr chiếm 161% tổng PnL
+  (+23,438,750 / +14,556,750) — 11 lệnh thua còn lại tổng -11,050,750
+  (avg lỗ -1,004,614). SL=5 giải quyết trực tiếp vấn đề này.
 - Hold time: median 317 bar (≈26 giờ giao dịch ≈ 4-5 phiên) — đây là swing,
   không phải scalping; kỳ vọng giữ vị thế nhiều ngày.
 - Phí KHÔNG phải vấn đề lớn với entry default: chỉ 1/21 lệnh có |pnl| < 1

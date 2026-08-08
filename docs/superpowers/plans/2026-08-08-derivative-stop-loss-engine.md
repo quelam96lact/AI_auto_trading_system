@@ -11,8 +11,8 @@
 Nghiên cứu trên dữ liệu thật (`docs/superpowers/research/2026-08-08-derivative-strategy-params-summary.md`,
 thí nghiệm E3 trong `scripts/.spike_improve_derivative_strategies.py`) cho thấy:
 engine hiện tại chỉ đóng vị thế khi có crossover ngược → lỗ chạy 5–20 điểm,
-16/21 lệnh thua của Momentum default tổng -8.9tr, và lợi nhuận tập trung cực
-cao (5/21 lệnh > +2tr = 161% tổng PnL). Thêm **stop-loss ~5 điểm, không
+11/21 lệnh thua của Momentum default tổng -11,050,750 (avg lỗ -1,004,614),
+và lợi nhuận tập trung cực cao (5/21 lệnh > +2tr = 161% tổng PnL). Thêm **stop-loss ~5 điểm, không
 take-profit** cải thiện +14.71% → +18.79% trên cùng sample; TP chặt (3 điểm)
 PHÁ chiến lược (-3.66%). Plan này thêm khả năng SL/TP vào
 `run_derivative_backtest()` — mặc định **tắt (0)**, giữ nguyên hành vi cũ khi

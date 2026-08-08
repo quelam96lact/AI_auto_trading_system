@@ -1,5 +1,5 @@
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from trading.backtest import BacktestReport
 from trading.broker import Fill
@@ -36,6 +36,7 @@ def run_derivative_backtest(
     capital: float,
     stop_loss_points: float = 0.0,
     take_profit_points: float = 0.0,
+    intraday_close_time: time | None = None,
 ) -> BacktestReport:
     broker = DerivativePaperBroker(capital)
     marks: dict[str, float] = {}
@@ -66,20 +67,44 @@ def run_derivative_backtest(
                 elif take_profit_points > 0 and bar.low <= entry - take_profit_points:
                     exit_price = min(bar.open, entry - take_profit_points)
             if exit_price is not None:
-                all_fills.append(broker.close(bar.symbol, exit_price, bar.ts))
+                fill = broker.close(bar.symbol, exit_price, bar.ts)
+                all_fills.append(fill)
+                assert fill.pnl is not None  # fill dong vi the luon co pnl
+                risk.record_trade_result(fill.pnl, bar.ts.date())
                 equity = broker.cash + _unrealized(broker, marks)
                 equity_curve.append(equity)
                 continue
 
+        # Ep dong vi the tai/sau gio cat (intraday_close_time) - truoc logic
+        # crossover, khong mo lai cung bar. Mac dinh None = tat, giu hanh vi cu.
+        if (
+            net != 0
+            and intraday_close_time is not None
+            and bar.ts.astimezone(TZ).time() >= intraday_close_time
+        ):
+            fill = broker.close(bar.symbol, bar.close, bar.ts)
+            all_fills.append(fill)
+            assert fill.pnl is not None  # fill dong vi the luon co pnl
+            risk.record_trade_result(fill.pnl, bar.ts.date())
+            equity = broker.cash + _unrealized(broker, marks)
+            equity_curve.append(equity)
+            continue
+
         if crossover == "bull" and net < 0:
-            all_fills.append(broker.close(bar.symbol, bar.close, bar.ts))
+            fill = broker.close(bar.symbol, bar.close, bar.ts)
+            all_fills.append(fill)
+            assert fill.pnl is not None  # fill dong vi the luon co pnl
+            risk.record_trade_result(fill.pnl, bar.ts.date())
         elif crossover == "bull" and net == 0:
             if risk.approve_open("long", net, daily_pnl, today):
                 all_fills.append(
                     broker.open_long(bar.symbol, strategy.qty, bar.close, bar.ts)
                 )
         elif crossover == "bear" and net > 0:
-            all_fills.append(broker.close(bar.symbol, bar.close, bar.ts))
+            fill = broker.close(bar.symbol, bar.close, bar.ts)
+            all_fills.append(fill)
+            assert fill.pnl is not None  # fill dong vi the luon co pnl
+            risk.record_trade_result(fill.pnl, bar.ts.date())
         elif (
             crossover == "bear"
             and net == 0

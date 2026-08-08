@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import pytest
@@ -167,6 +167,91 @@ def test_no_reentry_on_same_bar_after_stop_loss_exit():
     open_fill, close_fill = report.fills
     assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
     assert close_fill.side == "SELL" and abs(close_fill.price - 9.0) < 1e-9
+
+
+def test_two_consecutive_losing_trades_halt_third_open_same_day():
+    # Chuoi gia da xac nhan that (compute_crossover truc tiep): bull bar4
+    # (11) mo long -> bear bar5 (9) dong, LO 1 (-208,250); bull bar6 (13) mo
+    # long -> bear bar7 (7) dong, LO 2 (-608,250); bull bar8 (16) la tin hieu
+    # mo thu 3 CUNG NGAY -> bi risk chan boi 2 lenh thua lien tiep (streak),
+    # KHONG phai daily-loss: tong lo -816,500 < 2% x 100tr = 2,000,000.
+    prices = [10, 10, 10, 10, 11, 9, 13, 7, 16]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP)
+
+    # Chi 2 round-trip (4 fill) - lenh mo thu 3 KHONG duoc fill.
+    assert len(report.fills) == 4
+    assert report.trades == 2
+    assert risk.halted_date == bars[-1].ts.date()
+    assert all(f.pnl is not None and f.pnl < 0 for f in report.fills if f.pnl is not None)
+
+
+def test_intraday_close_time_none_default_keeps_position_open_past_1420():
+    # Regression: khong truyen intraday_close_time -> vi the van mo qua 14:20,
+    # khong co fill dong ngoai y strategy (bar5 close=12 khong tao crossover).
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    sym = DERIVATIVE_SYMBOL
+    bars = [
+        Bar(sym, start + timedelta(minutes=5 * i), p, p, p, p, 100)
+        for i, p in enumerate([10, 10, 10, 10, 11])
+    ]
+    bars.append(Bar(sym, datetime(2026, 8, 8, 14, 25, tzinfo=TZ), 12.0, 12.0, 12.0, 12.0, 100))
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP)
+
+    assert len(report.fills) == 1  # chi mo long, khong dong
+    assert report.fills[0].side == "BUY" and abs(report.fills[0].price - 11.0) < 1e-9
+    assert abs(report.unrealized_pnl - (12.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+
+
+def test_intraday_close_time_force_closes_open_position_at_cutoff():
+    # Truyen intraday_close_time=14:20: bar 14:25 (close=7) co ts.time() >= 14:20
+    # -> ep dong tai bar.close=7, VA bar nay cung la bear crossover -> khong
+    # duoc mo vi the moi cung bar (rule "khong mo lai cung bar" nhu SL/TP).
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    sym = DERIVATIVE_SYMBOL
+    bars = [
+        Bar(sym, start + timedelta(minutes=5 * i), p, p, p, p, 100)
+        for i, p in enumerate([10, 10, 10, 10, 11])
+    ]
+    bars.append(Bar(sym, datetime(2026, 8, 8, 14, 25, tzinfo=TZ), 7.0, 7.0, 7.0, 7.0, 100))
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, strategy, risk, CAP, intraday_close_time=time(14, 20)
+    )
+
+    assert len(report.fills) == 2  # mo long + dong EOD, khong mo short cung bar
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - 7.0) < 1e-9
+    expected_pnl = (7.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_intraday_close_time_does_not_fire_when_already_flat():
+    # Khong co vi the mo tai/sau gio cat -> khong phat sinh fill thua.
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    sym = DERIVATIVE_SYMBOL
+    bars = [
+        Bar(sym, start + timedelta(minutes=5 * i), p, p, p, p, 100)
+        for i, p in enumerate([10, 10, 10, 10, 10])
+    ]
+    bars.append(Bar(sym, datetime(2026, 8, 8, 14, 25, tzinfo=TZ), 10.0, 10.0, 10.0, 10.0, 100))
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, strategy, risk, CAP, intraday_close_time=time(14, 20)
+    )
+
+    assert len(report.fills) == 0  # flat suot, khong co gi de dong
 
 
 def test_long_cycle_bull_opens_long_then_bear_closes_it():

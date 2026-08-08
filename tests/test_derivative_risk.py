@@ -43,3 +43,42 @@ def test_no_approve_close_method_exists_closes_are_never_gated():
     # DerivativeRiskManager (khac approve_open danh cho lenh mo).
     risk = DerivativeRiskManager(capital=100_000_000)
     assert not hasattr(risk, "approve_close")
+
+
+def test_default_max_daily_loss_pct_is_2_percent():
+    # Theo file nguoi dung de xuat: dung ngay khi lo 2% von.
+    risk = DerivativeRiskManager(capital=100_000_000)
+    assert risk.max_daily_loss_pct == 0.02
+
+
+def test_approve_open_blocks_after_two_consecutive_losing_trades():
+    risk = DerivativeRiskManager(capital=100_000_000)  # max_consecutive_losses=2 mac dinh
+    today = date(2026, 8, 8)
+    risk.record_trade_result(pnl=-100_000, today=today)
+    # Moi 1 lenh thua - van duoc mo lenh tiep.
+    assert risk.approve_open("long", current_qty=0, daily_pnl=0.0, today=today) is True
+    risk.record_trade_result(pnl=-50_000, today=today)
+    # Lenh thua thu 2 lien tiep -> halt.
+    assert risk.approve_open("long", current_qty=0, daily_pnl=0.0, today=today) is False
+    assert risk.halted_date == today
+
+
+def test_consecutive_loss_streak_resets_on_winning_trade():
+    risk = DerivativeRiskManager(capital=100_000_000)
+    today = date(2026, 8, 8)
+    risk.record_trade_result(pnl=-1.0, today=today)
+    risk.record_trade_result(pnl=+1.0, today=today)  # lenh thang reset streak
+    risk.record_trade_result(pnl=-1.0, today=today)  # streak chi con 1
+    assert risk.approve_open("long", current_qty=0, daily_pnl=0.0, today=today) is True
+
+
+def test_consecutive_loss_streak_resets_next_day():
+    risk = DerivativeRiskManager(capital=100_000_000)
+    day1 = date(2026, 8, 8)
+    day2 = date(2026, 8, 9)
+    risk.record_trade_result(pnl=-1.0, today=day1)
+    risk.record_trade_result(pnl=-1.0, today=day1)
+    assert risk.approve_open("long", current_qty=0, daily_pnl=0.0, today=day1) is False
+    assert risk.halted_date == day1
+    # Sang ngay mai: streak reset theo ngay, khong con halt.
+    assert risk.approve_open("long", current_qty=0, daily_pnl=0.0, today=day2) is True
