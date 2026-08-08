@@ -215,7 +215,7 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
     assert args["ssi_order_id"] == "SSI-123"
     assert args["status"] == "placed"
     assert args["pnl"] is None
-    assert args["fee"] == 100 * 50_000.0 * 0.0015
+    assert args["fee"] == 100 * 50_000.0 * 0.0025
     fake_auth.close.assert_awaited_once()
 
 
@@ -268,7 +268,7 @@ async def test_confirm_real_mode_computes_pnl_on_sell(cfg, pending_order):
     assert args["price"] == 55_000.0
     assert args["qty"] == 100
     assert args["pnl"] == 500_000.0
-    assert args["fee"] == 100 * 55_000.0 * 0.0015
+    assert args["fee"] == 100 * 55_000.0 * 0.0025
     mock_alert.assert_called_once()
     fake_auth.close.assert_awaited_once()
 

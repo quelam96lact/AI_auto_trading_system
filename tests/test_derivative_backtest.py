@@ -12,7 +12,7 @@ from trading.models import Bar
 from trading.strategies.sma_cross import SmaCrossStrategy
 
 CAP = 100_000_000
-FEE = 2_700.0
+FEE = 8_250.0
 
 
 def bars_from_prices(prices: list[float], sym: str = DERIVATIVE_SYMBOL) -> list[Bar]:
@@ -61,8 +61,16 @@ def test_long_cycle_bull_opens_long_then_bear_closes_it():
 
     assert len(report.fills) == 2
     open_fill, close_fill = report.fills
-    assert open_fill.side == "BUY" and open_fill.qty == 1 and abs(open_fill.price - 11.0) < 1e-9
-    assert close_fill.side == "SELL" and close_fill.qty == 1 and abs(close_fill.price - 16.0) < 1e-9
+    assert (
+        open_fill.side == "BUY"
+        and open_fill.qty == 1
+        and abs(open_fill.price - 11.0) < 1e-9
+    )
+    assert (
+        close_fill.side == "SELL"
+        and close_fill.qty == 1
+        and abs(close_fill.price - 16.0) < 1e-9
+    )
     expected_pnl = (16.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
     assert abs(report.realized_pnl - expected_pnl) < 1e-9
@@ -81,8 +89,16 @@ def test_short_cycle_bear_opens_short_from_flat_then_bull_covers_it():
 
     assert len(report.fills) == 2
     open_fill, close_fill = report.fills
-    assert open_fill.side == "SELL" and open_fill.qty == 1 and abs(open_fill.price - 9.0) < 1e-9
-    assert close_fill.side == "BUY" and close_fill.qty == 1 and abs(close_fill.price - 12.0) < 1e-9
+    assert (
+        open_fill.side == "SELL"
+        and open_fill.qty == 1
+        and abs(open_fill.price - 9.0) < 1e-9
+    )
+    assert (
+        close_fill.side == "BUY"
+        and close_fill.qty == 1
+        and abs(close_fill.price - 12.0) < 1e-9
+    )
     expected_pnl = (9.0 - 12.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
     assert close_fill.pnl < 0
@@ -93,14 +109,16 @@ def test_halted_day_blocks_new_open_after_loss_breaches_threshold():
     # Chuoi gia da xac nhan that (chay qua compute_crossover truc tiep, khong
     # doan tay): bull bar4 (close=11) mo long, bear bar8 (close=10) dong.
     # Round-trip dau tien LO THAT sau khi co he so nhan:
-    # (10-11)*1*100,000 - 2,700 = -102,700 - khong con la "lo ao" do phi che
-    # mat lai 5 diem nhu chuoi cu (16-11)*100,000-2,700 = +497,300 (LAI).
+    # (10-11)*1*100,000 - 8,250 = -108,250 - khong con la "lo ao" do phi che
+    # mat lai 5 diem nhu chuoi cu (16-11)*100,000-8,250 = +491,750 (LAI).
     prices = [10, 10, 10, 10, 11, 13, 16, 13, 10, 7, 9, 12, 16, 20]
     bars = bars_from_prices(prices)
     strategy = new_strategy()
     # Von nho de khoan lo round-trip dau tien (-102,700) vuot nguong 3% cua
     # 50,000 (=-1,500).
-    risk = DerivativeRiskManager(capital=50_000, max_contracts=1, max_daily_loss_pct=0.03)
+    risk = DerivativeRiskManager(
+        capital=50_000, max_contracts=1, max_daily_loss_pct=0.03
+    )
 
     report = run_derivative_backtest(bars, strategy, risk, 50_000)
 
@@ -117,14 +135,18 @@ def test_real_captured_ohlc_sample_runs_end_to_end():
     # skip gon neu khong co san thay vi fail.
     sample_path = Path("scripts/.spike_derivative_ohlc_5m_2m_sample.json")
     if not sample_path.exists():
-        pytest.skip("scripts/.spike_derivative_ohlc_5m_2m_sample.json khong co san (gitignored)")
+        pytest.skip(
+            "scripts/.spike_derivative_ohlc_5m_2m_sample.json khong co san (gitignored)"
+        )
 
     raw = json.loads(sample_path.read_text())
     bars = sorted(
         (
             Bar(
                 row["symbol"],
-                datetime.strptime(row["trading_date"], "%Y/%m/%d %H:%M:%S").replace(tzinfo=TZ),
+                datetime.strptime(row["trading_date"], "%Y/%m/%d %H:%M:%S").replace(
+                    tzinfo=TZ
+                ),
                 row["open_price"],
                 row["high_price"],
                 row["low_price"],
@@ -135,7 +157,9 @@ def test_real_captured_ohlc_sample_runs_end_to_end():
         ),
         key=lambda b: b.ts,
     )
-    strategy = SmaCrossStrategy(qty=1)  # tham so mac dinh (fast=10/slow=20) - khong ep crossover
+    strategy = SmaCrossStrategy(
+        qty=1
+    )  # tham so mac dinh (fast=10/slow=20) - khong ep crossover
     risk = DerivativeRiskManager(capital=CAP)
 
     report = run_derivative_backtest(bars, strategy, risk, CAP)

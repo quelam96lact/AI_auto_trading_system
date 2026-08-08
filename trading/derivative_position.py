@@ -3,10 +3,17 @@ from datetime import datetime
 
 from trading.broker import Fill
 
-# VNĐ/hợp đồng — biểu phí phái sinh thật của SSI CHƯA được xác nhận (khác
-# equity, phí % giá trị). Placeholder cho paper-trading — không tiền thật,
-# xem docs/superpowers/specs/2026-08-08-derivative-paper-trading-phase1-design.md.
-DERIVATIVE_FEE_PER_CONTRACT = 2_700.0
+# VNĐ/hợp đồng/lượt (mở HOẶC đóng riêng) — biểu phí phái sinh SSI công khai
+# (VN30/VN100 futures, Online = qua môi giới, cùng mức), gồm 3 phần cộng dồn:
+# 3.000 (phí dịch vụ SSI, bậc dưới 100 HĐ/ngày) + 2.700 (phí trả HNX,
+# "đồng/hợp đồng/giao dịch") + 2.550 (phí bù trừ VSD, "đồng/hợp đồng vị thế" —
+# CHƯA xác nhận rõ tính theo lượt hay theo ngày giữ vị thế, tạm cộng dồn theo
+# lượt cho khớp cơ chế per-transaction hiện có của DerivativePaperBroker).
+# Nguồn: https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan
+# (hiệu lực 10/10/2025). Vẫn là ước tính bậc thấp nhất (dưới 100 HĐ/ngày) cho
+# paper-trading — không tiền thật, xem
+# docs/superpowers/specs/2026-08-08-derivative-paper-trading-phase1-design.md.
+DERIVATIVE_FEE_PER_CONTRACT = 8_250.0
 
 # VNĐ/điểm — hệ số nhân hợp đồng công khai của HNX cho VN30 Index Futures
 # (VN30F1M): 100,000 VNĐ/điểm chỉ số. Đây là đặc tả hợp đồng do sở giao dịch

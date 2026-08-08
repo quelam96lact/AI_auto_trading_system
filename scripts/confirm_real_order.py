@@ -14,6 +14,7 @@ from datetime import datetime
 
 from ssi_sdk import AsyncTrading
 from ssi_sdk.enums import OrderSide
+
 # 2 import trên chỉ tham chiếu class/enum, không có I/O — dry-run (real_trading_enabled=false)
 # không thực sự kết nối SSI dù các symbol này được import ở module level.
 
@@ -23,9 +24,11 @@ from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import Config, load_config
 from trading.storage.db import Storage
 
-
-FEE_RATE_ESTIMATE = 0.0015  # 0.15% giá trị lệnh — ƯỚC TÍNH theo biểu phí môi giới
-# đã ký của tài khoản, KHÔNG PHẢI phí thật từ SSI. SDK hiện không có field phí
+FEE_RATE_ESTIMATE = 0.0025  # 0.25% giá trị lệnh — biểu phí SSI công khai, đặt lệnh
+# Online (không qua môi giới), giá trị GD dưới 100 triệu đồng/ngày/tài khoản.
+# Nguồn: https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan
+# (hiệu lực 10/10/2025). Vẫn là ƯỚC TÍNH cho account cụ thể (bậc GD cao hơn có
+# rate khác: 0.30%/0.25% — chưa hỗ trợ), KHÔNG PHẢI phí thật trả về từ SSI SDK
 # per-order (PlaceOrderResponse/Order chỉ có id/status/giá/số lượng, EquityPPMMR.fees
 # chỉ là tổng luỹ kế cấp tài khoản) — xem PLAN_REAL_ORDER_PLACEMENT.md.
 
@@ -123,7 +126,9 @@ async def confirm(
         else:
             mbs = await max_buy_sell_fn(order["account_no"], order["symbol"])
 
-        available = mbs.max_buy_quantity if order["side"] == "BUY" else mbs.max_sell_quantity
+        available = (
+            mbs.max_buy_quantity if order["side"] == "BUY" else mbs.max_sell_quantity
+        )
         if available < order["quantity"]:
             print(
                 f"!! DỪNG — sức {'mua' if order['side'] == 'BUY' else 'bán'} thật hiện tại "
@@ -168,7 +173,9 @@ async def confirm(
 
         fee = order["price"] * order["quantity"] * FEE_RATE_ESTIMATE
 
-        storage.update_pending_order_status(order_id, "placed", ssi_order_id=placed.order_id)
+        storage.update_pending_order_status(
+            order_id, "placed", ssi_order_id=placed.order_id
+        )
         storage.write_real_order_fill(
             account_no=order["account_no"],
             ts=datetime.now(TZ),
@@ -209,7 +216,9 @@ async def confirm(
 def main() -> None:
     ap = argparse.ArgumentParser(description="Xác nhận thủ công 1 lệnh chờ thật")
     ap.add_argument("order_id", type=int, help="id trong bảng pending_real_orders")
-    ap.add_argument("--config", default="config/config.yaml", help="path tới config yaml")
+    ap.add_argument(
+        "--config", default="config/config.yaml", help="path tới config yaml"
+    )
     args = ap.parse_args()
 
     cfg = load_config(args.config)

@@ -4,7 +4,11 @@ from trading.broker import Fill, Position
 from trading.models import Bar
 from trading.strategy import Signal
 
-FEE_RATE = 0.0015
+# 0.25% - biểu phí SSI, đặt lệnh Online (không qua môi giới), giá trị GD
+# dưới 100 triệu đồng/ngày/tài khoản. Nguồn: https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan
+# (hiệu lực 10/10/2025, đã bao gồm phí trả Sở). Các bậc giá trị GD cao hơn có
+# mức phí khác (0.30% / 0.25%) - chưa hỗ trợ trong PaperBroker (dùng 1 rate cố định).
+FEE_RATE = 0.0025
 SELL_TAX_RATE = 0.001
 SLIPPAGE_BPS = 5
 

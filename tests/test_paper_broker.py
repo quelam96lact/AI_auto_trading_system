@@ -25,7 +25,7 @@ def test_buy_fills_with_fee_and_slippage():
     expected_price = 10.0 * (1 + 5 / 10_000)
     assert abs(f.price - expected_price) < 1e-9
     assert f.qty == 100 and f.pnl is None
-    expected_fee = expected_price * 100 * 0.0015
+    expected_fee = expected_price * 100 * 0.0025
     assert abs(f.fee - expected_fee) < 1e-9
     assert b.position_qty("VCB") == 100
 
