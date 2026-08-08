@@ -34,6 +34,8 @@ def run_derivative_backtest(
     strategy: SmaCrossStrategy,
     risk: DerivativeRiskManager,
     capital: float,
+    stop_loss_points: float = 0.0,
+    take_profit_points: float = 0.0,
 ) -> BacktestReport:
     broker = DerivativePaperBroker(capital)
     marks: dict[str, float] = {}
@@ -46,6 +48,28 @@ def run_derivative_backtest(
         net = broker.position_qty(bar.symbol)
         daily_pnl = broker.realized_pnl + _unrealized(broker, marks)
         today = bar.ts.date()
+
+        # Exit SL/TP (kiem tra TRUOC logic crossover; SL uu tien khi trung bar
+        # - conservative; bar gap qua muc thi fill tai open - quy uoc gap cua
+        # repo, giong TrailingStopManager). Sau exit khong mo lai cung bar.
+        if net != 0 and (stop_loss_points > 0 or take_profit_points > 0):
+            entry = broker.positions[bar.symbol].avg_price
+            exit_price: float | None = None
+            if net > 0:  # long
+                if stop_loss_points > 0 and bar.low <= entry - stop_loss_points:
+                    exit_price = min(bar.open, entry - stop_loss_points)
+                elif take_profit_points > 0 and bar.high >= entry + take_profit_points:
+                    exit_price = max(bar.open, entry + take_profit_points)
+            else:  # short
+                if stop_loss_points > 0 and bar.high >= entry + stop_loss_points:
+                    exit_price = max(bar.open, entry + stop_loss_points)
+                elif take_profit_points > 0 and bar.low <= entry - take_profit_points:
+                    exit_price = min(bar.open, entry - take_profit_points)
+            if exit_price is not None:
+                all_fills.append(broker.close(bar.symbol, exit_price, bar.ts))
+                equity = broker.cash + _unrealized(broker, marks)
+                equity_curve.append(equity)
+                continue
 
         if crossover == "bull" and net < 0:
             all_fills.append(broker.close(bar.symbol, bar.close, bar.ts))

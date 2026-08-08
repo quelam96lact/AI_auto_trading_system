@@ -48,6 +48,127 @@ def test_report_unrealized_pnl_applies_contract_multiplier():
     assert abs(report.unrealized_pnl - expected_unrealized) < 1e-9
 
 
+def test_stop_loss_long_exits_at_level_on_low_touch():
+    # Chuoi gia da xac nhan that (chay qua compute_crossover truc tiep): bull
+    # bar4 (close=11) mo long. SL=1 -> level 10. Bar5 (close=9.5): low=9.5 <= 10
+    # va KHONG co bear crossover (fast 10.25 > slow 10.125) -> chi SL moi dong
+    # duoc lenh. Exit tai min(open=9.5, level 10) = 9.5 (bar dong duoi muc SL
+    # = min quy uoc gap cua repo, giong TrailingStopManager).
+    prices = [10, 10, 10, 10, 11, 9.5]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP, stop_loss_points=1.0)
+
+    assert len(report.fills) == 2
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - 9.5) < 1e-9
+    expected_pnl = (9.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_stop_loss_short_exits_at_level_on_high_touch():
+    # Chuoi gia da xac nhan that (compute_crossover truc tiep): bear bar5
+    # (close=9) mo short tu flat. SL=1 -> level 10. Bar6 (close=10): high=10 >= 10
+    # va KHONG co bull crossover (fast 9.5 < slow 11.25) -> chi SL moi dong duoc.
+    # Exit tai max(open=10, level 10) = 10.
+    prices = [10, 11, 12, 14, 12, 9, 10]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP, stop_loss_points=1.0)
+
+    assert len(report.fills) == 2
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "SELL" and abs(open_fill.price - 9.0) < 1e-9
+    assert close_fill.side == "BUY" and abs(close_fill.price - 10.0) < 1e-9
+    expected_pnl = (9.0 - 10.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_take_profit_long_exits_at_level_on_high_touch():
+    # Chuoi gia da xac nhan that (compute_crossover truc tiep): bull bar4
+    # (close=11) mo long. TP=1 -> level 12. Bar5 (close=13): high=13 >= 12,
+    # khong co crossover -> chi TP moi dong duoc. Exit tai max(open=13, 12) = 13.
+    prices = [10, 10, 10, 10, 11, 13]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP, take_profit_points=1.0)
+
+    assert len(report.fills) == 2
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - 13.0) < 1e-9
+    expected_pnl = (13.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_take_profit_short_exits_at_level_on_low_touch():
+    # Chuoi gia da xac nhan that (compute_crossover truc tiep): bear bar5
+    # (close=9) mo short tu flat. TP=1 -> level 8. Bar6 (close=6): low=6 <= 8,
+    # khong co crossover -> chi TP moi dong duoc. Exit tai min(open=6, 8) = 6.
+    prices = [10, 11, 12, 14, 12, 9, 6]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP, take_profit_points=1.0)
+
+    assert len(report.fills) == 2
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "SELL" and abs(open_fill.price - 9.0) < 1e-9
+    assert close_fill.side == "BUY" and abs(close_fill.price - 6.0) < 1e-9
+    expected_pnl = (9.0 - 6.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_stop_loss_takes_priority_when_tp_and_sl_both_hit_same_bar():
+    # Bar5 custom (open=10, high=14, low=8, close=12): low=8 <= 9 (SL=2 tu entry
+    # 11) VA high=14 >= 13 (TP=2) cung luc -> SL uu tien (conservative), dong
+    # tai min(open=10, level 9) = 9. Khong co crossover o bar5 (close=12 giu
+    # fast > slow) nen exit nay chi den tu SL/TP.
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    sym = DERIVATIVE_SYMBOL
+    bars = bars_from_prices([10, 10, 10, 10, 11])  # bull bar4 -> long @11
+    bars.append(Bar(sym, start + timedelta(minutes=5 * 5), 10.0, 14.0, 8.0, 12.0, 100))
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, strategy, risk, CAP, stop_loss_points=2.0, take_profit_points=2.0
+    )
+
+    assert len(report.fills) == 2
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - 9.0) < 1e-9
+    expected_pnl = (9.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
+    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+
+
+def test_no_reentry_on_same_bar_after_stop_loss_exit():
+    # Chuoi gia da xac nhan that (compute_crossover truc tiep): bull bar4
+    # (close=11) mo long, bar5 (close=9) VUA cham SL (9 <= 10, SL=1) VUA la
+    # bear crossover. Sau khi SL dong, KHONG duoc mo vi the moi cung bar nay
+    # (neu khong, bear & flat se mo short -> 3 fills).
+    prices = [10, 10, 10, 10, 11, 9]
+    bars = bars_from_prices(prices)
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(bars, strategy, risk, CAP, stop_loss_points=1.0)
+
+    assert len(report.fills) == 2  # chi mo long + dong SL, khong mo short cung bar
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - 9.0) < 1e-9
+
+
 def test_long_cycle_bull_opens_long_then_bear_closes_it():
     # Chuoi gia da xac nhan that (chay qua SmaCrossStrategy.compute_crossover
     # truc tiep de lay index bull/bear that, khong doan tay): bull tai bar4
