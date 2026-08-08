@@ -23,9 +23,9 @@ def _unrealized(broker: DerivativePaperBroker, marks: dict[str, float]) -> float
             continue
         mark = marks[symbol]
         if pos.qty > 0:
-            total += (mark - pos.avg_price) * pos.qty
+            total += (mark - pos.avg_price) * pos.qty * broker.contract_multiplier
         else:
-            total += (pos.avg_price - mark) * abs(pos.qty)
+            total += (pos.avg_price - mark) * abs(pos.qty) * broker.contract_multiplier
     return total
 
 

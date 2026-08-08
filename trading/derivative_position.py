@@ -8,6 +8,12 @@ from trading.broker import Fill
 # xem docs/superpowers/specs/2026-08-08-derivative-paper-trading-phase1-design.md.
 DERIVATIVE_FEE_PER_CONTRACT = 2_700.0
 
+# VNĐ/điểm — hệ số nhân hợp đồng công khai của HNX cho VN30 Index Futures
+# (VN30F1M): 100,000 VNĐ/điểm chỉ số. Đây là đặc tả hợp đồng do sở giao dịch
+# công bố (khác biểu phí — biểu phí vẫn là placeholder CHƯA xác nhận, còn hệ
+# số nhân điểm là số công khai của sở, dùng được ngay làm hằng số).
+DERIVATIVE_CONTRACT_MULTIPLIER = 100_000.0
+
 
 @dataclass
 class DerivativePosition:
@@ -26,10 +32,12 @@ class DerivativePaperBroker:
         self,
         capital: float,
         fee_per_contract: float = DERIVATIVE_FEE_PER_CONTRACT,
+        contract_multiplier: float = DERIVATIVE_CONTRACT_MULTIPLIER,
     ):
         self.capital = capital
         self.cash = capital
         self.fee_per_contract = fee_per_contract
+        self.contract_multiplier = contract_multiplier
         self.positions: dict[str, DerivativePosition] = {}
         self.realized_pnl = 0.0
 
@@ -69,10 +77,10 @@ class DerivativePaperBroker:
         filled_qty = abs(qty)
         fee = filled_qty * self.fee_per_contract
         if qty > 0:
-            pnl = (price - pos.avg_price) * qty - fee
+            pnl = (price - pos.avg_price) * qty * self.contract_multiplier - fee
             side = "SELL"
         else:
-            pnl = (pos.avg_price - price) * filled_qty - fee
+            pnl = (pos.avg_price - price) * filled_qty * self.contract_multiplier - fee
             side = "BUY"
         self.realized_pnl += pnl
         self.cash += pnl
