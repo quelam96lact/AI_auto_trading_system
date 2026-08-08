@@ -47,6 +47,35 @@ Cau hinh                                    Trd   Win%       avgW           PnL 
    định đánh đổi giữa an toàn vốn theo quy tắc D+ (không giữ qua đêm) và
    giữ lợi nhuận (giữ vị thế nhiều ngày).
 
+## Bổ sung (theo yêu cầu user: "đến 14h20 lệnh đang lãi thì giữ qua đêm")
+
+Engine đã tinh chỉnh: tại/sau `intraday_close_time`, CHỈ đóng lệnh đang LỖ
+(`_unrealized() <= 0`); lệnh đang LÃI được GIỮ qua đêm và tiếp tục quản lý
+bình thường (SL/TP/crossover vẫn áp dụng). Chạy lại script với engine mới:
+
+```
+Cau hinh                                    Trd   Win%       avgW           PnL      Ret   MaxDD  halt
+1. Baseline (risk cu 3%, khong streak, khong EOD)   17 58.8%  2,582,750    20,069,750 +20.25%   2.9%  None
+2. Risk moi (2% + 2-loss halt), khong EOD    17 58.8%  2,582,750    20,069,750 +20.25%   2.9%  None
+3. Risk cu + EOD 14:20 (engine moi: chi dong lo, giu lenh lai)   23 43.5%  2,550,750    17,700,250 +18.22%   4.3%  None
+4. Risk moi + EOD 14:20 (engine moi: chi dong lo, giu lenh lai)   23 43.5%  2,550,750    17,700,250 +18.22%   4.3%  None
+```
+
+Nhận xét khách quan:
+- Rule "giữ lệnh lãi qua đêm" phục hồi gần hết lợi nhuận so với "đóng hết":
+  +18.22% vs +9.51% (chỉ giảm ~10% so với baseline +20.25%, thay vì ~53%).
+- Cơ chế: avgW được bảo toàn (2,550,750 ≈ baseline 2,582,750) — đuôi lãi
+  của các lệnh thắng lớn (hold nhiều ngày) không bị cắt tại 14:20; các
+  lệnh đang lỗ cuối phiên vẫn bị đóng sớm (trades 17 → 23, win rate giảm
+  58.8% → 43.5% do nhiều lệnh lỗ nhỏ được realize).
+- MaxDD hơi tăng (2.9% → 4.3%) do nhiều lệnh hơn và vẫn còn rủi ro gap
+  qua đêm cho phần lệnh lãi được giữ.
+- Lưu ý ngưỡng "có lãi": dùng `unrealized > 0` (gross, chưa trừ phí đóng).
+  Lệnh lãi gross nhưng nhỏ hơn tổng phí round-trip (16,500đ ≈ 0.165 điểm)
+  sẽ được giữ nhưng thực chất net âm — có thể tinh chỉnh ngưỡng sau nếu cần.
+- KHÔNG chọn cấu hình "khuyến nghị cuối" ở đây — số liệu khách quan, để
+  Claude/user quyết đánh đổi.
+
 ## Caveat
 
 - 1 sample duy nhất 2 tháng, chưa out-of-sample / walk-forward.

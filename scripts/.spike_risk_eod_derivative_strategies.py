@@ -8,6 +8,10 @@ Cau hinh:
 3. Risk cu, EOD close time(14, 20)
 4. Risk moi + EOD close time(14, 20)
 
+LUU Y: engine hien tai da theo yeu cau user - EOD close CHI dong lenh dang
+LO (unrealized <= 0), lenh dang LAI duoc giu qua dem. Ket qua "dong het tai
+14:20" (+9.51%) da ghi trong research doc 2026-08-09 tu truoc khi tinh chinh.
+
 Entry co dinh: MomentumBreakoutStrategy(qty=1, lookback=5, volume_multiplier=2.0,
 volume_period=20, atr_pct_threshold=0.001) - tham so khuyen nghi da kiem chung.
 
@@ -64,8 +68,8 @@ NEW_RISK = {"max_daily_loss_pct": 0.02, "max_consecutive_losses": 2}
 configs = [
     ("1. Baseline (risk cu 3%, khong streak, khong EOD)", OLD_RISK, None),
     ("2. Risk moi (2% + 2-loss halt), khong EOD", NEW_RISK, None),
-    ("3. Risk cu, EOD close 14:20", OLD_RISK, time(14, 20)),
-    ("4. Risk moi + EOD close 14:20", NEW_RISK, time(14, 20)),
+    ("3. Risk cu + EOD 14:20 (engine moi: chi dong lo, giu lenh lai)", OLD_RISK, time(14, 20)),
+    ("4. Risk moi + EOD 14:20 (engine moi: chi dong lo, giu lenh lai)", NEW_RISK, time(14, 20)),
 ]
 
 print("=" * 100)

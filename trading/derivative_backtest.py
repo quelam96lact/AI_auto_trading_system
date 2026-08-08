@@ -76,11 +76,14 @@ def run_derivative_backtest(
                 continue
 
         # Ep dong vi the tai/sau gio cat (intraday_close_time) - truoc logic
-        # crossover, khong mo lai cung bar. Mac dinh None = tat, giu hanh vi cu.
+        # crossover, khong mo lai cung bar. Theo yeu cau user: CHI dong lenh
+        # dang LO (unrealized <= 0); lenh dang LAI thi giu qua dem (loi nhuan
+        # ky vong bu gap risk + lai D+), tiep tuc quan ly binh thuong.
         if (
             net != 0
             and intraday_close_time is not None
             and bar.ts.astimezone(TZ).time() >= intraday_close_time
+            and _unrealized(broker, marks) <= 0
         ):
             fill = broker.close(bar.symbol, bar.close, bar.ts)
             all_fills.append(fill)

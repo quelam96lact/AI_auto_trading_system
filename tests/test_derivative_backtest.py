@@ -254,6 +254,29 @@ def test_intraday_close_time_does_not_fire_when_already_flat():
     assert len(report.fills) == 0  # flat suot, khong co gi de dong
 
 
+def test_intraday_close_time_keeps_profitable_position_past_cutoff():
+    # User yeu cau: den 14:20 ma lenh DANG LAI thi giu qua dem. Bar 14:25
+    # close=13, long @11 -> unrealized +200,000 > 0 -> KHONG ep dong, vi the
+    # van mo cuoi chuoi (bar5 close=13 khong tao crossover).
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    sym = DERIVATIVE_SYMBOL
+    bars = [
+        Bar(sym, start + timedelta(minutes=5 * i), p, p, p, p, 100)
+        for i, p in enumerate([10, 10, 10, 10, 11])
+    ]
+    bars.append(Bar(sym, datetime(2026, 8, 8, 14, 25, tzinfo=TZ), 13.0, 13.0, 13.0, 13.0, 100))
+    strategy = new_strategy()
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, strategy, risk, CAP, intraday_close_time=time(14, 20)
+    )
+
+    assert len(report.fills) == 1  # chi mo long, lenh lai duoc giu
+    assert report.fills[0].side == "BUY" and abs(report.fills[0].price - 11.0) < 1e-9
+    assert abs(report.unrealized_pnl - (13.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+
+
 def test_long_cycle_bull_opens_long_then_bear_closes_it():
     # Chuoi gia da xac nhan that (chay qua SmaCrossStrategy.compute_crossover
     # truc tiep de lay index bull/bear that, khong doan tay): bull tai bar4
