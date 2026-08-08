@@ -22,3 +22,12 @@ packages = { find = { include = ["trading*"] } }
 
 [tool.setuptools.package-data]
 "trading.storage" = ["*.sql"]
+
+[tool.ruff.lint]
+# BLE001/S110: except Exception tran la pattern CO Y cho resilience cua he
+# thong trading live (collector/feed khong duoc crash vi 1 loi la) - xem
+# docs/superpowers/specs/2026-08-08-fix-preexisting-ruff-findings-design.md.
+# DTZ007/DTZ001: parse chuoi gio VN khong co tz (SSI tra ve vay) bang
+# strptime() (naive) roi .replace(tzinfo=TZ) ngay sau - cach lam dung cho
+# du lieu khong co tz trong chuoi goc, khong phai bug.
+ignore = ["BLE001", "S110", "DTZ007", "DTZ001"]
