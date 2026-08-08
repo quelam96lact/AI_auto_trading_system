@@ -1,6 +1,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -18,6 +19,7 @@ def test_feed_reconnects_on_error(monkeypatch):
     class FakeStream:
         def __init__(self, cfg, client):
             pass
+
         def start(self, on_message, on_error, channel):
             starts.append(channel)
             if len(starts) == 1:
@@ -28,8 +30,9 @@ def test_feed_reconnects_on_error(monkeypatch):
 
     received = []
     feed = SSIFeedLegacy.__new__(SSIFeedLegacy)
-    feed._init_for_test(FakeStream, on_raw=received.append,
-                        symbols=["VCB"], backoff_base=0.01)
+    feed._init_for_test(
+        FakeStream, on_raw=received.append, symbols=["VCB"], backoff_base=0.01
+    )
     feed.start()
     time.sleep(0.5)
     feed.stop()
@@ -54,7 +57,7 @@ class FakeAuth:
 
 
 class FakeStreaming:
-    instances = []
+    instances: ClassVar[list] = []
     fail_first_wait = True
 
     def __init__(self):
@@ -104,7 +107,9 @@ async def test_async_feed_reconnects_after_wait_error(monkeypatch):
     monkeypatch.setattr(feed_module, "ensure_authenticated", fake_ensure_authenticated)
 
     cfg = SimpleNamespace(symbols=["VCB"])
-    feed = SSIFeed(cfg, storage=object(), on_message=lambda msg: None, backoff_base=0.01)
+    feed = SSIFeed(
+        cfg, storage=object(), on_message=lambda msg: None, backoff_base=0.01
+    )
     feed.start()
 
     await _wait_until(lambda: len(FakeStreaming.instances) >= 2)
@@ -121,7 +126,9 @@ async def test_async_feed_restart_disconnects_current_stream(monkeypatch):
     monkeypatch.setattr(feed_module, "ensure_authenticated", fake_ensure_authenticated)
 
     cfg = SimpleNamespace(symbols=["VCB"])
-    feed = SSIFeed(cfg, storage=object(), on_message=lambda msg: None, backoff_base=0.01)
+    feed = SSIFeed(
+        cfg, storage=object(), on_message=lambda msg: None, backoff_base=0.01
+    )
     feed.start()
 
     await _wait_until(lambda: len(FakeStreaming.instances) >= 1)

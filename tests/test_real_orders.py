@@ -41,7 +41,15 @@ def cfg():
 
 @pytest.fixture
 def bar():
-    return Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 50_000, 50_000, 50_000, 50_000, 100)
+    return Bar(
+        "VCB",
+        datetime(2026, 7, 15, 9, 0, tzinfo=TZ),
+        50_000,
+        50_000,
+        50_000,
+        50_000,
+        100,
+    )
 
 
 def _make_storage():
@@ -74,7 +82,9 @@ def test_handle_crossover_buy_when_not_held(cfg, bar):
     mock_alert.assert_called_once()
     alert_kwargs = mock_alert.call_args.kwargs
     assert alert_kwargs["id"] == 42
-    assert alert_kwargs["confirm_cmd"] == "uv run python scripts/confirm_real_order.py 42"
+    assert (
+        alert_kwargs["confirm_cmd"] == "uv run python scripts/confirm_real_order.py 42"
+    )
 
 
 def test_handle_crossover_skips_buy_when_already_held(cfg, bar):
@@ -139,7 +149,7 @@ def test_handle_crossover_skips_buy_when_position_qty_is_zero(cfg, bar):
     }
     risk = RiskManager(capital=cfg.real_order_capital)
 
-    with patch("trading.real_orders.alert") as mock_alert:
+    with patch("trading.real_orders.alert"):
         handle_crossover(cfg, storage, risk, "bull", bar)
 
     storage.create_pending_order.assert_called_once()

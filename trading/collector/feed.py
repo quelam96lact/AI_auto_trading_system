@@ -75,7 +75,9 @@ class SSIFeedLegacy:
 
                     stream._on_close = _closed
                 stream.start(
-                    self.on_raw, lambda e: dead.set(), build_channel(self.symbols)
+                    self.on_raw,
+                    lambda e, dead=dead: dead.set(),
+                    build_channel(self.symbols),
                 )
             except Exception:
                 dead.set()

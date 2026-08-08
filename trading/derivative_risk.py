@@ -35,6 +35,4 @@ class DerivativeRiskManager:
         approve_close())."""
         if self._halt_check(daily_pnl, today):
             return False
-        if abs(current_qty) >= self.max_contracts:
-            return False
-        return True
+        return not abs(current_qty) >= self.max_contracts

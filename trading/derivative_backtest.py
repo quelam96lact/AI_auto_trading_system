@@ -56,11 +56,14 @@ def run_derivative_backtest(
                 )
         elif crossover == "bear" and net > 0:
             all_fills.append(broker.close(bar.symbol, bar.close, bar.ts))
-        elif crossover == "bear" and net == 0:
-            if risk.approve_open("short", net, daily_pnl, today):
-                all_fills.append(
-                    broker.open_short(bar.symbol, strategy.qty, bar.close, bar.ts)
-                )
+        elif (
+            crossover == "bear"
+            and net == 0
+            and risk.approve_open("short", net, daily_pnl, today)
+        ):
+            all_fills.append(
+                broker.open_short(bar.symbol, strategy.qty, bar.close, bar.ts)
+            )
 
         equity = broker.cash + _unrealized(broker, marks)
         equity_curve.append(equity)

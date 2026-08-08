@@ -91,9 +91,11 @@ def with_real_trading_enabled(cfg):
 @pytest.mark.asyncio
 async def test_confirm_rejects_when_input_not_yes(cfg, pending_order):
     storage = make_storage(pending_order)
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with pytest.raises(SystemExit) as exc:
-            await confirm(cfg, storage, 42, "no")
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(cfg, storage, 42, "no")
     assert exc.value.code == 0
     storage.update_pending_order_status.assert_called_once_with(42, "rejected")
     storage.write_real_order_fill.assert_not_called()
@@ -104,9 +106,11 @@ async def test_confirm_rejects_when_input_not_yes(cfg, pending_order):
 async def test_confirm_dry_run_does_not_call_place_order(cfg, pending_order):
     storage = make_storage(pending_order)
     fake_place = MagicMock()
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with pytest.raises(SystemExit) as exc:
-            await confirm(cfg, storage, 42, "YES", place_order_fn=fake_place)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(cfg, storage, 42, "YES", place_order_fn=fake_place)
     assert exc.value.code == 0
     storage.update_pending_order_status.assert_called_once_with(42, "confirmed")
     fake_place.assert_not_called()
@@ -126,9 +130,11 @@ async def test_confirm_rejects_buy_with_invalid_lot_size(cfg, pending_order):
     pending_order["quantity"] = 137
     pending_order["side"] = "BUY"
     storage = make_storage(pending_order)
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with pytest.raises(SystemExit) as exc:
-            await confirm(cfg, storage, 42, "YES")
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(cfg, storage, 42, "YES")
     assert exc.value.code == 1
     storage.update_pending_order_status.assert_called_once_with(42, "failed")
     storage.write_real_order_fill.assert_not_called()
@@ -145,9 +151,11 @@ async def test_confirm_expired_order_does_nothing(cfg, pending_order):
     pending_order["expires_at"] = datetime(2026, 7, 15, 8, 0, tzinfo=TZ)
     storage = make_storage(pending_order)
     fake_place = MagicMock()
-    with patch("scripts.confirm_real_order.alert"):
-        with pytest.raises(SystemExit) as exc:
-            await confirm(cfg, storage, 42, "YES", place_order_fn=fake_place)
+    with (
+        patch("scripts.confirm_real_order.alert"),
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(cfg, storage, 42, "YES", place_order_fn=fake_place)
     assert exc.value.code == 0
     storage.update_pending_order_status.assert_not_called()
     fake_place.assert_not_called()
@@ -171,9 +179,20 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
     fake_auth.config = MagicMock()
     fake_auth.close = AsyncMock()
 
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch(
+            "scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth
+        ),
+    ):
+        await confirm(
+            cfg_real,
+            storage,
+            42,
+            "YES",
+            place_order_fn=fake_place,
+            max_buy_sell_fn=fake_mbs,
+        )
 
     fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
 
@@ -183,7 +202,9 @@ async def test_confirm_real_mode_calls_place_order_and_saves_result(cfg, pending
     assert alert_args.args[0] == "WARN"
     assert alert_args.kwargs["ssi_order_id"] == "SSI-123"
     assert alert_args.kwargs["status"] == "MATCHED"
-    storage.update_pending_order_status.assert_called_once_with(42, "placed", ssi_order_id="SSI-123")
+    storage.update_pending_order_status.assert_called_once_with(
+        42, "placed", ssi_order_id="SSI-123"
+    )
     storage.write_real_order_fill.assert_called_once()
     args = storage.write_real_order_fill.call_args.kwargs
     assert args["account_no"] == "ACC_REAL"
@@ -221,13 +242,26 @@ async def test_confirm_real_mode_computes_pnl_on_sell(cfg, pending_order):
     fake_auth.config = MagicMock()
     fake_auth.close = AsyncMock()
 
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch(
+            "scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth
+        ),
+    ):
+        await confirm(
+            cfg_real,
+            storage,
+            42,
+            "YES",
+            place_order_fn=fake_place,
+            max_buy_sell_fn=fake_mbs,
+        )
 
     fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
     fake_place.assert_called_once_with("ACC_REAL", "VCB", OrderSide.SELL, 100, 55_000.0)
-    storage.update_pending_order_status.assert_called_once_with(42, "placed", ssi_order_id="SSI-SELL-123")
+    storage.update_pending_order_status.assert_called_once_with(
+        42, "placed", ssi_order_id="SSI-SELL-123"
+    )
     storage.write_real_order_fill.assert_called_once()
     args = storage.write_real_order_fill.call_args.kwargs
     assert args["side"] == "SELL"
@@ -252,10 +286,21 @@ async def test_confirm_real_mode_marks_failed_on_exception(cfg, pending_order):
     fake_auth.config = MagicMock()
     fake_auth.close = AsyncMock()
 
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            with pytest.raises(SystemExit) as exc:
-                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch(
+            "scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(
+            cfg_real,
+            storage,
+            42,
+            "YES",
+            place_order_fn=fake_place,
+            max_buy_sell_fn=fake_mbs,
+        )
 
     fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
 
@@ -274,16 +319,29 @@ async def test_confirm_real_mode_aborts_when_insufficient_buy_power(cfg, pending
     cfg_real = with_real_trading_enabled(cfg)
     storage = make_storage(pending_order)
     fake_place = AsyncMock()
-    fake_mbs = AsyncMock(return_value=MagicMock(max_buy_quantity=50, max_sell_quantity=1000))
+    fake_mbs = AsyncMock(
+        return_value=MagicMock(max_buy_quantity=50, max_sell_quantity=1000)
+    )
 
     fake_auth = MagicMock()
     fake_auth.config = MagicMock()
     fake_auth.close = AsyncMock()
 
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            with pytest.raises(SystemExit) as exc:
-                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch(
+            "scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(
+            cfg_real,
+            storage,
+            42,
+            "YES",
+            place_order_fn=fake_place,
+            max_buy_sell_fn=fake_mbs,
+        )
 
     assert exc.value.code == 1
     fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")
@@ -301,21 +359,36 @@ async def test_confirm_real_mode_aborts_when_insufficient_buy_power(cfg, pending
 
 
 @pytest.mark.asyncio
-async def test_confirm_real_mode_aborts_when_insufficient_sell_power(cfg, pending_order):
+async def test_confirm_real_mode_aborts_when_insufficient_sell_power(
+    cfg, pending_order
+):
     pending_order["side"] = "SELL"
     cfg_real = with_real_trading_enabled(cfg)
     storage = make_storage(pending_order)
     fake_place = AsyncMock()
-    fake_mbs = AsyncMock(return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=30))
+    fake_mbs = AsyncMock(
+        return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=30)
+    )
 
     fake_auth = MagicMock()
     fake_auth.config = MagicMock()
     fake_auth.close = AsyncMock()
 
-    with patch("scripts.confirm_real_order.alert") as mock_alert:
-        with patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth):
-            with pytest.raises(SystemExit) as exc:
-                await confirm(cfg_real, storage, 42, "YES", place_order_fn=fake_place, max_buy_sell_fn=fake_mbs)
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch(
+            "scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        await confirm(
+            cfg_real,
+            storage,
+            42,
+            "YES",
+            place_order_fn=fake_place,
+            max_buy_sell_fn=fake_mbs,
+        )
 
     assert exc.value.code == 1
     fake_mbs.assert_awaited_once_with("ACC_REAL", "VCB")

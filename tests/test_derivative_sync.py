@@ -22,15 +22,15 @@ class FakeStorage:
 
 
 def _ppmmr(**overrides):
-    base = dict(
-        rc_call=False,
-        account_ratio_ssi=0.0,
-        account_ratio_vsdc=0.0,
-        used_limit_warning_level1_ssi=85.0,
-        used_limit_warning_level2_ssi=90.0,
-        used_limit_warning_level3_ssi=95.0,
-        total_equity=0.0,
-    )
+    base = {
+        "rc_call": False,
+        "account_ratio_ssi": 0.0,
+        "account_ratio_vsdc": 0.0,
+        "used_limit_warning_level1_ssi": 85.0,
+        "used_limit_warning_level2_ssi": 90.0,
+        "used_limit_warning_level3_ssi": 95.0,
+        "total_equity": 0.0,
+    }
     base.update(overrides)
     return _wrap(SimpleNamespace(**base))
 
