@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import Config
@@ -173,5 +173,5 @@ class SSIFeed:
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=backoff)
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass

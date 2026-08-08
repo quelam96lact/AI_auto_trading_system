@@ -1,7 +1,9 @@
 from datetime import datetime
+
 from trading.calendar_vn import TZ
 from trading.collector.aggregator import BarAggregator
 from trading.models import Tick
+
 
 def tick(h, m, s, price, vol=100, sym="VCB"):
     return Tick(sym, price, vol, datetime(2026, 7, 15, h, m, s, tzinfo=TZ))

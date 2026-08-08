@@ -3,7 +3,6 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from trading.broker import Position
 from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.storage.db import RealPosition, Storage

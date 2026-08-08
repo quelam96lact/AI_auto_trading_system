@@ -2,14 +2,12 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from ssi_sdk.enums import OrderSide
 
+from scripts.confirm_real_order import confirm
 from trading.calendar_vn import TZ
 from trading.config import Config
 from trading.storage.db import RealPosition, Storage
-
-from scripts.confirm_real_order import confirm
 
 
 @pytest.fixture

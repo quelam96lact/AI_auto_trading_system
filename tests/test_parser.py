@@ -6,7 +6,6 @@ from trading.calendar_vn import TZ
 from trading.collector.parser import ci_get, parse_interval_message, parse_message
 from trading.models import IndexValue, Tick
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

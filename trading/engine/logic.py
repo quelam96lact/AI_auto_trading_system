@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from trading.broker import Fill
 from trading.calendar_vn import TZ

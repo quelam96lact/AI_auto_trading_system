@@ -1,4 +1,5 @@
 from datetime import date
+
 from trading.config import load_config
 
 

@@ -2,8 +2,8 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 
-import pytest
 import nats
+import pytest
 
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ
@@ -203,7 +203,6 @@ async def test_engine_run_expires_stale_pending_real_order(storage):
 
 
 async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatch):
-    import trading.engine.main as engine_main
     import trading.real_orders as real_orders_mod
 
     signals_seen = []

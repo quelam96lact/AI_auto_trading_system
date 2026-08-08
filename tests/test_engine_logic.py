@@ -5,8 +5,7 @@ from trading.engine.logic import bar_from_payload, process_bar
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
-from trading.strategies.sma_cross import Crossover
-from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.strategies.sma_cross import Crossover, SmaCrossStrategy
 from trading.trailing_stop import TrailingStopManager
 
 
