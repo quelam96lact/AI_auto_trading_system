@@ -36,12 +36,23 @@ dịch chủ động). Đối chiếu thêm: thuvienchungkhoan.vn, vfs.com.vn.
 3. Lưu ý file user ghi "SSI D+ hiển thị phí dịch vụ 7.000 đồng" — chênh 250đ
    so với 7,250 tính được; có thể iBoard hiển thị khác/tròn số — cần xác
    nhận trên màn hình thực tế.
-4. **CHƯA xác minh công khai:** tỷ lệ ký quỹ D+ 3% (intraday) / 6% (qua
-   đêm) và lãi suất qua đêm 0.0487%/ngày — nguồn duy nhất là ảnh chụp iBoard
-   (footnote [4] file user). Các số này KHÔNG nằm trên trang biểu phí công
-   khai của SSI. **Cần xác nhận trực tiếp trên SSI iBoard trước khi vận hành.**
-5. Phí chưa mô hình (rủi ro chi phí thực > backtest): VSD bù trừ nếu tính
-   theo NGÀY GIỮ (2,550đ/HĐ/ngày), phí quản lý ký quỹ 0.0024%, thuế TNCN.
+4. **Xác nhận từ SSI iBoard (ảnh chụp user, 2026-08-09, 2 ảnh giống nhau —
+   OCR Windows):**
+   - Ký quỹ ban đầu D+ với VN30: **3% (trong ngày) / 6% (qua đêm)** ✓ khớp
+     file user (VN100 cũng 3%/6%).
+   - Phí dịch vụ hiển thị: **7.000 đồng** (cả trong ngày lẫn qua đêm) ✓ khớp
+     file user. LƯU Ý: chênh 250đ so với 7,250 tính từ biểu phí công khai
+     (2,000+2,700+2,550) — iBoard là nguồn vận hành thực tế, xem là 7,000.
+   - Số vị thế tối đa/tài khoản: VN30: 300; VN100: 20.
+   - Ngưỡng sử dụng ký quỹ: trong ngày 66% (tỷ lệ tối đa khuyến cáo — file
+     user: "không xem 66% là mức nên dùng"), [80% cảnh báo], 100% ép đóng;
+     qua đêm 98%/99%/100%.
+   - **Lãi suất qua đêm: KHÔNG hiển thị trong 2 ảnh** — vẫn CHƯA xác nhận
+     con số 0.0487%/ngày; cần xem màn hình chi tiết D+ khác nếu muốn chốt.
+5. Phí chưa mô hình (rủi ro chi phí thực > backtest): phí quản lý ký quỹ
+   0.0024%, thuế TNCN. LƯU Ý: VSD bù trừ **2,550đ/hợp đồng (per lượt giao
+   dịch)** — đã xác nhận với user 2026-08-09, KHÔNG tính theo ngày giữ →
+   giữ qua đêm không phát sinh thêm phí VSD.
 
 ## 2. Ràng buộc margin với vốn 30tr
 
@@ -79,12 +90,17 @@ Lý do chốt EOD ngưỡng 1.0: MaxDD thấp nhất (9.8% ≈ 2.94tr — chấp
 
 ## 4. Checklist TRƯỚC khi dùng vốn thật (thứ tự ưu tiên)
 
-- [ ] Xác nhận trên SSI iBoard: tỷ lệ ký quỹ D+ 3%/6%, lãi qua đêm 0.0487%,
-      phí dịch vụ hiển thị (7,000 vs 7,250) — số CHƯA có nguồn công khai.
-- [ ] Quyết định hằng số phí: giữ 8,250 (thường) hay đổi 7,250 (D+) — nếu
-      đổi: cập nhật `DERIVATIVE_FEE_PER_CONTRACT` + test + re-backtest.
-- [ ] Làm rõ VSD bù trừ: theo lượt hay theo ngày giữ (2,550đ/HĐ/ngày) —
-      nếu theo ngày, giữ qua đêm tốn thêm ~2,550đ/ngày/HĐ.
+- [x] Xác nhận trên SSI iBoard: ký quỹ D+ **3% trong ngày / 6% qua đêm**
+      ✓, phí dịch vụ **7.000đ** ✓ (chênh 250đ so với 7,250 tính từ biểu phí
+      — iBoard là nguồn vận hành), số vị thế tối đa 300/20 ✓. Lãi suất qua
+      đêm CHƯA hiển thị trong ảnh — cần xem màn hình chi tiết D+ nếu muốn.
+- [x] Quyết định hằng số phí: **GIỮ 8,250** (user chốt 2026-08-09 —
+      conservative; chênh lệch với D+ thực tế chỉ ~1,000-1,250đ/lượt ≈
+      0.0125 điểm, không đáng kể so với biến động giá). Nếu sau này muốn
+      chính xác theo D+ (7,000 iBoard / 7,250 biểu phí): plan TDD riêng.
+- [x] Làm rõ VSD bù trừ: **2,550đ/hợp đồng (per lượt)** — user xác nhận
+      2026-08-09, KHÔNG tính theo ngày giữ → giữ qua đêm không phát sinh
+      thêm phí VSD (chỉ có lãi D+ qua đêm).
 - [ ] Paper trading ít nhất 50 lệnh (theo file user) với đúng cấu hình trên,
       đối chiếu backtest trước khi vào tiền thật.
 - [ ] Out-of-sample / dữ liệu dài hơn 2 tháng trước khi coi kết quả là bền vững.
