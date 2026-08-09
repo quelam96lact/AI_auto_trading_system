@@ -46,6 +46,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
     real_risk = RiskManager(capital=cfg.real_order_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     marks: dict[str, float] = {}
+    day_state: dict = {}
 
     nc = await nats.connect(cfg.nats_url)
     js = nc.jetstream()
@@ -116,6 +117,7 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
                     risk,
                     trailing_stop,
                     marks,
+                    day_state,
                     on_crossover=on_real_crossover,
                 )
                 persist_fills(fills)

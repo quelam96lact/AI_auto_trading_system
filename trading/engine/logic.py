@@ -17,8 +17,20 @@ def process_bar(
     risk: RiskManager,
     trailing_stop: TrailingStopManager,
     marks: dict[str, float],
+    day_state: dict,
     on_crossover: Callable[[Crossover, Bar], None] | None = None,
 ) -> list[Fill]:
+    # daily_pnl phai tinh THEO NGAY: snapshot realized dau ngay, reset khi doi
+    # ngay. Truoc day dung broker.realized_pnl tich luy tu luc khoi dong — khi
+    # lo tich luy vuot max_daily_loss_pct thi RiskManager halt VINH VIEN, vi
+    # realized tich luy khong bao gio hoi. Cung loai bug da sua cho backtest o
+    # commit 351e6e1 (derivative_backtest.py); luong live khi do chua sua.
+    # Snapshot TRUOC broker.on_bar() de fill cua chinh bar nay tinh vao ngay moi.
+    today = bar.ts.date()
+    if day_state.get("day") != today:
+        day_state["day"] = today
+        day_state["start_realized"] = broker.realized_pnl
+
     fills = broker.on_bar(bar)
     marks[bar.symbol] = bar.close
     for f in fills:
@@ -41,14 +53,18 @@ def process_bar(
         trailing_stop.on_position_closed(bar.symbol)
         fills.append(forced)
     elif signal is not None:
-        daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
+        daily_pnl = (
+            broker.realized_pnl
+            - day_state["start_realized"]
+            + broker.unrealized_pnl(marks)
+        )
         sized = risk.approve_sized(
             signal,
             bar.close,
             strategy.last_atr(bar.symbol),
             broker.positions,
             daily_pnl,
-            bar.ts.date(),
+            today,
         )
         if sized is not None:
             broker.submit(sized)
