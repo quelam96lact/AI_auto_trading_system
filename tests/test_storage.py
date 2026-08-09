@@ -258,3 +258,50 @@ def test_save_real_risk_halt_upsert(storage):
     storage.save_real_risk_halt(date(2026, 7, 15))
     storage.save_real_risk_halt(date(2026, 7, 16))
     assert storage.read_real_risk_halt() == date(2026, 7, 16)
+
+
+def test_symbol_universe_upsert_and_read_active(storage):
+    with storage.conn() as c:
+        c.execute("DELETE FROM symbol_universe WHERE symbol LIKE 'ZZ%'")
+    storage.upsert_symbol_universe([
+        {"symbol": "ZZA", "exchange": "HOSE", "avg_value_20d": 5e9,
+         "avg_volume_20d": 100000, "is_active": True},
+        {"symbol": "ZZB", "exchange": "UPCOM", "avg_value_20d": 1e6,
+         "avg_volume_20d": 100, "is_active": False},
+    ])
+    active = storage.read_active_universe()
+    assert "ZZA" in active
+    assert "ZZB" not in active
+
+    # upsert lai phai GHI DE, khong tao dong trung
+    storage.upsert_symbol_universe([
+        {"symbol": "ZZA", "exchange": "HOSE", "avg_value_20d": 1.0,
+         "avg_volume_20d": 1, "is_active": False},
+    ])
+    assert "ZZA" not in storage.read_active_universe()
+
+
+def test_backfill_progress_roundtrip(storage):
+    with storage.conn() as c:
+        c.execute("DELETE FROM backfill_progress WHERE symbol = 'ZZA'")
+    assert storage.get_backfill_progress("ZZA", "1d") is None
+
+    storage.set_backfill_progress("ZZA", "1d", date(2026, 1, 31), "ok")
+    got = storage.get_backfill_progress("ZZA", "1d")
+    assert got["last_done_date"] == date(2026, 1, 31)
+    assert got["status"] == "ok"
+
+    storage.set_backfill_progress("ZZA", "1d", date(2026, 2, 28), "error", "boom")
+    got = storage.get_backfill_progress("ZZA", "1d")
+    assert got["status"] == "error" and got["error"] == "boom"
+
+
+def test_bars_daily_is_hypertable(storage):
+    """bars_daily se chua ~4 trieu dong (1600 ma x 10 nam); khong hypertable thi
+    query theo khoang thoi gian khong duoc chunk pruning."""
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT count(*) FROM timescaledb_information.hypertables "
+            "WHERE hypertable_name = 'bars_daily'"
+        ).fetchone()
+    assert row[0] == 1, "bars_daily phai la hypertable"

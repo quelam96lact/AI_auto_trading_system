@@ -25,6 +25,27 @@ CREATE TABLE IF NOT EXISTS bars_daily (
   PRIMARY KEY (symbol, ts)
 );
 
+SELECT create_hypertable('bars_daily', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
+
+CREATE TABLE IF NOT EXISTS symbol_universe (
+  symbol text PRIMARY KEY,
+  exchange text NOT NULL,
+  avg_value_20d double precision,
+  avg_volume_20d double precision,
+  is_active boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS backfill_progress (
+  symbol text NOT NULL,
+  timeframe text NOT NULL,
+  last_done_date date,
+  status text NOT NULL,
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (symbol, timeframe)
+);
+
 CREATE TABLE IF NOT EXISTS index_values (
   index_id text NOT NULL,
   ts timestamptz NOT NULL,

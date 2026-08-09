@@ -95,11 +95,28 @@ from datetime import datetime, timedelta
 
 from trading.calendar_vn import TZ
 from trading.config import load_config
-from trading.resample import resample_bars
+from trading.resample import (
+    resample_bars,
+    resample_monthly,
+    resample_weekly,
+)
 from trading.storage.db import Storage
 
 STRATEGIES = {"sma_cross": lambda: SmaCrossStrategy()}
-_TF_MINUTES = {"15m": 15, "1h": 60}
+
+# (bang_nguon, ham_resample). Khung noi ngay tinh tu bar 5m trong `bars`;
+# 1d/1w/1M tinh tu `bars_daily`. Xem plan 2026-08-09-multi-timeframe-data.md.
+_TF_SPEC = {
+    "5m": ("bars", lambda bars: bars),
+    "10m": ("bars", lambda bars: resample_bars(bars, 10)),
+    "15m": ("bars", lambda bars: resample_bars(bars, 15)),
+    "30m": ("bars", lambda bars: resample_bars(bars, 30)),
+    "1h": ("bars", lambda bars: resample_bars(bars, 60)),
+    "4h": ("bars", lambda bars: resample_bars(bars, 240)),
+    "1d": ("bars_daily", lambda bars: bars),
+    "1w": ("bars_daily", resample_weekly),
+    "1M": ("bars_daily", resample_monthly),
+}
 
 
 def main() -> None:
@@ -108,7 +125,7 @@ def main() -> None:
     ap.add_argument("--symbols", required=True, help="VD: VCB,HPG")
     ap.add_argument("--from", dest="frm", required=True, help="YYYY-MM-DD")
     ap.add_argument("--to", dest="to", required=True, help="YYYY-MM-DD")
-    ap.add_argument("--tf", default="5m", choices=["5m", "15m", "1h"])
+    ap.add_argument("--tf", default="5m", choices=list(_TF_SPEC))
     ap.add_argument("--capital", type=float, default=100_000_000.0)
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
@@ -118,12 +135,15 @@ def main() -> None:
     frm = datetime.strptime(args.frm, "%Y-%m-%d").replace(tzinfo=TZ)
     to = datetime.strptime(args.to, "%Y-%m-%d").replace(tzinfo=TZ) + timedelta(days=1)
 
+    source, resample_fn = _TF_SPEC[args.tf]
+    read = (
+        storage.read_bars if source == "bars" else storage.read_daily_bars
+    )
+
     bars: list[Bar] = []
     for sym in args.symbols.split(","):
-        rows = storage.read_bars(sym, frm, to)
-        bars.extend(
-            rows if args.tf == "5m" else resample_bars(rows, _TF_MINUTES[args.tf])
-        )
+        rows = read(sym, frm, to)
+        bars.extend(resample_fn(rows))
     bars.sort(key=lambda b: (b.ts, b.symbol))
 
     strategy = STRATEGIES[args.strategy]()

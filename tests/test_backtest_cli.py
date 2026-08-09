@@ -56,3 +56,16 @@ def test_read_resample_replay_is_deterministic_from_real_db(storage):
     r1, r2 = run_once(), run_once()
     assert r1 == r2
     assert len(resample_bars(storage.read_bars("BTCLI", frm, to), 15)) > 0
+
+
+def test_tf_registry_covers_all_timeframes_and_sources():
+    from trading.backtest import _TF_SPEC
+
+    assert set(_TF_SPEC) == {"5m", "10m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"}
+    # khung noi ngay doc bang `bars`, khung tu 1d tro len doc `bars_daily`
+    assert {tf for tf, (src, _) in _TF_SPEC.items() if src == "bars"} == {
+        "5m", "10m", "15m", "30m", "1h", "4h"
+    }
+    assert {tf for tf, (src, _) in _TF_SPEC.items() if src == "bars_daily"} == {
+        "1d", "1w", "1M"
+    }

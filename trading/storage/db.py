@@ -69,6 +69,15 @@ class Storage:
             ).fetchall()
         return [Bar(*r) for r in rows]
 
+    def read_daily_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_daily "
+                "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
+                (symbol, start, end),
+            ).fetchall()
+        return [Bar(*r) for r in rows]
+
     def last_bar_ts(self, symbol: str) -> datetime | None:
         with self.conn() as c:
             row = c.execute(
@@ -507,4 +516,71 @@ class Storage:
                     ssi_order_id,
                     status,
                 ),
+            )
+
+    def upsert_symbol_universe(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        with self.conn() as c:
+            c.cursor().executemany(
+                "INSERT INTO symbol_universe "
+                "(symbol, exchange, avg_value_20d, avg_volume_20d, is_active, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, now()) "
+                "ON CONFLICT (symbol) DO UPDATE SET "
+                "exchange = EXCLUDED.exchange, avg_value_20d = EXCLUDED.avg_value_20d, "
+                "avg_volume_20d = EXCLUDED.avg_volume_20d, is_active = EXCLUDED.is_active, "
+                "updated_at = now()",
+                [
+                    (
+                        r["symbol"],
+                        r["exchange"],
+                        r.get("avg_value_20d"),
+                        r.get("avg_volume_20d"),
+                        r["is_active"],
+                    )
+                    for r in rows
+                ],
+            )
+
+    def read_active_universe(self) -> list[str]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol FROM symbol_universe WHERE is_active ORDER BY symbol"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_backfill_progress(self, symbol: str, timeframe: str) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT symbol, timeframe, last_done_date, status, error "
+                "FROM backfill_progress WHERE symbol = %s AND timeframe = %s",
+                (symbol, timeframe),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "symbol": row[0],
+            "timeframe": row[1],
+            "last_done_date": row[2],
+            "status": row[3],
+            "error": row[4],
+        }
+
+    def set_backfill_progress(
+        self,
+        symbol: str,
+        timeframe: str,
+        last_done_date,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO backfill_progress "
+                "(symbol, timeframe, last_done_date, status, error, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, now()) "
+                "ON CONFLICT (symbol, timeframe) DO UPDATE SET "
+                "last_done_date = EXCLUDED.last_done_date, status = EXCLUDED.status, "
+                "error = EXCLUDED.error, updated_at = now()",
+                (symbol, timeframe, last_done_date, status, error),
             )
