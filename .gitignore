@@ -10,6 +10,8 @@ scripts/.spike_stream_sample.jsonl
 scripts/.spike_account_info.json
 scripts/.spike_equity_balance.json
 scripts/.spike_equity_positions.json
+scripts/.spike_all_symbols.json
+scripts/.spike_all_symbols_classified.json
 scripts/.spike_max_buy_sell.json
 scripts/.spike_place_order.json
 scripts/.spike_cancel_order.json
