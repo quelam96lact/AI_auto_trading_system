@@ -28,10 +28,10 @@ been run end-to-end.
 
 ## 3. Firewall — only expose what must be public
 
-By default `docker-compose.yml` binds Postgres (5432) and NATS (4222) to
-`127.0.0.1` only, so they are not reachable from outside the host even without
-a firewall. Grafana (3000) is still bound to all interfaces — put it behind a
-reverse proxy with TLS (see §4) rather than exposing it directly.
+`docker-compose.yml` binds Postgres (5432), NATS (4222) **and Grafana (3000)**
+to `127.0.0.1` only, so none of them is reachable from outside the host even
+without a firewall. To reach Grafana remotely, either tunnel over SSH
+(`ssh -L 3000:127.0.0.1:3000 user@server`) or put it behind nginx + TLS (§4).
 
 ```bash
 sudo ufw default deny incoming
@@ -70,8 +70,15 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d grafana.YOUR_DOMAIN
 ```
 
-Also change Grafana's default admin password (`GF_SECURITY_ADMIN_PASSWORD` in
-`docker-compose.yml`) before exposing it publicly.
+Also change Grafana's default admin password before exposing it: set
+`GRAFANA_ADMIN_PASSWORD` in the environment file (compose reads it; the
+fallback is still `admin`, which is only acceptable because port 3000 is bound
+to localhost).
+
+`POSTGRES_PASSWORD` works the same way, with one trap: Postgres only applies it
+when the `pgdata` volume is initialised the **first** time. On an existing
+database you must run `ALTER USER trading WITH PASSWORD '...'` inside the
+container first, then set the same value in the environment file.
 
 ## 5. Start the stack
 

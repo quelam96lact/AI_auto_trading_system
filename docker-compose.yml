@@ -3,7 +3,7 @@ services:
     image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_USER: trading
-      POSTGRES_PASSWORD: trading
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
       POSTGRES_DB: trading
     ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
@@ -27,7 +27,7 @@ services:
     build: .
     command: python -m trading.engine.main --config config/config.yaml
     environment:
-      DB_DSN: postgresql://trading:trading@postgres:5432/trading
+      DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
       SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
       SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
       SSI_API_KEY: ${SSI_API_KEY}
@@ -45,7 +45,7 @@ services:
     build: .
     command: python -m trading.collector.main --config config/config.yaml
     environment:
-      DB_DSN: postgresql://trading:trading@postgres:5432/trading
+      DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
       NATS_URL: nats://nats:4222
       SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
       SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
@@ -62,9 +62,12 @@ services:
     cpus: 1.0
   grafana:
     image: grafana/grafana:11.2.0
-    ports: ["3000:3000"]
+    # 127.0.0.1: Grafana KHONG duoc mo thang ra internet. Dat sau nginx+TLS
+    # neu can truy cap tu xa (DEPLOYMENT.md §4), hoac dung SSH tunnel.
+    ports: ["127.0.0.1:3000:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:

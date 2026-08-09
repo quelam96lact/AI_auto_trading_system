@@ -1,0 +1,21 @@
+# Build context chi can pyproject/uv.lock/trading/config — moi thu khac chi lam
+# context phinh to va lam hong cache layer. .env DUOC LOAI TRU CO CHU DICH:
+# khong bao gio bake secret vao image.
+.env
+.venv/
+.git/
+.github/
+.claude/
+.1devtool/
+.gitnexus/
+.superpowers/
+.agents/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+archive/
+docs/
+tests/
+grafana/
+*.md

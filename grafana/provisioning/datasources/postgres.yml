@@ -8,7 +8,7 @@ datasources:
     database: trading
     user: trading
     secureJsonData:
-      password: trading
+      password: ${POSTGRES_PASSWORD}
     jsonData:
       sslmode: disable
       postgresVersion: 1600
