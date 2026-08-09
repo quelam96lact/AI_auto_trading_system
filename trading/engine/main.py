@@ -85,47 +85,70 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
     def on_real_crossover(crossover, bar) -> None:
         real_orders.handle_crossover(cfg, storage, real_risk, crossover, bar)
 
+    def idle_maintenance() -> None:
+        """expire + heartbeat, không được để lỗi DB tạm thời giết engine."""
+        try:
+            expire_stale_real_orders()
+            storage.beat("engine")
+        except Exception as e:
+            alert(
+                "WARN",
+                "engine maintenance failed, continuing",
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+
     processed = 0
     try:
         while max_messages is None or processed < max_messages:
             try:
                 msg = await sub.next_msg(timeout=60)
             except nats.errors.TimeoutError:
-                expire_stale_real_orders()
-                storage.beat("engine")
+                idle_maintenance()
                 continue
-            bar = bar_from_payload(json.loads(msg.data))
-            was_halted = risk.halted_date
-            was_real_halted = real_risk.halted_date
-            fills = process_bar(
-                bar,
-                broker,
-                strategy,
-                risk,
-                trailing_stop,
-                marks,
-                on_crossover=on_real_crossover,
-            )
-            persist_fills(fills)
-            if risk.halted_date is not None and risk.halted_date != was_halted:
+            try:
+                bar = bar_from_payload(json.loads(msg.data))
+                was_halted = risk.halted_date
+                was_real_halted = real_risk.halted_date
+                fills = process_bar(
+                    bar,
+                    broker,
+                    strategy,
+                    risk,
+                    trailing_stop,
+                    marks,
+                    on_crossover=on_real_crossover,
+                )
+                persist_fills(fills)
+                if risk.halted_date is not None and risk.halted_date != was_halted:
+                    alert(
+                        "CRITICAL",
+                        "risk halt: max daily loss reached",
+                        date=str(risk.halted_date),
+                    )
+                if (
+                    real_risk.halted_date is not None
+                    and real_risk.halted_date != was_real_halted
+                ):
+                    storage.save_real_risk_halt(real_risk.halted_date)
+                    alert(
+                        "CRITICAL",
+                        "REAL risk halt: max daily loss reached",
+                        date=str(real_risk.halted_date),
+                    )
+                await msg.ack()
+            except Exception as e:
+                # term() chứ không nak(): broker là state in-memory đã bị
+                # process_bar mutate, và write_order() là INSERT thuần không
+                # idempotent — redeliver sẽ ghi trùng lệnh + tính trùng PnL.
+                # Bỏ 1 nến an toàn hơn vào lệnh nhân đôi. Xem plan P0 Task 1.
                 alert(
                     "CRITICAL",
-                    "risk halt: max daily loss reached",
-                    date=str(risk.halted_date),
+                    "engine failed to process bar, message dropped",
+                    error=f"{type(e).__name__}: {e}"[:200],
+                    payload=msg.data.decode("utf-8", "replace")[:200],
                 )
-            if (
-                real_risk.halted_date is not None
-                and real_risk.halted_date != was_real_halted
-            ):
-                storage.save_real_risk_halt(real_risk.halted_date)
-                alert(
-                    "CRITICAL",
-                    "REAL risk halt: max daily loss reached",
-                    date=str(real_risk.halted_date),
-                )
-            await msg.ack()
-            expire_stale_real_orders()
-            storage.beat("engine")
+                await msg.term()
+            idle_maintenance()
             processed += 1
     finally:
         await nc.close()

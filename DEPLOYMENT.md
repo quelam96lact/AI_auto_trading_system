@@ -131,6 +131,30 @@ Docker's default `json-file` log driver is unbounded. Add to
 sudo systemctl restart docker
 ```
 
+## 9. Dead-man's switch (heartbeat)
+
+`collector` và `engine` ghi vào bảng `heartbeat` mỗi ~30-60 giây. Nếu một
+service chết, Docker `restart: unless-stopped` sẽ thử khởi động lại — nhưng nếu
+nó chết lặp (crash loop) hoặc treo mà không thoát, container vẫn "đang chạy" và
+không ai biết. `scripts/heartbeat_check.py` đọc bảng đó và bắn Telegram khi một
+service quá hạn.
+
+Chạy bằng cron **trên host**, không phải trong container:
+
+```bash
+sudo crontab -e
+# thêm (chỉ chạy trong giờ giao dịch VN, script tự bỏ qua ngoài phiên):
+*/5 9-15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/heartbeat_check.py >> /var/log/trading-heartbeat.log 2>&1
+```
+
+Thay `trading:trading` bằng user/password Postgres thật nếu bạn đã đổi khỏi giá
+trị mặc định trong `docker-compose.yml`.
+
+Ngưỡng mặc định 300 giây, đổi bằng `HEARTBEAT_MAX_AGE_SECONDS`.
+
+Kiểm chứng một lần sau khi cài: `docker compose stop engine`, đợi >5 phút trong
+giờ giao dịch, xác nhận có tin Telegram, rồi `docker compose start engine`.
+
 ## Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.

@@ -1,6 +1,7 @@
 import argparse
 import asyncio
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
@@ -15,6 +16,112 @@ from trading.config import load_config
 from trading.storage.db import Storage
 
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
+
+
+async def persist_bars(storage, pub, bars) -> None:
+    """Ghi bar vào DB + publish NATS. KHÔNG BAO GIỜ ném: hàm này được gọi qua
+    asyncio.create_task() fire-and-forget, exception thoát ra sẽ bị asyncio nuốt
+    thành 'Task exception was never retrieved' — bar mất mà không ai biết."""
+    if not bars:
+        return
+    try:
+        storage.write_bars(bars)
+        for b in bars:
+            await pub.publish(b)
+        alert("INFO", "bars closed", n=len(bars), symbols=[b.symbol for b in bars])
+    except Exception as e:
+        alert(
+            "CRITICAL",
+            "bar persist/publish failed, bars dropped",
+            error=f"{type(e).__name__}: {e}"[:200],
+            symbols=[b.symbol for b in bars],
+            ts=[b.ts.isoformat() for b in bars],
+        )
+
+
+def make_stream_message_handler(wd, storage, pub):
+    """Callback cho AsyncStream.streaming.on_data. Một message dị dạng không
+    được ném ngược vào vòng stream của SDK."""
+
+    def on_stream_message(msg):
+        try:
+            bar = parse_interval_message(msg)
+        except Exception as e:
+            alert(
+                "WARN",
+                "failed to parse stream message, skipping",
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+            return
+        if bar is not None:
+            wd.beat()
+            asyncio.create_task(persist_bars(storage, pub, [bar]))
+        # Index streaming (VNINDEX/VN30): không có nguồn dữ liệu real-time nào
+        # trong ssi-sdk hiện tại — xem PLAN_INDEX_STREAMING.md (điều tra thật
+        # 2026-08-07). Không viết IndexValue cho tới khi có nguồn dữ liệu khác.
+
+    return on_stream_message
+
+
+@dataclass
+class HousekeepingState:
+    eod_done_for: date | None = None
+    last_account_sync: datetime | None = None
+
+
+async def housekeeping_tick(cfg, storage, wd, state: HousekeepingState) -> None:
+    """Một vòng housekeeping. Được phép ném — housekeeping_loop chịu trách nhiệm bắt."""
+    wd.check()
+    storage.beat("collector")
+    now = datetime.now(TZ)
+    if state.last_account_sync is None or now - state.last_account_sync >= timedelta(
+        minutes=5
+    ):
+        state.last_account_sync = now
+        try:
+            await sync_account_data(cfg, storage)
+        except Exception as e:
+            alert("WARN", "account sync failed, skipping", error=str(e)[:100])
+        try:
+            await sync_derivative_data(cfg, storage)
+        except Exception as e:
+            alert("WARN", "derivative sync failed, skipping", error=str(e)[:100])
+    if (now.hour, now.minute) >= (
+        EOD_HOUR,
+        EOD_MINUTE,
+    ) and state.eod_done_for != now.date():
+        state.eod_done_for = now.date()
+        eod_client = SSIRestClient(cfg, storage)
+        try:
+            counts = await run_backfill(storage, eod_client, cfg.symbols, now.date())
+            alert("INFO", "eod backfill done", counts=counts)
+        finally:
+            await eod_client.close()
+
+
+async def housekeeping_loop(
+    cfg,
+    storage,
+    wd,
+    sleep_seconds: float = 30.0,
+    max_ticks: int | None = None,
+) -> None:
+    """Vòng housekeeping vô hạn. Một lỗi (vd Postgres restart) KHÔNG được giết
+    collector — bắt hết, alert WARN, rồi chạy tiếp vòng sau.
+    `max_ticks` chỉ dùng cho test, cùng pattern với run(max_messages) của engine."""
+    state = HousekeepingState()
+    ticks = 0
+    while max_ticks is None or ticks < max_ticks:
+        await asyncio.sleep(sleep_seconds)
+        try:
+            await housekeeping_tick(cfg, storage, wd, state)
+        except Exception as e:
+            alert(
+                "WARN",
+                "housekeeping tick failed, continuing",
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+        ticks += 1
 
 
 async def run(cfg) -> None:
@@ -36,13 +143,6 @@ async def run(cfg) -> None:
     finally:
         await client.close()
 
-    async def persist(bars):
-        if bars:
-            storage.write_bars(bars)
-            for b in bars:
-                await pub.publish(b)
-            alert("INFO", "bars closed", n=len(bars), symbols=[b.symbol for b in bars])
-
     def _on_stale():
         alert("WARN", "feed stale, forcing reconnect")
         asyncio.create_task(feed.restart())
@@ -56,55 +156,12 @@ async def run(cfg) -> None:
         on_critical=lambda: alert("CRITICAL", "feed stale beyond max failures"),
     )
 
-    def on_stream_message(msg):
-        bar = parse_interval_message(msg)
-        if bar is not None:
-            wd.beat()
-            asyncio.create_task(persist([bar]))
-        # Index streaming (VNINDEX/VN30): không có nguồn dữ liệu real-time nào
-        # trong ssi-sdk hiện tại — xem PLAN_INDEX_STREAMING.md (điều tra thật
-        # 2026-08-07). Không viết IndexValue cho tới khi có nguồn dữ liệu khác.
-
-    feed = SSIFeed(cfg, storage, on_message=on_stream_message)
+    feed = SSIFeed(
+        cfg, storage, on_message=make_stream_message_handler(wd, storage, pub)
+    )
     feed.start()
 
-    async def housekeeping():
-        eod_done_for: object = None
-        last_account_sync: datetime | None = None
-        while True:
-            await asyncio.sleep(30)
-            wd.check()
-            storage.beat("collector")
-            now = datetime.now(TZ)
-            if last_account_sync is None or now - last_account_sync >= timedelta(
-                minutes=5
-            ):
-                last_account_sync = now
-                try:
-                    await sync_account_data(cfg, storage)
-                except Exception as e:
-                    alert("WARN", "account sync failed, skipping", error=str(e)[:100])
-                try:
-                    await sync_derivative_data(cfg, storage)
-                except Exception as e:
-                    alert(
-                        "WARN", "derivative sync failed, skipping", error=str(e)[:100]
-                    )
-            if (now.hour, now.minute) >= (
-                EOD_HOUR,
-                EOD_MINUTE,
-            ) and eod_done_for != now.date():
-                eod_done_for = now.date()
-                eod_client = SSIRestClient(cfg, storage)
-                try:
-                    counts = await run_backfill(
-                        storage, eod_client, cfg.symbols, now.date()
-                    )
-                    alert("INFO", "eod backfill done", counts=counts)
-                finally:
-                    await eod_client.close()
-
-    await housekeeping()
+    await housekeeping_loop(cfg, storage, wd)
 
 
 def main() -> None:

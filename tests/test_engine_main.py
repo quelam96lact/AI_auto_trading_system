@@ -12,7 +12,11 @@ from trading.engine.main import run
 from trading.models import Bar
 from trading.storage.db import Storage
 
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@localhost:5432/trading")
+# 127.0.0.1 thay vi localhost: cung ly do nhu nats_url ben duoi — tren Windows
+# localhost resolve ::1 truoc, Docker chi publish IPv4, nen moi psycopg.connect()
+# ton ~130s cho tai TCP timeout roi moi fallback sang IPv4. Storage mo connection
+# moi cho MOI query, nen ca file test khong chay noi neu dung localhost.
+DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
 pytestmark = pytest.mark.integration
 
 
@@ -24,7 +28,10 @@ def make_cfg(real_order_account: str = "") -> Config:
         ssi_equity_accounts=[],
         holidays=set(),
         db_dsn=DSN,
-        nats_url="nats://localhost:4222",
+        # 127.0.0.1 thay vi localhost: tren Windows localhost resolve ::1 truoc,
+        # Docker chi publish IPv4 -> SYN toi ::1:4222 bi drop lan (nats-py treo
+        # retry vo han). Test-infra fix, khong anh huong config san xuat.
+        nats_url="nats://127.0.0.1:4222",
         nats_stream="BARS",
         watchdog_stale_seconds=180,
         watchdog_max_failures=3,
@@ -53,7 +60,7 @@ def storage():
 
 @pytest.fixture(autouse=True)
 async def reset_stream_and_durable_consumer():
-    nc = await nats.connect("nats://localhost:4222")
+    nc = await nats.connect("nats://127.0.0.1:4222")
     js = nc.jetstream()
     try:
         await js.delete_consumer("BARS", "engine")
@@ -225,3 +232,38 @@ async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatc
     assert signals_seen
     for halted_date, crossover, bar in signals_seen:
         assert halted_date == halted_day, "real_risk.halted_date should be restored from DB on startup"
+
+
+async def test_engine_survives_poison_message_and_keeps_processing(
+    storage, monkeypatch
+):
+    import json
+
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg)),
+    )
+
+    cfg = make_cfg()
+    nc = await nats.connect(cfg.nats_url)
+    js = nc.jetstream()
+    await js.publish("bars.ssi.ENGT", json.dumps({"symbol": "ENGT"}).encode())
+    await nc.close()
+    await _publish(cfg, make_bars([10]))
+
+    # Không được ném exception: message hỏng phải bị term(), không được giết engine.
+    await run(cfg, max_messages=2)
+
+    assert any(
+        lvl == "CRITICAL" and "engine failed to process bar" in m
+        for lvl, m in alerts_seen
+    )
+    with storage.conn() as c:
+        n = c.execute(
+            "SELECT count(*) FROM heartbeat WHERE service = 'engine'"
+        ).fetchone()[0]
+    assert n == 1, "engine phải vẫn đập heartbeat sau khi gặp message hỏng"
