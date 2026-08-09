@@ -10,7 +10,7 @@ from trading.resample import resample_bars
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@localhost:5432/trading")
+DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
 pytestmark = pytest.mark.integration
 
 

@@ -7,7 +7,7 @@ from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.storage.db import RealPosition, Storage
 
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@localhost:5432/trading")
+DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
 pytestmark = pytest.mark.integration
 
 

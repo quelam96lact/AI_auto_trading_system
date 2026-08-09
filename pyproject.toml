@@ -31,3 +31,7 @@ packages = { find = { include = ["trading*"] } }
 # strptime() (naive) roi .replace(tzinfo=TZ) ngay sau - cach lam dung cho
 # du lieu khong co tz trong chuoi goc, khong phai bug.
 ignore = ["BLE001", "S110", "DTZ007", "DTZ001"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
