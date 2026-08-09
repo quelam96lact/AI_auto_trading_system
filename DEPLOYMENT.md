@@ -167,5 +167,6 @@ giờ giao dịch, xác nhận có tin Telegram, rồi `docker compose start eng
 - Derivative trading — no risk-control code exists yet, do not enable.
 - Real order placement — code exists but has never been tested against a real
   fill; run the Phase 4 runbook first (see `PLAN_REAL_ORDER_PLACEMENT.md`).
-- CI/CD — no `.github/workflows` yet; deployment above is manual
+- CD — `.github/workflows/ci.yml` runs tests + ruff on every push, but there is
+  no automated deployment; the steps above are manual
   (`git pull && docker compose up -d --build`).

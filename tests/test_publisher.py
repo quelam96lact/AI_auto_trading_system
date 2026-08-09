@@ -26,3 +26,38 @@ async def test_publish_roundtrip():
     assert data["ts"].endswith("+07:00")
     await nc.close()
     await pub.close()
+
+async def test_connect_applies_retention_limits_to_existing_unlimited_stream():
+    """Stream da ton tai voi config khong gioi han phai duoc CAP NHAT.
+
+    Bug goc: connect() bat BadRequestError roi bo qua, nen mot stream cu (tao
+    truoc khi co limit) giu nguyen retention vo han — file store NATS phinh to
+    khong gioi han tren dia VPS. add_stream() mot minh KHONG bao gio sua duoc
+    stream da ton tai.
+    """
+    from nats.js.api import StreamConfig
+
+    from trading.bus.publisher import STREAM_MAX_AGE_SECONDS, STREAM_MAX_BYTES
+
+    nc = await nats.connect("nats://127.0.0.1:4222")
+    js = nc.jetstream()
+    try:
+        await js.delete_stream("BARSLIMIT")
+    except Exception:
+        pass
+    # Dung tinh huong that: stream cu, khong gioi han gi ca.
+    await js.add_stream(StreamConfig(name="BARSLIMIT", subjects=["barslimit.>"]))
+    before = await js.stream_info("BARSLIMIT")
+    assert before.config.max_age in (None, 0)
+
+    pub = BarPublisher("nats://127.0.0.1:4222", "BARSLIMIT")
+    pub.subjects = ["barslimit.>"]
+    await pub.connect()
+    await pub.close()
+
+    after = await js.stream_info("BARSLIMIT")
+    assert after.config.max_age == STREAM_MAX_AGE_SECONDS
+    assert after.config.max_bytes == STREAM_MAX_BYTES
+
+    await js.delete_stream("BARSLIMIT")
+    await nc.close()
