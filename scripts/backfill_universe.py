@@ -12,24 +12,21 @@ Thiết kế (bắt buộc từ plan 2026-08-09-multi-timeframe-data.md Task 5):
   đi tiếp (bài học commit ed017c9).
 - Rate limit: sleep giữa các mã (--sleep-ms, mặc định 200); gặp lỗi rate-limit
   chờ backoff 1s, 2s, 4s... tối đa 60s, thử lại tối đa 3 lần cho CÙNG mã.
-- Chunk daily ≤ 30 ngày/call (giới hạn API); 5m dùng SSIRestClient.intraday_ohlc
-  (đã chunk 7 ngày nội bộ).
+- Chunk daily (366 ngày) và 5m (7 ngày) do SSIRestClient tự xử lý nội bộ
+  (backfill.py); re-auth tự động 1 lần khi access token hết hạn (401).
 - write_daily/write_bars UPSERT theo (symbol, ts) — chạy lại an toàn.
 """
 
 import argparse
 import asyncio
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 from trading.collector.backfill import SSIRestClient
 from trading.config import load_config
 from trading.storage.db import Storage
 
-MAX_RANGE_DAYS = 366  # chunk theo NAM: 1 nam ~250 bar daily < gioi han 1000 record/call
-# (Kiem chung that 2026-08-09: range 10 nam 1 call chi tra 1000 bar window moi nhat
-# 2021-2025, mat am tham 2016-2020; chunk 1 nam tra day du 2016=251/2018=248/2021=250)
 PROGRESS_EVERY = 25
 
 
@@ -66,18 +63,6 @@ def fmt_date(d: date) -> str:
     return d.isoformat()
 
 
-async def fetch_daily(client, symbol: str, frm: date, to: date) -> list:
-    """Chunk ≤ 30 ngày/call, gom + dedupe theo (symbol, ts)."""
-    by_ts: dict[str, object] = {}
-    chunk_start = frm
-    while chunk_start <= to:
-        chunk_end = min(chunk_start + timedelta(days=MAX_RANGE_DAYS - 1), to)
-        for r in await client.daily_ohlc(symbol, chunk_start, chunk_end):
-            by_ts[r.ts.isoformat()] = r
-        chunk_start = chunk_end + timedelta(days=1)
-    return list(by_ts.values())
-
-
 async def backfill_one(
     client: SSIRestClient,
     storage: Storage,
@@ -98,7 +83,7 @@ async def backfill_one(
         for attempt in range(3):
             try:
                 if timeframe == "1d":
-                    bars = await fetch_daily(client, symbol, frm, to)
+                    bars = await client.daily_ohlc(symbol, frm, to)
                     storage.write_daily(bars)
                 else:
                     bars = await client.intraday_ohlc(symbol, frm, to)
@@ -130,18 +115,13 @@ async def run(
     symbols: list[str],
     sleep_ms: int,
 ) -> None:
-    # Access token hết hạn ~1 tiếng, client cũ KHÔNG tự refresh giữa job (đã gặp
-    # 401 AuthenticationError sau ~400 mã). Tạo client mới mỗi 25 mã: SSIRestClient
-    # lazy-gọi ensure_authenticated (đọc DB, refresh bằng refresh_token nếu cần).
+    # SSIRestClient tự re-auth khi access token hết hạn (401, 1 lần) — dùng
+    # một client duy nhất cho cả job dài (fix gốc trong backfill.py, 2026-08-10).
     errors: list[tuple[str, str]] = []
     n_ok = n_skip = n_err = 0
-    client: SSIRestClient | None = None
+    client = SSIRestClient(cfg, storage)
     try:
         for i, sym in enumerate(symbols, 1):
-            if client is None or (i % 25 == 1 and i > 1):
-                if client is not None:
-                    await client.close()
-                client = SSIRestClient(cfg, storage)
             _, status, detail = await backfill_one(
                 client, storage, sym, timeframe, frm, to, sleep_ms
             )
@@ -158,8 +138,7 @@ async def run(
                     f"cuoi: {sym} {detail}"
                 )
     finally:
-        if client is not None:
-            await client.close()
+        await client.close()
     print(f"\nDONE: ok={n_ok} skip={n_skip} err={n_err} / {len(symbols)}")
     if errors:
         print("5 loi dau:")

@@ -2,6 +2,8 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from trading.calendar_vn import TZ
 from trading.collector.backfill import (
     SSIRestClient,
@@ -244,3 +246,330 @@ async def test_paged_intraday_dedupes_when_ssi_page_index_overlaps():
     assert (
         rows[0].trading_date in got_dates
     ), "ban ghi cu nhat trong khoang ngay yeu cau bi mat"
+
+
+class FakeMarketDataDailyCapped:
+    """Mô phỏng hành vi thật SSI (đo 2026-08-09): get_ohlc_1day_historical chặn
+    1000 dòng/call và trả CỬA SỔ MỚI NHẤT — gọi 1 lần với khoảng 10 năm chỉ trả
+    1000 bar cuối (2021-2025), mất âm thầm 2016-2020."""
+
+    def __init__(self, rows):
+        self.rows = rows  # list[OHLCData] daily, trading_date "YYYY/MM/DD"
+        self.market_data = self
+        self.calls: list[tuple] = []
+
+    async def get_ohlc_1day_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        self.calls.append((from_str, to_str))
+        frm_d = datetime.strptime(from_str, "%Y/%m/%d %H:%M:%S").date()
+        to_d = datetime.strptime(to_str, "%Y/%m/%d %H:%M:%S").date()
+        window = sorted(
+            (
+                r
+                for r in self.rows
+                if frm_d
+                <= datetime.strptime(r.trading_date, "%Y/%m/%d").date()
+                <= to_d
+            ),
+            key=lambda r: r.trading_date,
+        )
+        if len(window) > size:
+            return window[-size:]  # trần 1000 + cửa sổ mới nhất (hành vi thật)
+        return window
+
+
+def _gen_daily_rows(symbol: str, start: date, end: date):
+    from ssi_sdk.models import OHLCData
+
+    rows = []
+    d = start
+    while d <= end:
+        if d.weekday() < 5:  # ~250 phiên/năm, chỉ ngày trong tuần
+            rows.append(
+                OHLCData(
+                    symbol=symbol,
+                    trading_date=d.strftime("%Y/%m/%d"),
+                    open_price=10,
+                    high_price=11,
+                    low_price=9,
+                    close_price=10,
+                    volume=100,
+                    value=1000,
+                )
+            )
+        d += timedelta(days=1)
+    return rows
+
+
+async def test_daily_ohlc_chunks_and_keeps_oldest_rows():
+    symbol = "VCB"
+    start, end = date(2016, 1, 1), date(2025, 12, 31)
+    rows = _gen_daily_rows(symbol, start, end)
+    fake = FakeMarketDataDailyCapped(rows)
+    client = SSIRestClient.__new__(SSIRestClient)
+    client._data = fake
+
+    bars = await client.daily_ohlc(symbol, start, end)
+
+    got = {b.ts.date() for b in bars}
+    expected = {
+        datetime.strptime(r.trading_date, "%Y/%m/%d").date() for r in rows
+    }
+    assert (
+        date(2016, 1, 4) in got
+    ), "bar cu nhat (2016) bi mat: daily_ohlc khong chunk theo ngay"
+    assert len(bars) == len(rows), (
+        f"tong so bar khong khop: got {len(bars)}, expected {len(rows)} "
+        f"(mat hoac trung du lieu)"
+    )
+    assert got == expected
+
+
+class FakeMarketDataReauth:
+    """Mô phỏng access token hết hạn giữa job: lần gọi API đầu tiên raise
+    AuthenticationError (SSI dùng class này cho cả 401/403 — xác minh
+    rest_client.py:31-42), lần sau thành công."""
+
+    def __init__(self, rows, always_fail: bool = False):
+        self.rows = rows
+        self.market_data = self
+        self.calls = 0
+        self.always_fail = always_fail
+
+    async def _maybe_fail(self):
+        self.calls += 1
+        if self.always_fail or self.calls == 1:
+            from ssi_sdk.exceptions import AuthenticationError
+
+            raise AuthenticationError("Authentication failed: 401")
+
+    async def get_ohlc_5minute_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        await self._maybe_fail()
+        return self.rows
+
+    async def get_ohlc_1day_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        await self._maybe_fail()
+        return self.rows
+
+
+def _make_reauth_client(fake) -> SSIRestClient:
+    """Client với _ensure_data bị giả để đếm số lần re-auth và trả fake data."""
+    client = SSIRestClient.__new__(SSIRestClient)
+    ensures: list[int] = []
+
+    async def fake_ensure():
+        ensures.append(1)
+        client._data = fake
+        return fake
+
+    client._ensure_data = fake_ensure  # type: ignore[method-assign]
+    client._ensures = ensures
+    return client
+
+
+async def test_daily_ohlc_single_call_for_short_range():
+    """Ràng buộc collector live: frm cách today ≤ 7 ngày (run_backfill) thì
+    chunk 366 ngày phải là no-op — ĐÚNG 1 call, không phải 2 (off-by-one ở
+    biên chunk sẽ làm tăng gấp đôi request cho production path)."""
+    symbol = "VCB"
+    rows = _gen_daily_rows(symbol, date(2026, 8, 1), date(2026, 8, 7))
+    fake = FakeMarketDataDailyCapped(rows)
+    client = SSIRestClient.__new__(SSIRestClient)
+    client._data = fake
+
+    bars = await client.daily_ohlc(symbol, date(2026, 8, 1), date(2026, 8, 7))
+
+    assert len(fake.calls) == 1, (
+        f"khoang <= 366 ngay phai dung 1 chunk/1 call, thuc te {len(fake.calls)} "
+        f"(off-by-one tai bien chunk)"
+    )
+    assert len(bars) == len(rows)
+
+
+async def test_intraday_reauth_once_after_401_then_succeeds():
+    from ssi_sdk.models import OHLCData
+
+    rows = [
+        OHLCData(
+            symbol="VCB",
+            trading_date="2026/07/15 09:00:00",
+            open_price=10,
+            high_price=11,
+            low_price=9,
+            close_price=10,
+            volume=100,
+            value=1000,
+        )
+    ]
+    client = _make_reauth_client(FakeMarketDataReauth(rows))
+    frm, to = date(2026, 7, 15), date(2026, 7, 15)
+
+    bars = await client.intraday_ohlc("VCB", frm, to)
+
+    assert len(bars) == 1, "call dau 401 -> reauth 1 lan -> phai tra du lieu dung"
+    assert len(client._ensures) == 2, "ensure_authenticated phai duoc goi lai dung 1 lan"
+
+
+async def test_daily_ohlc_also_reauths_on_401():
+    from ssi_sdk.models import OHLCData
+
+    rows = [
+        OHLCData(
+            symbol="VCB",
+            trading_date="2026/07/15",
+            open_price=10,
+            high_price=11,
+            low_price=9,
+            close_price=10,
+            volume=100,
+            value=1000,
+        )
+    ]
+    client = _make_reauth_client(FakeMarketDataReauth(rows))
+
+    bars = await client.daily_ohlc("VCB", date(2026, 7, 15), date(2026, 7, 15))
+
+    assert len(bars) == 1, "daily cung phai di qua re-auth khi 401"
+    assert len(client._ensures) == 2
+
+
+async def test_reauth_is_attempted_only_once():
+    from ssi_sdk.exceptions import AuthenticationError
+
+    client = _make_reauth_client(FakeMarketDataReauth([], always_fail=True))
+    frm, to = date(2026, 7, 15), date(2026, 7, 15)
+
+    with pytest.raises(AuthenticationError):
+        await client.intraday_ohlc("VCB", frm, to)
+
+    # refresh_token het han that thi retry vo ich — phai fail to va ro, khong
+    # nuot, khong retry vo han; so lan re-auth dung bang 1.
+    assert len(client._ensures) == 2, (
+        f"re-auth phai dung 1 lan (ensure lan dau + 1 lan sau 401), "
+        f"thuc te {len(client._ensures)}"
+    )
+
+
+class FakeMarketDataMultiChunk:
+    """Mô phỏng production: mỗi lần ensure_authenticated trả AsyncData MỚI.
+    Object cũ bị đóng (closed=True) và RAISE nếu bị dùng lại — đúng thứ
+    _reset_auth làm (auth.close()). Chỉ OBJECT ĐẦU TIÊN fail 401 (access token
+    hết hạn 1 lần); các object sau (sau re-auth) hoạt động bình thường."""
+
+    def __init__(self, fail_first: bool = False):
+        self.closed = False
+        self.calls = 0
+        self.fail_first = fail_first
+        self.market_data = self
+
+    async def close(self):
+        self.closed = True
+
+    async def get_ohlc_1day_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        if self.closed:
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        self.calls += 1
+        if self.fail_first and self.calls == 1:  # chunk dau -> access token het han
+            from ssi_sdk.exceptions import AuthenticationError
+
+            raise AuthenticationError("Authentication failed: 401")
+        from ssi_sdk.models import OHLCData
+
+        year = int(from_str[:4])
+        return [
+            OHLCData(
+                symbol=symbol,
+                trading_date=f"{year}/01/04",
+                open_price=10,
+                high_price=11,
+                low_price=9,
+                close_price=10,
+                volume=100,
+                value=1000,
+            )
+        ]
+
+
+def _make_multi_chunk_client():
+    """_ensure_data giả tạo fake MỚI mỗi lần (như production) + set _auth để
+    _reset_auth thật sự close object cũ. Chỉ object đầu fail 401."""
+    client = SSIRestClient.__new__(SSIRestClient)
+    fakes: list[FakeMarketDataMultiChunk] = []
+    first_done = False
+
+    async def fake_ensure():
+        nonlocal first_done
+        f = FakeMarketDataMultiChunk(fail_first=not first_done)
+        first_done = True
+        fakes.append(f)
+        client._data = f
+        client._auth = f
+        return f
+
+    client._ensure_data = fake_ensure  # type: ignore[method-assign]
+    client._fakes = fakes
+    return client
+
+
+async def test_reauth_mid_loop_uses_fresh_data_for_next_chunks():
+    """Bug that (Claude repro): 401 o chunk 1 -> _reset_auth close object cu,
+    nhung vong lap van giu bien `data` cu -> chunk 2 goi HTTP client da dong
+    (RuntimeError). Phai dung data MOI cho cac chunk sau chunk bi 401."""
+    client = _make_multi_chunk_client()
+
+    bars = await client.daily_ohlc("VCB", date(2023, 1, 1), date(2025, 12, 31))
+
+    # 3 chunk (2023/2024/2025): chunk 1 bi 401 -> reauth -> chunk 2, 3 phai
+    # chay tren data moi, khong duoc dung client da close
+    assert len(bars) == 3, f"thieu du lieu sau chunk bi 401: {len(bars)}"
+    assert client._fakes[0].closed, "object cu phai bi dong sau 401"
+    assert client._fakes[-1] is client._data, "vong lap phai dung data moi nhat"
+
+
+class FakeMarketDataIntradayCount:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = 0
+        self.market_data = self
+
+    async def get_ohlc_5minute_historical(
+        self, symbol, from_str, to_str, page=1, size=1000
+    ):
+        self.calls += 1
+        return self.rows
+
+
+async def test_intraday_single_call_for_short_range():
+    """Collector live lui toi da 7 ngay: chunk 7 ngay phai la no-op — dung 1
+    call, khong tang request cho production path."""
+    from ssi_sdk.models import OHLCData
+
+    rows = [
+        OHLCData(
+            symbol="VCB",
+            trading_date="2026/08/03 09:00:00",
+            open_price=10,
+            high_price=11,
+            low_price=9,
+            close_price=10,
+            volume=100,
+            value=1000,
+        )
+    ]
+    fake = FakeMarketDataIntradayCount(rows)
+    client = SSIRestClient.__new__(SSIRestClient)
+    client._data = fake
+
+    bars = await client.intraday_ohlc("VCB", date(2026, 8, 1), date(2026, 8, 7))
+
+    assert fake.calls == 1, (
+        f"khoang <= 7 ngay phai dung 1 call intraday, thuc te {fake.calls}"
+    )
+    assert len(bars) == 1

@@ -209,6 +209,39 @@ class SSIRestClient:
             self._data = AsyncData(self._auth)
         return self._data
 
+    async def _reset_auth(self) -> None:
+        """Đóng auth cũ và bỏ cache. Lỗi khi đóng KHÔNG được che mất lỗi gốc."""
+        auth = getattr(self, "_auth", None)
+        self._auth = None
+        self._data = None
+        if auth is not None:
+            try:
+                await auth.close()
+            except Exception:
+                pass  # lỗi đóng auth cũ không được nuốt mất lỗi gốc 401
+
+    async def _fetch_with_reauth(self, data, method: str, *args, **kwargs):
+        """Gọi 1 method market_data; gặp AuthenticationError (401/403 — cùng
+        class trong ssi_sdk, xác minh rest_client.py:31-42) thì re-auth ĐÚNG
+        MỘT LẦN rồi thử lại. Lần thứ hai lỗi thì để exception bay ra — nếu
+        refresh_token hết hạn thì retry vô ích, phải fail to cho người vận
+        hành biết (chạy OTP thủ công).
+
+        Trả về (rows, data_moi): vòng lặp chunk PHẢI dùng data trả về này cho
+        chunk tiếp theo — _reset_auth() đóng object cũ (auth.close()), giữ
+        biến `data` cũ sẽ gọi HTTP client đã đóng (bug thật, Claude repro:
+        RuntimeError 'Cannot send a request' ở chunk 2 sau 401 chunk 1)."""
+        from ssi_sdk.exceptions import AuthenticationError
+
+        try:
+            rows = await getattr(data.market_data, method)(*args, **kwargs)
+            return rows, data
+        except AuthenticationError:
+            await self._reset_auth()
+            data = await self._ensure_data()
+            rows = await getattr(data.market_data, method)(*args, **kwargs)
+            return rows, data
+
     async def close(self) -> None:
         if self._auth is not None:
             await self._auth.close()
@@ -225,12 +258,32 @@ class SSIRestClient:
 
     async def daily_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
         data = await self._ensure_data()
-        rows = await data.market_data.get_ohlc_1day_historical(  # tên xác nhận Task 1.2
-            symbol,
-            self._fmt_intraday(frm, end_of_day=False),
-            self._fmt_intraday(to, end_of_day=True),
-        )
+        rows = await self._paged_daily(data, symbol, frm, to)
         return _ohlc_rows_to_bars(rows)
+
+    async def _paged_daily(self, data, symbol: str, frm: date, to: date):
+        """Chunk daily theo NĂM (366 ngày/chunk) — get_ohlc_1day_historical
+        chặn 1000 dòng/call và trả CỬA SỔ MỚI NHẤT, mất âm thầm phần cũ.
+        Đo thật 2026-08-09: gọi 10 năm 1 lần chỉ trả 2021-2025; chunk 1 năm
+        trả đủ 2016=251/2018=248/2021=250 bar (dưới trần 1000)."""
+        size = 1000
+        by_ts: dict[str, object] = {}
+        chunk_start = frm
+        while chunk_start <= to:
+            chunk_end = min(chunk_start + timedelta(days=365), to)
+            rows, data = await self._fetch_with_reauth(
+                data,
+                "get_ohlc_1day_historical",
+                symbol,
+                self._fmt_intraday(chunk_start, end_of_day=False),
+                self._fmt_intraday(chunk_end, end_of_day=True),
+                page=1,
+                size=size,
+            )
+            for r in rows:
+                by_ts[r.trading_date] = r
+            chunk_start = chunk_end + timedelta(days=1)
+        return list(by_ts.values())
 
     async def intraday_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
         data = await self._ensure_data()
@@ -249,7 +302,9 @@ class SSIRestClient:
         chunk_start = frm
         while chunk_start <= to:
             chunk_end = min(chunk_start + timedelta(days=6), to)
-            rows = await data.market_data.get_ohlc_5minute_historical(
+            rows, data = await self._fetch_with_reauth(
+                data,
+                "get_ohlc_5minute_historical",
                 symbol,
                 self._fmt_intraday(chunk_start, end_of_day=False),
                 self._fmt_intraday(chunk_end, end_of_day=True),
