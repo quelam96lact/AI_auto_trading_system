@@ -31,3 +31,8 @@ scripts/.spike_equity_10y_*.json
 scripts/.spike_derivative_ohlc_5m_2m_sample.json
 scripts/.spike_indexes.json
 scripts/.spike_index_summary.json
+scripts/.spike_*.py
+scripts/.repro_*.py
+.gitnexus_rpc.py
+.1devtool/
+.claude/worktrees/
