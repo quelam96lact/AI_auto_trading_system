@@ -107,9 +107,18 @@ BOI CANH: truoc fix, daily_ohlc() goi API mot lan cho ca khoang. SSI chan 1000
 dong/call va tra ve CUA SO MOI NHAT, bo phan cu MA KHONG BAO LOI. Yeu cau 10
 nam chi nhan ve 2021-2025. Fix chia thanh chunk 366 ngay.
 
-Ban fix nay CHUA HE duoc goi len API that (luc commit, Postgres tat va token
-het han). Bang chung hien co chi la unit test dung tren hanh vi API da do.
-Buoc 4 chinh la phan con thieu do.
+DA KIEM CHUNG TREN API THAT ngay 2026-08-10. Ket qua AAM, khoang 2016-2025:
+2487 bar, cu nhat 2016-01-04, moi nam 241-252 bar. Doi chieu: dem trong DB
+gioi han dung khoang do cung ra 2487 - khop tung dong. Bug cu (1000 bar tron,
+bat dau 2021) KHONG con.
+
+Cach kiem chung KHONG dung 4a/4b/4c ben duoi: daily_ohlc() chi TRA VE bar,
+storage.write_daily() moi ghi DB, nen goi thang client.daily_ohlc(...) kiem
+duoc dung code path ma khong xoa/ghi gi. Xem
+docs/superpowers/plans/2026-08-10-verify-backfill-live.md.
+
+Quy trinh 4a/4b/4c duoi day GIU LAI lam phuong an du (kiem chung end-to-end ca
+duong ghi DB), nhung LUU Y no XOA DU LIEU THAT.
 
 4a. Xoa checkpoint + du lieu cu cua VCB:
 
@@ -146,7 +155,21 @@ Bug thu hai da sua: SSIRestClient xac thuc mot lan roi cache, nen job chay lau
 hon ~15 phut chet bang 401 (lan chay dau toan san chet sau ~1 gio voi 1.191 loi
 xac thuc). Gio no tu re-auth dung mot lan khi gap AuthenticationError.
 
-Chi kiem chung duoc bang mot job chay > 15 phut. Vi du 30 ma:
+DA KIEM CHUNG ngay 2026-08-10: job 900 ma trong MOT tien trinh, chay 1207.1
+giay (20.1 phut), xong het 900/900 ma, exit 0, khong dung han.
+
+Bang chung TRUC TIEP cho duong _fetch_with_reauth (khong phai chi "khong thay
+loi"): log co dung 2 cap "Access token set manually" + "Token refreshed
+successfully" - mot luc khoi tao, mot luc 15.5 phut sau, GIUA job. Cap do chi
+sinh ra tu ensure_authenticated(), ma trong tien trinh nay no chi duoc goi tu
+_ensure_data() khi self._data is None, va thu duy nhat set _data ve None la
+_reset_auth() - duoc goi tu DUNG MOT cho: nhanh except AuthenticationError
+trong _fetch_with_reauth.
+
+LUU Y khi doc log: bat 401 la IM LANG (SDK raise khong log, cho bat cung khong
+log). Dung ket luan "khong re-auth" tu viec khong thay dong 401 nao.
+
+Cach chay lai neu can (job > 15 phut):
 
     uv run python -m scripts.backfill_universe --timeframe 1d --limit 30 --from 2016-01-01 --to 2025-12-31
 
