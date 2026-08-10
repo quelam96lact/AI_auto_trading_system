@@ -1,0 +1,183 @@
+================================================================================
+RUNBOOK: XAC THUC OTP VOI SSI + KIEM CHUNG BAN FIX BACKFILL
+Ngay viet: 2026-08-10  |  Commit lien quan: 69fa41e  |  Branch: feature/data-layer
+Moi truong: Windows + PowerShell, chay tu thu muc goc cua repo
+================================================================================
+
+MUC DICH
+  1. Lay access_token/refresh_token moi tu SSI bang OTP.
+  2. Nap token vao Postgres (bang ssi_auth_state) de collector dung duoc.
+  3. Kiem chung ban fix chunking daily (commit 69fa41e) tren du lieu THAT.
+
+VONG DOI TOKEN (do that, khong phai tu tai lieu)
+  access_token   : ~15 phut
+  refresh_token  : ~8 gio
+  Het access_token -> code tu refresh (khong can OTP).
+  Het refresh_token -> BUOC PHAI lam lai runbook nay tu Buoc 2.
+
+
+--------------------------------------------------------------------------------
+BUOC 0 - BAT POSTGRES
+--------------------------------------------------------------------------------
+
+    docker compose up -d postgres
+
+Kiem tra:
+
+    docker ps --format "{{.Names}}`t{{.Status}}"
+
+Neu khong thay container postgres thi cac buoc sau se treo o
+ConnectionTimeout chu khong bao loi ro rang.
+
+
+--------------------------------------------------------------------------------
+BUOC 1 - NAP BIEN MOI TRUONG VAO SESSION
+--------------------------------------------------------------------------------
+
+load_config() (trading/config.py:40-49) BAT BUOC ca 6 bien duoi day, ke ca khi
+script chi dung db_dsn:
+    DB_DSN, SSI_CONSUMER_ID, SSI_CONSUMER_SECRET,
+    SSI_API_KEY, SSI_API_SECRET, SSI_PRIVATE_KEY
+
+Lenh:
+
+    Get-Content .env | Where-Object { $_ -match '^\s*[^#].*=' } | ForEach-Object {
+        $k, $v = $_ -split '=', 2
+        Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
+    }
+    $env:DB_DSN = "postgresql://trading:trading@127.0.0.1:5432/trading"
+    $env:PYTHONIOENCODING = "utf-8"
+
+!! DUNG 127.0.0.1, KHONG DUNG localhost
+   Tren may nay localhost giai ra ::1 trong khi Docker chi publish IPv4.
+   Do that: psycopg.connect toi localhost = 130.1 giay, toi 127.0.0.1 = 0.0 giay.
+   Storage mo connection MOI cho tung query, nen script se treo han chu khong
+   phai chi cham.
+
+!! PYTHONIOENCODING = utf-8 la de tranh mot bay o Buoc 3, xem giai thich o do.
+
+
+--------------------------------------------------------------------------------
+BUOC 2 - XIN OTP VA XAC THUC (HAI BUOC, KHONG INTERACTIVE)
+--------------------------------------------------------------------------------
+
+2a. Xin OTP (SSI gui qua SMS/email):
+
+    uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --request-otp
+
+2b. Xac thuc bang ma vua nhan (thay 123456 bang ma that):
+
+    uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --otp 123456
+
+Tai sao hai buoc thay vi chay khong co:
+    Che do mac dinh dung input() cho go OTP truc tiep trong terminal. Chay qua
+    tooling/script thi stdin khong noi duoc va no se TREO. Hai buoc tranh han
+    van de nay.
+
+Ket qua mong doi: in ra "AUTHENTICATE co OTP - THANH CONG" kem expires_at va
+refresh_token_expires_at. Token luu vao scripts/.ssi_sdk_token.json (da
+gitignore - KHONG commit file nay).
+
+CANH BAO BAO MAT: khong dan noi dung file token vao chat/issue/log. Refresh
+token con song ~8 tieng va dung duoc ngay. Neu can bao cao, chi dan dong
+expires_at / refresh_token_expires_at.
+
+
+--------------------------------------------------------------------------------
+BUOC 3 - NAP TOKEN VAO DATABASE
+--------------------------------------------------------------------------------
+
+    uv run python scripts/load_token_to_db.py --config config/config.yaml
+
+Buoc nay KHONG duoc bo qua. Collector doc refresh_token tu bang ssi_auth_state
+trong Postgres, KHONG doc scripts/.ssi_sdk_token.json. Script nay la cau noi
+duy nhat giua hai noi luu token - bo qua thi Buoc 2 vo nghia.
+
+!! BAY DA BIET: load_token_to_db.py khong import _ssi_spike_common nen khong
+   force UTF-8 cho stdout nhu cac script spike khac. Dong print() tieng Viet
+   cuoi cung (load_token_to_db.py:45) se nem UnicodeEncodeError SAU KHI DA GHI
+   DB THANH CONG. Ban thay traceback nhung token DA vao DB roi.
+   Dat $env:PYTHONIOENCODING = "utf-8" o Buoc 1 la de tranh chuyen nay.
+
+Kiem tra token trong DB (con bao nhieu phut/gio):
+
+    uv run python -c "import time; from trading.storage.db import Storage; s=Storage('postgresql://trading:trading@127.0.0.1:5432/trading'); t=s.load_ssi_token(); now=time.time(); print('khong co token') if t is None else [print(f'{k}: con {(t[k]-now)/60:.1f} phut') for k in ('expires_at','refresh_token_expires_at')]"
+
+
+--------------------------------------------------------------------------------
+BUOC 4 - KIEM CHUNG BAN FIX CHUNKING DAILY (commit 69fa41e)
+--------------------------------------------------------------------------------
+
+BOI CANH: truoc fix, daily_ohlc() goi API mot lan cho ca khoang. SSI chan 1000
+dong/call va tra ve CUA SO MOI NHAT, bo phan cu MA KHONG BAO LOI. Yeu cau 10
+nam chi nhan ve 2021-2025. Fix chia thanh chunk 366 ngay.
+
+Ban fix nay CHUA HE duoc goi len API that (luc commit, Postgres tat va token
+het han). Bang chung hien co chi la unit test dung tren hanh vi API da do.
+Buoc 4 chinh la phan con thieu do.
+
+4a. Xoa checkpoint + du lieu cu cua VCB:
+
+    docker compose exec -T postgres psql -U trading -d trading -c "DELETE FROM backfill_progress WHERE symbol='VCB' AND timeframe='1d'; DELETE FROM bars_daily WHERE symbol='VCB';"
+
+    Tai sao phai xoa CA HAI:
+      - backfill_progress: VCB da co status='ok' tu dot truoc -> job se bao
+        "skip" va khong goi API lan nao.
+      - bars_daily: du lieu 2016 DA NAM SAN trong DB tu dot backfill truoc (chay
+        qua workaround). Khong xoa thi min(ts) van hien 2016 du code moi co
+        hong hay khong -> phep thu vo nghia.
+
+    NEU BAN KHONG MUON MAT DU LIEU VCB: bo lenh DELETE FROM bars_daily va dung
+    mot ma KHAC chua tung backfill (thay 'VCB' o ca 3 cho ben duoi).
+
+4b. Chay backfill 10 nam cho 1 ma:
+
+    uv run python -m scripts.backfill_universe --timeframe 1d --symbols VCB --from 2016-01-01 --to 2025-12-31
+
+4c. Kiem tra ket qua:
+
+    docker compose exec -T postgres psql -U trading -d trading -c "SELECT min(ts)::date AS cu_nhat, max(ts)::date AS moi_nhat, count(*) FROM bars_daily WHERE symbol='VCB';"
+
+    DAT   : cu_nhat o dau 2016, count khoang 2.500
+    HONG  : cu_nhat roi vao 2021, count dung 1.000
+            -> chunking khong hoat dong, dung bug cu. Bao lai cho toi.
+
+
+--------------------------------------------------------------------------------
+BUOC 5 (TUY CHON) - KIEM CHUNG RE-AUTH TREN JOB DAI
+--------------------------------------------------------------------------------
+
+Bug thu hai da sua: SSIRestClient xac thuc mot lan roi cache, nen job chay lau
+hon ~15 phut chet bang 401 (lan chay dau toan san chet sau ~1 gio voi 1.191 loi
+xac thuc). Gio no tu re-auth dung mot lan khi gap AuthenticationError.
+
+Chi kiem chung duoc bang mot job chay > 15 phut. Vi du 30 ma:
+
+    uv run python -m scripts.backfill_universe --timeframe 1d --limit 30 --from 2016-01-01 --to 2025-12-31
+
+    DAT   : chay het, khong co loi 401 nao trong output
+    HONG  : xuat hien AuthenticationError / "Authentication failed: 401"
+
+Luu y: neu refresh_token (~8 gio) het han giua chung thi job se dung lai voi loi
+RO RANG doi chay lai OTP - day la HANH VI CO Y, khong phai bug. Retry khong cuu
+duoc truong hop do.
+
+
+================================================================================
+TOM TAT LENH (copy nhanh)
+================================================================================
+
+  docker compose up -d postgres
+
+  Get-Content .env | Where-Object { $_ -match '^\s*[^#].*=' } | ForEach-Object {
+      $k, $v = $_ -split '=', 2
+      Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
+  }
+  $env:DB_DSN = "postgresql://trading:trading@127.0.0.1:5432/trading"
+  $env:PYTHONIOENCODING = "utf-8"
+
+  uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --request-otp
+  uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --otp <MA_OTP>
+  uv run python scripts/load_token_to_db.py --config config/config.yaml
+
+================================================================================
