@@ -143,6 +143,7 @@ async def run(
             if stop_task in done:
                 next_task.cancel()
                 break
+            stop_task.cancel()  # next_msg thắng — hủy waiter, không để rò rỉ
             try:
                 msg = next_task.result()
             except nats.errors.TimeoutError:

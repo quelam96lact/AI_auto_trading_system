@@ -318,43 +318,31 @@ def test_bars_daily_is_hypertable(storage):
     assert row[0] == 1, "bars_daily phai la hypertable"
 
 
-def test_pool_survives_postgres_restart_first_query():
-    """Restart postgres -> query NGAY phai thanh cong o LAN DAU (khong retry).
+def test_pool_replaces_dead_connection_before_handing_out():
+    """Pool phải thay connection ĐÃ CHẾT trong pool, không đưa ra caller.
 
-    Regression canh bao (Claude repro): pool khong check connection -> dua
-    connection BAD ra caller -> query dau sau restart that bai
-    (OperationalError: could not receive data from server), chi lan thu hai
-    moi OK. Truoc khi co pool moi query tu mo connection moi nen sau khi
-    postgres song lai query ke tiep THANH CONG NGAY - mat di hieu qua do la
-    regression khong the chap nhan (persist_bars -> alert CRITICAL mat 1 nen;
-    persist_fills -> term() mat 1 fill).
-    """
-    import subprocess
-    import time
+    Regression: pool không check connection -> đưa connection BAD ra caller ->
+    query sau khi connection bị giết FAIL (AdminShutdown), chỉ lần 2 mới OK.
+    Trước khi có pool mỗi query tự mở connection mới nên query kế tiếp thành
+    công NGAY — mất đi hiệu quả đó là regression không chấp nhận được
+    (persist_bars -> alert CRITICAL mất 1 nến; persist_fills trong try của
+    engine -> term() mất 1 fill; mỗi blip mạng/postgres restart mất 1 nến/lệnh).
+
+    Giết connection bằng pg_terminate_backend(pid) — pid của CHÍNH connection
+    pool vừa trả về, KHÔNG giết mọi connection của DB (bài học flaky: bản đầu
+    giết TẤT CẢ connection tới DB trading -> phá các test khác trong suite,
+    cả lần chạy sau — vì pool connection của chính process đang bị giết giữa
+    lúc pool đang cầm chúng)."""
+    import psycopg
 
     s = Storage(DSN)
     with s.conn() as c:
-        c.execute("SELECT 1")
+        pid = c.execute("SELECT pg_backend_pid()").fetchone()[0]
+        # connection vừa dùng được trả về pool khi thoát block — giờ giết nó
 
-    subprocess.run(
-        ["docker", "compose", "restart", "postgres"],
-        check=True,
-        capture_output=True,
-        timeout=60,
-    )
-    # chờ postgres sẵn sàng (kết nối trực tiếp, không qua pool)
-    import psycopg
+    with psycopg.connect(DSN) as killer:
+        killer.execute("SELECT pg_terminate_backend(%s)", (pid,))
 
-    for _ in range(60):
-        try:
-            with psycopg.connect(DSN) as c:
-                c.execute("SELECT 1")
-            break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        raise AssertionError("postgres khong san sang sau 30s")
-
-    with s.conn() as c:  # QUERY ĐẦU TIÊN sau restart — phải thành công ngay
+    with s.conn() as c:  # query NGAY sau đó — phải thành công ở LẦN ĐẦU
         row = c.execute("SELECT 1").fetchone()
     assert row == (1,), "pool phai thay connection chet trong pool, khong nem ra caller"

@@ -330,3 +330,22 @@ async def test_engine_stops_within_docker_grace_when_idle(storage):
 
     await asyncio.wait_for(task, timeout=10)
     # không publish message nào — vòng lặp phải thoát ngay khi stop_event set
+
+
+async def test_engine_no_stop_waiter_leak_after_run(storage):
+    """Mỗi vòng lặp phải HỦY stop_task (stop_event.wait()) khi next_msg thắng —
+    bug đo thật (Claude): thiếu stop_task.cancel() -> mỗi vòng lặp rò rỉ 1
+    future wait() -> ev._waiters tăng tuyến tính theo số message (sau 200
+    message = 200 waiters) kèm cảnh báo 'Task was destroyed but it is pending!'."""
+    import asyncio
+
+    cfg = make_cfg()
+    stop_event = asyncio.Event()
+    bars = make_bars([10] * 20 + [20] * 5)
+    await _publish(cfg, bars)
+
+    await run(cfg, max_messages=len(bars), stop_event=stop_event)
+
+    assert len(stop_event._waiters) == 0, (
+        f"stop waiter bi ro ri: {len(stop_event._waiters)} (phai la 0 sau khi run xong)"
+    )
