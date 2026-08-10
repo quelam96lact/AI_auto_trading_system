@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -58,18 +59,68 @@ def storage():
     return s
 
 
+async def _reset_stream_and_consumer(js) -> None:
+    """Purge + VERIFY stream thật sự rỗng — KHÔNG nuốt lỗi. Flake đã tái hiện
+    (plan 2026-08-10): purge không ăn -> message cũ còn sót -> engine ăn nhầm
+    dùng hết max_messages budget -> assert [] xa xăm. Phải fail NGAY tại
+    fixture với thông điệp nói rõ, không phải 200 dòng sau."""
+    info = None
+    for _ in range(3):
+        await js.purge_stream("BARS")
+        info = await js.stream_info("BARS")
+        if info.state.messages == 0:
+            break
+        await asyncio.sleep(0.5)
+    else:
+        raise AssertionError(
+            f"stream BARS khong rong sau purge (con {info.state.messages} messages) — "
+            f"test se an nham message cu cua test khac"
+        )
+
+
 @pytest.fixture(autouse=True)
 async def reset_stream_and_durable_consumer():
+    from nats.js.api import StreamConfig
+    from nats.js.errors import BadRequestError, NotFoundError
+
+    nc = await nats.connect("nats://127.0.0.1:4222")
+    js = nc.jetstream()
+    # Stream phải TỒN TẠI để purge/stream_info chạy được trên NATS sạch
+    # (NotFoundError khi mới khởi tạo) — tạo nếu chưa có, như BarPublisher.connect()
+    try:
+        await js.add_stream(StreamConfig(name="BARS", subjects=["bars.>"]))
+    except BadRequestError:
+        pass  # stream đã tồn tại
+    try:
+        await js.delete_consumer("BARS", "engine")
+    except NotFoundError:
+        pass  # consumer chưa tồn tại = trạng thái hợp lệ ở lần chạy đầu
+    await _reset_stream_and_consumer(js)
+    await nc.close()
+
+
+async def test_fixture_fails_loudly_when_stream_not_empty(monkeypatch):
+    """Fixture phải fail NGAY và NÓI RÕ khi stream còn message sau purge —
+    thay vì test chạy tiếp rồi chết ở assert cách đó 200 dòng (flake assert [])."""
+    import nats
+    from nats.js.api import StreamConfig
+    from nats.js.errors import BadRequestError
+
     nc = await nats.connect("nats://127.0.0.1:4222")
     js = nc.jetstream()
     try:
-        await js.delete_consumer("BARS", "engine")
-    except Exception:
+        await js.add_stream(StreamConfig(name="BARS", subjects=["bars.>"]))
+    except BadRequestError:
         pass
-    try:
-        await js.purge_stream("BARS")
-    except Exception:
-        pass
+    await js.purge_stream("BARS")
+    await js.publish("bars.FIXTURE_PROBE", b"stale")  # cố ý để lại message
+
+    async def fake_purge(*_a, **_k):
+        pass  # giả lập purge không ăn — message vẫn còn trong stream
+
+    monkeypatch.setattr(js, "purge_stream", fake_purge)
+    with pytest.raises(AssertionError, match="khong rong sau purge"):
+        await _reset_stream_and_consumer(js)
     await nc.close()
 
 
