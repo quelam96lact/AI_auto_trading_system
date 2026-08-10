@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import logging
+import signal
 
 import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
@@ -20,7 +21,31 @@ from trading.trailing_stop import TrailingStopManager
 CAPITAL = 100_000_000.0
 
 
-async def run(cfg: Config, max_messages: int | None = None) -> None:
+def _install_stop_handlers(stop_event: asyncio.Event) -> None:
+    """Bắt SIGTERM/SIGINT -> set stop_event để vòng lặp thoát ở ranh giới message.
+
+    Windows (nơi dev): loop.add_signal_handler ném NotImplementedError — fallback
+    sang signal.signal (chỉ thật sự hữu dụng trên Linux, nơi sản xuất chạy)."""
+
+    def _on_signal(*_args):
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _on_signal)
+    except NotImplementedError:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, _on_signal)
+
+
+async def run(
+    cfg: Config, max_messages: int | None = None, stop_event: asyncio.Event | None = None
+) -> None:
+    if stop_event is None:
+        stop_event = asyncio.Event()
+        _install_stop_handlers(stop_event)
+
     storage = Storage(cfg.db_dsn)
     storage.init_schema()
 
@@ -100,9 +125,26 @@ async def run(cfg: Config, max_messages: int | None = None) -> None:
 
     processed = 0
     try:
-        while max_messages is None or processed < max_messages:
+        while not stop_event.is_set() and (
+            max_messages is None or processed < max_messages
+        ):
+            # Đua next_msg với stop_event: SIGTERM lúc engine đang RẢNH phải
+            # thoát ngay (không chờ hết timeout 60s của next_msg) — bug đo thật:
+            # check stop ở đầu vòng rồi block trong next_msg làm engine mất 58s
+            # nhận ra lệnh dừng, vượt grace 10s của docker stop -> SIGKILL, và
+            # trong 10s grace engine vẫn xử lý message mới -> ghi DB chưa ack
+            # -> JetStream giao lại -> lệnh trùng. Hủy next_msg khi chưa xử lý
+            # là AN TOÀN: chưa ack -> JetStream giao lại, không mất không trùng.
+            next_task = asyncio.ensure_future(sub.next_msg(timeout=60))
+            stop_task = asyncio.ensure_future(stop_event.wait())
+            done, _ = await asyncio.wait(
+                {next_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if stop_task in done:
+                next_task.cancel()
+                break
             try:
-                msg = await sub.next_msg(timeout=60)
+                msg = next_task.result()
             except nats.errors.TimeoutError:
                 idle_maintenance()
                 continue

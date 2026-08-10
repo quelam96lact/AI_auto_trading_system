@@ -9,6 +9,7 @@ from trading.models import Bar
 from trading.resample import resample_bars
 from trading.risk import RiskManager
 from trading.storage.db import Storage
+from trading.trailing_stop import TrailingStopManager
 
 DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
 pytestmark = pytest.mark.integration
@@ -50,6 +51,7 @@ def test_read_resample_replay_is_deterministic_from_real_db(storage):
             resampled,
             STRATEGIES["sma_cross"](),
             RiskManager(capital=100_000_000),
+            TrailingStopManager(),
             100_000_000,
         )
 

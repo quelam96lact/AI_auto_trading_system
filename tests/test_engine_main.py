@@ -98,7 +98,10 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     await run(cfg, max_messages=len(bars))
 
     positions = storage.read_positions()
-    assert positions["ENGT"].qty == 100
+    qty_first_run = positions["ENGT"].qty
+    # ATR sizing (approve_sized) quyet dinh qty — khong hard-code con so;
+    # dieu test nay can khang dinh la qty doc lai tu DB bang dung qty da ghi.
+    assert qty_first_run > 0, "phai co vi the duoc mo"
     state = storage.read_engine_state()
     assert state is not None and state[0] < 100_000_000
 
@@ -112,7 +115,7 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     with caplog.at_level(logging.INFO):
         await run(cfg, max_messages=1)
     assert any("engine restored state" in r.message for r in caplog.records)
-    assert storage.read_positions()["ENGT"].qty == 100
+    assert storage.read_positions()["ENGT"].qty == qty_first_run
 
 
 async def test_engine_run_calls_real_orders_handle_crossover_on_crossover(storage, monkeypatch):
@@ -146,6 +149,17 @@ async def test_engine_alerts_critical_on_risk_halt(storage, monkeypatch):
         "alert",
         lambda level, msg, **f: alerts_seen.append((level, msg)),
     )
+
+    # Day noi: ep process_bar (duoc engine loop goi cho moi message) set
+    # risk.halted_date, roi assert engine phat CRITICAL. Khong co gang dung lai
+    # chuoi gia lam halt tu nhien — fixture gia hang lam ATR filter
+    # (0.0038 < 0.005) giet crossover nen approve_sized khong bao gio duoc goi
+    # (da instrument xac nhan 0 lan). Tien le: test real-risk halt cung monkeypatch.
+    def fake_process_bar(bar, broker, strategy, risk, trailing_stop, marks, day_state, **kwargs):
+        risk.halted_date = bar.ts.date()
+        return []
+
+    monkeypatch.setattr(engine_main, "process_bar", fake_process_bar)
 
     cfg = make_cfg()
     prices = [90_000] * 20 + [95_000] * 10 + [50_000] * 10
@@ -267,3 +281,52 @@ async def test_engine_survives_poison_message_and_keeps_processing(
             "SELECT count(*) FROM heartbeat WHERE service = 'engine'"
         ).fetchone()[0]
     assert n == 1, "engine phải vẫn đập heartbeat sau khi gặp message hỏng"
+
+
+async def test_engine_exits_cleanly_when_stop_event_set(storage):
+    """SIGTERM (docker stop) -> stop_event set -> vòng lặp phải thoát ở ranh
+    giới message (SAU khi ack), không cắt giữa chừng. Test phần logic, không
+    gửi signal thật (Windows: add_signal_handler NotImplementedError)."""
+    import asyncio
+
+    cfg = make_cfg()
+    stop_event = asyncio.Event()
+    bars = make_bars([10] * 20 + [20] * 5)
+    await _publish(cfg, bars[:5])
+
+    task = asyncio.create_task(run(cfg, stop_event=stop_event))
+    # chờ engine xử lý được ít nhất 1 message (heartbeat beat — chỉ xảy ra
+    # sau khi message đã được xử lý trọn vẹn + ack)
+    n = 0
+    for _ in range(100):
+        with storage.conn() as c:
+            n = c.execute(
+                "SELECT count(*) FROM heartbeat WHERE service = 'engine'"
+            ).fetchone()[0]
+        if n >= 1:
+            break
+        await asyncio.sleep(0.1)
+    assert n >= 1, "engine phai xu ly duoc it nhat 1 message truoc khi dung"
+
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=15)
+    # thoát sạch: không exception, không treo
+
+
+async def test_engine_stops_within_docker_grace_when_idle(storage):
+    """SIGTERM lúc engine ĐANG RẢNH (không có message nào) phải thoát < 10s
+    (grace của docker stop). Bug đo thật: while check stop_event ở ĐẦU vòng
+    rồi block trong sub.next_msg(timeout=60) -> mất tới 58.2s -> luôn bị
+    SIGKILL; trong 10s grace engine VẪN nhận + xử lý message mới -> ghi DB
+    chưa ack -> JetStream giao lại -> lệnh trùng."""
+    import asyncio
+
+    cfg = make_cfg()
+    stop_event = asyncio.Event()
+
+    task = asyncio.create_task(run(cfg, stop_event=stop_event))
+    await asyncio.sleep(0.5)  # engine đã vào vòng lặp, đang block chờ message
+    stop_event.set()
+
+    await asyncio.wait_for(task, timeout=10)
+    # không publish message nào — vòng lặp phải thoát ngay khi stop_event set

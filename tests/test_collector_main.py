@@ -152,3 +152,92 @@ async def test_stream_handler_skips_unparsable_message_without_raising(monkeypat
     assert any(
         lvl == "WARN" and "failed to parse stream message" in m for lvl, m in alerts_seen
     )
+
+
+async def test_collector_stops_cleanly_when_stop_event_set(cfg, monkeypatch):
+    """SIGTERM -> stop_event set -> feed.stop() + pub.close() phải được gọi,
+    housekeeping_loop phải dừng. Test phần logic, không gửi signal thật."""
+    import asyncio
+    from dataclasses import replace
+
+    import trading.collector.main as collector_main
+
+    # fixture cfg dung dsn 'localhost' -> Windows resolve ::1 -> psycopg treo
+    cfg = replace(cfg, db_dsn="postgresql://trading:trading@127.0.0.1:5432/trading")
+
+    class FakePub:
+        def __init__(self):
+            self.close_called = False
+
+        async def connect(self):
+            pass
+
+        async def close(self):
+            self.close_called = True
+
+        async def publish(self, bar):
+            pass
+
+    class FakeFeed:
+        def __init__(self):
+            self.stop_called = False
+
+        def start(self):
+            pass
+
+        async def stop(self):
+            self.stop_called = True
+
+    fake_pub = FakePub()
+    fake_feed = FakeFeed()
+
+    async def fake_backfill(storage, client, symbols, today):
+        return {}
+
+    monkeypatch.setattr(collector_main, "BarPublisher", lambda *a, **k: fake_pub)
+    monkeypatch.setattr(collector_main, "SSIFeed", lambda *a, **k: fake_feed)
+    monkeypatch.setattr(collector_main, "run_backfill", fake_backfill)
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(collector_main.run(cfg, stop_event=stop_event))
+    await asyncio.sleep(0.2)  # để run() khởi động xong
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=15)
+
+    assert fake_feed.stop_called, "feed.stop() phai duoc goi khi dung"
+    assert fake_pub.close_called, "pub.close() phai duoc goi khi dung"
+
+
+async def test_housekeeping_loop_runs_no_tick_after_stop_event(cfg, monkeypatch):
+    """Bug đo thật: wait_for(stop_event.wait(), timeout) trả về BÌNH THƯỜNG
+    (không ném TimeoutError) khi stop được set giữa lúc chờ -> rơi thẳng xuống
+    housekeeping_tick — chạy thêm 1 tick (có thể là EOD backfill job SSI dài)
+    ngay lúc đang tắt máy. Phải break TRƯỚC khi tick."""
+    import asyncio
+
+    import trading.collector.main as collector_main
+
+    ticks = []
+
+    async def fake_tick(cfg, storage, wd, state):
+        ticks.append(1)
+
+    monkeypatch.setattr(collector_main, "housekeeping_tick", fake_tick)
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+
+    stop_event = asyncio.Event()
+    # set cờ GIỮA lúc wait_for đang chờ (loop đã vào vòng) — đúng kịch bản
+    # bug: wait_for trả về BÌNH THƯỜNG khi stop set, rơi thẳng xuống tick
+    task = asyncio.create_task(
+        collector_main.housekeeping_loop(
+            cfg, object(), object(), sleep_seconds=30.0, stop_event=stop_event
+        )
+    )
+    await asyncio.sleep(0.2)  # loop đã vào wait_for(30s)
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert ticks == [], (
+        f"khong duoc chay tick nao sau khi co lenh dung, thuc te {len(ticks)}"
+    )

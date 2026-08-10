@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import signal
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -16,6 +17,24 @@ from trading.config import load_config
 from trading.storage.db import Storage
 
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
+
+
+def _install_stop_handlers(stop_event: asyncio.Event) -> None:
+    """Bắt SIGTERM/SIGINT -> set stop_event để các vòng lặp dừng sạch.
+
+    Windows (nơi dev): loop.add_signal_handler ném NotImplementedError — fallback
+    sang signal.signal (chỉ thật sự hữu dụng trên Linux, nơi sản xuất chạy)."""
+
+    def _on_signal(*_args):
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _on_signal)
+    except NotImplementedError:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, _on_signal)
 
 
 async def persist_bars(storage, pub, bars) -> None:
@@ -39,9 +58,10 @@ async def persist_bars(storage, pub, bars) -> None:
         )
 
 
-def make_stream_message_handler(wd, storage, pub):
+def make_stream_message_handler(wd, storage, pub, persist_tasks=None):
     """Callback cho AsyncStream.streaming.on_data. Một message dị dạng không
-    được ném ngược vào vòng stream của SDK."""
+    được ném ngược vào vòng stream của SDK. `persist_tasks` (set, tuỳ chọn):
+    theo dõi task persist_bars fire-and-forget để shutdown chờ chúng xong."""
 
     def on_stream_message(msg):
         try:
@@ -55,7 +75,10 @@ def make_stream_message_handler(wd, storage, pub):
             return
         if bar is not None:
             wd.beat()
-            asyncio.create_task(persist_bars(storage, pub, [bar]))
+            task = asyncio.create_task(persist_bars(storage, pub, [bar]))
+            if persist_tasks is not None:
+                persist_tasks.add(task)
+                task.add_done_callback(persist_tasks.discard)
         # Index streaming (VNINDEX/VN30): không có nguồn dữ liệu real-time nào
         # trong ssi-sdk hiện tại — xem PLAN_INDEX_STREAMING.md (điều tra thật
         # 2026-08-07). Không viết IndexValue cho tới khi có nguồn dữ liệu khác.
@@ -105,14 +128,26 @@ async def housekeeping_loop(
     wd,
     sleep_seconds: float = 30.0,
     max_ticks: int | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
     """Vòng housekeeping vô hạn. Một lỗi (vd Postgres restart) KHÔNG được giết
     collector — bắt hết, alert WARN, rồi chạy tiếp vòng sau.
-    `max_ticks` chỉ dùng cho test, cùng pattern với run(max_messages) của engine."""
+    `max_ticks` chỉ dùng cho test, cùng pattern với run(max_messages) của engine.
+    `stop_event` (SIGTERM): dừng sạch sau vòng hiện tại."""
+    if stop_event is None:
+        stop_event = asyncio.Event()
     state = HousekeepingState()
     ticks = 0
-    while max_ticks is None or ticks < max_ticks:
-        await asyncio.sleep(sleep_seconds)
+    while not stop_event.is_set() and (max_ticks is None or ticks < max_ticks):
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
+        except TimeoutError:
+            pass  # hết khoảng chờ bình thường, chạy tick
+        # Bug đo thật: wait_for trả về BÌNH THƯỜNG (không ném TimeoutError) khi
+        # stop được set giữa lúc chờ -> KHÔNG được rơi xuống tick (tick có thể
+        # là EOD backfill job SSI dài — chạy giữa lúc đang tắt máy).
+        if stop_event.is_set():
+            break
         try:
             await housekeeping_tick(cfg, storage, wd, state)
         except Exception as e:
@@ -124,11 +159,16 @@ async def housekeeping_loop(
         ticks += 1
 
 
-async def run(cfg) -> None:
+async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
+    if stop_event is None:
+        stop_event = asyncio.Event()
+        _install_stop_handlers(stop_event)
+
     storage = Storage(cfg.db_dsn)
     storage.init_schema()
     pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
     await pub.connect()
+    persist_tasks: set[asyncio.Task] = set()
 
     alert("INFO", "backfill start")
     client = SSIRestClient(cfg, storage)
@@ -157,11 +197,25 @@ async def run(cfg) -> None:
     )
 
     feed = SSIFeed(
-        cfg, storage, on_message=make_stream_message_handler(wd, storage, pub)
+        cfg,
+        storage,
+        on_message=make_stream_message_handler(wd, storage, pub, persist_tasks),
     )
     feed.start()
 
-    await housekeeping_loop(cfg, storage, wd)
+    try:
+        await housekeeping_loop(cfg, storage, wd, stop_event=stop_event)
+    finally:
+        await feed.stop()
+        if persist_tasks:
+            _, pending = await asyncio.wait(persist_tasks, timeout=10)
+            if pending:
+                alert(
+                    "WARN",
+                    "persist tasks still running at shutdown",
+                    count=len(pending),
+                )
+        await pub.close()
 
 
 def main() -> None:

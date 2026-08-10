@@ -43,6 +43,17 @@ def test_upsert_idempotent(storage):
     assert len(got) == 1 and got[0].close == 105.0
 
 
+def test_storage_instances_share_pool_by_dsn():
+    """Hai Storage cùng DSN phải dùng CHUNG một pool (cấp module) — mỗi
+    instance một pool sẽ cạn connection Postgres khi test tạo hàng chục Storage."""
+    from trading.storage.db import _get_pool
+
+    s1 = Storage(DSN)
+    s2 = Storage(DSN)
+    assert _get_pool(s1.dsn) is _get_pool(s2.dsn), "pool phai dung chung theo DSN"
+    assert _get_pool(s1.dsn).max_size == 8, "khoi tao min_size=1, max_size=8"
+
+
 def test_last_bar_ts(storage):
     assert storage.last_bar_ts("TEST") is None
     storage.write_bars([bar(0), bar(5)])
@@ -305,3 +316,45 @@ def test_bars_daily_is_hypertable(storage):
             "WHERE hypertable_name = 'bars_daily'"
         ).fetchone()
     assert row[0] == 1, "bars_daily phai la hypertable"
+
+
+def test_pool_survives_postgres_restart_first_query():
+    """Restart postgres -> query NGAY phai thanh cong o LAN DAU (khong retry).
+
+    Regression canh bao (Claude repro): pool khong check connection -> dua
+    connection BAD ra caller -> query dau sau restart that bai
+    (OperationalError: could not receive data from server), chi lan thu hai
+    moi OK. Truoc khi co pool moi query tu mo connection moi nen sau khi
+    postgres song lai query ke tiep THANH CONG NGAY - mat di hieu qua do la
+    regression khong the chap nhan (persist_bars -> alert CRITICAL mat 1 nen;
+    persist_fills -> term() mat 1 fill).
+    """
+    import subprocess
+    import time
+
+    s = Storage(DSN)
+    with s.conn() as c:
+        c.execute("SELECT 1")
+
+    subprocess.run(
+        ["docker", "compose", "restart", "postgres"],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    # chờ postgres sẵn sàng (kết nối trực tiếp, không qua pool)
+    import psycopg
+
+    for _ in range(60):
+        try:
+            with psycopg.connect(DSN) as c:
+                c.execute("SELECT 1")
+            break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        raise AssertionError("postgres khong san sang sau 30s")
+
+    with s.conn() as c:  # QUERY ĐẦU TIÊN sau restart — phải thành công ngay
+        row = c.execute("SELECT 1").fetchone()
+    assert row == (1,), "pool phai thay connection chet trong pool, khong nem ra caller"

@@ -1,9 +1,10 @@
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from importlib.resources import files
 
-import psycopg
+from psycopg_pool import ConnectionPool
 
 from trading.broker import Fill, Position
 from trading.models import Bar, IndexValue
@@ -26,13 +27,41 @@ ON CONFLICT (symbol, ts) DO UPDATE SET
 """
 
 
+_POOLS: dict[str, ConnectionPool] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def _get_pool(dsn: str) -> ConnectionPool:
+    """Pool dùng chung ở CẤP MODULE, khoá theo DSN — KHÔNG một pool cho mỗi
+    instance Storage (test tạo hàng chục Storage -> hết connection Postgres).
+    Kích thước nhỏ: min_size=1, max_size=8. Pool tự thay connection chết
+    (postgres restart giữa chừng không làm hỏng vĩnh viễn)."""
+    with _POOL_LOCK:
+        pool = _POOLS.get(dsn)
+        if pool is None:
+            # check=check_connection: validate connection TRƯỚC khi đưa ra caller,
+            # connection chết (postgres restart/blip mạng) được thay TRONG pool
+            # chứ không ném BAD connection ra ngoài — query đầu sau restart phải
+            # thành công ngay (regression so với connection-per-query nếu không).
+            pool = ConnectionPool(
+                dsn,
+                min_size=1,
+                max_size=8,
+                open=False,
+                check=ConnectionPool.check_connection,
+            )
+            pool.open(wait=True)  # mở ngay, chờ conn đầu (báo lỗi sớm nếu DB chết)
+            _POOLS[dsn] = pool
+        return pool
+
+
 class Storage:
     def __init__(self, dsn: str):
         self.dsn = dsn
 
     @contextmanager
     def conn(self):
-        with psycopg.connect(self.dsn) as c:
+        with _get_pool(self.dsn).connection() as c:
             yield c
 
     def init_schema(self) -> None:

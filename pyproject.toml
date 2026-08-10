@@ -8,6 +8,7 @@ dependencies = [
     "nats-py>=2.6",
     "psycopg[binary]>=3.1",
     "PyYAML>=6.0",
+    "psycopg-pool>=3.3.1",
 ]
 
 [project.optional-dependencies]
