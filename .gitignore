@@ -33,6 +33,7 @@ scripts/.spike_indexes.json
 scripts/.spike_index_summary.json
 scripts/.spike_*.py
 scripts/.repro_*.py
+scripts/.probe_*.py
 .gitnexus_rpc.py
 .1devtool/
 .claude/worktrees/
