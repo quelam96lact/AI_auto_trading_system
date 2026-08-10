@@ -46,15 +46,12 @@ Lenh:
         Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
     }
     $env:DB_DSN = "postgresql://trading:trading@127.0.0.1:5432/trading"
-    $env:PYTHONIOENCODING = "utf-8"
 
 !! DUNG 127.0.0.1, KHONG DUNG localhost
    Tren may nay localhost giai ra ::1 trong khi Docker chi publish IPv4.
    Do that: psycopg.connect toi localhost = 130.1 giay, toi 127.0.0.1 = 0.0 giay.
    Storage mo connection MOI cho tung query, nen script se treo han chu khong
    phai chi cham.
-
-!! PYTHONIOENCODING = utf-8 la de tranh mot bay o Buoc 3, xem giai thich o do.
 
 
 --------------------------------------------------------------------------------
@@ -87,17 +84,15 @@ expires_at / refresh_token_expires_at.
 BUOC 3 - NAP TOKEN VAO DATABASE
 --------------------------------------------------------------------------------
 
-    uv run python scripts/load_token_to_db.py --config config/config.yaml
+    uv run python scripts/load_token_to_db.py
 
 Buoc nay KHONG duoc bo qua. Collector doc refresh_token tu bang ssi_auth_state
 trong Postgres, KHONG doc scripts/.ssi_sdk_token.json. Script nay la cau noi
 duy nhat giua hai noi luu token - bo qua thi Buoc 2 vo nghia.
 
-!! BAY DA BIET: load_token_to_db.py khong import _ssi_spike_common nen khong
-   force UTF-8 cho stdout nhu cac script spike khac. Dong print() tieng Viet
-   cuoi cung (load_token_to_db.py:45) se nem UnicodeEncodeError SAU KHI DA GHI
-   DB THANH CONG. Ban thay traceback nhung token DA vao DB roi.
-   Dat $env:PYTHONIOENCODING = "utf-8" o Buoc 1 la de tranh chuyen nay.
+Script doc DB_DSN tu bien env (da set o Buoc 1); khong can --config va khong
+can PYTHONIOENCODING (in khong dau, khong in DSN nen khong lo mat khau ra
+console).
 
 Kiem tra token trong DB (con bao nhieu phut/gio):
 
@@ -174,10 +169,9 @@ TOM TAT LENH (copy nhanh)
       Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
   }
   $env:DB_DSN = "postgresql://trading:trading@127.0.0.1:5432/trading"
-  $env:PYTHONIOENCODING = "utf-8"
 
   uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --request-otp
   uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --otp <MA_OTP>
-  uv run python scripts/load_token_to_db.py --config config/config.yaml
+  uv run python scripts/load_token_to_db.py
 
 ================================================================================
