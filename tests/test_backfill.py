@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -573,3 +574,65 @@ async def test_intraday_single_call_for_short_range():
         f"khoang <= 7 ngay phai dung 1 call intraday, thuc te {fake.calls}"
     )
     assert len(bars) == 1
+
+
+async def test_fetch_with_reauth_logs_on_retry_success(caplog):
+    """Re-auth sau 401 phai de lai dau vet: log INFO 're-authenticated after
+    AuthenticationError' (lan kiem chung job 900 ma phai suy luan 5 buoc vi
+    duong nay khong log gi - plan 2026-08-10-log-fetch-reauth)."""
+    from ssi_sdk.models import OHLCData
+
+    rows = [
+        OHLCData(
+            symbol="VCB",
+            trading_date="2026/07/15",
+            open_price=10,
+            high_price=11,
+            low_price=9,
+            close_price=10,
+            volume=100,
+            value=1000,
+        )
+    ]
+    client = _make_reauth_client(FakeMarketDataReauth(rows))
+
+    with caplog.at_level(logging.INFO):
+        bars = await client.daily_ohlc("VCB", date(2026, 7, 15), date(2026, 7, 15))
+
+    assert len(bars) == 1
+    assert any(
+        "re-authenticated after AuthenticationError" in r.message
+        and "get_ohlc_1day_historical" in r.message
+        for r in caplog.records
+    ), "phai co log INFO khi retry thanh cong, kem ten method"
+
+
+async def test_fetch_with_reauth_no_log_when_first_call_succeeds(caplog):
+    """Goi thanh cong ngay lan dau (khong loi) KHONG duoc log — tranh log on
+    vo ich tren moi luot goi."""
+    from ssi_sdk.models import OHLCData
+
+    rows = [
+        OHLCData(
+            symbol="VCB",
+            trading_date="2026/07/15",
+            open_price=10,
+            high_price=11,
+            low_price=9,
+            close_price=10,
+            volume=100,
+            value=1000,
+        )
+    ]
+    fake = FakeMarketDataReauth(rows)
+    fake.calls = 1  # lan goi dau tien thuc su la lan thu 2 -> khong fail
+    client = _make_reauth_client(fake)
+
+    with caplog.at_level(logging.INFO):
+        bars = await client.daily_ohlc("VCB", date(2026, 7, 15), date(2026, 7, 15))
+
+    assert len(bars) == 1
+    assert not any(
+        "re-authenticated after AuthenticationError" in r.message
+        for r in caplog.records
+    ), "khong duoc log khi thanh cong ngay lan dau"

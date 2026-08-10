@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import logging
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -8,6 +9,8 @@ from trading.calendar_vn import TZ
 from trading.config import Config, load_config
 from trading.models import Bar
 from trading.storage.db import Storage
+
+logger = logging.getLogger("trading.collector.backfill")
 
 _PAGE_SIZE = 100  # xác minh findings Task 6: page trả đúng pageSize record
 _MAX_RANGE_DAYS = 30  # xác minh findings Task 6: API giới hạn range 30 ngày/call
@@ -240,6 +243,9 @@ class SSIRestClient:
             await self._reset_auth()
             data = await self._ensure_data()
             rows = await getattr(data.market_data, method)(*args, **kwargs)
+            logger.info(
+                "re-authenticated after AuthenticationError, retrying %s", method
+            )
             return rows, data
 
     async def close(self) -> None:
