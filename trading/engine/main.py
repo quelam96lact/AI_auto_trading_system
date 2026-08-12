@@ -68,6 +68,21 @@ async def run(
     strategy = SmaCrossStrategy()
     risk = RiskManager(capital=CAPITAL)
     trailing_stop = TrailingStopManager()
+    # Tai dung _highest cho vi the dang mo sau restart (bug RESTORE-1 Task A):
+    # _highest la dict in-memory, mat sau restart -> trailing stop vo hieu hoa
+    # vinh vien im lang. Khong tai dung duoc -> alert WARN, khong duoc im lang.
+    for sym, pos in positions.items():
+        if pos.qty > 0:
+            highest = storage.read_highest_since_buy(sym)
+            if highest is not None:
+                trailing_stop.on_position_opened(sym, highest)
+            else:
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc trailing stop cho {sym}: khong co BUY "
+                    f"fill hoac khong co bar tu luc vao lenh — vi the nay DANG "
+                    f"KHONG co trailing stop",
+                )
     real_risk = RiskManager(capital=cfg.real_order_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     marks: dict[str, float] = {}

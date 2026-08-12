@@ -164,6 +164,23 @@ class Storage:
             ).fetchone()
         return (row[0], row[1]) if row else None
 
+    def read_highest_since_buy(self, symbol: str) -> float | None:
+        """Dinh gia cao nhat cua vi the dang mo ke tu lan BUY fill gan nhat —
+        dung de TAI DUNG TrailingStopManager._highest luc engine khoi dong lai.
+        _highest la dict in-memory (trailing_stop.py:11) nen mat sau restart,
+        trailing stop bi vo hieu hoa vinh vien im lang (bug RESTORE-1 Task A);
+        vi the phai tai dung tu du lieu da co, khong duoc dat bang avg_price
+        (under-protect khi gia da chay len roi moi restart). Tra ve None neu
+        khong co BUY fill hoac khong co bar nao tu do toi nay — main.py se
+        alert WARN, KHONG duoc im lang."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT max(high) FROM bars WHERE symbol = %s AND ts >= "
+                "(SELECT max(ts) FROM orders WHERE symbol = %s AND side = 'BUY')",
+                (symbol, symbol),
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def save_real_risk_halt(self, halted_date: date) -> None:
         with self.conn() as c:
             c.execute(

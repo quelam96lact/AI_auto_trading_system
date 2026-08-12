@@ -56,7 +56,19 @@ def storage():
         c.execute("DELETE FROM orders WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM engine_state WHERE id = 1")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
-    return s
+        c.execute("DELETE FROM pending_real_orders WHERE symbol = 'ENGT'")
+    yield s
+    # TEARDOWN: don ca pending_real_orders (RESTORE-1 Task B) — test ghi vao
+    # bang that ma khong don se tich rac (208 dong ENGT do truoc day, cung
+    # loai voi 26 message NATS da sua). Don-ca-sau hoc tu 9d829f0: don chi
+    # truoc = rac van con lai sau khi suite chay xong, isolation phu thuoc
+    # vao dung mot lan don o lan chay ke tiep.
+    with s.conn() as c:
+        c.execute("DELETE FROM positions WHERE symbol = 'ENGT'")
+        c.execute("DELETE FROM orders WHERE symbol = 'ENGT'")
+        c.execute("DELETE FROM engine_state WHERE id = 1")
+        c.execute("DELETE FROM real_risk_state WHERE id = 1")
+        c.execute("DELETE FROM pending_real_orders WHERE symbol = 'ENGT'")
 
 
 async def _reset_stream_and_consumer(js) -> None:
@@ -411,3 +423,65 @@ async def test_engine_no_stop_waiter_leak_after_run(storage):
     assert len(stop_event._waiters) == 0, (
         f"stop waiter bi ro ri: {len(stop_event._waiters)} (phai la 0 sau khi run xong)"
     )
+
+
+async def test_engine_restores_trailing_stop_after_restart(storage, monkeypatch):
+    """Bug RESTORE-1 Task A: TrailingStopManager._highest la dict in-memory —
+    sau restart, vi the khoi phuc tu DB nhung _highest rong -> check() return
+    None -> trailing stop BI VO HIEU HOA VINH VIEN, im lang, cho toi khi vi
+    the dong roi mo lai. Test nay phai FAIL tren code hien tai (chua tai dung
+    _highest luc khoi dong)."""
+    from trading.broker import Fill, Position
+
+    cfg = make_cfg()
+    entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    # Seed trang thai nhu sau restart: vi the dang mo + BUY fill cu + 1 bar
+    # daily voi high 20 (dinh gia tu luc vao lenh — trailing stop phai tinh
+    # tu day, khong phai tu gia vao lenh 10).
+    storage.upsert_position(Position("ENGT", 1, 10.0))
+    storage.write_order(Fill("ENGT", "BUY", 1, 10.0, 0.0, entry_ts))
+    storage.write_bars([Bar("ENGT", entry_ts, 20.0, 20.0, 20.0, 20.0, 1000)])
+    # engine_state phai TON TAI de run() di duong restore (broker.restore nap
+    # positions vao broker) — neu de trong, engine chay fresh, broker khong co
+    # vi the -> trailing stop khong bao gio duoc check (sai kich ban restart).
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+
+    # Bar moi: gia quanh dinh (de ATR co gia tri) roi BUT xuong low 5 — duoi
+    # stop tinh tu dinh 20 (20 - atr*2 ~ 19.8). Trailing stop DUNG phai trigger.
+    bars = make_bars([20] * 20 + [21] * 4)
+    bars.append(Bar("ENGT", bars[-1].ts + timedelta(minutes=15), 21.0, 21.0, 5.0, 21.0, 1000))
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    pos = storage.read_positions().get("ENGT")
+    assert pos is None or pos.qty == 0, (
+        "trailing stop phai duoc tai dung sau restart: vi the phai bi dong "
+        f"khi gia but xuong, nhung con qty={pos.qty if pos else 'closed'}"
+    )
+
+
+async def test_engine_alerts_warn_when_trailing_stop_cannot_restore(storage, monkeypatch):
+    """Vi the mo nhung khong tai dung duoc trailing stop (khong co BUY fill,
+    khong co bar tu luc vao lenh) -> PHAI alert WARN noi ro symbol — im lang
+    chinh la ban chat cua bug RESTORE-1 Task A, khong duoc tai tao no."""
+    import trading.engine.main as engine_main
+    from trading.broker import Position
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg()
+    storage.upsert_position(Position("ENGT", 1, 10.0))
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+    # KHONG write_order -> khong co BUY fill -> read_highest_since_buy tra None
+
+    bars = make_bars([10] * 5)
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert any(
+        level == "WARN" and "ENGT" in msg and "trailing stop" in msg
+        for level, msg in alerts_seen
+    ), f"phai alert WARN neu ro symbol va vi the khong co trailing stop, thuc te: {alerts_seen}"
