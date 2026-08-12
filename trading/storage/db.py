@@ -181,6 +181,25 @@ class Storage:
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def read_last_close(self, symbol: str) -> float | None:
+        """Gia dong cua gan nhat cua symbol (bars truoc, bars_daily sau) —
+        dung de kiem tra tran gia tri lenh that luc khoi dong (GUARD-1): neu
+        tran khong du mua noi 1 lo 100 cp thi duong dat lenh that INERT (se
+        khong bao gio sinh lenh BUY) — phai alert CRITICAL, khong duoc im
+        lang. Tra None neu ca hai bang rong cho symbol nay — caller bo qua
+        im lang (khong the ket luan, canh bao sai se lam nhon canh bao that)."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT close FROM bars WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            if row is None:
+                row = c.execute(
+                    "SELECT close FROM bars_daily WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        return row[0] if row else None
+
     def save_real_risk_halt(self, halted_date: date) -> None:
         with self.conn() as c:
             c.execute(

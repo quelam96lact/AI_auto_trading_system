@@ -18,6 +18,31 @@ Tin tốt: kiến trúc an toàn (người bấm nút, không tự đặt lệnh
 
 ---
 
+---
+
+## Quyết định của chủ dự án — 2026-08-13
+
+**1. Giữ nguyên `real_order_capital: 21459` → khoá hẳn đường đặt lệnh thật.**
+
+Đây là **quyết định có ý thức**, không phải sót. Hệ quả: `RiskManager.approve()`
+từ chối mọi lệnh BUY, nên `real_orders.handle_crossover()` không bao giờ sinh
+lệnh. Đường đặt lệnh thật là code chết, cố ý.
+
+Rủi ro của cách khoá này (ghi lại để người sau không đạp phải): khoá **ngầm**
+qua một con số vốn phi lý, chồng lên khoá **tường minh** `real_trading_enabled:
+false`. Ai đó bật `real_trading_enabled: true` sẽ thấy hệ thống im lặng không
+làm gì và không hiểu tại sao; hoặc tệ hơn, "sửa" capital cho hợp lý mà không
+biết rằng làm vậy là mở khoá giao dịch thật.
+
+Giảm thiểu: engine cảnh báo `CRITICAL` lúc khởi động nếu `real_trading_enabled`
+là `true` mà trần giá trị lệnh không mua nổi một lô của bất kỳ mã nào trong
+`symbols`. Khi `real_trading_enabled=false` thì im lặng — vì khi đó tình trạng
+này chính là trạng thái mong muốn.
+
+**2. Nối trailing stop vào luồng thật trước khi go-live** (xem rủi ro 3).
+
+---
+
 ## Chặn số 1 — `real_order_capital` sai đơn vị: MỌI lệnh BUY bị từ chối
 
 `config/config.yaml:8` đặt `real_order_capital: 21459`.

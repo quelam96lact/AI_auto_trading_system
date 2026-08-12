@@ -21,9 +21,14 @@ DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trad
 pytestmark = pytest.mark.integration
 
 
-def make_cfg(real_order_account: str = "") -> Config:
+def make_cfg(
+    real_order_account: str = "",
+    real_order_capital: float = 0,
+    symbols: list[str] | None = None,
+    real_trading_enabled: bool = False,
+) -> Config:
     return Config(
-        symbols=["ENGT"],
+        symbols=symbols if symbols is not None else ["ENGT"],
         indices=[],
         bar_interval_minutes=15,
         ssi_equity_accounts=[],
@@ -41,8 +46,8 @@ def make_cfg(real_order_account: str = "") -> Config:
         ssi_api_key="k",
         ssi_api_secret="s",
         ssi_private_key="pk",
-        real_trading_enabled=False,
-        real_order_capital=0,
+        real_trading_enabled=real_trading_enabled,
+        real_order_capital=real_order_capital,
         real_order_account=real_order_account,
     )
 
@@ -485,3 +490,100 @@ async def test_engine_alerts_warn_when_trailing_stop_cannot_restore(storage, mon
         level == "WARN" and "ENGT" in msg and "trailing stop" in msg
         for level, msg in alerts_seen
     ), f"phai alert WARN neu ro symbol va vi the khong co trailing stop, thuc te: {alerts_seen}"
+
+
+async def test_engine_alerts_critical_when_real_order_capital_too_small(storage, monkeypatch):
+    """GUARD-1: real_order_capital nho den muc tran gia tri lenh khong du mua
+    1 lo 100 cp cua ma re nhat -> alert CRITICAL noi ro ca hai con so. Day la
+    tinh huong THAT dang ton tai (capital=21459: tran 4.292d < 1 lo HPG
+    2.200.000d) — duong dat lenh that la CODE CHET ma khong ai biet."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_capital=21459, real_trading_enabled=True)
+    ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
+    storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert any(
+        level == "CRITICAL" and "INERT" in msg and "4,292" in msg and "2,200,000" in msg
+        for level, msg in alerts_seen
+    ), f"phai alert CRITICAL noi ro tran (4.292) va gia lo re nhat (2.200.000), thuc te: {alerts_seen}"
+
+
+async def test_engine_silent_when_trading_disabled_and_capital_tiny(storage, monkeypatch):
+    """GUARD-2: real_trading_enabled=False + capital nho = CAU HINH THAT dang
+    chay (chu du an CO Y khoa duong lenh that) -> phai IM LANG hoan toan.
+    Neu test nay fail nghia la ta vua them mot nguon canh bao rac vinh vien."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_capital=21459, real_trading_enabled=False)
+    ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
+    storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
+        f"trading tat + capital nho la trang thai mong muon -> phai im lang, thuc te: {alerts_seen}"
+    )
+
+
+async def test_engine_no_critical_alert_when_capital_sufficient(storage, monkeypatch):
+    """GUARD-1: capital du lon (100 trieu, tran 20 trieu > 1 lo 2.200.000) ->
+    KHONG co alert CRITICAL — canh bao khong keu bua."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_capital=100_000_000, real_trading_enabled=True)
+    ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
+    storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
+        f"capital du lon khong duoc keu INERT, thuc te: {alerts_seen}"
+    )
+
+
+async def test_engine_skips_guard_silently_when_no_prices(storage, monkeypatch):
+    """GUARD-1: khong lay duoc gia nao (bang rong) -> bo qua im lang, khong
+    alert sai, khong crash."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_capital=21459)
+    with storage.conn() as c:
+        c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")
+        c.execute("DELETE FROM bars_daily WHERE symbol = 'ENGT'")
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
+        f"khong co gia -> khong duoc canh bao INERT, thuc te: {alerts_seen}"
+    )

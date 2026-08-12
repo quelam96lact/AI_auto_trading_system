@@ -40,7 +40,9 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
 
 
 async def run(
-    cfg: Config, max_messages: int | None = None, stop_event: asyncio.Event | None = None
+    cfg: Config,
+    max_messages: int | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
     if stop_event is None:
         stop_event = asyncio.Event()
@@ -85,6 +87,34 @@ async def run(
                 )
     real_risk = RiskManager(capital=cfg.real_order_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
+    # GUARD-1: kiem tra duong dat lenh that co that su co the sinh lenh BUY
+    # khong. Tran gia tri lenh = real_order_capital * max_order_value_pct; neu
+    # khong du mua noi 1 lo 100 cp cua ma re nhat trong cfg.symbols (gia dong
+    # gan nhat) -> alert CRITICAL noi ro: duong lenh that INERT. CHI canh bao,
+    # khong chan engine — luong paper van chay dung va van co gia tri; van de
+    # goc la IM LANG, khong phai thieu che tai. Khong lay duoc gia nao (bang
+    # rong) -> bo qua im lang: khong the ket luan, canh bao sai lam nhon canh
+    # bao that.
+    # CHI chay khi real_trading_enabled=True (sua GUARD-2): chủ dự án CO Y
+    # giu real_order_capital=21459 de khoa duong lenh that — khi trading tat,
+    # tran nho la TRANG THAI MONG MUON, canh bao moi lan khoi dong chi la
+    # nhieu (cai bay NOISE-1). Gia tri that nam o luc ai do bat
+    # real_trading_enabled=true ma quen cap nhat capital.
+    if cfg.real_trading_enabled:
+        order_cap = cfg.real_order_capital * real_risk.max_order_value_pct
+        cheapest: float | None = None
+        for sym in cfg.symbols:
+            close = storage.read_last_close(sym)
+            if close is not None and (cheapest is None or close < cheapest):
+                cheapest = close
+        if cheapest is not None and order_cap < cheapest * 100:
+            alert(
+                "CRITICAL",
+                f"duong dat lenh that INERT: tran gia tri lenh {order_cap:,.0f} VND "
+                f"khong du mua 1 lo 100 cp cua ma re nhat ({cheapest:,.0f} VND/cp = "
+                f"{cheapest * 100:,.0f} VND/lo) trong cfg.symbols — se khong bao "
+                f"gio sinh lenh BUY",
+            )
     marks: dict[str, float] = {}
     day_state: dict = {}
 
