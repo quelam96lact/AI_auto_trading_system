@@ -96,6 +96,17 @@ async def reset_stream_and_durable_consumer():
     except NotFoundError:
         pass  # consumer chưa tồn tại = trạng thái hợp lệ ở lần chạy đầu
     await _reset_stream_and_consumer(js)
+    yield
+    # TEARDOWN: dọn SAU test — chỉ dọn, KHÔNG assert/raise (teardown fail sẽ
+    # che mất lỗi thật của chính test đó). Dọn bằng connection riêng của
+    # fixture (monkeypatch purge_stream của test chỉ áp lên object js cục bộ
+    # của test nên không ảnh hưởng connection này). Purge toàn bộ stream:
+    # gom cả message bars.FIXTURE_PROBE mà test_fixture_fails_loudly cố ý để
+    # lại — mục tiêu: sau full suite stream BARS = 0 message (plan 2026-08-12).
+    try:
+        await js.purge_stream("BARS")
+    except Exception:
+        pass  # teardown không được raise — dọn thất bại cũng không được che lỗi test
     await nc.close()
 
 
