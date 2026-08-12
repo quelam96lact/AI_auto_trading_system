@@ -28,6 +28,11 @@ services:
     command: python -m trading.engine.main --config config/config.yaml
     environment:
       DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
+      # BAT BUOC: config.yaml mac dinh nats://localhost:4222 (dung cho dev chay
+      # thang tren host). Trong container, localhost la CHINH container do nen
+      # engine khong bao gio ket noi duoc NATS. Collector da co dong nay tu dau,
+      # engine thi thieu — engine chua bao gio chay duoc trong Docker.
+      NATS_URL: nats://nats:4222
       SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
       SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
       SSI_API_KEY: ${SSI_API_KEY}
