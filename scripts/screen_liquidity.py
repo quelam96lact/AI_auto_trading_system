@@ -32,7 +32,9 @@ def compute(window_days: int, max_stale_days: int, dsn: str):
     stats chứa MỌI mã trong universe (kể cả stale, để main set is_active=false);
     cutoff = ngày giao dịch mới nhất toàn bars_daily - max_stale_days."""
     with psycopg.connect(dsn) as c:
-        total_max = c.execute("SELECT max(ts)::date FROM bars_daily").fetchone()[0]
+        total_max = c.execute(
+            "SELECT max((ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) FROM bars_daily"
+        ).fetchone()[0]
         if total_max is None:
             raise SystemExit("bars_daily rong - chay Task 5 truoc")
         rows = c.execute(
@@ -49,7 +51,7 @@ def compute(window_days: int, max_stale_days: int, dsn: str):
             SELECT u.symbol, u.exchange,
                    COALESCE(AVG(r.close * r.volume), 0) AS avg_value,
                    COALESCE(AVG(r.volume), 0) AS avg_volume,
-                   MAX(r.ts)::date AS max_ts
+                   MAX((r.ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS max_ts
             FROM symbol_universe u
             LEFT JOIN recent r USING (symbol)
             GROUP BY u.symbol, u.exchange

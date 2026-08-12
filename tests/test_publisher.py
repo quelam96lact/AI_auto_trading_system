@@ -19,12 +19,19 @@ async def test_publish_roundtrip():
 
     nc = await nats.connect("nats://127.0.0.1:4222")
     js = nc.jetstream()
-    sub = await js.subscribe("bars.ssi.VCB", stream="BARS")
-    msg = await sub.next_msg(timeout=5)
-    data = json.loads(msg.data)
-    assert data["symbol"] == "VCB" and data["close"] == 101.0
-    assert data["ts"].endswith("+07:00")
-    await nc.close()
+    try:
+        sub = await js.subscribe("bars.ssi.VCB", stream="BARS")
+        msg = await sub.next_msg(timeout=5)
+        data = json.loads(msg.data)
+        assert data["symbol"] == "VCB" and data["close"] == 101.0
+        assert data["ts"].endswith("+07:00")
+    finally:
+        # Tu DON phan test nay tao ra (tech-debt C2): purge theo DUNG subject
+        # bars.ssi.VCB — khong dong cham message cua test khac; chay ca khi
+        # assert fail (neu khong don, moi lan suite de lai rac trong stream BARS
+        # lam isolation engine test phu thuoc vao 1 lan purge trong fixture).
+        await js.purge_stream("BARS", subject="bars.ssi.VCB")
+        await nc.close()
     await pub.close()
 
 async def test_connect_applies_retention_limits_to_existing_unlimited_stream():
