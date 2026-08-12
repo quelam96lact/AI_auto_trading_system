@@ -142,6 +142,17 @@ async def run(
             )
             if stop_task in done:
                 next_task.cancel()
+                # Chờ task kết thúc và nuốt exception của nó (CancelledError
+                # lẫn ConnectionClosedError khi finally: nc.close() đóng
+                # connection lúc task vẫn đang chờ) — nếu không, asyncio in
+                # "Task exception was never retrieved" ở MỌI lần shutdown
+                # bình thường, tập cho người vận hành thói quen bỏ qua
+                # traceback. Logic huỷ giữ nguyên: chưa ack -> JetStream giao
+                # lại, không mất không trùng (comment dòng 131-137).
+                try:
+                    await next_task
+                except (asyncio.CancelledError, Exception):
+                    pass  # nuốt — task chỉ chạy next_msg, không có lỗi thật nào đáng giữ
                 break
             stop_task.cancel()  # next_msg thắng — hủy waiter, không để rò rỉ
             try:
