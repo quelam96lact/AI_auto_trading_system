@@ -32,7 +32,7 @@ See `CLAUDE.md` for full project conventions.
    token/chat id if you want alerts). `.env` is gitignored — never commit it.
 2. Review `config/config.yaml` — symbols, indices, holidays, watchdog thresholds,
    and `real_trading_enabled` (leave `false` unless you have completed the real
-   order verification runbook, see `PLAN_REAL_ORDER_PLACEMENT.md`).
+   order verification runbook, see `docs/plans-legacy/PLAN_REAL_ORDER_PLACEMENT.md`).
 3. Start the stack:
    ```bash
    docker compose up -d --build
@@ -62,4 +62,4 @@ exposure, backups, resource limits).
 ## Status
 
 Active development — see `CLAUDE.md` "Project status" for what's done vs. in
-progress, and `DEPLOYMENT_READINESS.md` for the go-live checklist.
+progress, and `GO_LIVE_AUDIT.md` for what is still blocking go-live.

@@ -1,8 +1,8 @@
 # Deployment Guide — Ubuntu VPS
 
 This covers deploying the collector/engine/postgres/nats/grafana stack to a
-production Ubuntu server via Docker Compose. See `DEPLOYMENT_READINESS.md` for
-the full go-live checklist this guide implements the "Critical" items of.
+production Ubuntu server via Docker Compose. See `GO_LIVE_AUDIT.md` for what is
+still blocking go-live — read it before enabling real trading.
 
 ## 1. Server prerequisites
 
@@ -23,7 +23,7 @@ chmod 600 .env
 ```
 
 Review `config/config.yaml` — in particular keep `real_trading_enabled: false`
-until the real-order verification runbook (`PLAN_REAL_ORDER_PLACEMENT.md`) has
+until the real-order verification runbook (`docs/plans-legacy/PLAN_REAL_ORDER_PLACEMENT.md`) has
 been run end-to-end.
 
 ## 3. Firewall — only expose what must be public
@@ -166,7 +166,7 @@ giờ giao dịch, xác nhận có tin Telegram, rồi `docker compose start eng
 
 - Derivative trading — no risk-control code exists yet, do not enable.
 - Real order placement — code exists but has never been tested against a real
-  fill; run the Phase 4 runbook first (see `PLAN_REAL_ORDER_PLACEMENT.md`).
+  fill; run the Phase 4 runbook first (see `docs/plans-legacy/PLAN_REAL_ORDER_PLACEMENT.md`).
 - CD — `.github/workflows/ci.yml` runs tests + ruff on every push, but there is
   no automated deployment; the steps above are manual
   (`git pull && docker compose up -d --build`).
