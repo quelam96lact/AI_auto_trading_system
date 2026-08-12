@@ -587,3 +587,269 @@ async def test_engine_skips_guard_silently_when_no_prices(storage, monkeypatch):
     assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
         f"khong co gia -> khong duoc canh bao INERT, thuc te: {alerts_seen}"
     )
+
+
+# ============ RTS-1: trailing stop luong lenh THAT ============
+
+RTS_ACCOUNT = "ACC_RTS"
+
+
+def _seed_real_position(storage, qty=100, sellable=100, account=RTS_ACCOUNT):
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    storage.save_account_positions(
+        account, ts, [{"symbol": "ENGT", "quantity": qty, "cost_price": 10.0, "sellable_quantity": sellable}]
+    )
+
+
+def _make_real_stop_bar(low=5.0):
+    return Bar("ENGT", datetime(2026, 7, 15, 10, 0, tzinfo=TZ), 21.0, 21.0, low, 21.0, 1000)
+
+
+def _count_pending_sells(storage, account=RTS_ACCOUNT):
+    with storage.conn() as c:
+        return c.execute(
+            "SELECT count(*) FROM pending_real_orders WHERE account_no = %s AND side = 'SELL'",
+            (account,),
+        ).fetchone()[0]
+
+
+async def test_real_stop_touch_creates_pending_sell(storage, monkeypatch):
+    """RTS-1 muc 1: cham stop + sellable_qty > 0 -> co pending SELL dung
+    sellable_qty + co alert (canh bao CHAM STOP, khong phai stop-loss tu dong)."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)  # dinh 20
+
+    handle_stop_touch(cfg, storage, _make_real_stop_bar(low=5.0), atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 1
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT quantity, side, price FROM pending_real_orders WHERE account_no = %s AND side = 'SELL'",
+            (RTS_ACCOUNT,),
+        ).fetchone()
+    assert row[0] == 100, f"phai dung sellable_qty (100), thuc te {row[0]}"
+    assert any(level == "WARN" and "STOP TOUCH" in msg for level, msg in alerts_seen), alerts_seen
+
+
+async def test_real_stop_touch_ignores_daily_halt(storage, monkeypatch):
+    """RTS-1 muc 2 + muc 4: halt lo ngay (risk.approve() chan ca SELL khi
+    halted_date == today) KHONG chan lenh cat lo — tien le logic.py:51-54
+    (luong paper bo qua risk cho stop-loss). Lenh SELL do cham stop KHONG di
+    qua risk.approve()."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    storage.save_real_risk_halt(date(2026, 7, 15))  # halt DUNG ngay cua bar
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)
+
+    handle_stop_touch(cfg, storage, _make_real_stop_bar(low=5.0), atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 1, (
+        "halt lo ngay KHONG duoc chan lenh cat lo (halt xay ra vi dang lo roi "
+        "chinh no khoa duong thoat la nguy hiem — logic.py:51-54)"
+    )
+
+
+async def test_real_stop_touch_warns_when_not_settled(storage, monkeypatch):
+    """RTS-1 muc 3: sellable_qty = 0 (chua settle T+2.5) -> khong sinh lenh,
+    CO alert WARN neu ro (thong tin nguoi van hanh can, khong nuot)."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=100, sellable=0)  # qty>0 nhung chua settle
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)
+
+    handle_stop_touch(cfg, storage, _make_real_stop_bar(low=5.0), atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 0
+    assert any(
+        level == "WARN" and "chua settle" in msg and "ENGT" in msg
+        for level, msg in alerts_seen
+    ), f"phai alert WARN noi ro chua ban duoc vi chua settle, thuc te: {alerts_seen}"
+
+
+async def test_real_stop_touch_no_duplicate_pending(storage, monkeypatch):
+    """RTS-1 muc 4: hai bar lien tiep deu cham stop -> chi MOT pending SELL
+    (moi bar cham stop se de ra mot lenh cho moi neu khong chan)."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)
+
+    bar1 = _make_real_stop_bar(low=5.0)
+    bar2 = Bar("ENGT", bar1.ts + timedelta(minutes=15), 21.0, 21.0, 4.0, 21.0, 1000)
+    handle_stop_touch(cfg, storage, bar1, atr=1.0, real_trailing_stop=ts)
+    handle_stop_touch(cfg, storage, bar2, atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 1, "phai chan lenh SELL trung khi da co pending hieu luc"
+
+
+async def test_engine_restores_real_trailing_stop_and_touches_stop(storage, monkeypatch):
+    """RTS-1 muc 5: sau restart, real_trailing_stop tai dung tu real_order_fills
+    (BUY fill) + bars — bar moi but xuong cham stop -> sinh pending SELL."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    # engine_state phai ton tai de di duong restore (như test paper)
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+    # BUY fill that + bar daily high 20 (dinh tu luc vao lenh)
+    entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO real_order_fills (ts, account_no, symbol, side, qty, price, fee, status) "
+            "VALUES (%s, %s, 'ENGT', 'BUY', 100, 10.0, 0, 'filled')",
+            (entry_ts, RTS_ACCOUNT),
+        )
+    storage.write_bars([Bar("ENGT", entry_ts, 20.0, 20.0, 20.0, 20.0, 1000)])
+
+    bars = make_bars([20] * 20 + [21] * 4)
+    bars.append(Bar("ENGT", bars[-1].ts + timedelta(minutes=15), 21.0, 21.0, 5.0, 21.0, 1000))
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert _count_pending_sells(storage) == 1, (
+        "real_trailing_stop phai duoc tai dung sau restart (dinh 20) va cham "
+        "stop phai sinh pending SELL"
+    )
+
+
+async def test_engine_warns_when_real_trailing_stop_cannot_restore(storage, monkeypatch):
+    """RTS-1 muc 5: vi the that ton tai nhung khong co BUY fill trong
+    real_order_fills (mua ngoai he thong) -> khong tai dung duoc -> alert WARN
+    neu ro ma, KHONG im lang."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+    # Fixture storage khong don real_order_fills/account_position_snapshot —
+    # test truoc (restores_real_trailing_stop) da de lai BUY fill cho ACC_RTS;
+    # xoa de kich ban nay dung: vi the that ton tai NHUNG khong co fill nao.
+    with storage.conn() as c:
+        c.execute("DELETE FROM real_order_fills WHERE account_no = %s", (RTS_ACCOUNT,))
+        c.execute("DELETE FROM account_position_snapshot WHERE account_no = %s", (RTS_ACCOUNT,))
+    _seed_real_position(storage)
+
+    bars = make_bars([10] * 5)
+    await _publish(cfg, bars)
+    await run(cfg, max_messages=len(bars))
+
+    assert any(
+        level == "WARN" and "ENGT" in msg and "khong tai dung duoc trailing stop" in msg
+        for level, msg in alerts_seen
+    ), f"phai alert WARN noi ro khong tai dung duoc trailing stop cho vi the that, thuc te: {alerts_seen}"
+
+
+async def test_real_stop_touch_init_tracking_mid_session(storage, monkeypatch):
+    """RTS-2: vi the that xuat hien GIUA PHIEN (nguoi dung xac nhan BUY that,
+    SSI khop, snapshot cap nhat) — trailing stop CHUA theo doi ma do (khoi tao
+    chi chay luc engine khoi dong). Phai khoi tao truoc khi check, khong thi
+    check() tra None MAI MAI (trailing_stop.py:26-28) -> khong bao gio cham
+    stop. Test nay phai FAIL tren code hien tai (lo hong co that)."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage)
+    entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO real_order_fills (ts, account_no, symbol, side, qty, price, fee, status) "
+            "VALUES (%s, %s, 'ENGT', 'BUY', 100, 10.0, 0, 'filled')",
+            (entry_ts, RTS_ACCOUNT),
+        )
+    storage.write_bars([Bar("ENGT", entry_ts, 10.0, 10.0, 10.0, 10.0, 1000)])
+
+    ts = TrailingStopManager()  # KHONG goi on_position_opened — vi the mo GIUA PHIEN
+    bar1 = Bar("ENGT", entry_ts + timedelta(minutes=15), 30.0, 30.0, 30.0, 30.0, 1000)
+    bar2 = Bar("ENGT", entry_ts + timedelta(minutes=30), 30.0, 30.0, 5.0, 30.0, 1000)
+    handle_stop_touch(cfg, storage, bar1, atr=1.0, real_trailing_stop=ts)
+    handle_stop_touch(cfg, storage, bar2, atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 1, (
+        "vi the that mo giua phien phai duoc trailing stop khoi tao truoc khi "
+        "check (bar but len 30 roi sup xuong 5 phai cham stop tu dinh 30)"
+    )
+
+
+async def test_real_stop_touch_falls_back_to_avg_price(storage, monkeypatch):
+    """RTS-2 fallback: khong co real_order_fills (mua ngoai he thong) ->
+    khoi tao _highest bang avg_price + alert WARN noi ro dang dung gia von
+    thay cho dinh that. Canh bao 1 lan (lan sau da tracking)."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    # Test truoc (mid_session) de lai real_order_fills cho ACC_RTS — xoa de
+    # kich ban nay dung: khong co fill nao (mua ngoai he thong).
+    with storage.conn() as c:
+        c.execute("DELETE FROM real_order_fills WHERE account_no = %s", (RTS_ACCOUNT,))
+    _seed_real_position(storage)  # cost_price = 10 — khong INSERT fill nao
+    ts = TrailingStopManager()
+    entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    bar1 = Bar("ENGT", entry_ts + timedelta(minutes=15), 30.0, 30.0, 30.0, 30.0, 1000)
+    bar2 = Bar("ENGT", entry_ts + timedelta(minutes=30), 30.0, 30.0, 5.0, 30.0, 1000)
+    handle_stop_touch(cfg, storage, bar1, atr=1.0, real_trailing_stop=ts)
+    handle_stop_touch(cfg, storage, bar2, atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 1
+    gia_von_warns = [
+        m for l, m in alerts_seen if l == "WARN" and "GIA VON" in m and "ENGT" in m
+    ]
+    assert len(gia_von_warns) == 1, (
+        f"phai alert WARN 1 lan noi ro dang dung gia von thay cho dinh that, thuc te: {alerts_seen}"
+    )

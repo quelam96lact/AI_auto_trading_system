@@ -87,6 +87,23 @@ async def run(
                 )
     real_risk = RiskManager(capital=cfg.real_order_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
+    real_trailing_stop = TrailingStopManager()
+    # Tai dung _highest cho vi the THAT sau restart (RTS-1), giong luong paper
+    # o tren: doc tu real_order_fills (loc account_no). Vi the that co the do
+    # chu tai khoan TU MUA ngoai he thong -> khong co fill -> khong tai dung
+    # duoc -> alert WARN neu ro ma, KHONG im lang.
+    for sym, rpos in storage.read_real_positions(cfg.real_order_account).items():
+        if rpos.qty > 0:
+            rhighest = storage.read_real_highest_since_buy(cfg.real_order_account, sym)
+            if rhighest is not None:
+                real_trailing_stop.on_position_opened(sym, rhighest)
+            else:
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc trailing stop cho vi the that {sym}: "
+                    f"khong co BUY fill trong real_order_fills (co the mua ngoai "
+                    f"he thong) — vi the nay DANG KHONG co trailing stop",
+                )
     # GUARD-1: kiem tra duong dat lenh that co that su co the sinh lenh BUY
     # khong. Tran gia tri lenh = real_order_capital * max_order_value_pct; neu
     # khong du mua noi 1 lo 100 cp cua ma re nhat trong cfg.symbols (gia dong
@@ -220,6 +237,16 @@ async def run(
                     on_crossover=on_real_crossover,
                 )
                 persist_fills(fills)
+                # Trailing stop luong THAT (RTS-1): canh bao cham stop moi bar —
+                # KHONG phai stop-loss tu dong, chi sinh lenh SELL cho xac
+                # nhan (nguoi van hanh bam nut qua confirm_real_order.py).
+                real_orders.handle_stop_touch(
+                    cfg,
+                    storage,
+                    bar,
+                    strategy.last_atr(bar.symbol),
+                    real_trailing_stop,
+                )
                 if risk.halted_date is not None and risk.halted_date != was_halted:
                     alert(
                         "CRITICAL",

@@ -200,6 +200,35 @@ class Storage:
                 ).fetchone()
         return row[0] if row else None
 
+    def read_real_highest_since_buy(self, account_no: str, symbol: str) -> float | None:
+        """Dinh gia cao nhat cua vi the THAT ke tu lan BUY fill gan nhat trong
+        real_order_fills (loc account_no) — dung de TAI DUNG real_trailing_stop
+        luc engine khoi dong lai (RTS-1), giong read_highest_since_buy() cho
+        luong paper. Vi the that co the do chu tai khoan TU MUA ngoai he thong
+        -> khong co fill nao -> tra None, caller phai alert WARN (khong im
+        lang). Chi tinh fill da co hieu luc (placed/filled), bo cancelled."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT max(high) FROM bars WHERE symbol = %s AND ts >= "
+                "(SELECT max(ts) FROM real_order_fills WHERE account_no = %s "
+                "AND symbol = %s AND side = 'BUY' AND status IN ('placed', 'filled'))",
+                (symbol, account_no, symbol),
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def has_active_pending_sell(self, account_no: str, symbol: str) -> bool:
+        """Co pending SELL con hieu luc (status='pending' va chua het han) cho
+        account_no + symbol khong — chan sinh lenh TRUNG (RTS-1): moi bar cham
+        stop se de ra mot lenh cho moi neu khong chan."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM pending_real_orders WHERE account_no = %s "
+                "AND symbol = %s AND side = 'SELL' AND status = 'pending' "
+                "AND expires_at > now() LIMIT 1",
+                (account_no, symbol),
+            ).fetchone()
+        return row is not None
+
     def save_real_risk_halt(self, halted_date: date) -> None:
         with self.conn() as c:
             c.execute(

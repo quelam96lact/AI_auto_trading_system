@@ -19,6 +19,14 @@ class TrailingStopManager:
         mo vi the tiep theo bat dau lai tu dau."""
         self._highest.pop(symbol, None)
 
+    def is_tracking(self, symbol: str) -> bool:
+        """Trailing stop co dang theo doi symbol nay khong (on_position_opened
+        da duoc goi). Phan biet voi check() tra None — None la MO HO (co the
+        la 'chua theo doi', co the la 'chua cham stop'); dung method cong khai
+        nay thay vi doc _highest tu ben ngoai (RTS-2: vi the that mo GIUA
+        PHIEN can duoc khoi tao truoc khi check)."""
+        return symbol in self._highest
+
     def check(self, bar: Bar, atr: float | None) -> float | None:
         """Cap nhat highest_price_since_entry, tra ve gia khop neu bar nay
         cham stop, else None. Khong lam gi neu chua co vi the dang theo doi
