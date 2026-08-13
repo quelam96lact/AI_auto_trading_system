@@ -4,6 +4,11 @@ __pycache__/
 .env
 .pytest_cache/
 .superpowers/
+# Cau hinh tool AI (skills/agents/hooks) — cung loai .superpowers/ va
+# .1devtool/. LUU Y: .gitignore KHONG ho tro comment cuoi dong, comment
+# phai nam tren dong rieng, neu khong ca dong tro thanh pattern literal.
+.agents/
+.codex/
 scripts/.ssi_sdk_token.json
 scripts/.spike_ohlc_sample.json
 scripts/.spike_stream_sample.jsonl

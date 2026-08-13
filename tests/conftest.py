@@ -48,11 +48,19 @@ os.environ["NATS_URL"] = TEST_NATS_URL
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolated_infra():
-    """Tao database trading_test neu chua co + init schema — chay mot lan moi
-    phien. Ket noi vao database 'postgres' (khong phai DB test) de CREATE
-    DATABASE, autocommit. schema.sql tu chay CREATE EXTENSION timescaledb nen
-    database trong la du."""
+def _isolated_infra(request):
+    """Tao database trading_test neu chua co + init schema — chi khi session
+    co it nhat 1 test integration SE CHAY (khong co thi tra ve ngay, khong ket
+    noi gi: unit test phai chay duoc khong can Docker). Doc request.session.
+    items (da qua deselection cua -m) chu khong dung hook collection — items
+    trong modifyitems van con ca test bi deselected nen flag sai."""
+    has_integration = any(
+        item.get_closest_marker("integration") is not None
+        for item in request.session.items
+    )
+    if not has_integration:
+        yield  # khong co test integration -> khong dung ha tang, khong ket noi
+        return
     db_name = TEST_DSN.rsplit("/", 1)[-1]
     admin_dsn = TEST_DSN.rsplit("/", 1)[0] + "/postgres"
     with psycopg.connect(admin_dsn, autocommit=True) as c:

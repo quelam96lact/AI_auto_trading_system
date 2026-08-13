@@ -154,6 +154,7 @@ async def test_stream_handler_skips_unparsable_message_without_raising(monkeypat
     )
 
 
+@pytest.mark.integration  # DOC-1: test nay CHAM DB THAT (db_dsn=TEST_DSN) — can ha tang, khong phai unit; cac test con lai trong file nay la unit that
 async def test_collector_stops_cleanly_when_stop_event_set(cfg, monkeypatch):
     """SIGTERM -> stop_event set -> feed.stop() + pub.close() phải được gọi,
     housekeeping_loop phải dừng. Test phần logic, không gửi signal thật."""

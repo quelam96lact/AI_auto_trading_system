@@ -49,10 +49,22 @@ See `CLAUDE.md` for full project conventions.
 
 ```bash
 uv sync
-uv run pytest -m "not integration" -v      # unit tests
+uv run pytest -m "not integration" -v      # unit tests — KHÔNG cần Docker
 uv run pytest tests/test_parser.py -v       # single file
 uv run ruff check trading tests             # lint
 ```
+
+Suite đầy đủ (gồm integration) cần Postgres đang chạy **và** NATS riêng cho
+test:
+
+```bash
+docker compose --profile test up -d nats-test   # NATS 4223 — riêng, không đụng stack thật
+uv run pytest -q                                 # full suite
+```
+
+Vì sao có `nats-test`: test chạy trên DB `trading_test` + NATS 4223 để **không
+bao giờ đụng hệ thống thật** (stream BARS / durable consumer / engine_state).
+Chi tiết: `docs/superpowers/plans/2026-08-13-test-isolation.md`.
 
 ## Production deployment
 
