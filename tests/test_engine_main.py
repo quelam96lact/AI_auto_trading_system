@@ -69,6 +69,11 @@ def storage():
             "DELETE FROM account_position_snapshot WHERE account_no = 'ACC_RTS'"
         )
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_RTS'")
+        c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")  # WARM-1: warm-up doc bars tu DB
+        c.execute("DELETE FROM bars_daily WHERE symbol = 'ENGT'")
+        # WARM-1: test warmup seed ts0 = 2026-07-14 -> persist_fills ghi pnl_daily
+        # 14/07; cac test khac ghi 15/07 — don ca 2 de khong ran cho test khac
+        c.execute("DELETE FROM pnl_daily WHERE date IN ('2026-07-14', '2026-07-15')")
     yield s
     # TEARDOWN: don ca pending_real_orders (RESTORE-1 Task B) — test ghi vao
     # bang that ma khong don se tich rac (208 dong ENGT do truoc day, cung
@@ -89,6 +94,9 @@ def storage():
             "DELETE FROM account_position_snapshot WHERE account_no = 'ACC_RTS'"
         )
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_RTS'")
+        c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")  # WARM-1: warm-up doc bars tu DB
+        c.execute("DELETE FROM bars_daily WHERE symbol = 'ENGT'")
+        c.execute("DELETE FROM pnl_daily WHERE date IN ('2026-07-14', '2026-07-15')")
 
 
 async def _reset_stream_and_consumer(js) -> None:
@@ -860,3 +868,123 @@ async def test_real_stop_touch_falls_back_to_avg_price(storage, monkeypatch):
     assert len(gia_von_warns) == 1, (
         f"phai alert WARN 1 lan noi ro dang dung gia von thay cho dinh that, thuc te: {alerts_seen}"
     )
+
+
+# ============ WARM-1 Viec A: warm-up SMA/ATR luc engine khoi dong ============
+
+
+def _warm_bars(n: int, price: float, start: datetime) -> list[Bar]:
+    """n bar 5 phut gia khong doi bat dau tu start — seed cho warm-up."""
+    return [
+        Bar("ENGT", start + timedelta(minutes=5 * i), price, price, price, price, 1000)
+        for i in range(n)
+    ]
+
+
+async def test_engine_warmup_enables_immediate_signal(storage, monkeypatch):
+    """WARM-1 A1: warm-up nap 21 bar lich su (slow=20 + 1 de _prev_above thoat
+    None) tu bang bars -> bar SONG dau tien qua NATS tao crossover -> lenh sinh
+    NGAy tu bar dau tien (khong phai doi ~1h45' nhu truoc). RED bat buoc: bo
+    phan nap di -> cung kich ban -> khong co lenh nao."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    cfg = make_cfg()
+    ts0 = datetime(2026, 7, 14, 9, 0, tzinfo=TZ)
+    storage.write_bars(_warm_bars(21, 10.0, ts0))  # 21 bar gia 10 — chua crossover
+    live = Bar(
+        "ENGT", ts0 + timedelta(minutes=5 * 21), 20.0, 20.0, 20.0, 20.0, 1000
+    )  # bar 1: crossover -> broker.submit lenh
+    live2 = Bar(
+        "ENGT", ts0 + timedelta(minutes=5 * 22), 20.0, 20.0, 20.0, 20.0, 1000
+    )  # bar 2: broker fill lenh (PaperBroker submit -> fill o bar ke tiep)
+    await _publish(cfg, [live, live2])
+    await run(cfg, max_messages=2)
+    with storage.conn() as c:
+        n = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
+    assert n == 1, f"warm-up xong phai ban duoc ngay bar dau, thuc te orders={n}, alerts={alerts_seen}"
+
+
+async def test_engine_warmup_skips_replayed_bars(storage, monkeypatch):
+    """WARM-1 A2 CHONG NAP TRUNG: consumer durable giao lai bar CHUA ACK sau
+    restart — bar do da nam trong DB nen vua duoc warm-up nap. Publish lai bar
+    ts CU (trong cua so warm-up) -> phai bi BO QUA, khong an lan hai (leth cua
+    so MA). Kiem qua ts cua lenh: phai la bar SONG, khong phai bar cu duoc nap
+    lai. RED bat buoc: bo dieu kien warmed_until -> lenh sinh tu bar cu -> fail."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    cfg = make_cfg()
+    ts0 = datetime(2026, 7, 14, 9, 0, tzinfo=TZ)
+    storage.write_bars(_warm_bars(21, 10.0, ts0))  # warm-up den T20
+    old = Bar(
+        "ENGT", ts0 + timedelta(minutes=5 * 20), 20.0, 20.0, 20.0, 20.0, 1000
+    )  # ts CU = T20 — nam trong cua so warm-up (durable consumer giao lai)
+    live = Bar(
+        "ENGT", ts0 + timedelta(minutes=5 * 21), 20.0, 20.0, 20.0, 20.0, 1000
+    )  # bar song 1: crossover -> submit
+    live2 = Bar(
+        "ENGT", ts0 + timedelta(minutes=5 * 22), 20.0, 20.0, 20.0, 20.0, 1000
+    )  # bar song 2: broker fill (ts cua lenh = T22 = live2.ts)
+    await _publish(cfg, [old, live, live2])
+    await run(cfg, max_messages=3)
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT ts FROM orders WHERE symbol = 'ENGT' ORDER BY ts LIMIT 1"
+        ).fetchone()
+    assert row is not None, "phai co lenh tu bar song"
+    assert row[0] == live2.ts, (
+        f"lenh phai sinh tu bar SONG (khong phai bar cu duoc nap lai), thuc te ts={row[0]}"
+    )
+
+
+async def test_engine_warmup_warns_when_history_short(storage, monkeypatch):
+    """WARM-1 A3: DB chi co vai bar -> alert WARN neu ro symbol + so bar nap
+    duoc, noi ro ma do VAN DANG MU. Khong co WARN la fail (chinh la cai 'im
+    lang' ma rui ro 5 noi toi)."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    cfg = make_cfg()
+    ts0 = datetime(2026, 7, 14, 9, 0, tzinfo=TZ)
+    storage.write_bars(_warm_bars(5, 10.0, ts0))  # 5 bar — thieu (can 21)
+    await _publish(cfg, make_bars([10]))
+    await run(cfg, max_messages=1)
+    assert any(
+        level == "WARN" and "ENGT" in msg and "thieu lich su" in msg
+        for level, msg in alerts_seen
+    ), f"phai WARN thieu lich su cho ENGT, thuc te: {alerts_seen}"
+
+
+async def test_engine_warmup_does_not_generate_orders(storage, monkeypatch):
+    """WARM-1 A4: warm-up nap bang compute_crossover() (chi cap nhat state ky
+    thuat) TUYET DOI khong dung process_bar — bar lich su khong duoc di qua
+    broker. Seed lich su chua ca bull lan bear crossover -> sau khi khoi dong,
+    orders KHONG co dong nao sinh tu chung."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    cfg = make_cfg()
+    ts0 = datetime(2026, 7, 14, 9, 0, tzinfo=TZ)
+    prices = [10] * 10 + [20] * 10 + [10]  # bull (10->20) roi bear (20->10)
+    bars = [
+        Bar("ENGT", ts0 + timedelta(minutes=5 * i), p, p, p, p, 1000)
+        for i, p in enumerate(prices)
+    ]
+    storage.write_bars(bars)
+    await run(cfg, max_messages=0)  # warm-up chay truoc loop, khong co message nao
+    with storage.conn() as c:
+        n = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
+    assert n == 0, f"warm-up KHONG duoc sinh lenh, thuc te orders={n}"

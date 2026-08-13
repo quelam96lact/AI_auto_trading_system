@@ -92,6 +92,17 @@ class SmaCrossStrategy:
             return Signal(bar.symbol, "SELL", held)
         return None
 
+    @property
+    def warmup_bars(self) -> int:
+        """So bar toi thieu de MA va ATR san sang: du slow close cho MA + du
+        atr_period cho ATR, cong 1 bar nua de _prev_above thoat khoi None (lan
+        dau du slow bar van tra None vi prev_above is None — xem
+        compute_crossover). WARM-1 rui ro 5: so bar nap luc engine khoi dong
+        phai do CHINH CHIEN LUOC quyet, khong hardcode o main.py — ai do doi
+        atr_period=30 ma main van nap 21 bar thi ATR khong bao gio san sang,
+        hong im lang."""
+        return max(self.slow, self._atr.period) + 1
+
 
 # Re-export for type-safe callers.
 __all__ = ["Crossover", "SmaCrossStrategy"]

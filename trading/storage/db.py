@@ -60,8 +60,13 @@ class Storage:
         self.dsn = dsn
 
     @contextmanager
-    def conn(self):
-        with _get_pool(self.dsn).connection() as c:
+    def conn(self, timeout: float | None = None):
+        """Connection tu pool. timeout=None (mac dinh) = hanh vi cu 30s cua
+        pool; truyen timeout ngan (vd 5) cho duong can that bai NHANH (WARM-1
+        Viec B: collector phai phat hien DB chet som de phuc hoi heartbeat —
+        khong ha timeout toan cuc vi _get_pool la CRITICAL 59 symbol/29 luong
+        gom ca duong dat lenh that)."""
+        with _get_pool(self.dsn).connection(timeout=timeout) as c:
             yield c
 
     def init_schema(self) -> None:
@@ -114,6 +119,22 @@ class Storage:
             ).fetchone()
         return row[0]
 
+    def read_last_bars(self, symbol: str, n: int) -> list[Bar]:
+        """n bar gan nhat cua symbol, sap xep TANG DAN theo ts (de nap tuan tu
+        vao chien luoc) — dung cho WARM-UP SMA/ATR luc engine khoi dong (rui
+        ro 5 GO_LIVE_AUDIT: consumer durable khong phat lai tu dau, khong nap
+        lich su thi engine mu ~1h45' sau restart, im lang). Method moi — khong
+        caller cu nao bi anh huong."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume, source "
+                "FROM bars WHERE symbol = %s ORDER BY ts DESC LIMIT %s",
+                (symbol, n),
+            ).fetchall()
+        bars = [Bar(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in rows]
+        bars.reverse()  # DESC -> ASC theo ts
+        return bars
+
     def write_index_values(self, vals: list[IndexValue]) -> None:
         if not vals:
             return
@@ -124,8 +145,8 @@ class Storage:
                 [(v.index_id, v.ts, v.value) for v in vals],
             )
 
-    def beat(self, service: str) -> None:
-        with self.conn() as c:
+    def beat(self, service: str, timeout: float | None = None) -> None:
+        with self.conn(timeout=timeout) as c:
             c.execute(
                 "INSERT INTO heartbeat (service, last_seen) VALUES (%s, now()) "
                 "ON CONFLICT (service) DO UPDATE SET last_seen = now()",

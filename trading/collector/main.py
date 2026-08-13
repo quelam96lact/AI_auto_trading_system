@@ -96,7 +96,11 @@ class HousekeepingState:
 async def housekeeping_tick(cfg, storage, wd, state: HousekeepingState) -> None:
     """Một vòng housekeeping. Được phép ném — housekeeping_loop chịu trách nhiệm bắt."""
     wd.check()
-    storage.beat("collector")
+    # WARM-1 Viec B: timeout=5 thay vi 30s mac dinh — khi DB chet, tick that bai
+    # NHANH (5s + sleep 30s = ~35s phuc hoi heartbeat thay vi ~90s truoc; chu du
+    # an khong ha timeout toan cuc vi _get_pool la CRITICAL). Mac dinh None giu
+    # nguyen hanh vi cho moi caller khac.
+    storage.beat("collector", timeout=5)
     now = datetime.now(TZ)
     if state.last_account_sync is None or now - state.last_account_sync >= timedelta(
         minutes=5

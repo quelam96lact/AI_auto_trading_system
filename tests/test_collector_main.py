@@ -78,7 +78,8 @@ async def test_housekeeping_tick_beats_and_checks_watchdog(cfg, monkeypatch):
     await housekeeping_tick(cfg, storage, wd, state)
 
     wd.check.assert_called_once()
-    storage.beat.assert_called_once_with("collector")
+    # WARM-1 Viec B: housekeeping truyen timeout=5 de that bai NHANH khi DB chet
+    storage.beat.assert_called_once_with("collector", timeout=5)
     assert state.last_account_sync is not None
 
 

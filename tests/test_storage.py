@@ -11,6 +11,37 @@ DSN = TEST_DSN
 pytestmark = pytest.mark.integration
 
 
+def test_conn_default_timeout_unchanged(monkeypatch):
+    """WARM-1 Viec B: conn() khong truyen timeout -> connection(timeout=None) —
+    dung hanh vi cu (pool 30s). Timeout ngan CHI khi caller chu dong truyen.
+    Day la dieu kien khiến ban kinh anh huong cua thay doi bang 0 (khong dong
+    duong dat lenh that / moi caller cu)."""
+    import trading.storage.db as db_mod
+
+    calls = []
+
+    class FakePool:
+        def connection(self, timeout=None):
+            calls.append(timeout)
+
+            class FakeConn:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            return FakeConn()
+
+    monkeypatch.setattr(db_mod, "_get_pool", lambda dsn: FakePool())
+    s = Storage("postgresql://x:x@127.0.0.1:1/x")  # khong ket noi that — pool gia
+    with s.conn():
+        pass
+    with s.conn(timeout=5):
+        pass
+    assert calls == [None, 5], f"mac dinh phai giu None (hanh vi cu), thuc te: {calls}"
+
+
 @pytest.fixture
 def storage():
     s = Storage(DSN)

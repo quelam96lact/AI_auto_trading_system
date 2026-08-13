@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import signal
+from datetime import datetime
 
 import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
@@ -68,6 +69,33 @@ async def run(
         )
 
     strategy = SmaCrossStrategy()
+    # WARM-UP (rui ro 5 GO_LIVE_AUDIT, WARM-1): nap lich su SMA/ATR tu bang
+    # bars luc khoi dong. Consumer engine la DURABLE: sau lan chay dau no tiep
+    # tuc tu vi tri cu chu khong phat lai tu dau — khong nap thi engine mu
+    # ~1h45' (21 bar 5 phut) va IM LANG. Nap bang compute_crossover() (chi cap
+    # nhat state ky thuat MA+ATR, KHONG qua broker/khong sinh lenh — tuyet doi
+    # khong dung process_bar cho bar lich su). So bar do CHINH CHIEN LUOC quyet
+    # (warmup_bars) — khong hardcode, ai do doi atr_period thi so bar theo.
+    warmed_until: dict[str, datetime] = {}
+    for sym in cfg.symbols:
+        hist = storage.read_last_bars(sym, strategy.warmup_bars)
+        if len(hist) < strategy.warmup_bars:
+            alert(
+                "WARN",
+                f"warm-up {sym} thieu lich su: chi co {len(hist)}/"
+                f"{strategy.warmup_bars} bar trong bang bars — ma nay VAN DANG MU",
+                symbol=sym,
+            )
+            continue
+        for hb in hist:
+            strategy.compute_crossover(hb)
+        warmed_until[sym] = hist[-1].ts
+        alert(
+            "INFO",
+            f"warm-up {sym} xong",
+            bars=len(hist),
+            until=str(hist[-1].ts),
+        )
     risk = RiskManager(capital=CAPITAL)
     trailing_stop = TrailingStopManager()
     # Tai dung _highest cho vi the dang mo sau restart (bug RESTORE-1 Task A):
@@ -224,6 +252,19 @@ async def run(
                 continue
             try:
                 bar = bar_from_payload(json.loads(msg.data))
+                # CHONG NAP TRUNG (WARM-1 muc 4): consumer engine la DURABLE —
+                # khi restart, JetStream giao lai cac bar CHUA ACK. Nhung bar
+                # do cung nam trong bang bars (COLLECTOR ghi, engine khong ghi)
+                # nen vua duoc warm-up nap. Khong chan thi cung mot bar vao
+                # _closes HAI LAN, lech cua so MA — bien chien luoc "mu" thanh
+                # chien luoc "SAI", te hon bug dang sua. Bo qua toan bo xu ly
+                # bar ts <= warmed_until (van ack: state da phan anh no roi).
+                if bar.ts <= warmed_until.get(
+                    bar.symbol, datetime.min.replace(tzinfo=bar.ts.tzinfo)
+                ):
+                    await msg.ack()
+                    processed += 1  # bar da xu ly (state da phan anh) — dem vao, khong thi loop cho message khong ton tai
+                    continue
                 was_halted = risk.halted_date
                 was_real_halted = real_risk.halted_date
                 fills = process_bar(
