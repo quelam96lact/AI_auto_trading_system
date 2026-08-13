@@ -1,6 +1,8 @@
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from trading.calendar_vn import TZ
 from trading.collector import account_sync
 
@@ -19,12 +21,16 @@ class FakeStorage:
     def __init__(self):
         self.balance_calls = []
         self.position_calls = []
+        self.sync_recorded = []
 
     def save_account_balance(self, **kwargs):
         self.balance_calls.append(kwargs)
 
     def save_account_positions(self, account_no, ts, positions):
         self.position_calls.append((account_no, ts, positions))
+
+    def record_position_sync(self, account_no, ts):
+        self.sync_recorded.append((account_no, ts))
 
 
 async def test_sync_balance_maps_real_api_fields():
@@ -98,7 +104,9 @@ async def _positions(*positions):
 async def test_sync_positions_handles_none_portfolio():
     """SYNC-1: SDK tra None cho danh muc rong (docstring portfolio.py:330-331:
     'absent or empty sections yield None') — None la trang thai HOP LE, khong
-    duoc nem, khong duoc goi save_account_positions voi None."""
+    duoc nem, khong duoc goi save_account_positions voi None. SYNC-LOG-1: van
+    ghi record_position_sync (da dong bo va rong != chua dong bo — khong ghi
+    thi vi the da ban ve VINH VIEN)."""
     storage = FakeStorage()
 
     async def _none():
@@ -109,6 +117,30 @@ async def test_sync_positions_handles_none_portfolio():
 
     await account_sync._sync_positions(portfolio, "0434221", ts, storage)
 
+    assert storage.position_calls == [("0434221", ts, [])]  # save no-op voi rong
+    assert storage.sync_recorded == [("0434221", ts)], (
+        "phai ghi su kien dong bo CA KHI danh muc rong"
+    )
+
+
+async def test_sync_positions_not_recorded_when_fetch_raises():
+    """SYNC-LOG-1 kiem chung 4: get_equity_positions nem exception -> KHONG
+    ghi account_sync_log (ghi mot lan dong bo chua xay ra con te hon khong ghi
+    — bien 'chua biet' thanh 'da biet va rong')."""
+    storage = FakeStorage()
+
+    async def _boom():
+        raise RuntimeError("parse boom")
+
+    portfolio = SimpleNamespace(get_equity_positions=lambda account_no: _boom())
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+
+    with pytest.raises(RuntimeError):
+        await account_sync._sync_positions(portfolio, "0434221", ts, storage)
+
+    assert storage.sync_recorded == [], (
+        f"fetch hong thi KHONG duoc ghi sync, thuc te: {storage.sync_recorded}"
+    )
     assert storage.position_calls == []
 
 

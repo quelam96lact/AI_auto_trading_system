@@ -194,3 +194,13 @@ CREATE TABLE IF NOT EXISTS real_risk_state (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (id = 1)
 );
+
+-- SYNC-LOG-1: su kien dong bo vi the (CHI luu lan gan nhat, khong lich su —
+-- lich su nhip dong bo da co o account_balance_snapshot cung chu ky 5 phut).
+-- Ghi LUON khi fetch thanh cong (ca khi danh muc RONG) de phan biet
+-- "chua dong bo bao gio" voi "da dong bo va rong" — khong ghi thi max(ts)
+-- dung o lan cu, vi the da ban ve VINH VIEN.
+CREATE TABLE IF NOT EXISTS account_sync_log (
+  account_no text PRIMARY KEY,
+  ts         timestamptz NOT NULL
+);

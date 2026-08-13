@@ -315,8 +315,12 @@ class Storage:
                 (access_token, expires_at, refresh_token, refresh_token_expires_at),
             )
 
-    def load_ssi_token(self) -> dict | None:
-        with self.conn() as c:
+    def load_ssi_token(self, timeout: float | None = None) -> dict | None:
+        # SYNC-LOG-1 Phan 2: timeout tùy chọn — mặc định None giữ nguyên hành
+        # vi cũ (30s pool); ensure_authenticated truyền 5 để vòng kết nối lại
+        # của feed (feed.py:163) không chờ 30s mỗi lần DB chết. KHÔNG đụng
+        # backoff feed.py:174 (thay đổi khác chưa đo).
+        with self.conn(timeout=timeout) as c:
             row = c.execute(
                 "SELECT access_token, expires_at, refresh_token, refresh_token_expires_at "
                 "FROM ssi_auth_state WHERE id = 1"
@@ -583,20 +587,62 @@ class Storage:
     def read_real_positions(self, account_no: str) -> dict[str, RealPosition]:
         """Đọc account_position_snapshot, lấy ts mới nhất theo account_no.
 
+        SYNC-LOG-1: neu co ban ghi account_sync_log, doc dung ts cua LAN DONG
+        BO do (khong phai max(ts)) — phan biet "chua dong bo bao gio" voi "da
+        dong bo va RONG" (bug: danh muc rong khong ghi dong nao -> max(ts) dung
+        o lan cu, vi the da ban ve VINH VIEN — nhanh SELL sinh lenh ban co
+        phieu khong ton tai). Chua co ban ghi sync (bang moi them) -> giu NGUYEN
+        hanh vi cu max(ts) — khong doi ket qua dot ngot cho du lieu da co, tu
+        khoi sau lan dong bo dau tien (5 phut) — quyet dinh co chu dich (plan
+        SYNC-LOG-1 muc 5: lua chon giua hai kieu sai, chon cai khong doi dot
+        ngot).
+
         KHÔNG correlate thêm theo symbol — nếu correlate cả symbol, mã đã bán hết
         sẽ không bao giờ bị ghi đè, hiện vĩnh viễn. Trả về dict[symbol, RealPosition]
         chỉ gồm các symbol có quantity > 0. `sellable_qty` (khác `qty` — tổng nắm giữ)
         là số cổ phiếu THẬT SỰ khả dụng để bán (SSI đã tự trừ phần chưa settle T+2,5) —
         dùng để cap số lượng SELL ở real_orders.handle_crossover(), KHÔNG được bỏ qua.
         """
-        with self.conn() as c:
-            rows = c.execute(
-                "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
-                "WHERE account_no = %s AND ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = %s) "
-                "AND quantity > 0",
-                (account_no, account_no),
-            ).fetchall()
+        sync_ts = self.read_position_sync_ts(account_no)
+        if sync_ts is None:
+            # Chua co ban ghi sync — hanh vi cu (max ts)
+            with self.conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
+                    "WHERE account_no = %s AND ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = %s) "
+                    "AND quantity > 0",
+                    (account_no, account_no),
+                ).fetchall()
+        else:
+            # Co moc sync — doc dung lan dong bo do (rong = khong co dong nao)
+            with self.conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
+                    "WHERE account_no = %s AND ts = %s AND quantity > 0",
+                    (account_no, sync_ts),
+                ).fetchall()
         return {r[0]: RealPosition(r[0], r[1], r[2], r[3]) for r in rows}
+
+    def record_position_sync(self, account_no: str, ts: datetime) -> None:
+        """Ghi su kien dong bo vi the (upsert, chi luu lan gan nhat) — goi
+        LUON khi fetch thanh cong, CA KHI danh muc RONG; KHONG goi khi fetch
+        nem exception (ghi mot lan dong bo chua xay ra con te hon khong ghi —
+        bien "chua biet" thanh "da biet va rong")."""
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO account_sync_log (account_no, ts) VALUES (%s, %s) "
+                "ON CONFLICT (account_no) DO UPDATE SET ts = EXCLUDED.ts",
+                (account_no, ts),
+            )
+
+    def read_position_sync_ts(self, account_no: str) -> datetime | None:
+        """Moc thoi gian lan dong bo vi the gan nhat (None = chua bao gio dong bo)."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT ts FROM account_sync_log WHERE account_no = %s",
+                (account_no,),
+            ).fetchone()
+        return row[0] if row else None
 
     def read_real_daily_pnl(self, account_no: str, day: date) -> float:
         """SUM(pnl) từ real_order_fills cho 1 ngày theo giờ Việt Nam.

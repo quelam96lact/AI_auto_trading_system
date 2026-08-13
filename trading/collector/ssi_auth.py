@@ -38,7 +38,10 @@ async def ensure_authenticated(cfg: Config, storage: Storage) -> AsyncAuth:
 
     Caller chịu trách nhiệm đóng auth (await auth.close()) khi dùng xong.
     """
-    saved = storage.load_ssi_token()
+    # SYNC-LOG-1 Phan 2: timeout=5 — vong ket noi lai cua feed (feed.py:163)
+    # goi ham nay moi lan DB chet; timeout ngan de no that bai nhanh thay vi
+    # cho 30s mac dinh. KHONG dong backoff feed.py:174.
+    saved = storage.load_ssi_token(timeout=5)
     if saved is None or saved["refresh_token_expires_at"] <= time.time():
         raise RuntimeError(
             "SSI refresh_token missing/expired — run scripts/spike_ssi_sdk_auth.py "

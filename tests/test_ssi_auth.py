@@ -43,8 +43,12 @@ class FakeStorage:
     def __init__(self, saved):
         self._saved = saved
         self.saved_tokens = []
+        self.token_timeouts = []
 
-    def load_ssi_token(self):
+    def load_ssi_token(self, timeout=None):
+        # SYNC-LOG-1 Phan 2: track timeout de test xac nhan ensure_authenticated
+        # truyen timeout=5
+        self.token_timeouts.append(timeout)
         return self._saved
 
     def save_ssi_token(self, **kwargs):
@@ -114,3 +118,16 @@ async def test_refresh_token_het_han_raise_runtime_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="SSI refresh_token missing/expired"):
         await ssi_auth.ensure_authenticated(_cfg(), storage)
+
+
+async def test_ensure_authenticated_doc_token_voi_timeout_5(monkeypatch):
+    """SYNC-LOG-1 Phan 2 kiem chung 2: ensure_authenticated goi load_ssi_token
+    voi timeout=5 (vong ket noi lai cua feed khong cho 30s moi lan DB chet)."""
+    monkeypatch.setattr(ssi_auth, "AsyncAuth", FakeAuth)
+    storage = FakeStorage(_valid_saved())
+
+    await ssi_auth.ensure_authenticated(_cfg(), storage)
+
+    assert storage.token_timeouts == [5], (
+        f"ensure_authenticated phai doc token voi timeout=5, thuc te: {storage.token_timeouts}"
+    )

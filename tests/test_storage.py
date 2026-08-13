@@ -50,6 +50,7 @@ def storage():
         c.execute("DELETE FROM bars WHERE symbol = 'TEST'")
         c.execute("DELETE FROM account_balance_snapshot WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM account_position_snapshot WHERE account_no = 'ACC_TEST'")
+        c.execute("DELETE FROM account_sync_log WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM pending_real_orders WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
@@ -377,3 +378,115 @@ def test_pool_replaces_dead_connection_before_handing_out():
     with s.conn() as c:  # query NGAY sau đó — phải thành công ở LẦN ĐẦU
         row = c.execute("SELECT 1").fetchone()
     assert row == (1,), "pool phai thay connection chet trong pool, khong nem ra caller"
+
+# ============ SYNC-LOG-1 Phan 1: account_sync_log ============
+
+
+def _seed_snapshot(storage, account, ts, symbols):
+    """Ghi mot lo anh chup (dung save_account_positions — cac test goi
+    record_position_sync rieng de kiem soat)."""
+    storage.save_account_positions(
+        account, ts, [
+            {"symbol": s, "quantity": q, "cost_price": 100.0, "sellable_quantity": q}
+            for s, q in symbols
+        ]
+    )
+
+
+def test_real_positions_empty_after_sync_with_empty_portfolio(storage):
+    """SYNC-LOG-1 kiem chung 1 (ca gay — trong tam): dong bo VCB 1500 -> dong
+    bo lan 2 RONG -> read_real_positions tra {} (truoc day max(ts) dung o lan
+    cu -> VCB 1500 VINH VIEN, nhanh SELL sinh lenh ban co phieu khong ton tai).
+    RED bat buoc: bo record_position_sync trong _sync_positions (production)
+    -> tra VCB 1500 nhu cu. Seed QUA _sync_positions (production path) chu
+    khong goi record truc tiep — neu khong, test khong chung minh duoc gi."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from trading.collector.account_sync import _sync_positions
+
+    async def _run():
+        ts1 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+        ts2 = ts1 + timedelta(minutes=35)
+
+        async def _with_vcb():
+            return [
+                SimpleNamespace(symbol="VCB", quantity=1500, cost_price=100.0, sellable_quantity=1500)
+            ]
+
+        async def _empty():
+            return None  # SDK: danh muc rong tra None
+
+        portfolio1 = SimpleNamespace(get_equity_positions=lambda a: _with_vcb())
+        await _sync_positions(portfolio1, "ACC_TEST", ts1, storage)
+        portfolio2 = SimpleNamespace(get_equity_positions=lambda a: _empty())
+        await _sync_positions(portfolio2, "ACC_TEST", ts2, storage)
+
+        return storage.read_real_positions("ACC_TEST")
+
+    pos = asyncio.run(_run())
+    assert pos == {}
+
+
+def test_real_positions_follow_latest_sync(storage):
+    """SYNC-LOG-1 kiem chung 2 (khong pha ca thuong): dong bo VCB+HPG -> dong
+    bo chi con VCB -> read tra dung VCB, khong con HPG."""
+    ts1 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+    ts2 = ts1 + timedelta(minutes=35)
+    _seed_snapshot(storage, "ACC_TEST", ts1, [("VCB", 1500), ("HPG", 1000)])
+    storage.record_position_sync("ACC_TEST", ts1)
+    _seed_snapshot(storage, "ACC_TEST", ts2, [("VCB", 1500)])
+    storage.record_position_sync("ACC_TEST", ts2)
+    pos = storage.read_real_positions("ACC_TEST")
+    assert set(pos.keys()) == {"VCB"}
+    assert pos["VCB"].qty == 1500
+
+
+def test_real_positions_fallback_when_no_sync_record(storage):
+    """SYNC-LOG-1 kiem chung 3 (fallback co chu dich): co dong snapshot nhung
+    KHONG co ban ghi account_sync_log (bang moi them, du lieu cu) -> van tra
+    nhu hanh vi cu max(ts) — khong doi ket qua dot ngot, tu khoi sau lan dong
+    bo dau tien."""
+    ts1 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+    _seed_snapshot(storage, "ACC_TEST", ts1, [("VCB", 1500)])
+    # KHONG goi record_position_sync
+    pos = storage.read_real_positions("ACC_TEST")
+    assert set(pos.keys()) == {"VCB"}
+    assert pos["VCB"].qty == 1500
+
+
+# ============ SYNC-LOG-1 Phan 2: load_ssi_token timeout ============
+
+
+def test_load_ssi_token_default_timeout_unchanged(monkeypatch):
+    """SYNC-LOG-1 Phan 2 kiem chung 1: load_ssi_token() khong truyen ->
+    connection(timeout=None) (hanh vi cu); truyen 5 -> 5. Cung khuon mau test
+    conn/beat da co."""
+    import trading.storage.db as db_mod
+
+    calls = []
+
+    class FakePool:
+        def connection(self, timeout=None):
+            calls.append(timeout)
+
+            class FakeConn:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def execute(self, *a, **k):
+                    class R:
+                        def fetchone(self):
+                            return None
+                    return R()
+
+            return FakeConn()
+
+    monkeypatch.setattr(db_mod, "_get_pool", lambda dsn: FakePool())
+    s = Storage("postgresql://x:x@127.0.0.1:1/x")  # khong ket noi that — pool gia
+    s.load_ssi_token()
+    s.load_ssi_token(timeout=5)
+    assert calls == [None, 5], f"mac dinh phai giu None (hanh vi cu), thuc te: {calls}"

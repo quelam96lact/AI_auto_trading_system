@@ -61,14 +61,12 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
 
 async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Storage) -> None:
     positions = await portfolio.get_equity_positions(account_no)
-    if positions is None:
-        # SDK docstring (portfolio.py:330-331): "absent or empty sections yield
-        # None for that side" — annotation `-> list[EquityPosition]` sai voi
-        # hanh vi that (portfolio.py:184 tra thang .equity). Danh muc RONG la
-        # trang thai HOP LE (tai khoan 0434221 dang rong, so du 21.459 VND),
-        # khong phai loi — khong alert, khong nem (SYNC-1).
-        return
-    rows = [
+    # SDK docstring (portfolio.py:330-331): "absent or empty sections yield
+    # None for that side" — annotation `-> list[EquityPosition]` sai voi
+    # hanh vi that (portfolio.py:184 tra thang .equity). Danh muc RONG la
+    # trang thai HOP LE (tai khoan 0434221 dang rong, so du 21.459 VND),
+    # khong phai loi — khong alert, khong nem (SYNC-1).
+    rows = [] if positions is None else [
         {
             "symbol": p.symbol,
             "quantity": p.quantity,
@@ -77,4 +75,11 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
         }
         for p in positions
     ]
-    storage.save_account_positions(account_no, ts, rows)
+    storage.save_account_positions(account_no, ts, rows)  # no-op khi rong
+    # SYNC-LOG-1: ghi su kien dong bo LUON khi fetch thanh cong (CA KHI danh
+    # muc RONG) — de read_real_positions phan biet "chua dong bo" voi "da dong
+    # bo va rong". Khong ghi thi max(ts) dung o lan cu, vi the da ban ve VINH
+    # VIEN (nhanh SELL sinh lenh ban co phieu khong ton tai). Khong goi khi
+    # fetch nem exception (exception day len sync_account_data, dong nay khong
+    # chay — ghi mot lan dong bo chua xay ra con te hon khong ghi).
+    storage.record_position_sync(account_no, ts)
