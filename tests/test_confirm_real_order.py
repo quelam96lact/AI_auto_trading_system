@@ -35,7 +35,6 @@ def cfg(monkeypatch):
         ssi_api_secret="a",
         ssi_private_key="pk",
         real_trading_enabled=False,
-        real_order_capital=1_000_000_000.0,
         real_order_account="ACC_REAL",
     )
 
@@ -83,7 +82,6 @@ def with_real_trading_enabled(cfg):
         ssi_api_secret=cfg.ssi_api_secret,
         ssi_private_key=cfg.ssi_private_key,
         real_trading_enabled=True,
-        real_order_capital=cfg.real_order_capital,
         real_order_account=cfg.real_order_account,
     )
 

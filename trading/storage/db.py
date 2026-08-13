@@ -202,6 +202,22 @@ class Storage:
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def read_account_balance(self, account_no: str) -> tuple[float, datetime] | None:
+        """So du THAT (withdrawable) moi nhat cua tai khoan — dung lam CAPITAL
+        cho RiskManager luong lenh that (CAP-1: chu du an BO real_order_capital
+        khoi config, engine doc so du that tu account_balance_snapshot). Dung
+        withdrawable (tien that su dung duoc), khong dung account_balance (co
+        the bao phan dang bi giu — vd 0434226 holdSubscription 2.5tr). Tra
+        (withdrawable, ts) hoac None neu chua co dong nao — main.py alert
+        CRITICAL + capital=0 (fail-safe), KHONG duoc im lang."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT withdrawable, ts FROM account_balance_snapshot "
+                "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
+                (account_no,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
     def read_last_close(self, symbol: str) -> float | None:
         """Gia dong cua gan nhat cua symbol (bars truoc, bars_daily sau) —
         dung de kiem tra tran gia tri lenh that luc khoi dong (GUARD-1): neu

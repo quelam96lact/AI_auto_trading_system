@@ -31,7 +31,6 @@ def cfg():
         ssi_api_secret="a",
         ssi_private_key="pk",
         real_trading_enabled=False,
-        real_order_capital=1_000_000_000.0,
         real_order_account="ACC",
     )
 

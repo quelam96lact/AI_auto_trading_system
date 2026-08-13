@@ -113,7 +113,45 @@ async def run(
                     f"fill hoac khong co bar tu luc vao lenh — vi the nay DANG "
                     f"KHONG co trailing stop",
                 )
-    real_risk = RiskManager(capital=cfg.real_order_capital)
+    # CAP-1: vốn lệnh thật đọc SỐ DƯ THẬT từ account_balance_snapshot (chủ
+    # dự án BỎ real_order_capital khỏi config — quyết định 13/08, đã cảnh báo
+    # và ghi GO_LIVE_AUDIT). Dùng withdrawable (tiền thật dùng được), không
+    # dùng account_balance (có thể bao phần đang bị giữ — vd 0434226
+    # holdSubscription 2.5tr). Ba nhánh, KHÔNG nhánh nào im lặng: không có
+    # dòng nào -> capital=0 + CRITICAL (fail-safe: approve() từ chối MỌI lệnh,
+    # KHÔNG rơi về số dễ dãi); cũ >24h -> vẫn dùng + WARN kèm tuổi; bình
+    # thường -> INFO nêu số tiền + mốc thời gian (người vận hành phải nhìn
+    # được hệ thống đang tính rủi ro trên con số nào).
+    balance = storage.read_account_balance(cfg.real_order_account)
+    if balance is None:
+        real_capital = 0.0
+        alert(
+            "CRITICAL",
+            "khong doc duoc so du that (account_balance_snapshot khong co dong "
+            "cho tai khoan nay) — real capital = 0, MOI lenh that bi tu choi "
+            "(fail-safe)",
+            account=cfg.real_order_account,
+        )
+    else:
+        real_capital, balance_ts = balance
+        age_h = (datetime.now(TZ) - balance_ts).total_seconds() / 3600
+        if age_h > 24:
+            alert(
+                "WARN",
+                f"so du that cu hon 24h ({age_h:.1f}h) — van dung de tinh rui ro",
+                account=cfg.real_order_account,
+                withdrawable=real_capital,
+                ts=str(balance_ts),
+            )
+        else:
+            alert(
+                "INFO",
+                "so du that (withdrawable) lam real capital",
+                account=cfg.real_order_account,
+                withdrawable=real_capital,
+                ts=str(balance_ts),
+            )
+    real_risk = RiskManager(capital=real_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     real_trailing_stop = TrailingStopManager()
     # Tai dung _highest cho vi the THAT sau restart (RTS-1), giong luong paper
@@ -133,20 +171,19 @@ async def run(
                     f"he thong) — vi the nay DANG KHONG co trailing stop",
                 )
     # GUARD-1: kiem tra duong dat lenh that co that su co the sinh lenh BUY
-    # khong. Tran gia tri lenh = real_order_capital * max_order_value_pct; neu
+    # khong. Tran gia tri lenh = SO DU THAT * max_order_value_pct (CAP-1: doc tu
+    # account_balance_snapshot, khong con real_order_capital trong config); neu
     # khong du mua noi 1 lo 100 cp cua ma re nhat trong cfg.symbols (gia dong
     # gan nhat) -> alert CRITICAL noi ro: duong lenh that INERT. CHI canh bao,
     # khong chan engine — luong paper van chay dung va van co gia tri; van de
     # goc la IM LANG, khong phai thieu che tai. Khong lay duoc gia nao (bang
     # rong) -> bo qua im lang: khong the ket luan, canh bao sai lam nhon canh
     # bao that.
-    # CHI chay khi real_trading_enabled=True (sua GUARD-2): chủ dự án CO Y
-    # giu real_order_capital=21459 de khoa duong lenh that — khi trading tat,
-    # tran nho la TRANG THAI MONG MUON, canh bao moi lan khoi dong chi la
-    # nhieu (cai bay NOISE-1). Gia tri that nam o luc ai do bat
-    # real_trading_enabled=true ma quen cap nhat capital.
+    # CHI chay khi real_trading_enabled=True (sua GUARD-2): khi trading tat,
+    # canh bao moi lan khoi dong chi la nhieu (cai bay NOISE-1) — gia tri that
+    # nam o luc ai do bat real_trading_enabled=true.
     if cfg.real_trading_enabled:
-        order_cap = cfg.real_order_capital * real_risk.max_order_value_pct
+        order_cap = real_capital * real_risk.max_order_value_pct
         cheapest: float | None = None
         for sym in cfg.symbols:
             close = storage.read_last_close(sym)

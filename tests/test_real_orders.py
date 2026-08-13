@@ -34,7 +34,6 @@ def cfg():
         ssi_api_secret="a",
         ssi_private_key="pk",
         real_trading_enabled=False,
-        real_order_capital=1_000_000_000.0,
         real_order_account="ACC_REAL",
     )
 
@@ -62,7 +61,7 @@ def _make_storage():
 
 def test_handle_crossover_buy_when_not_held(cfg, bar):
     storage = _make_storage()
-    risk = RiskManager(capital=cfg.real_order_capital)
+    risk = RiskManager(capital=1_000_000_000.0)
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_crossover(cfg, storage, risk, "bull", bar)
@@ -92,7 +91,7 @@ def test_handle_crossover_skips_buy_when_already_held(cfg, bar):
     storage.read_real_positions.return_value = {
         "VCB": RealPosition("VCB", 100, 50_000.0, 100)
     }
-    risk = RiskManager(capital=cfg.real_order_capital)
+    risk = RiskManager(capital=1_000_000_000.0)
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_crossover(cfg, storage, risk, "bull", bar)
@@ -106,7 +105,7 @@ def test_handle_crossover_sell_caps_to_sellable_qty(cfg, bar):
     storage.read_real_positions.return_value = {
         "VCB": RealPosition("VCB", 100, 50_000.0, 30)
     }
-    risk = RiskManager(capital=cfg.real_order_capital)
+    risk = RiskManager(capital=1_000_000_000.0)
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_crossover(cfg, storage, risk, "bear", bar)
@@ -121,7 +120,7 @@ def test_handle_crossover_sell_caps_to_sellable_qty(cfg, bar):
 def test_handle_crossover_skips_sell_when_nothing_sellable(cfg, bar):
     storage = _make_storage()
     storage.read_real_positions.return_value = {}
-    risk = RiskManager(capital=cfg.real_order_capital)
+    risk = RiskManager(capital=1_000_000_000.0)
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_crossover(cfg, storage, risk, "bear", bar)
@@ -147,7 +146,7 @@ def test_handle_crossover_skips_buy_when_position_qty_is_zero(cfg, bar):
     storage.read_real_positions.return_value = {
         "VCB": RealPosition("VCB", 0, 50_000.0, 0)
     }
-    risk = RiskManager(capital=cfg.real_order_capital)
+    risk = RiskManager(capital=1_000_000_000.0)
 
     with patch("trading.real_orders.alert"):
         handle_crossover(cfg, storage, risk, "bull", bar)

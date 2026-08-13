@@ -18,7 +18,6 @@ def test_load_config(tmp_path, monkeypatch):
         "ssi_equity_accounts: ['0434221', '0434226']\n"
         "holidays: ['2026-09-02']\n"
         "real_trading_enabled: false\n"
-        "real_order_capital: 21459\n"
         "real_order_account: '0434221'\n"
         "nats: {url: 'nats://localhost:4222', stream: BARS}\n"
         "watchdog: {stale_seconds: 180, max_failures: 3}\n",
@@ -33,7 +32,6 @@ def test_load_config(tmp_path, monkeypatch):
     assert cfg.ssi_api_secret == "secret000"
     assert cfg.ssi_private_key == "privatekey000"
     assert cfg.real_trading_enabled is False
-    assert cfg.real_order_capital == 21459
     assert cfg.real_order_account == "0434221"
     assert cfg.db_dsn.startswith("postgresql://")
     assert cfg.nats_stream == "BARS"
