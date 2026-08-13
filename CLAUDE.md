@@ -29,6 +29,11 @@ uv run pytest tests/test_parser.py -v
 # Run single test
 uv run pytest tests/test_parser.py::test_parse_b_string_envelope -v
 
+# Suite day du (gom integration) — can Postgres + NATS RIENG cho test
+docker compose --profile test up -d nats-test
+uv run pytest -q
+# (test chay tren DB trading_test + NATS 4223 de khong bao gio dung he thong that)
+
 # Lint with ruff
 uv run ruff check trading tests
 
@@ -114,7 +119,7 @@ Khi Claude đóng vai trò lên kế hoạch (planner) và giao việc viết co
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI_auto_trading_system** (3333 symbols, 5652 relationships, 122 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI_auto_trading_system** (3396 symbols, 5769 relationships, 123 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

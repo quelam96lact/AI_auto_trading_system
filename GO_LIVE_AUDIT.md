@@ -22,6 +22,8 @@ HEAD tại thời điểm audit: `2b6fd06`, nhánh `feature/data-layer`.
 | Rủi ro 3 — lệnh thật không có stop-loss | mở | **Đã nối** `ff3a26b` (cảnh báo chạm stop, không phải cắt lỗ tự động) |
 | Rủi ro 4 — restart mất trailing stop | mở | **Đã sửa** `7b5d6aa` |
 | Rủi ro 5 — restart làm chiến lược mù ~1h45' | mở | **Đã sửa** `2665d48` |
+| `real_order_capital` trong config | `21459` (khoá cố ý) | **Bỏ hẳn khỏi config** `63e6028` — engine đọc số dư thật từ `account_balance_snapshot` (withdrawable). Lớp khoá còn lại: `real_trading_enabled: false` |
+| Rổ mã giao dịch | `[VCB, HPG, TCB]` | **Đổi sang `[HII, IJC, AAA]`** `63e6028` — VCB/HPG/TCB đều vượt trần 1 lô với số dư ~5 triệu |
 | Test ghi vào bảng thật | nêu ở mục "Dữ liệu hiện tại" | **Đã tách hạ tầng** `51eb353` |
 
 **Mọi rào cản KỸ THUẬT trong bản audit này đã gỡ.** Thứ còn chặn go-live không
@@ -464,6 +466,50 @@ sẵn sàng hơn thực tế** — vì nó không hề nhắc tới 5 vấn đ�
 
 ---
 
+## Luồng paper không thể mua — phát hiện 13/08 khuya (`95b84d9`)
+
+> ĐÍNH CHÍNH quan trọng: phát hiện này lật ngược giả định "mọi rào cản kỹ
+> thuật đã gỡ". Luồng PAPER không thể mua về mặt số học — không phải do vốn.
+
+approve_sized áp hai luật chống nhau:
+```
+qty        = capital * risk_pct / (atr * atr_multiplier)      # 0,01 va 2,0
+rang buoc:   ref_price * qty <= capital * max_order_value_pct # 0,20
+Thay qty vao, CAPITAL TRIET TIEU ca hai ve:
+  ref_price / atr <= 40   <=>   atr / ref_price >= 2,5%
+```
+
+ATR/giá CAO NHẤT từng đạt trên bar 5 phút:
+```
+  HII 2,003%  |  IJC 1,350%  |  AAA 0,937%   -> KHONG bar nao dat 2,5%
+```
+
+Điều này giải thích vì sao `orders` chỉ có 1 dòng từ 15/07 và engine chạy
+trọn phiên 13/08 sinh 0 lệnh. Crossover CÓ xảy ra (9–56 lần mỗi mã qua được
+bộ lọc ATR) rồi bị vứt im lặng ở khâu sizing.
+
+Đường lệnh THẬT không dính: `real_orders.handle_crossover()` gọi `approve()`
+với `qty=100` cố định, chỉ kiểm trần 20%.
+
+Đã sửa bằng `qty = min(qty_atr, qty_cap)`, kèm đánh đổi: khi vướng trần,
+rủi ro mỗi lệnh nhỏ hơn `risk_pct` — không còn là hằng số, nhưng chỉ nhỏ đi.
+
+## Backtest sau khi gỡ bế tắc
+
+sma_cross, 5m, 2026-04-03 -> 2026-08-07, không chỉnh một tham số nào:
+```
+  HII,IJC,AAA / 5.021.459    24 lenh  win  8,3%  PnL   -153.067   MaxDD 3,8%
+  HII,IJC,AAA / 1 ty         16 lenh  win  6,2%  PnL -32.571.418  MaxDD 4,1%
+  VCB,HPG,TCB / 5.021.459     0 lenh  (1 lo VCB ~6tr > tran 1,004tr — dung so hoc)
+  VCB,HPG,TCB / 1 ty         17 lenh  win 52,9%  PnL  -6.094.804  MaxDD 1,9%
+```
+
+Cả bốn cấu hình đều lỗ.
+
+Hai quan sát, chưa kết luận:
+- lỗ trung bình mỗi lệnh RUN 1 = -6.378 trên lệnh ~860.000 = -0,74%; phí vòng
+  khứ hồi VN ~0,3-0,4% cộng slippage chiếm phần lớn con số đó
+- RUN 2 có ít giao dịch hơn RUN 1 (16 vs 24) dù vốn gấp 200 lần
 ## Thứ tự đề xuất
 
 > **CẬP NHẬT 2026-08-13, 22:45 — mục 3, 4, 5, 6, 7 đã xong.** Còn lại:
@@ -479,6 +525,8 @@ sẵn sàng hơn thực tế** — vì nó không hề nhắc tới 5 vấn đ�
 >    cập nhật liên tục **TRƯỚC** khi bật `real_trading_enabled`.
 >
 > Chỉ sau (1), (2), (5) mới có thể nói tới việc bật `real_trading_enabled: true`.
+
+> **CẬP NHẬT 2026-08-14 — câu chốt trên không còn đúng:** Câu hỏi chặn đường bây giờ không phải "khi nào bật tiền thật" mà là "chiến lược này có biên lợi thế không" — vì nó đã được đo là lỗ trên 4 tháng dữ liệu gần nhất.
 
 1. **Chốt `real_order_capital`** (quyết định của chủ dự án — về tiền)
 2. **Chạy collector một phiên đầy đủ**, xác minh `account_position_snapshot` có dữ liệu

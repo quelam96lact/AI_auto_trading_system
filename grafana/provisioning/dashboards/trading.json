@@ -5,13 +5,13 @@
   "panels": [
     {
       "id": 1,
-      "title": "Gia (VCB)",
+      "title": "Gia ($symbol)",
       "type": "timeseries",
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "datasource": {"type": "postgres", "uid": "TimescaleDB"},
       "targets": [
         {
-          "rawSql": "SELECT ts AS time, close FROM bars WHERE symbol = 'VCB' ORDER BY ts",
+          "rawSql": "SELECT ts AS time, close FROM bars WHERE symbol = '$symbol' ORDER BY ts",
           "format": "time_series"
         }
       ]
@@ -94,5 +94,19 @@
         }
       ]
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "symbol",
+        "type": "query",
+        "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+        "query": "SELECT DISTINCT symbol FROM bars WHERE ts > now() - interval '7 days' ORDER BY 1",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "description": "Doi ro ma khong can sua panel (truoc day hardcode VCB — panel dung hinh sau 63e6028). Cua so 7 ngay con lan VCB/HPG/TCB khoang 1 tuan nua roi tu rung. 7 ngay thay vi 2: sang thu Hai cua so 2 ngay RONG (cuoi tuan khong bar) nen bien khong co gia tri."
+      }
+    ]
+  }
 }
