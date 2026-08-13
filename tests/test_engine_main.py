@@ -1,11 +1,11 @@
 import asyncio
 import logging
-import os
 from datetime import date, datetime, timedelta
 
 import nats
 import pytest
 
+from tests.conftest import TEST_DSN, TEST_NATS_URL
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ
 from trading.config import Config
@@ -13,11 +13,14 @@ from trading.engine.main import run
 from trading.models import Bar
 from trading.storage.db import Storage
 
-# 127.0.0.1 thay vi localhost: cung ly do nhu nats_url ben duoi — tren Windows
-# localhost resolve ::1 truoc, Docker chi publish IPv4, nen moi psycopg.connect()
-# ton ~130s cho tai TCP timeout roi moi fallback sang IPv4. Storage mo connection
-# moi cho MOI query, nen ca file test khong chay noi neu dung localhost.
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
+# ISO-1: suite chay tren ha tang RIENG (DB trading_test + NATS 4223) — xem
+# tests/conftest.py (hang rao chan DB/NATS san xuat). 127.0.0.1 thay vi
+# localhost: tren Windows localhost resolve ::1 truoc, Docker chi publish IPv4,
+# nen moi psycopg.connect() ton ~130s cho tai TCP timeout roi moi fallback sang
+# IPv4. Storage mo connection moi cho MOI query, nen ca file test khong chay
+# noi neu dung localhost.
+
+DSN = TEST_DSN
 pytestmark = pytest.mark.integration
 
 
@@ -37,7 +40,7 @@ def make_cfg(
         # 127.0.0.1 thay vi localhost: tren Windows localhost resolve ::1 truoc,
         # Docker chi publish IPv4 -> SYN toi ::1:4222 bi drop lan (nats-py treo
         # retry vo han). Test-infra fix, khong anh huong config san xuat.
-        nats_url="nats://127.0.0.1:4222",
+        nats_url=TEST_NATS_URL,
         nats_stream="BARS",
         watchdog_stale_seconds=180,
         watchdog_max_failures=3,
@@ -112,7 +115,7 @@ async def reset_stream_and_durable_consumer():
     from nats.js.api import StreamConfig
     from nats.js.errors import BadRequestError, NotFoundError
 
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await nats.connect(TEST_NATS_URL)
     js = nc.jetstream()
     # Stream phải TỒN TẠI để purge/stream_info chạy được trên NATS sạch
     # (NotFoundError khi mới khởi tạo) — tạo nếu chưa có, như BarPublisher.connect()
@@ -146,7 +149,7 @@ async def test_fixture_fails_loudly_when_stream_not_empty(monkeypatch):
     from nats.js.api import StreamConfig
     from nats.js.errors import BadRequestError
 
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await nats.connect(TEST_NATS_URL)
     js = nc.jetstream()
     try:
         await js.add_stream(StreamConfig(name="BARS", subjects=["bars.>"]))

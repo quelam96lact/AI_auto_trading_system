@@ -1,13 +1,13 @@
-import os
 from datetime import date, datetime
 
 import pytest
 
+from tests.conftest import TEST_DSN
 from trading.broker import Fill, Position
 from trading.calendar_vn import TZ
 from trading.storage.db import Storage
 
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
+DSN = TEST_DSN
 pytestmark = pytest.mark.integration
 
 

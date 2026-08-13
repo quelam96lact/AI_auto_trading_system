@@ -23,6 +23,21 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
+  # ISO-1: NATS RIÊNG cho test (cổng 4223) — tách khỏi stack thật để suite
+  # không bao giờ đụng stream/consumer của hệ thống đang chạy (sự cố 13/08:
+  # suite xóa durable consumer engine thật + purge BARS + ghi đè engine_state).
+  # Volume RIÊNG (không dùng chung natsdata). profiles: ["test"] — `docker
+  # compose up -d` thường KHÔNG khởi động nó; chạy test thì:
+  #   docker compose --profile test up -d nats-test
+  nats-test:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data"]
+    ports: ["127.0.0.1:4223:4222"]
+    volumes: [natsdata-test:/data]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    profiles: ["test"]
   engine:
     build: .
     command: python -m trading.engine.main --config config/config.yaml
@@ -83,3 +98,4 @@ services:
 volumes:
   pgdata:
   natsdata:
+  natsdata-test:

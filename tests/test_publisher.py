@@ -4,6 +4,7 @@ from datetime import datetime
 import nats
 import pytest
 
+from tests.conftest import TEST_NATS_URL
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ
 from trading.models import Bar
@@ -12,12 +13,12 @@ pytestmark = pytest.mark.integration
 
 
 async def test_publish_roundtrip():
-    pub = BarPublisher("nats://127.0.0.1:4222", "BARS")
+    pub = BarPublisher(TEST_NATS_URL, "BARS")
     await pub.connect()
     bar = Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 100.0, 102.0, 99.0, 101.0, 1000)
     await pub.publish(bar)
 
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await nats.connect(TEST_NATS_URL)
     js = nc.jetstream()
     try:
         sub = await js.subscribe("bars.ssi.VCB", stream="BARS")
@@ -46,7 +47,7 @@ async def test_connect_applies_retention_limits_to_existing_unlimited_stream():
 
     from trading.bus.publisher import STREAM_MAX_AGE_SECONDS, STREAM_MAX_BYTES
 
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await nats.connect(TEST_NATS_URL)
     js = nc.jetstream()
     try:
         await js.delete_stream("BARSLIMIT")
@@ -57,7 +58,7 @@ async def test_connect_applies_retention_limits_to_existing_unlimited_stream():
     before = await js.stream_info("BARSLIMIT")
     assert before.config.max_age in (None, 0)
 
-    pub = BarPublisher("nats://127.0.0.1:4222", "BARSLIMIT")
+    pub = BarPublisher(TEST_NATS_URL, "BARSLIMIT")
     pub.subjects = ["barslimit.>"]
     await pub.connect()
     await pub.close()

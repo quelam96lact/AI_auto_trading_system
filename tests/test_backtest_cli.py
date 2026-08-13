@@ -1,8 +1,8 @@
-import os
 from datetime import datetime, timedelta
 
 import pytest
 
+from tests.conftest import TEST_DSN
 from trading.backtest import STRATEGIES, run_backtest
 from trading.calendar_vn import TZ
 from trading.models import Bar
@@ -11,7 +11,7 @@ from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.trailing_stop import TrailingStopManager
 
-DSN = os.environ.get("DB_DSN", "postgresql://trading:trading@127.0.0.1:5432/trading")
+DSN = TEST_DSN
 pytestmark = pytest.mark.integration
 
 

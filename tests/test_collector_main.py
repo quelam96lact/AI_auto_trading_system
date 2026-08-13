@@ -162,8 +162,11 @@ async def test_collector_stops_cleanly_when_stop_event_set(cfg, monkeypatch):
 
     import trading.collector.main as collector_main
 
-    # fixture cfg dung dsn 'localhost' -> Windows resolve ::1 -> psycopg treo
-    cfg = replace(cfg, db_dsn="postgresql://trading:trading@127.0.0.1:5432/trading")
+    # ISO-1: DB RIÊNG (trading_test) — fixture cfg dung dsn 'localhost' ->
+    # Windows resolve ::1 -> psycopg treo, nen thay bang TEST_DSN
+    from tests.conftest import TEST_DSN
+
+    cfg = replace(cfg, db_dsn=TEST_DSN)
 
     class FakePub:
         def __init__(self):
