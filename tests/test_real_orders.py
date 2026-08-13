@@ -132,13 +132,17 @@ def test_handle_crossover_skips_sell_when_nothing_sellable(cfg, bar):
 def test_handle_crossover_does_nothing_when_risk_rejects(cfg, bar):
     storage = _make_storage()
     storage.read_real_positions.return_value = {}
-    risk = RiskManager(capital=1.0)
+    risk = RiskManager(capital=1.0)  # capital 1d -> moi lenh deu vo tran -> reject
 
     with patch("trading.real_orders.alert") as mock_alert:
         handle_crossover(cfg, storage, risk, "bull", bar)
 
     storage.create_pending_order.assert_not_called()
-    mock_alert.assert_not_called()
+    # SIZE-1 Viec 2: tu choi PHẢI noi ly do qua alert INFO (khong con im lang)
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "INFO"
+    assert "reason" in mock_alert.call_args.kwargs
+    assert mock_alert.call_args.kwargs["reason"] is not None
 
 
 def test_handle_crossover_skips_buy_when_position_qty_is_zero(cfg, bar):

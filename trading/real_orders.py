@@ -43,6 +43,15 @@ def handle_crossover(
     daily_pnl = storage.read_real_daily_pnl(cfg.real_order_account, today)
 
     if not risk.approve(signal, bar.close, positions, daily_pnl, today):
+        # SIZE-1 Viec 2: moi lan tu choi noi duoc ly do — caller ghi log INFO
+        # (tu choi la chuyen binh thuong, khong WARN — bay NOISE-1).
+        alert(
+            "INFO",
+            "lenh that bi tu choi",
+            symbol=signal.symbol,
+            side=signal.side,
+            reason=risk.last_reject_reason,
+        )
         return
 
     expires_at = datetime.now(bar.ts.tzinfo) + timedelta(minutes=PENDING_ORDER_TTL_MINUTES)

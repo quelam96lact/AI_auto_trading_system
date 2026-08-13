@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from datetime import datetime
 
+from trading.alerts import alert
 from trading.broker import Fill
 from trading.calendar_vn import TZ
 from trading.models import Bar
@@ -68,6 +69,18 @@ def process_bar(
         )
         if sized is not None:
             broker.submit(sized)
+        else:
+            # SIZE-1 Viec 2: moi lan tu choi phai noi duoc ly do — caller ghi
+            # log (risk.py giu thuan logic, khong import alert). Muc INFO chu
+            # khong WARN: tu choi la chuyen binh thuong, WARN tao moi canh bao
+            # (bay NOISE-1 da sua o 1e801ec).
+            alert(
+                "INFO",
+                "signal bi tu choi",
+                symbol=signal.symbol,
+                side=signal.side,
+                reason=risk.last_reject_reason,
+            )
 
     return fills
 
