@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import logging
 import signal
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -218,13 +219,27 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
         await pub.close()
 
 
+def _configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # LOG-1: bịt access token rò ra log. ssi_sdk.transport.websocket_client.py:76
+    # log `logger.info("Connecting to WebSocket with headers: %s", self._headers)`
+    # — self._headers chứa `Authorization: Bearer <token>` plaintext (token sống
+    # 15 phút nhưng log được giữ lâu hơn). Nâng level logger NÀY lên WARNING
+    # (không phải filter regex — một dòng setLevel giải quyết trọn vẹn, regex
+    # phải bảo trì và hỏng lặng lẽ khi SDK đổi format). Đánh đổi: mất dòng
+    # INFO "WebSocket connected to wss://..." — chấp nhận vì lỗi kết nối vẫn
+    # hiện ("SSIFeed connection error") và collector có heartbeat riêng trong
+    # bảng heartbeat. KHÔNG đụng logger ssi_sdk.services.token_manager — nó log
+    # "Token refreshed successfully", hữu ích và không chứa secret.
+    logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
-    import logging
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    _configure_logging()
     asyncio.run(run(load_config(args.config)))
 
 

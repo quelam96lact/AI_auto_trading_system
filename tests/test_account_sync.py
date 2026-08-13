@@ -93,3 +93,79 @@ async def test_sync_positions_maps_position_fields():
 
 async def _positions(*positions):
     return list(positions)
+
+
+async def test_sync_positions_handles_none_portfolio():
+    """SYNC-1: SDK tra None cho danh muc rong (docstring portfolio.py:330-331:
+    'absent or empty sections yield None') — None la trang thai HOP LE, khong
+    duoc nem, khong duoc goi save_account_positions voi None."""
+    storage = FakeStorage()
+
+    async def _none():
+        return None
+
+    portfolio = SimpleNamespace(get_equity_positions=lambda account_no: _none())
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+
+    await account_sync._sync_positions(portfolio, "0434221", ts, storage)
+
+    assert storage.position_calls == []
+
+
+async def test_sync_account_data_isolates_failing_account(monkeypatch):
+    """SYNC-1: tai khoan thu nhat nem -> tai khoan thu hai VAN duoc sync day
+    du, va co DUNG MOT WARN chua ma tai khoan hong. Do that 13/08: 0434221
+    no -> 0434226 mat im lang ca balance lan position."""
+    from types import SimpleNamespace as NS
+
+    warns = []
+    # account_sync import `from trading.alerts import alert` (tham chieu truc
+    # tiep) -> monkeypatch tren account_sync, khong phai alerts_mod.
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: warns.append((level, msg, f.get("account_no")))
+    )
+
+    async def fake_auth(cfg, storage):
+        return NS(
+            token_manager=NS(access_token="tok"),
+            config=NS(),
+            rest_client=None,
+            close=lambda: _noop(),
+        )
+
+    async def _noop():
+        pass
+
+    monkeypatch.setattr(account_sync, "ensure_authenticated", fake_auth)
+    monkeypatch.setattr(account_sync, "decode_client_id", lambda tok: "043422")
+    # AsyncPortfolioService duoc import CUC BO trong sync_account_data (dòng 12)
+    # -> monkeypatch o module goc cua SDK, khong phai tren account_sync.
+    import ssi_sdk.services.portfolio as sdk_portfolio
+
+    monkeypatch.setattr(sdk_portfolio, "AsyncPortfolioService", lambda rc, cfg: NS())
+
+    calls = {"balance": [], "positions": []}
+
+    async def fake_balance(auth, client_id, account_no, ts, storage):
+        calls["balance"].append(account_no)
+        if account_no == "ACC_BAD":
+            raise RuntimeError("parse boom")
+
+    async def fake_positions(portfolio, account_no, ts, storage):
+        calls["positions"].append(account_no)
+
+    monkeypatch.setattr(account_sync, "_sync_balance", fake_balance)
+    monkeypatch.setattr(account_sync, "_sync_positions", fake_positions)
+
+    cfg = NS(ssi_equity_accounts=["ACC_BAD", "ACC_OK"])
+    await account_sync.sync_account_data(cfg, FakeStorage())
+
+    assert calls["balance"] == ["ACC_BAD", "ACC_OK"], (
+        f"tai khoan 2 van phai duoc sync balance, thuc te: {calls['balance']}"
+    )
+    assert calls["positions"] == ["ACC_OK"], (
+        f"tai khoan 2 van phai duoc sync positions, thuc te: {calls['positions']}"
+    )
+    assert len(warns) == 1 and warns[0][2] == "ACC_BAD", (
+        f"phai co dung 1 WARN chua ma tai khoan hong (ACC_BAD), thuc te: {warns}"
+    )

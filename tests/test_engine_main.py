@@ -62,18 +62,30 @@ def storage():
         c.execute("DELETE FROM engine_state WHERE id = 1")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
         c.execute("DELETE FROM pending_real_orders WHERE symbol = 'ENGT'")
+        c.execute(
+            "DELETE FROM account_position_snapshot WHERE account_no = 'ACC_RTS'"
+        )
+        c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_RTS'")
     yield s
     # TEARDOWN: don ca pending_real_orders (RESTORE-1 Task B) — test ghi vao
     # bang that ma khong don se tich rac (208 dong ENGT do truoc day, cung
     # loai voi 26 message NATS da sua). Don-ca-sau hoc tu 9d829f0: don chi
     # truoc = rac van con lai sau khi suite chay xong, isolation phu thuoc
     # vao dung mot lan don o lan chay ke tiep.
+    # CLEAN-1: them account_position_snapshot + real_order_fills (CHI theo
+    # account_no = 'ACC_RTS' — DB chua du lieu that, tuyet doi khong DELETE
+    # khong dieu kien tren 2 bang nay). Test _seed_real_position() ghi vao
+    # account_position_snapshot moi lan chay.
     with s.conn() as c:
         c.execute("DELETE FROM positions WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM orders WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM engine_state WHERE id = 1")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
         c.execute("DELETE FROM pending_real_orders WHERE symbol = 'ENGT'")
+        c.execute(
+            "DELETE FROM account_position_snapshot WHERE account_no = 'ACC_RTS'"
+        )
+        c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_RTS'")
 
 
 async def _reset_stream_and_consumer(js) -> None:
@@ -766,13 +778,9 @@ async def test_engine_warns_when_real_trailing_stop_cannot_restore(storage, monk
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     _seed_real_position(storage)
     storage.write_engine_state(100_000_000 - 10.0, 0.0)
-    # Fixture storage khong don real_order_fills/account_position_snapshot —
-    # test truoc (restores_real_trailing_stop) da de lai BUY fill cho ACC_RTS;
-    # xoa de kich ban nay dung: vi the that ton tai NHUNG khong co fill nao.
-    with storage.conn() as c:
-        c.execute("DELETE FROM real_order_fills WHERE account_no = %s", (RTS_ACCOUNT,))
-        c.execute("DELETE FROM account_position_snapshot WHERE account_no = %s", (RTS_ACCOUNT,))
-    _seed_real_position(storage)
+    # CLEAN-1: fixture da don real_order_fills/account_position_snapshot cho
+    # ACC_RTS (setup + teardown) — khong can DELETE thu cong trong test nua.
+    # Kich ban: vi the that ton tai NHUNG khong co fill nao (mua ngoai he thong).
 
     bars = make_bars([10] * 5)
     await _publish(cfg, bars)
@@ -834,10 +842,6 @@ async def test_real_stop_touch_falls_back_to_avg_price(storage, monkeypatch):
     )
 
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
-    # Test truoc (mid_session) de lai real_order_fills cho ACC_RTS — xoa de
-    # kich ban nay dung: khong co fill nao (mua ngoai he thong).
-    with storage.conn() as c:
-        c.execute("DELETE FROM real_order_fills WHERE account_no = %s", (RTS_ACCOUNT,))
     _seed_real_position(storage)  # cost_price = 10 — khong INSERT fill nao
     ts = TrailingStopManager()
     entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
