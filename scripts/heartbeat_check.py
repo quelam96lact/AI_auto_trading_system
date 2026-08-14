@@ -21,11 +21,21 @@ import psycopg
 import yaml
 
 from trading.calendar_vn import TZ, is_trading_time
+from trading.engine.main import CAPITAL  # LEDGER-1: import hang so tu trading/ —
+# da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
+# storage/nats nam trong ham). KHONG chep so sang day (hai noi lech = bao lao
+# mai mai hoac im mai mai).
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 
 SERVICES = ("collector", "engine")
 DEFAULT_MAX_AGE_SECONDS = 300
+
+# LEDGER-1 2C: dung sai so sach. Can cu: float double tich luy qua hang nghin
+# lenh sai so ~< 0.01 VND (15-17 chu so); 1.000 VND = ~100.000x bien an toan
+# chong bao lao vi lam tron, dong thoi nho hon MỌI khoan lech that (phi mua
+# nho nhat trong ho so la 6.670d/lenh — 6664cd9 lech 119.417).
+LEDGER_TOLERANCE = 1_000.0
 
 # 2A: cửa sổ kiểm tra bar — KHÔNG dùng SESSIONS của calendar_vn (coi tới 14:45
 # là giờ giao dịch). Khung ATC 14:30-14:45 lúc có lúc không tùy mã tùy ngày
@@ -109,6 +119,15 @@ def token_expiry_status(refresh_expires_at, now) -> str | None:
     return None
 
 
+def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, capital: float = CAPITAL) -> float:
+    """2C: độ lệch hai sổ sách. Bất biến (đúng LUÔN, không chỉ khi phẳng):
+        cash + Σ(avg_price × qty) − capital == realized_pnl
+    Trả về vế trái − vế phải. > LEDGER_TOLERANCE (hoặc < −LEDGER_TOLERANCE)
+    → hai sổ lệch (hai lỗi 6664cd9 / 2982900 đều là cash đúng, realized sai).
+    """
+    return (cash + positions_value - capital) - realized_pnl
+
+
 def main() -> int:
     dsn = os.environ.get("DB_DSN")
     if not dsn:
@@ -145,6 +164,11 @@ def main() -> int:
                 f"SELECT max(ts) FROM bars WHERE symbol IN ({placeholders})",
                 list(symbols),
             ).fetchone()
+            # 2C: doc engine_state + positions de kiem bat bien so sach
+            es = c.execute("SELECT cash, realized_pnl FROM engine_state WHERE id = 1").fetchone()
+            pos_rows = c.execute(
+                "SELECT avg_price, qty FROM positions WHERE qty != 0"
+            ).fetchall()
     except Exception as e:
         send_telegram(
             f"[CRITICAL] heartbeat check không đọc được DB: {type(e).__name__}: {e}"[:300]
@@ -158,6 +182,19 @@ def main() -> int:
         messages.append(
             f"[CRITICAL] service ngừng heartbeat quá {max_age}s: {', '.join(stale)}"
         )
+    # 2C: bat bien so sach — cash + Σ(avg_price*qty) - capital == realized_pnl
+    if es is not None:
+        cash, realized = float(es[0]), float(es[1])
+        positions_value = sum(float(r[0]) * float(r[1]) for r in pos_rows)
+        dev = ledger_deviation(cash, realized, positions_value)
+        if abs(dev) > LEDGER_TOLERANCE:
+            # FEE-ALARM-2 bai hoc: chuong bao tuyet doi khong duoc nem exception —
+            # dung lenh dang kiem, moi so lay tu DB, khong tinh gi them.
+            messages.append(
+                f"[CRITICAL] hai sổ sách LỆCH: vế trái (cash + giá vốn − vốn) "
+                f"= {cash + positions_value - CAPITAL:,.2f}, vế phải (realized_pnl) "
+                f"= {realized:,.2f}, độ lệch {dev:,.2f} VND"
+            )
     if bar_stale(max_ts, now):
         # FEE-ALARM-2 Lỗi 1: max_ts=None (feed chưa từng nối được) mà dựng
         # tin nhắn với `now - max_ts` -> TypeError, chuông báo CHẾT đúng lúc
