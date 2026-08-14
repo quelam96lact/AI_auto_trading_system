@@ -83,3 +83,54 @@ def test_restore_resumes_cash_positions_and_realized_pnl():
     assert b.realized_pnl == 200_000
     assert b.position_qty("VCB") == 100
     assert b.capital == 100_000_000
+
+
+# ============ FEE-ALARM-1 Viec 1: phi MUA phai nam trong gia von ============
+
+
+def test_full_roundtrip_cash_minus_capital_equals_realized_pnl():
+    """FEE-ALARM-1 kiem chung 1 (RED bat buoc): mot vong BUY->SELL tron ven,
+    ket thuc qty=0 -> broker.cash - broker.capital == broker.realized_pnl.
+    Phai DO tren code hien tai (avg_price khong gom phi mua -> realized_pnl bo
+    sot phi MUA, lech dung bang phi mua)."""
+    b = PaperBroker(capital=100_000_000)
+    b.submit(Signal("ENGT", "BUY", 100))
+    b.on_bar(Bar("ENGT", datetime(2026, 8, 14, 9, 5, tzinfo=TZ), 10_000.0, 10_000.0, 10_000.0, 10_000.0, 1000))
+    b.submit(Signal("ENGT", "SELL", 100))
+    b.on_bar(Bar("ENGT", datetime(2026, 8, 14, 9, 10, tzinfo=TZ), 10_000.0, 10_000.0, 10_000.0, 10_000.0, 1000))
+
+    assert b.position_qty("ENGT") == 0
+    assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01, (
+        f"cash-capital ({b.cash - b.capital}) phai bang realized_pnl ({b.realized_pnl}) — "
+        f"hien lech {abs((b.cash - b.capital) - b.realized_pnl)}"
+    )
+
+
+def test_force_exit_cash_minus_capital_equals_realized_pnl():
+    """FEE-ALARM-1 kiem chung 3: BUY roi force_exit toan bo -> cash - capital
+    == realized_pnl (force_exit doc avg_price, tu dung sau khi sua)."""
+    b = PaperBroker(capital=100_000_000)
+    b.submit(Signal("ENGT", "BUY", 100))
+    b.on_bar(Bar("ENGT", datetime(2026, 8, 14, 9, 5, tzinfo=TZ), 10_000.0, 10_000.0, 10_000.0, 10_000.0, 1000))
+    b.force_exit("ENGT", 10_000.0, datetime(2026, 8, 14, 9, 10, tzinfo=TZ))
+
+    assert b.position_qty("ENGT") == 0
+    assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01
+
+
+def test_unrealized_pnl_reflects_entry_fee():
+    """FEE-ALARM-1 kiem chung 4: mua xong, mark BANG DUNG gia mua -> unrealized
+    pnl phai AM dung bang phi (khong phai 0) — gia von gom phi."""
+    b = PaperBroker(capital=100_000_000)
+    b.submit(Signal("ENGT", "BUY", 100))
+    b.on_bar(Bar("ENGT", datetime(2026, 8, 14, 9, 5, tzinfo=TZ), 10_000.0, 10_000.0, 10_000.0, 10_000.0, 1000))
+    # on_bar mua voi slippage 5bps -> gia thuc = bar.open + 5
+    fill_price = 10_000.0 + 10_000.0 * (5 / 10_000)
+    gross = fill_price * 100
+    fee = gross * 0.0025
+    upnl = b.unrealized_pnl({"ENGT": 10_000.0})
+    assert upnl < 0, f"unrealized phai am (phi mua), thuc te: {upnl}"
+    # upnl = (mark - gia von gom phi) * qty = -(gross + fee - mark*qty)
+    assert abs(upnl + (gross + fee - 10_000.0 * 100)) < 0.01, (
+        f"unrealized phai = -(gia von gom phi - mark) = {- (gross + fee - 10_000.0 * 100)}, thuc te: {upnl}"
+    )

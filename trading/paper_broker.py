@@ -73,7 +73,15 @@ class PaperBroker:
         pnl = None
         if signal.side == "BUY":
             new_qty = pos.qty + qty
-            pos.avg_price = (pos.avg_price * pos.qty + gross) / new_qty
+            # FEE-ALARM-1: gop phi MUA vao gia von — truoc day avg_price dung
+            # gross (chua gom phi) trong khi cash ngay duoi tru phi do -> hai
+            # so sach lech nhau, realized_pnl bo sot phi mua cua MOI vong giao
+            # dich, luon sai mot chieu (bao lo nhe hon thuc te). Do that:
+            # cash giam 328.798 nhung realized_pnl chi ghi -209.381 (chenh
+            # 119.417 = tong phi 5 lenh mua). avg_price gio la "gia von gom
+            # phi" — da kiem: khong ai doc avg_price voi nghia "gia khop"
+            # (trailing stop dung tu lich su lenh, engine/main.py:108).
+            pos.avg_price = (pos.avg_price * pos.qty + gross + fee) / new_qty
             pos.qty = new_qty
             self.cash -= gross + fee
         else:
