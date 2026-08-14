@@ -131,3 +131,21 @@ async def test_ensure_authenticated_doc_token_voi_timeout_5(monkeypatch):
     assert storage.token_timeouts == [5], (
         f"ensure_authenticated phai doc token voi timeout=5, thuc te: {storage.token_timeouts}"
     )
+
+
+async def test_error_message_mentions_both_scripts(monkeypatch):
+    """DEPGAP-1: thông báo lỗi phải nhắc CẢ HAI script — spike_ssi_sdk_auth.py
+    (nhập OTP) RỒI load_token_to_db.py (cầu nối duy nhất sang DB). Nếu ai đó
+    sau này rút gọn còn một bước, test này phải đỏ."""
+    monkeypatch.setattr(ssi_auth, "AsyncAuth", FakeAuth)
+    storage = FakeStorage(None)  # không có token -> raise
+
+    with pytest.raises(RuntimeError) as ei:
+        await ssi_auth.ensure_authenticated(_cfg(), storage)
+
+    msg = str(ei.value)
+    assert "spike_ssi_sdk_auth.py" in msg, f"thieu buoc 1 (spike auth), thuc te: {msg}"
+    assert "load_token_to_db.py" in msg, f"thieu buoc 2 (load token vao DB), thuc te: {msg}"
+    # Khong con loi khuyen hanh dong "re-run collector" (tu noi lai) — chuoi moi
+    # chi giai thich "khong can restart" (dung), khong RA LENH restart
+    assert "re-run collector" not in msg, f"khong duoc nha lenh re-run collector, thuc te: {msg}"

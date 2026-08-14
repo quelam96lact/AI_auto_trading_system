@@ -138,6 +138,53 @@ Docker's default `json-file` log driver is unbounded. Add to
 sudo systemctl restart docker
 ```
 
+Khối trên chỉ xoay log **Docker**. Hai file log trên **host** mà §6 và §9 tự tạo
+ra không được xoay — thêm cấu hình logrotate trên host (KHÔNG phải trong
+container), xoay theo tuần, giữ vài bản, nén:
+
+```bash
+# /etc/logrotate.d/trading  (tạo mới; chạy logrotate mặc định hàng ngày qua cron)
+/var/log/trading-backup.log /var/log/trading-heartbeat.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+}
+```
+
+Test cấu hình: `sudo logrotate -d /etc/logrotate.d/trading` (dry-run).
+
+## 8.5 SSI token — quy trình ngày giao dịch (DEPGAP-1)
+
+Collector đọc token từ **DB** (`ssi_auth_state`), không đọc file. Refresh token
+sống **8 giờ** và **KHÔNG được gia hạn** bằng việc làm mới access token — hết là
+hết, phải làm lại từ đầu. Đây là thao tác phải làm mỗi ngày giao dịch, và là
+nguyên nhân của hai sự cố (14/08: đồng bộ tài khoản chết 4 tiếng vì quên bước 2).
+
+Hai bước, đúng thứ tự. `uv run` KHÔNG tự nạp `.env` — phải nạp trước (như §9):
+
+```bash
+cd /opt/trading
+set -a && . ./.env && set +a
+export DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading   # 127.0.0.1 như §9 —
+                                                               # localhost có thể resolve ::1 (treo)
+uv run python scripts/spike_ssi_sdk_auth.py   # 1. nhập OTP (thủ công, SSI bắt buộc)
+uv run python scripts/load_token_to_db.py     # 2. CẦU NỐI DUY NHẤT sang DB — làm OTP
+                                              #    mà quên bước này thì không có gì thay đổi
+```
+
+- **Thời điểm nên làm: khung 8:00–9:00 ngày giao dịch.** Làm lúc 8:30 thì token
+  chết ~16:30, phủ trọn phiên (9:00–14:45). Làm quá sớm sẽ chết giữa phiên chiều.
+- **Không cần restart collector** — nó tự nối lại khi DB có token hợp lệ (đã
+  chứng minh 14/08: token nạp 17:29:39 → phục hồi 17:30:16, không ai restart).
+- **BẢO MẬT:** không dán nội dung file token vào chat/issue/log. Nếu cần báo cáo,
+  chỉ dẫn `expires_at` / `refresh_token_expires_at`.
+- Cảnh báo token (§9) sẽ nhắc lúc 8:00–8:59 nếu quên — nhưng **chỉ khi cron đã
+  được cài** (xem §9).
+
+KHÔNG tự động hoá OTP — SSI yêu cầu OTP thủ công.
+
 ## 9. Dead-man's switch (heartbeat)
 
 `collector` và `engine` ghi vào bảng `heartbeat` mỗi ~30-60 giây. Nếu một

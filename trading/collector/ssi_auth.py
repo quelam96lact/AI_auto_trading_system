@@ -43,9 +43,17 @@ async def ensure_authenticated(cfg: Config, storage: Storage) -> AsyncAuth:
     # cho 30s mac dinh. KHONG dong backoff feed.py:174.
     saved = storage.load_ssi_token(timeout=5)
     if saved is None or saved["refresh_token_expires_at"] <= time.time():
+        # DEPGAP-1: thông báo phải đúng HAI bước — collector đọc token từ DB
+        # (ssi_auth_state), KHÔNG đọc file scripts/.ssi_sdk_token.json, nên
+        # scripts/load_token_to_db.py là cầu nối DUY NHẤT sang DB (bước 2 bị
+        # quên hai lần — 14/08 đồng bộ tài khoản chết 4 tiếng). KHÔNG nhắc
+        # restart collector — nó tự nối lại khi DB có token hợp lệ (đã chứng
+        # minh 14/08: nạp 17:29:39 -> phục hồi 17:30:16, không ai restart).
         raise RuntimeError(
             "SSI refresh_token missing/expired — run scripts/spike_ssi_sdk_auth.py "
-            "manually to re-authenticate with OTP, then re-run collector"
+            "(nhập OTP) rồi scripts/load_token_to_db.py (bước này là cầu nối duy "
+            "nhất sang DB — collector đọc token từ DB, không đọc file; không cần "
+            "restart collector, nó tự nối lại)"
         )
     auth = AsyncAuth(SsiConfig(api_key=cfg.ssi_api_key, api_secret=cfg.ssi_api_secret))
     # Token.from_dict nhận key camelCase (khớp Token.to_dict() / API response)
