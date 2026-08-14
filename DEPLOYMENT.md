@@ -150,9 +150,21 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# thêm (chỉ chạy trong giờ giao dịch VN, script tự bỏ qua ngoài phiên):
-*/5 9-15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/heartbeat_check.py >> /var/log/trading-heartbeat.log 2>&1
+# thêm — chạy 8:00-15:59 ngày giao dịch. KHÔNG ghi 9-15: script có nhánh
+# tiền-phiên 8:00-8:59 (cảnh báo token trước giờ mở cửa, 7700992) — lịch 9-15
+# sẽ không bao giờ gọi nhánh đó (CRON-1).
+*/5 8-15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/heartbeat_check.py >> /var/log/trading-heartbeat.log 2>&1
 ```
+
+Script kiểm **bốn thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
+chạy — các nhánh khác tự bỏ qua):
+
+| Kiểm | Cảnh báo | Từ commit |
+|---|---|---|
+| Service ngừng heartbeat | CRITICAL | `f1a410f` (gốc, trước đó) |
+| Dữ liệu ngừng chảy (bar không về, cửa sổ 9:00-11:30/13:00-14:30) | CRITICAL | `7700992` |
+| Token SSI sắp/đã hết hạn (kể cả khung 8:00-8:59) | WARN / CRITICAL | `7700992` |
+| Hai sổ sách lệch (`cash + Σ(avg_price×qty) − CAPITAL == realized_pnl`) | CRITICAL | `d775ebb` |
 
 Thay `trading:trading` bằng user/password Postgres thật nếu bạn đã đổi khỏi giá
 trị mặc định trong `docker-compose.yml`.
@@ -161,6 +173,12 @@ Ngưỡng mặc định 300 giây, đổi bằng `HEARTBEAT_MAX_AGE_SECONDS`.
 
 Kiểm chứng một lần sau khi cài: `docker compose stop engine`, đợi >5 phút trong
 giờ giao dịch, xác nhận có tin Telegram, rồi `docker compose start engine`.
+
+Kiểm chứng nhánh tiền-phiên (8:00-8:59) — KHÔNG giả mạo thời gian hệ thống:
+chạy tay đúng lệnh cron trên trong khung 8:00-8:59 một lần. Kỳ vọng: script
+thoát 0 im lặng nếu token còn > 60 phút; nếu token còn < 60 phút hoặc đã hết
+hạn sẽ thấy WARN/CRITICAL trong `/var/log/trading-heartbeat.log`. Nếu không
+thấy gì trong khung đó — cron chưa gọi đúng giờ (kiểm `crontab -l`).
 
 ## Not covered here (needs a decision, not just infra)
 
