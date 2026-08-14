@@ -369,6 +369,13 @@ Hiện chưa gây hại vì tài khoản cấu hình đang rỗng. Nó thành ng
 lúc bắt đầu giao dịch thật. Sửa là **quyết định thiết kế** (ghi dòng sentinel?
 bảng "lần sync cuối" riêng?), không phải một guard — để chủ dự án quyết.
 
+> **ĐÍNH CHÍNH (55df5dd)** — đã sửa: bảng `account_sync_log` (chỉ lưu lần gần
+> nhất) ghi mốc đồng bộ LUÔN khi fetch thành công, CẢ khi danh mục rỗng;
+> `read_real_positions` đọc đúng ts của lần đồng bộ đó (không phải `max(ts)`),
+> phân biệt "chưa đồng bộ" với "đã đồng bộ và rỗng". Nhánh fallback: chưa có
+> bản ghi sync (bảng mới thêm, dữ liệu cũ) thì giữ nguyên hành vi cũ `max(ts)`
+> — không đổi kết quả đột ngột, tự khỏi sau lần đồng bộ đầu tiên (5 phút).
+
 ---
 
 ## Những gì ĐÃ tốt (đã kiểm chứng, không phải phỏng đoán)
@@ -503,13 +510,120 @@ sma_cross, 5m, 2026-04-03 -> 2026-08-07, không chỉnh một tham số nào:
   VCB,HPG,TCB / 5.021.459     0 lenh  (1 lo VCB ~6tr > tran 1,004tr — dung so hoc)
   VCB,HPG,TCB / 1 ty         17 lenh  win 52,9%  PnL  -6.094.804  MaxDD 1,9%
 ```
+> **ĐÍNH CHÍNH (6664cd9)** — bang tren tinh bang cong thuc BO SOT phi mua
+> (`realized_pnl` khong gom phi mua, `cash` thi co — hai so lech). Da sua va
+> chay lai, KHONG chinh mot tham so nao:
+>
+> ```
+>                           CU (sai)                      MOI (dung)
+>   HII,IJC,AAA / 5.021.459   24 lenh 8,3%  -153.067    18 lenh 5,6%    -152.818
+>   HII,IJC,AAA / 1 ty        16 lenh 6,2% -32.571.418  14 lenh 7,1%  -31.907.394
+>   VCB,HPG,TCB / 5.021.459    0 lenh                    0 lenh (khong doi)
+>   VCB,HPG,TCB / 1 ty        17 lenh 52,9% -6.094.804  17 lenh 23,5% -14.552.406
+> ```
+>
+> Tach phi khoi ket qua (con so tra loi cau hoi bien loi the):
+> ```
+>                           PnL gop truoc phi   phi+thue      PnL rong
+>   HII,IJC,AAA / 5.021.459        -118.160         34.659      -152.818
+>   HII,IJC,AAA / 1 ty          -22.834.951      9.072.443   -31.907.394
+>   VCB,HPG,TCB / 1 ty           -4.702.361      9.850.045   -14.552.406
+> ```
+>
+> Dong VCB,HPG,TCB / 1 ty tut manh nhat (52,9% → 23,5% ti le thang) vi nam
+> lenh truoc day chi "thang" nho chua tinh phi vao lenh.
+
+### Hai loi ke toan PnL va ba canh bao moi — ly do bang tren doi so
+
+- `6664cd9` — `realized_pnl` bo sot **phi MUA** (co phieu). Do tren DB san
+  xuat: cash giam 328.798 nhung so ghi −209.381; chenh 119.417 = tong phi 5
+  lenh mua ngay 14/08. Sai mot chieu, luon bao lo nhe hon thuc te.
+- `2982900` — cung hang loi o lop phai sinh (phi MO vi the), sua bang truong
+  `open_fee` rieng (khong gop vao `avg_price` — phai sinh doc `avg_price` lam
+  gia vao lenh tinh cat lo/chot lai).
+- `engine_state.realized_pnl` trong DB da duoc sua tay tu −209.381,13 thanh
+  −328.798,31 (2026-08-14), engine da rebuild de nap lai.
+- `7700992` + `d775ebb` — ba canh bao moi trong `heartbeat_check.py`: du lieu
+  ngung chay, token SSI sap/da het han, va **hai so sach lech nhau**. Cai
+  cuoi chinh la thu da le ra bat duoc hai loi tren ngay ngay dau: bat bien
+  `cash + Σ(avg_price × qty) − CAPITAL == realized_pnl`.
+
 
 Cả bốn cấu hình đều lỗ.
 
 Hai quan sát, chưa kết luận:
 - lỗ trung bình mỗi lệnh RUN 1 = -6.378 trên lệnh ~860.000 = -0,74%; phí vòng
   khứ hồi VN ~0,3-0,4% cộng slippage chiếm phần lớn con số đó
+
+  > **ĐÍNH CHÍNH (6664cd9)** — SAI NGƯỢC: sau khi tách phí (bảng trên), cả ba
+  > cấu hình có lệnh đều lỗ **CẢ TRƯỚC KHI trả phí** (PnL gộp: −118.160 /
+  > −22.834.951 / −4.702.361). Phí làm vết thương sâu thêm, **không phải nguyên
+  > nhân**. Câu cũ chỉ sai hướng điều tra sang "giảm phí".
 - RUN 2 có ít giao dịch hơn RUN 1 (16 vs 24) dù vốn gấp 200 lần
+## Đo trên bar NGÀY — giả thuyết "SMA bắt xu hướng, 5m là nhiễu" (`37035dd`)
+
+Dữ liệu: `bars_daily`, 1.551 mã, 2.969.328 dòng, 2016-01-03 → 2026-08-13
+(không cần tải gì). Cùng cấu hình đang dùng, KHÔNG chỉnh một tham số nào.
+
+Kỳ 10,5 năm. "DA LOC" = loại bar có OHLC ≤ 0:
+```
+                          lenh  win     gop truoc phi     phi+thue        rong
+HII,IJC,AAA/5.021.459 chua   9  11,1%       -666.511        19.753    -686.265
+                      loc   11  18,2%       -134.728        23.186    -157.914
+HII,IJC,AAA/1 ty      chua   8  12,5%    -27.808.177     5.514.747 -33.322.924
+                      loc    8  12,5%    khong doi
+VCB,HPG,TCB/5.021.459 chua  26  46,2%        199.855        58.748     141.107
+                      loc   26  46,2%    khong doi
+VCB,HPG,TCB/1 ty      chua  52  30,8%     -3.059.961    27.395.721 -30.455.682
+                      loc   52  30,8%    khong doi
+```
+Kỳ 2026-04-03 → 2026-08-07 (cùng kỳ bản 5m, 88 bar/mã, không có bar rác):
+```
+  HII,IJC,AAA / 5.021.459   5 lenh 40,0%  rong    -58.330
+  HII,IJC,AAA / 1 ty        5 lenh 40,0%  rong -16.138.631
+  VCB,HPG,TCB / 5.021.459   0 lenh
+  VCB,HPG,TCB / 1 ty        3 lenh  0,0%  rong  -9.909.374
+```
+
+### Dữ liệu bẩn — 68 dòng OHLC ≤ 0 trong `bars_daily`
+
+IJC 62 · HII 3 · AAA 1 · VCB 1 · HPG 1 · TCB 0. Phần lớn là `open=high=low=0`,
+close thật, volume=0 — không phải `close=0` (IJC 2017-01→02; 2018-01-23 hỏng
+cả AAA/HII/HPG/VCB).
+
+`PaperBroker` khớp lệnh tại `bar.open`, nên `open=0` nghĩa là lệnh khớp **giá 0**:
+```
+HII,IJC,AAA / 5.021.459 / 10,5 nam:
+  2017-01-16 IJC SELL qty=200 price=0.0 pnl=-578.282,58
+  -> chiem 84% khoan lo -686.265 cua dong do
+```
+
+### Bốn giới hạn của phép đo (giữ cho tài liệu lương thiện)
+
+1. **Mẫu quá nhỏ.** 0-5 lệnh trong 4,5 tháng; 8-52 lệnh trong 10,5 năm. Giao
+   cắt SMA trên bar ngày rất hiếm. Đây là giới hạn của phép đo, không phải thứ
+   chạy thêm là hết.
+2. **MaxDD có phần tuỳ tiện.** Bar ngày làm mọi mã dùng chung một mốc thời
+   gian, nên thứ tự các mã trong cùng ngày là tuỳ ý và MaxDD thừa hưởng điều
+   đó. Đo thật trên VCB,HPG,TCB/1 tỷ: sắp theo `(ts)` → 9,15%; theo
+   `(ts, symbol)` → 9,24%. Số lệnh, win rate, PnL **không đổi**. Đừng trích
+   MaxDD đến hai chữ số.
+3. **`atr_pct_threshold = 0,001` đặt cho bar 5 phút.** Trên bar ngày ATR/giá
+   lớn hơn hàng chục lần (HII 3,09% · IJC 2,28% · AAA 1,93% so với ~0,05-0,10%
+   ở khung 5m) nên bộ lọc cho qua nhiều hơn. Không chỉnh — chỉ ghi nhận.
+4. **Chưa xác nhận giá đã điều chỉnh chia tách/cổ tức.** Không tìm thấy bước
+   nhảy qua đêm bất thường ngoài các bar rác trên, nhưng đó không phải bằng
+   chứng đủ mạnh để khẳng định dữ liệu ĐÃ điều chỉnh.
+
+### Một quan sát, CHƯA KẾT LUẬN
+
+`VCB,HPG,TCB / 5.021.459 / 10,5 năm` là cấu hình **duy nhất có lãi** (+141.107).
+Cùng mã, cùng kỳ, chỉ đổi vốn lên 1 tỷ thì lỗ 30,4 triệu — vốn nhỏ lọc bớt
+lệnh (26 thay vì 52) và những lệnh sống sót tốt hơn.
+
+Ba con số để tự đánh giá: 26 lệnh / 10,5 năm ≈ 2,5 lệnh mỗi năm; 141.107 trên
+vốn 5 triệu suốt 10,5 năm ≈ 0,25%/năm; và nó phụ thuộc vào việc bộ lọc kích
+thước lệnh vô tình chặn bớt tín hiệu.
 ## Thứ tự đề xuất
 
 > **CẬP NHẬT 2026-08-13, 22:45 — mục 3, 4, 5, 6, 7 đã xong.** Còn lại:
@@ -527,6 +641,30 @@ Hai quan sát, chưa kết luận:
 > Chỉ sau (1), (2), (5) mới có thể nói tới việc bật `real_trading_enabled: true`.
 
 > **CẬP NHẬT 2026-08-14 — câu chốt trên không còn đúng:** Câu hỏi chặn đường bây giờ không phải "khi nào bật tiền thật" mà là "chiến lược này có biên lợi thế không" — vì nó đã được đo là lỗ trên 4 tháng dữ liệu gần nhất.
+
+> **ĐÍNH CHÍNH (AUDITDOC-1, base 37035dd)** — các mục cũ đã xong hoặc không
+> còn tồn tại:
+>
+> - "Chốt `real_order_capital`" (mục 1 ở CẢ HAI danh sách): `real_order_capital`
+>   đã bị **bỏ khỏi config** ở `63e6028` — engine đọc số dư thật từ
+>   `account_balance_snapshot` (withdrawable), fail-safe capital=0. Mục này
+>   không còn nghĩa.
+> - "Quyết định cách sửa `save_account_positions`": đã xong ở `55df5dd` (bảng
+>   `account_sync_log` phân biệt "chưa đồng bộ" với "đã đồng bộ và rỗng";
+>   fallback giữ hành vi cũ khi chưa có mốc đồng bộ).
+> - "Nạp lịch sử SMA lúc khởi động" (rủi ro 5): đã xong `2665d48`.
+> - "Sửa mất trailing stop sau restart" (rủi ro 4): đã xong `7b5d6aa` (+ RTS-2
+>   khởi tạo tracking giữa phiên).
+> - "Cho test tự dọn `pending_real_orders`": đã xong trong `7b5d6aa` ("and stop
+>   tests leaking orders" — kiểm chứng: `git show 7b5d6aa | grep -c pending_real_orders` = 6).
+> - "Dọn rác repo + xoá/viết lại `DEPLOYMENT_READINESS.md`": đã xong ở `a013b28`
+>   ("docs: audit go-live, and clear 38 markdown files out of the repo root").
+>
+> Việc **còn thật sự tồn**:
+> 1. Quyết định `real_order_account` — `0434221` (rỗng) hay `0434226` (có cổ
+>    phiếu thật, trong đó 1500 VCB).
+> 2. Kiểm cron dead-man's switch trên VPS — chưa từng xác minh ở đó.
+> 3. **Câu hỏi biên lợi thế** — nay đã có thêm dữ liệu khung ngày (mục trên).
 
 1. **Chốt `real_order_capital`** (quyết định của chủ dự án — về tiền)
 2. **Chạy collector một phiên đầy đủ**, xác minh `account_position_snapshot` có dữ liệu
