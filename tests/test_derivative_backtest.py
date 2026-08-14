@@ -67,7 +67,8 @@ def test_stop_loss_long_exits_at_level_on_low_touch():
     assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
     assert close_fill.side == "SELL" and abs(close_fill.price - 9.5) < 1e-9
     expected_pnl = (9.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_stop_loss_short_exits_at_level_on_high_touch():
@@ -87,7 +88,8 @@ def test_stop_loss_short_exits_at_level_on_high_touch():
     assert open_fill.side == "SELL" and abs(open_fill.price - 9.0) < 1e-9
     assert close_fill.side == "BUY" and abs(close_fill.price - 10.0) < 1e-9
     expected_pnl = (9.0 - 10.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_take_profit_long_exits_at_level_on_high_touch():
@@ -106,7 +108,8 @@ def test_take_profit_long_exits_at_level_on_high_touch():
     assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
     assert close_fill.side == "SELL" and abs(close_fill.price - 13.0) < 1e-9
     expected_pnl = (13.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_take_profit_short_exits_at_level_on_low_touch():
@@ -125,7 +128,8 @@ def test_take_profit_short_exits_at_level_on_low_touch():
     assert open_fill.side == "SELL" and abs(open_fill.price - 9.0) < 1e-9
     assert close_fill.side == "BUY" and abs(close_fill.price - 6.0) < 1e-9
     expected_pnl = (9.0 - 6.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_stop_loss_takes_priority_when_tp_and_sl_both_hit_same_bar():
@@ -149,7 +153,8 @@ def test_stop_loss_takes_priority_when_tp_and_sl_both_hit_same_bar():
     assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
     assert close_fill.side == "SELL" and abs(close_fill.price - 9.0) < 1e-9
     expected_pnl = (9.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_no_reentry_on_same_bar_after_stop_loss_exit():
@@ -234,7 +239,8 @@ def test_intraday_close_time_force_closes_open_position_at_cutoff():
     assert open_fill.side == "BUY" and abs(open_fill.price - 11.0) < 1e-9
     assert close_fill.side == "SELL" and abs(close_fill.price - 7.0) < 1e-9
     expected_pnl = (7.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_intraday_close_time_does_not_fire_when_already_flat():
@@ -334,7 +340,8 @@ def test_eod_keep_min_profit_points_closes_small_profit_below_threshold():
     _open_fill, close_fill = report.fills
     assert close_fill.side == "SELL" and abs(close_fill.price - 11.5) < 1e-9
     expected_pnl = (11.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_eod_keep_min_profit_points_keeps_profit_above_threshold():
@@ -404,7 +411,8 @@ def test_long_cycle_bull_opens_long_then_bear_closes_it():
         and abs(close_fill.price - 16.0) < 1e-9
     )
     expected_pnl = (16.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
     # DERIV-FEE-1: realized tru ca phi mo (fill.pnl giu nguyen — chi ket toan doi)
     assert abs(report.realized_pnl - (expected_pnl - FEE)) < 1e-9
     assert report.trades == 1
@@ -433,7 +441,8 @@ def test_short_cycle_bear_opens_short_from_flat_then_bull_covers_it():
         and abs(close_fill.price - 12.0) < 1e-9
     )
     expected_pnl = (9.0 - 12.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
     assert close_fill.pnl < 0
     # DERIV-FEE-1: realized tru ca phi mo
     assert abs(report.realized_pnl - (expected_pnl - FEE)) < 1e-9

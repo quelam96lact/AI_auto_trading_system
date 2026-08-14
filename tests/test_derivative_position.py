@@ -26,7 +26,8 @@ def test_open_long_then_close_computes_pnl_fee_cash():
     expected_pnl = (1910.0 - 1900.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
 
     assert close_fill.side == "SELL" and close_fill.qty == 1
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
     assert b.position_qty(SYM) == 0
     assert b.positions[SYM].avg_price == 0.0
     # DERIV-FEE-1: realized gio TRU ca phi mo (expected_pnl chi tru phi dong)
@@ -46,7 +47,8 @@ def test_open_short_then_close_computes_pnl_for_price_drop():
     expected_pnl = (1900.0 - 1880.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
 
     assert close_fill.side == "BUY" and close_fill.qty == 1
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
     assert b.position_qty(SYM) == 0
     # DERIV-FEE-1: realized gio TRU ca phi mo (FEE o file nay = 2.700)
     assert abs(b.realized_pnl - (expected_pnl - FEE)) < 1e-9
@@ -59,7 +61,8 @@ def test_open_short_then_close_at_higher_price_is_a_loss():
     close_fill = b.close(SYM, price=1920.0, ts=TS)  # gia tang = lo cho short
     expected_pnl = (1900.0 - 1920.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
 
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9
     assert close_fill.pnl < 0
 
 
@@ -78,4 +81,5 @@ def test_close_pnl_applies_contract_multiplier():
     close_fill = b.close(SYM, price=1910.0, ts=TS)  # chenh 10 diem
     expected_pnl = (1910.0 - 1900.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
 
-    assert abs(close_fill.pnl - expected_pnl) < 1e-9
+    # LEDGER-1 Viec 2: fill.pnl gio GOM phi mo — cung nghia ben co phieu
+    assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9

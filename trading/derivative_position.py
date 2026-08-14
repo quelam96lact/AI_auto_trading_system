@@ -99,9 +99,15 @@ class DerivativePaperBroker:
         # phí mở (cùng hạng lỗi 6664cd9 bên cổ phiếu, sai một chiều). cash
         # KHÔNG trừ lại open_fee — nó đã trừ lúc mở (cash ròng giữ nguyên:
         # -phi_mo + gross - phi_dong). open_fee dọn cùng chỗ qty/avg_price.
-        self.realized_pnl += pnl - pos.open_fee
+        open_fee = pos.open_fee
+        self.realized_pnl += pnl - open_fee
         self.cash += pnl
         pos.qty = 0
         pos.avg_price = 0.0
         pos.open_fee = 0.0
-        return Fill(symbol, side, filled_qty, price, fee, ts, pnl)
+        # LEDGER-1 Viec 2: Fill.pnl GỒM cả phí mở — cùng nghĩa với bên cổ phiếu
+        # ("lãi/lỗ trọn vòng của lần đóng này"). DA KIEM: khong cho nao cong
+        # don fill.pnl ra realized_pnl (realized tinh trong broker; fill.pnl chi
+        # dung luu orders ben co phieu + thong ke spike win-rate tung lenh) —
+        # doi nay khong dem phi mo hai lan.
+        return Fill(symbol, side, filled_qty, price, fee, ts, pnl - open_fee)
