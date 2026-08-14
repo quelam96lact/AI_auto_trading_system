@@ -45,7 +45,8 @@ def test_report_unrealized_pnl_applies_contract_multiplier():
 
     expected_unrealized = (16.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER
     assert len(report.fills) == 1  # chi mo long, chua co lenh dong
-    assert abs(report.unrealized_pnl - expected_unrealized) < 1e-9
+    # DERIV-FEE-1: unrealized tru phi MO (vi the dang mo 1 hop dong)
+    assert abs(report.unrealized_pnl - (expected_unrealized - FEE)) < 1e-9
 
 
 def test_stop_loss_long_exits_at_level_on_low_touch():
@@ -206,7 +207,8 @@ def test_intraday_close_time_none_default_keeps_position_open_past_1420():
 
     assert len(report.fills) == 1  # chi mo long, khong dong
     assert report.fills[0].side == "BUY" and abs(report.fills[0].price - 11.0) < 1e-9
-    assert abs(report.unrealized_pnl - (12.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+    # DERIV-FEE-1: tru phi mo
+    assert abs(report.unrealized_pnl - ((12.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE)) < 1e-9
 
 
 def test_intraday_close_time_force_closes_open_position_at_cutoff():
@@ -274,7 +276,8 @@ def test_intraday_close_time_keeps_profitable_position_past_cutoff():
 
     assert len(report.fills) == 1  # chi mo long, lenh lai duoc giu
     assert report.fills[0].side == "BUY" and abs(report.fills[0].price - 11.0) < 1e-9
-    assert abs(report.unrealized_pnl - (13.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+    # DERIV-FEE-1: tru phi mo
+    assert abs(report.unrealized_pnl - ((13.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE)) < 1e-9
 
 
 def test_daily_loss_halt_resets_next_day_not_cumulative():
@@ -352,7 +355,8 @@ def test_eod_keep_min_profit_points_keeps_profit_above_threshold():
     )
 
     assert len(report.fills) == 1  # chi mo long, khong dong
-    assert abs(report.unrealized_pnl - (12.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+    # DERIV-FEE-1: tru phi mo
+    assert abs(report.unrealized_pnl - ((12.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE)) < 1e-9
 
 
 def test_eod_keep_min_profit_points_default_zero_keeps_any_profit():
@@ -372,7 +376,8 @@ def test_eod_keep_min_profit_points_default_zero_keeps_any_profit():
     )
 
     assert len(report.fills) == 1  # +50,000 > 0 (nguong mac dinh) -> giu
-    assert abs(report.unrealized_pnl - (11.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-9
+    # DERIV-FEE-1: tru phi mo
+    assert abs(report.unrealized_pnl - ((11.5 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE)) < 1e-9
 
 
 def test_long_cycle_bull_opens_long_then_bear_closes_it():
@@ -400,7 +405,8 @@ def test_long_cycle_bull_opens_long_then_bear_closes_it():
     )
     expected_pnl = (16.0 - 11.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
-    assert abs(report.realized_pnl - expected_pnl) < 1e-9
+    # DERIV-FEE-1: realized tru ca phi mo (fill.pnl giu nguyen — chi ket toan doi)
+    assert abs(report.realized_pnl - (expected_pnl - FEE)) < 1e-9
     assert report.trades == 1
 
 
@@ -429,7 +435,8 @@ def test_short_cycle_bear_opens_short_from_flat_then_bull_covers_it():
     expected_pnl = (9.0 - 12.0) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
     assert close_fill.pnl < 0
-    assert abs(report.realized_pnl - expected_pnl) < 1e-9
+    # DERIV-FEE-1: realized tru ca phi mo
+    assert abs(report.realized_pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_halted_day_blocks_new_open_after_loss_breaches_threshold():
@@ -501,3 +508,75 @@ def test_real_captured_ohlc_sample_runs_end_to_end():
     assert report.trades == len(closes)
     assert len(opens) - len(closes) in (0, 1)
     assert isinstance(report.realized_pnl, float)
+
+
+# ============ DERIV-FEE-1: phi MO trong PnL phai sinh (open_fee rieng) ============
+
+
+def _broker():
+    from trading.derivative_position import DerivativePaperBroker
+
+    return DerivativePaperBroker(capital=CAP)
+
+
+def test_roundtrip_long_cash_minus_capital_equals_realized_pnl():
+    """DERIV-FEE-1 kiem chung 1 (RED bat buoc, LONG): mo long roi dong -> 
+    cash - capital == realized_pnl. Phai DO tren code cu (bo sot phi mo),
+    lech dung bang phi mo (qty * fee_per_contract)."""
+    b = _broker()
+    ts = datetime(2026, 8, 8, 9, 5, tzinfo=TZ)
+    b.open_long(DERIVATIVE_SYMBOL, 1, 1300.0, ts)
+    b.close(DERIVATIVE_SYMBOL, 1300.0, datetime(2026, 8, 8, 9, 10, tzinfo=TZ))
+    assert b.position_qty(DERIVATIVE_SYMBOL) == 0
+    assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01, (
+        f"cash-capital ({b.cash - b.capital}) phai bang realized_pnl ({b.realized_pnl}) — "
+        f"hien lech {abs((b.cash - b.capital) - b.realized_pnl)} = phi mo bi bo sot"
+    )
+
+
+def test_roundtrip_short_cash_minus_capital_equals_realized_pnl():
+    """DERIV-FEE-1 kiem chung 2 (RED bat buoc, SHORT): nhanh short co cong
+    thuc PnL rieng (avg_price - price) — mot ban sua chi dung long la chua xong."""
+    b = _broker()
+    b.open_short(DERIVATIVE_SYMBOL, 1, 1300.0, datetime(2026, 8, 8, 9, 5, tzinfo=TZ))
+    b.close(DERIVATIVE_SYMBOL, 1300.0, datetime(2026, 8, 8, 9, 10, tzinfo=TZ))
+    assert b.position_qty(DERIVATIVE_SYMBOL) == 0
+    assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01, (
+        f"cash-capital ({b.cash - b.capital}) phai bang realized_pnl ({b.realized_pnl}) — "
+        f"hien lech {abs((b.cash - b.capital) - b.realized_pnl)} = phi mo bi bo sot"
+    )
+
+
+def test_unrealized_reflects_open_fee():
+    """DERIV-FEE-1 kiem chung 4: mo vi the, mark BANG DUNG gia vao ->
+    _unrealized phai AM dung bang phi mo (khong phai 0)."""
+    from trading.derivative_backtest import _unrealized
+
+    b = _broker()
+    ts = datetime(2026, 8, 8, 9, 5, tzinfo=TZ)
+    b.open_long(DERIVATIVE_SYMBOL, 1, 1300.0, ts)
+    upnl = _unrealized(b, {DERIVATIVE_SYMBOL: 1300.0})
+    assert upnl == -FEE, f"_unrealized phai = -phi mo ({-FEE}), thuc te: {upnl}"
+
+
+def test_open_fee_cleared_between_rounds():
+    """DERIV-FEE-1 kiem chung 5: nhieu vong lien tiep — open_fee duoc don
+    sach sau close, khong ro sang vong sau (realized = tong dung cua 2 vong)."""
+    b = _broker()
+    t1 = datetime(2026, 8, 8, 9, 5, tzinfo=TZ)
+    t2 = datetime(2026, 8, 8, 9, 10, tzinfo=TZ)
+    t3 = datetime(2026, 8, 8, 9, 15, tzinfo=TZ)
+    t4 = datetime(2026, 8, 8, 9, 20, tzinfo=TZ)
+    # vong 1: long 1300 -> 1302 (+200.000 - phi dong 8.250 - phi mo 8.250)
+    b.open_long(DERIVATIVE_SYMBOL, 1, 1300.0, t1)
+    b.close(DERIVATIVE_SYMBOL, 1302.0, t2)
+    assert b.positions[DERIVATIVE_SYMBOL].open_fee == 0.0, "open_fee phai duoc don sau close"
+    # vong 2: short 1302 -> 1300 (+200.000 - phi dong - phi mo)
+    b.open_short(DERIVATIVE_SYMBOL, 1, 1302.0, t3)
+    b.close(DERIVATIVE_SYMBOL, 1300.0, t4)
+    assert b.positions[DERIVATIVE_SYMBOL].open_fee == 0.0, "open_fee phai duoc don sau close"
+    expected = 2 * (2 * DERIVATIVE_CONTRACT_MULTIPLIER - 2 * FEE)
+    assert abs(b.realized_pnl - expected) < 0.01, (
+        f"realized 2 vong phai = {expected}, thuc te: {b.realized_pnl}"
+    )
+    assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01

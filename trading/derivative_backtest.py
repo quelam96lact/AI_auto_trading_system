@@ -29,6 +29,10 @@ def _unrealized(broker: DerivativePaperBroker, marks: dict[str, float]) -> float
             total += (mark - pos.avg_price) * pos.qty * broker.contract_multiplier
         else:
             total += (pos.avg_price - mark) * abs(pos.qty) * broker.contract_multiplier
+        # DERIV-FEE-1 Phan 2: tru phi MO da tra cho vi the dang mo — truoc day
+        # thuan theo diem, khong phan anh phi vao lenh (cung thieu sot ma ban
+        # co phieu da sua o 6664cd9: unrealized_pnl phan anh phi vao lenh).
+        total -= pos.open_fee
     return total
 
 

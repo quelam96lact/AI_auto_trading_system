@@ -27,6 +27,10 @@ class DerivativePosition:
     symbol: str
     qty: int = 0  # CÓ THỂ ÂM (short), DƯƠNG (long), 0 (flat)
     avg_price: float = 0.0
+    open_fee: float = 0.0  # DERIV-FEE-1: phí MỞ vị thế — trường RIÊNG, KHÔNG
+    # gộp vào avg_price (avg_price là ĐIỂM chỉ số, phí là VNĐ — gộp sai đơn vị,
+    # và derivative_backtest.py:72 dùng avg_price làm giá vào lệnh tính cắt
+    # lỗ/chốt lãi theo điểm — gộp phí sẽ DỊCH ngưỡng, đổi hành vi giao dịch).
 
 
 class DerivativePaperBroker:
@@ -61,6 +65,7 @@ class DerivativePaperBroker:
         pos = self.positions.setdefault(symbol, DerivativePosition(symbol))
         pos.qty = qty
         pos.avg_price = price
+        pos.open_fee = fee  # DERIV-FEE-1
         self.cash -= fee
         return Fill(symbol, "BUY", qty, price, fee, ts, None)
 
@@ -71,6 +76,7 @@ class DerivativePaperBroker:
         pos = self.positions.setdefault(symbol, DerivativePosition(symbol))
         pos.qty = -qty
         pos.avg_price = price
+        pos.open_fee = fee  # DERIV-FEE-1
         self.cash -= fee
         return Fill(symbol, "SELL", qty, price, fee, ts, None)
 
@@ -89,8 +95,13 @@ class DerivativePaperBroker:
         else:
             pnl = (pos.avg_price - price) * filled_qty * self.contract_multiplier - fee
             side = "BUY"
-        self.realized_pnl += pnl
+        # DERIV-FEE-1: realized trừ CẢ phí mở lẫn phí đóng — trước đây bỏ sót
+        # phí mở (cùng hạng lỗi 6664cd9 bên cổ phiếu, sai một chiều). cash
+        # KHÔNG trừ lại open_fee — nó đã trừ lúc mở (cash ròng giữ nguyên:
+        # -phi_mo + gross - phi_dong). open_fee dọn cùng chỗ qty/avg_price.
+        self.realized_pnl += pnl - pos.open_fee
         self.cash += pnl
         pos.qty = 0
         pos.avg_price = 0.0
+        pos.open_fee = 0.0
         return Fill(symbol, side, filled_qty, price, fee, ts, pnl)

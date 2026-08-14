@@ -93,6 +93,9 @@ def test_chot_config_with_rsi_matches_spike_results():
     # scripts/.spike_rsi_combination_analysis.py: 18 lenh / 66.7% /
     # realized 19,081,500 (con so da chay that - neu lech, dung bao cao,
     # khong tu sua).
+    # DERIV-FEE-1 (2026-08-14): realized gio tru ca phi MO (18 lenh x 8.250
+    # = 148.500) -> 19.081.500 - 148.500 = 18.932.999,99... (spike cu thieu
+    # phi mo — chinh la loii dang sua).
     sample = Path("scripts/.spike_derivative_ohlc_5m_2m_sample.json")
     if not sample.exists():
         raise FileNotFoundError(f"thieu sample: {sample}")  # chi chay khi co data
@@ -123,4 +126,5 @@ def test_chot_config_with_rsi_matches_spike_results():
     assert rep.trades == 18
     assert rep.win_rate == pytest.approx(0.6667, abs=0.001)
     # approx abs=1.0: gia tri float tich luy loi lam tron ~1e-7 (19,081,499.9999...)
-    assert rep.realized_pnl == pytest.approx(19_081_500.0, abs=1.0)
+    # DERIV-FEE-1: 18 lenh x 8.250 phi mo = 148.500 (spike cu thieu phi mo)
+    assert rep.realized_pnl == pytest.approx(19_081_500.0 - 18 * 8_250.0, abs=1.0)

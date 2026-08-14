@@ -29,7 +29,8 @@ def test_open_long_then_close_computes_pnl_fee_cash():
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
     assert b.position_qty(SYM) == 0
     assert b.positions[SYM].avg_price == 0.0
-    assert abs(b.realized_pnl - expected_pnl) < 1e-9
+    # DERIV-FEE-1: realized gio TRU ca phi mo (expected_pnl chi tru phi dong)
+    assert abs(b.realized_pnl - (expected_pnl - FEE)) < 1e-9
     assert abs(b.cash - (CAP - FEE + expected_pnl)) < 1e-9
 
 
@@ -47,7 +48,8 @@ def test_open_short_then_close_computes_pnl_for_price_drop():
     assert close_fill.side == "BUY" and close_fill.qty == 1
     assert abs(close_fill.pnl - expected_pnl) < 1e-9
     assert b.position_qty(SYM) == 0
-    assert abs(b.realized_pnl - expected_pnl) < 1e-9
+    # DERIV-FEE-1: realized gio TRU ca phi mo (FEE o file nay = 2.700)
+    assert abs(b.realized_pnl - (expected_pnl - FEE)) < 1e-9
 
 
 def test_open_short_then_close_at_higher_price_is_a_loss():
