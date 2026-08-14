@@ -490,3 +490,63 @@ def test_load_ssi_token_default_timeout_unchanged(monkeypatch):
     s.load_ssi_token()
     s.load_ssi_token(timeout=5)
     assert calls == [None, 5], f"mac dinh phai giu None (hanh vi cu), thuc te: {calls}"
+
+
+# ============ MARGIN-1 (phan 1): NAV + suc mua ============
+
+
+def _nav_now():
+    return datetime(2026, 8, 14, 15, 0, tzinfo=TZ)
+
+
+def test_compute_nav_fresh_price():
+    """MARGIN-1 kiem chung 1a: vi the co gia TUOI -> tinh dung vao NAV."""
+    nav, unpriced = Storage.compute_nav(
+        100_000.0, 10_000.0, {"VCB": 100},
+        lambda sym: (90.0, datetime(2026, 8, 14, tzinfo=TZ)),
+        _nav_now(),
+    )
+    assert nav == 100_000.0 - 10_000.0 + 100 * 90.0
+    assert unpriced == []
+
+
+def test_compute_nav_missing_price_zero_and_warned():
+    """MARGIN-1 kiem chung 1b: ma KHONG CO GIA -> tinh 0 + co trong danh sach."""
+    nav, unpriced = Storage.compute_nav(
+        100_000.0, 0.0, {"MIRHCM261": 1000},
+        lambda sym: None,
+        _nav_now(),
+    )
+    assert nav == 100_000.0
+    assert unpriced == ["MIRHCM261"]
+
+
+def test_compute_nav_stale_price_zero_and_warned():
+    """MARGIN-1 kiem chung 1c: ma gia QUA CU (> 5 ngay giao dich) -> tinh 0 +
+    co trong danh sach."""
+    nav, unpriced = Storage.compute_nav(
+        100_000.0, 0.0, {"CAP": 100},
+        lambda sym: (20.0, datetime(2026, 8, 6, tzinfo=TZ)),  # cu 8 ngay
+        _nav_now(),
+    )
+    assert nav == 100_000.0
+    assert unpriced == ["CAP"]
+
+
+def test_compute_nav_fresh_price_within_threshold():
+    """Gia moi (khong qua cu) van tinh — ca phan biet voi stale."""
+    nav, unpriced = Storage.compute_nav(
+        100_000.0, 0.0, {"VCB": 100},
+        lambda sym: (90.0, datetime(2026, 8, 13, tzinfo=TZ)),  # cu 1 ngay
+        _nav_now(),
+    )
+    assert nav == 100_000.0 + 9_000.0
+    assert unpriced == []
+
+
+def test_parse_margin_ratio_variants():
+    """MARGIN-1 kiem chung 4: '50%' -> 50.0; dang la -> None (khong doan)."""
+    assert Storage.parse_margin_ratio("50%") == 50.0
+    assert Storage.parse_margin_ratio("0%") == 0.0
+    assert Storage.parse_margin_ratio("abc") is None
+    assert Storage.parse_margin_ratio(None) is None

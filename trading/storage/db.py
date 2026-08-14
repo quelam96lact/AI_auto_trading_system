@@ -643,6 +643,113 @@ class Storage:
                 (account_no,),
             ).fetchone()
         return row[0] if row else None
+    # ============ MARGIN-1 (phan 1): suc mua + NAV ============
+
+    def record_buying_power(
+        self,
+        account_no: str,
+        symbol: str,
+        ts: datetime,
+        max_buy_qty: int,
+        max_sell_qty: int,
+        margin_ratio_pct: float | None,
+    ) -> None:
+        """Luu suc mua theo (account_no, symbol, ts) — anh chup giong cac
+        bang account khac. KHONG luu purchase_power (da do: chuoi RONG).
+        margin_ratio_pct None = khong parse duoc (SSI tra dang la, khong doan)."""
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO account_buying_power (account_no, symbol, ts, max_buy_qty, max_sell_qty, margin_ratio_pct) "
+                "VALUES (%s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (account_no, symbol, ts) DO UPDATE SET "
+                "max_buy_qty = EXCLUDED.max_buy_qty, max_sell_qty = EXCLUDED.max_sell_qty, margin_ratio_pct = EXCLUDED.margin_ratio_pct",
+                (account_no, symbol, ts, max_buy_qty, max_sell_qty, margin_ratio_pct),
+            )
+
+    def read_buying_power(self, account_no: str, symbol: str) -> tuple[int, int, float | None] | None:
+        """Suc mua moi nhat cua (account_no, symbol) — (max_buy_qty, max_sell_qty, margin_ratio_pct)."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT max_buy_qty, max_sell_qty, margin_ratio_pct FROM account_buying_power "
+                "WHERE account_no = %s AND symbol = %s ORDER BY ts DESC LIMIT 1",
+                (account_no, symbol),
+            ).fetchone()
+        return (row[0], row[1], row[2]) if row else None
+
+    @staticmethod
+    def parse_margin_ratio(value) -> float | None:
+        """Chuoi margin_ratio cua SSI: '50%' -> 50.0; None/dang la -> None (khong doan).
+        Khong nhan so thap phan — API tra chuoi phan tram, co the khac ngay."""
+        if value is None:
+            return None
+        s = str(value).strip()
+        if s.endswith("%"):
+            s = s.removesuffix("%")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def compute_nav(
+        cash: float,
+        debt: float,
+        positions: dict[str, float],  # symbol -> qty (vi the DANG GIU, qty > 0)
+        price_fn,
+        now: datetime,
+        max_price_age_days: int = 5,
+    ) -> tuple[float, list[str]]:
+        """NAV = tien mat + Σ(qty × gia) − no. THUAN — test duoc khong can DB.
+
+        price_fn(symbol) -> (price, ts) | None: gia + moc thoi gian gan nhat.
+
+        Quy tac (fail-safe): co gia va gia KHONG cu hon max_price_age_days (ngay
+        giao dich) -> tinh vao NAV; khong co gia / qua cu -> TINH 0 va them vao
+        danh sach "khong dinh gia duoc" (canh bao — NAV tinh hut ma khong ai biet
+        thi te hon NAV khong tinh). Dung cost_price thay the la SAI: gia von co
+        the cao hon thi gia rat nhieu (nhat la margin)."""
+        nav = cash - debt
+        unpriced = []
+        for symbol, qty in positions.items():
+            if qty <= 0:
+                continue
+            got = price_fn(symbol)
+            if got is None:
+                unpriced.append(symbol)  # khong co gia -> tinh 0
+                continue
+            price, ts = got
+            if (now - ts).days > max_price_age_days:
+                unpriced.append(symbol)  # gia qua cu -> tinh 0
+                continue
+            nav += qty * price
+        return nav, unpriced
+
+    def read_latest_bar(self, symbol: str) -> tuple[datetime, float] | None:
+        """(ts, close) cua bar moi nhat — bars_daily truoc (ma dang giu nhu
+        CAP/HCM/SSI/TCX chi co daily), bars 5m sau (ma cau hinh). MARGIN-1:
+        dung de dinh gia vi the dang giu khi tinh NAV."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT ts, close FROM bars_daily WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            if row is None:
+                row = c.execute(
+                    "SELECT ts, close FROM bars WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def record_nav(self, account_no: str, ts: datetime, nav: float, unpriced_symbols: list[str]) -> None:
+        """Luu NAV theo (account_no, ts) — bang rieng (nguon tinh tu positions
+        + gia, khac field SSI) de khong nham voi account_balance_snapshot."""
+        with self.conn() as c:
+            c.execute(
+                "INSERT INTO account_nav_snapshot (account_no, ts, nav, unpriced_symbols) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (account_no, ts) DO UPDATE SET nav = EXCLUDED.nav, unpriced_symbols = EXCLUDED.unpriced_symbols",
+                (account_no, ts, nav, list(unpriced_symbols)),
+            )
+
 
     def read_real_daily_pnl(self, account_no: str, day: date) -> float:
         """SUM(pnl) từ real_order_fills cho 1 ngày theo giờ Việt Nam.

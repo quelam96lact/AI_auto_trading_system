@@ -204,3 +204,30 @@ CREATE TABLE IF NOT EXISTS account_sync_log (
   account_no text PRIMARY KEY,
   ts         timestamptz NOT NULL
 );
+
+-- MARGIN-1 (phan 1): suc mua theo TUNG MA do san quyet (trần cứng khi dat lenh —
+-- phan 2). KHONG luu purchase_power (da do: chuoi RONG o ca 2 tai khoan — luu
+-- cot luon rong chi lam nguoi sau tuong no co nghia). margin_ratio_pct cho phep
+-- NULL: chuoi '50%' -> 50.0; SSI tra dang la thi NULL (dung doan).
+CREATE TABLE IF NOT EXISTS account_buying_power (
+  account_no text NOT NULL,
+  symbol text NOT NULL,
+  ts timestamptz NOT NULL,
+  max_buy_qty integer NOT NULL,
+  max_sell_qty integer NOT NULL,
+  margin_ratio_pct double precision,
+  PRIMARY KEY (account_no, symbol, ts)
+);
+
+-- MARGIN-1 (phan 1): tai san RONG (NAV) = tien mat + Σ(qty × gia) − no.
+-- Bang RIENG (khong them cot vao account_balance_snapshot) vi NAV TINH TU
+-- positions + gia (nguon khac field SSI) — them cot se lam nguoi sau tuong NAV
+-- la field SSI tra ve. unpriced_symbols = cac ma khong dinh gia duoc (khong co
+-- gia / gia qua cu) — de canh bao ro ma nao, khong im lang.
+CREATE TABLE IF NOT EXISTS account_nav_snapshot (
+  account_no text NOT NULL,
+  ts timestamptz NOT NULL,
+  nav double precision NOT NULL,
+  unpriced_symbols text[] NOT NULL DEFAULT '{}',
+  PRIMARY KEY (account_no, ts)
+);

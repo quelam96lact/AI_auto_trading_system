@@ -32,6 +32,17 @@ class FakeStorage:
     def record_position_sync(self, account_no, ts):
         self.sync_recorded.append((account_no, ts))
 
+    # MARGIN-1: stubs cho _sync_buying_power / _sync_nav trong sync_account_data
+    def record_buying_power(self, account_no, symbol, ts, **kwargs):
+        pass
+
+    def record_nav(self, account_no, ts, nav, unpriced_symbols):
+        pass
+
+    def parse_margin_ratio(self, v):
+        from trading.storage.db import Storage
+        return Storage.parse_margin_ratio(v)
+
 
 async def test_sync_balance_maps_real_api_fields():
     storage = FakeStorage()
@@ -188,8 +199,12 @@ async def test_sync_account_data_isolates_failing_account(monkeypatch):
 
     monkeypatch.setattr(account_sync, "_sync_balance", fake_balance)
     monkeypatch.setattr(account_sync, "_sync_positions", fake_positions)
+    # MARGIN-1: 2 ham moi co test rieng — o day no-op de chi kiem SYNC-1
+    # (ky vong cua test cu KHONG doi: dung 1 WARN cho ACC_BAD)
+    monkeypatch.setattr(account_sync, "_sync_buying_power", lambda *a, **k: _noop())
+    monkeypatch.setattr(account_sync, "_sync_nav", lambda *a, **k: _noop())
 
-    cfg = NS(ssi_equity_accounts=["ACC_BAD", "ACC_OK"])
+    cfg = NS(ssi_equity_accounts=["ACC_BAD", "ACC_OK"], symbols=["HII"])
     await account_sync.sync_account_data(cfg, FakeStorage())
 
     assert calls["balance"] == ["ACC_BAD", "ACC_OK"], (
@@ -201,3 +216,39 @@ async def test_sync_account_data_isolates_failing_account(monkeypatch):
     assert len(warns) == 1 and warns[0][2] == "ACC_BAD", (
         f"phai co dung 1 WARN chua ma tai khoan hong (ACC_BAD), thuc te: {warns}"
     )
+
+
+async def test_sync_buying_power_isolates_failing_symbol(monkeypatch):
+    """MARGIN-1 kiem chung 3: mot ma nem loi -> WARN + tiep tuc cac ma con lai,
+    khong lam hong ca vong dong bo (cung khuon mau SYNC-1)."""
+    from types import SimpleNamespace
+
+    from trading.collector import account_sync
+
+    recorded = []
+
+    class FakeStorage:
+        def record_buying_power(self, account_no, symbol, ts, **kwargs):
+            recorded.append((account_no, symbol, kwargs["max_buy_qty"], kwargs["margin_ratio_pct"]))
+
+        def parse_margin_ratio(self, v):
+            from trading.storage.db import Storage
+            return Storage.parse_margin_ratio(v)
+
+    async def _get(self, account_no, symbol):
+        if symbol == "IJC":
+            raise RuntimeError("parse boom")
+        return SimpleNamespace(
+            max_buy_quantity=100, max_sell_quantity=50, margin_ratio="50%"
+        )
+
+    class FakeTrading:
+        get_max_buy_sell_at_market_price = _get
+
+    alerts = []
+    monkeypatch.setattr(account_sync, "alert", lambda level, msg, **f: alerts.append((level, f.get("symbol"))))
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_buying_power(FakeTrading(), "0434226", ts, ["HII", "IJC", "AAA"], FakeStorage())
+
+    assert recorded == [("0434226", "HII", 100, 50.0), ("0434226", "AAA", 100, 50.0)], f"thuc te: {recorded}"
+    assert ("WARN", "IJC") in alerts, f"phai WARN cho ma loi, thuc te: {alerts}"
