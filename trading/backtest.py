@@ -155,8 +155,11 @@ from trading.resample import (
 )
 from trading.storage.db import Storage
 
+# sma_cross DA BI GO khoi danh sach (2026-08-15, quyet dinh cua chu du an): do tren
+# 4 cau hinh deu lo TRUOC KHI tinh phi, va no chua bao gio duoc chung minh co bien loi
+# the. Class van con vi `trading/engine/main.py:71` dang chay no o che do paper —
+# go khoi engine la mot quyet dinh KHAC, can co chien luoc thay the.
 STRATEGIES = {
-    "sma_cross": lambda: SmaCrossStrategy(),
     "daily_breakout": lambda: DailyBreakoutStrategy(),
     "octopus_pullback": lambda: OctopusPullbackStrategy(),
 }

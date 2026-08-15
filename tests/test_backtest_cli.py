@@ -35,8 +35,9 @@ def _seed_bars(storage, n=25):
     return bars
 
 
-def test_cli_registry_has_sma_cross():
-    assert "sma_cross" in STRATEGIES
+def test_cli_registry_no_longer_offers_sma_cross():
+    """Go bo co chu y (2026-08-15) — khong phai sot. Xem comment tren STRATEGIES."""
+    assert "sma_cross" not in STRATEGIES
 
 
 def test_cli_registry_has_daily_breakout():
@@ -57,7 +58,7 @@ def test_read_resample_replay_is_deterministic_from_real_db(storage):
         resampled = resample_bars(rows, 15)
         return run_backtest(
             resampled,
-            STRATEGIES["sma_cross"](),
+            STRATEGIES["daily_breakout"](),
             RiskManager(capital=100_000_000),
             TrailingStopManager(),
             100_000_000,
