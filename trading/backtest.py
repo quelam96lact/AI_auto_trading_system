@@ -6,7 +6,7 @@ from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
 from trading.strategies.octopus_pullback import OctopusPullbackStrategy
-from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.strategy import Strategy
 from trading.trailing_stop import TrailingStopManager
 
 
@@ -57,7 +57,7 @@ def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rat
 
 def run_backtest(
     bars: list[Bar],
-    strategy: SmaCrossStrategy,
+    strategy: Strategy,
     risk: RiskManager,
     trailing_stop: TrailingStopManager,
     capital: float,
