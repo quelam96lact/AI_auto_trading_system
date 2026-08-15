@@ -51,8 +51,15 @@ def process_bar(
 
     if stop_price is not None:
         forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
-        trailing_stop.on_position_closed(bar.symbol)
-        fills.append(forced)
+        if forced.qty > 0:
+            # SPEC1-FIX Lỗi 1: chi dong vi the khi thuc su ban duoc (da settle
+            # T+2,5). Neu qty=0 (chua settle): vi the GIU NGUYEN, trailing stop
+            # TIEP TUC theo doi (khong on_position_closed), khong ghi order rac
+            # (persist_fills ghi moi fill khong loc).
+            trailing_stop.on_position_closed(bar.symbol)
+            fills.append(forced)
+        # qty=0: stop da cham nhung luat khong cho ban — khong alert de tranh
+        # nhiem (moi bar cham = 1 canh bao); stop se thu lai o bar ke tiep.
     elif signal is not None:
         daily_pnl = (
             broker.realized_pnl

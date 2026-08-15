@@ -17,6 +17,40 @@ class BacktestReport:
     max_drawdown: float = 0.0
     win_rate: float = 0.0
     trades: int = 0
+    # SPEC-1b: moc mua-va-giu (cung ma, cung ky, cung von, cung bieu phi, gom
+    # phi mua lan phi ban) — chien luoc co lai nhung thua moc nay = THẤT BẠI.
+    buy_and_hold_pnl: float = 0.0
+    # SPEC-1c: so dong bar bi loai vi OHLC <= 0, theo tung ma.
+    filtered_bars: dict[str, int] = field(default_factory=dict)
+
+
+def _is_dirty(bar: Bar) -> bool:
+    """SPEC-1c: bar rac = co open/high/low/close <= 0."""
+    return bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0
+
+
+def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rate: float, slippage_bps: float) -> float:
+    """SPEC-1b: voi moi ma, mua o bar DAU (gom phi mua vao gia von nhu
+    PaperBroker), giu toi bar CUOI, ban (tru phi ban + thue). Von ban dau chia
+    deu cho cac ma de khong double-count; 1 ma -> dung toan bo von."""
+    symbols = sorted({b.symbol for b in bars})
+    if not symbols:
+        return 0.0
+    per_symbol = capital / len(symbols)
+    slip = slippage_bps / 10_000
+    total = 0.0
+    for sym in symbols:
+        sym_bars = [b for b in bars if b.symbol == sym]
+        first, last = sym_bars[0], sym_bars[-1]
+        buy_price = first.open * (1 + slip)
+        sell_price = last.close * (1 - slip)
+        qty = int(per_symbol // (buy_price * (1 + fee_rate)))  # phi mua trong gia von
+        if qty <= 0:
+            continue
+        buy_cost = qty * buy_price * (1 + fee_rate)
+        sell_proceeds = qty * sell_price * (1 - fee_rate - sell_tax_rate)
+        total += sell_proceeds - buy_cost
+    return total
 
 
 def run_backtest(
@@ -26,6 +60,18 @@ def run_backtest(
     trailing_stop: TrailingStopManager,
     capital: float,
 ) -> BacktestReport:
+    # SPEC-1c: loai bar rac TRUOC khi vao vong lap — khong co lenh nao khop o
+    # gia 0, va so dong loai duoc bao cao theo tung ma (im lang loc = che giau
+    # van de du lieu).
+    filtered: dict[str, int] = {}
+    clean_bars: list[Bar] = []
+    for b in bars:
+        if _is_dirty(b):
+            filtered[b.symbol] = filtered.get(b.symbol, 0) + 1
+        else:
+            clean_bars.append(b)
+    bars = clean_bars
+
     broker = PaperBroker(capital)
     marks: dict[str, float] = {}
     all_fills: list[Fill] = []
@@ -49,8 +95,9 @@ def run_backtest(
 
         if stop_price is not None:
             forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
-            trailing_stop.on_position_closed(bar.symbol)
-            all_fills.append(forced)
+            if forced.qty > 0:  # SPEC-1a: chua settle -> qty=0, vi the giu nguyen
+                trailing_stop.on_position_closed(bar.symbol)
+                all_fills.append(forced)
         elif signal is not None:
             daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
             sized = risk.approve_sized(
@@ -87,6 +134,10 @@ def run_backtest(
         max_drawdown=max_dd,
         win_rate=(wins / len(sell_fills)) if sell_fills else 0.0,
         trades=len(sell_fills),
+        buy_and_hold_pnl=_buy_and_hold(
+            bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
+        ),
+        filtered_bars=filtered,
     )
 
 
@@ -152,10 +203,18 @@ def main() -> None:
     report = run_backtest(bars, strategy, risk, trailing_stop, args.capital)
 
     print(f"Bars replayed: {len(bars)}")
+    if report.filtered_bars:
+        detail = ", ".join(f"{s}: {n}" for s, n in sorted(report.filtered_bars.items()))
+        print(f"Bars filtered (OHLC<=0): {sum(report.filtered_bars.values())} ({detail})")
     print(f"Trades: {report.trades}  Win rate: {report.win_rate:.1%}")
     print(
         f"Realized PnL: {report.realized_pnl:,.0f}  Unrealized PnL: {report.unrealized_pnl:,.0f}"
     )
+    strat_pnl = report.realized_pnl + report.unrealized_pnl
+    bh = report.buy_and_hold_pnl
+    print(f"Buy&Hold PnL: {bh:,.0f}  Strategy PnL: {strat_pnl:,.0f}  Diff: {strat_pnl - bh:,.0f}")
+    if report.trades > 0 and strat_pnl < bh:
+        print("KET LUAN: THUA mua-va-giu (co lai nhung khong co bien loi the)")
     print(
         f"Ending cash: {report.ending_cash:,.0f}  Max drawdown: {report.max_drawdown:.1%}"
     )

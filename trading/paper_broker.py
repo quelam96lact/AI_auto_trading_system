@@ -1,4 +1,5 @@
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 
 from trading.broker import Fill, Position
 from trading.models import Bar
@@ -11,6 +12,21 @@ from trading.strategy import Signal
 FEE_RATE = 0.0025
 SELL_TAX_RATE = 0.001
 SLIPPAGE_BPS = 5
+
+# SPEC-1a: mua ngay D -> ban duoc tu ngay giao dich D+3 (lam tron len tu T+2,5,
+# khop cach real_orders.py doc sellable_qty tu SSI). Dung NGAY GIAO DICH (so bar
+# ngay), khong dung ngay lich.
+SETTLE_DAYS = 3
+
+
+@dataclass
+class Lot:
+    """Mot lo co phieu dang giu: so luong + ngay giao dich da mua (index vao
+    danh sach cac ngay giao dich broker da thay). Dung de tinh phan da settle
+    (T+2,5) theo FIFO — lo cu settle truoc."""
+
+    day_index: int
+    qty: int
 
 
 class PaperBroker:
@@ -29,6 +45,56 @@ class PaperBroker:
         self.positions: dict[str, Position] = {}
         self.realized_pnl = 0.0
         self._pending: dict[str, Signal] = {}
+        # SPEC-1a: cac ngay giao dich da thay (theo thu tu xuat hien — gia dinh
+        # bar den theo thu tu thoi gian, dung nhu run_backtest sort + engine
+        # nhan bar song). Moi ngay lich moi = 1 ngay giao dich moi.
+        self._trade_days: list[date] = []
+        self._lots: dict[str, list[Lot]] = {}
+
+    def _day_index(self, ts: datetime) -> int:
+        """Tra index cua ngay giao dich chua `ts`; neu la ngay moi, them vao
+        cuoi danh sach (gia dinh bar den theo thu tu thoi gian)."""
+        d = ts.date()
+        if not self._trade_days or self._trade_days[-1] != d:
+            self._trade_days.append(d)
+        return len(self._trade_days) - 1
+
+    def sellable_qty(self, symbol: str, ts: datetime) -> int:
+        """SPEC-1a: phan co the ban hom nay = tong qty cac lo co day_index sao
+        cho ngay hom nay >= day_index + SETTLE_DAYS (mua D -> ban duoc D+3)."""
+        today = self._day_index(ts)
+        return sum(
+            lot.qty
+            for lot in self._lots.get(symbol, [])
+            if today - lot.day_index >= SETTLE_DAYS
+        )
+
+    def _consume_lots(self, symbol: str, qty: int, today: int) -> None:
+        """Tru qty da ban khoi cac lo (FIFO: lo cu nhat — day_index nho nhat —
+        truoc). Chi tru vao lo da settle (today - day_index >= SETTLE_DAYS); vi
+        caller da gioi han qty <= sellable_qty nen luon du lo de tru."""
+        lots = self._lots.get(symbol)
+        if not lots:
+            return
+        remaining = qty
+        kept: list[Lot] = []
+        for lot in lots:
+            if remaining <= 0:
+                kept.append(lot)
+                continue
+            if today - lot.day_index < SETTLE_DAYS:
+                kept.append(lot)  # chua settle — khong dong toi
+                continue
+            if lot.qty > remaining:
+                kept.append(Lot(lot.day_index, lot.qty - remaining))
+                remaining = 0
+            else:
+                remaining -= lot.qty
+        if remaining > 0:  # phong thu: qty > sellable — khong duoc phep, giu nguyen
+            raise AssertionError(
+                f"consume_lots: khong du lo settle de tru {qty} (con {remaining})"
+            )
+        self._lots[symbol] = kept
 
     def position_qty(self, symbol: str) -> int:
         pos = self.positions.get(symbol)
@@ -38,28 +104,38 @@ class PaperBroker:
         self._pending[signal.symbol] = signal
 
     def force_exit(self, symbol: str, price: float, ts: datetime) -> Fill:
-        """Đóng TOÀN BỘ vị thế đang giữ ngay lập tức tại `price` — dùng bởi
-        trailing stop. KHÔNG qua hàng đợi self._pending như submit()/on_bar()
-        (không có độ trễ 1 bar). Giả định caller đã xác nhận vị thế đang mở
-        (qty > 0) trước khi gọi, giống cách on_bar()'s SELL branch giả định."""
+        """Dong phan vi the da SETTLE ngay lap tuc tai `price` — dung boi
+        trailing stop. KHONG qua hang doi self._pending nhu submit()/on_bar()
+        (khong co do tre 1 bar). SPEC-1a: phan chua settle (T+2,5) KHONG the
+        ban — giong real_orders.py chi ban sellable_qty; neu chua co gi settle
+        duoc thi tra Fill qty=0 (caller bo qua, vi the giu nguyen)."""
         pos = self.positions[symbol]
-        qty = pos.qty
+        today = self._day_index(ts)
+        qty = min(pos.qty, self.sellable_qty(symbol, ts))
+        if qty <= 0:
+            return Fill(symbol, "SELL", 0, price, 0.0, ts, None)
         gross = price * qty
         fee = gross * self.fee_rate + gross * self.sell_tax_rate
         pnl = (price - pos.avg_price) * qty - fee
         self.realized_pnl += pnl
         self.cash += gross - fee
-        pos.qty = 0
-        pos.avg_price = 0.0
+        pos.qty -= qty
+        if pos.qty == 0:
+            pos.avg_price = 0.0
+        self._consume_lots(symbol, qty, today)
         return Fill(symbol, "SELL", qty, price, fee, ts, pnl)
 
     def on_bar(self, bar: Bar) -> list[Fill]:
+        # SPEC-1a: ngay giao dich duoc danh dau cho MOI bar (ke ca bar khong
+        # co lenh treo) — thi truong van troi qua ngay du khong co lenh cua ta.
+        today = self._day_index(bar.ts)
         signal = self._pending.pop(bar.symbol, None)
         if signal is None:
             return []
         qty = signal.qty
         if signal.side == "SELL":
-            qty = min(qty, self.position_qty(bar.symbol))
+            # SPEC-1a: chi khop tren phan da settle — phan chua settle bi tu choi
+            qty = min(qty, self.sellable_qty(bar.symbol, bar.ts))
             if qty <= 0:
                 return []
         slip = bar.open * (self.slippage_bps / 10_000)
@@ -84,6 +160,8 @@ class PaperBroker:
             pos.avg_price = (pos.avg_price * pos.qty + gross + fee) / new_qty
             pos.qty = new_qty
             self.cash -= gross + fee
+            # SPEC-1a: ghi nhan lo moi voi ngay giao dich hom nay
+            self._lots.setdefault(bar.symbol, []).append(Lot(today, qty))
         else:
             pnl = (price - pos.avg_price) * qty - fee
             self.realized_pnl += pnl
@@ -91,6 +169,7 @@ class PaperBroker:
             pos.qty -= qty
             if pos.qty == 0:
                 pos.avg_price = 0.0
+            self._consume_lots(bar.symbol, qty, today)
 
         return [Fill(bar.symbol, signal.side, qty, price, fee, bar.ts, pnl)]
 
@@ -114,4 +193,15 @@ class PaperBroker:
         broker.cash = cash
         broker.realized_pnl = realized_pnl
         broker.positions = positions
+        # SPEC1-FIX Lỗi 2: restore (engine restart) khong co thong tin ngay mua
+        # cua cac vi the. KHONG dung day_index am lon (mo lo hong lac quan: ban
+        # duoc ngay trong paper trong khi live phai doi SSI quyet sellable).
+        # Chon: coi nhu mua o NGAY RESTORE (day_index 0 = bar dau tien sau
+        # restart) — thận trọng, co the khoa nham vi the cu toi da 3 ngay giao
+        # dich, nhung khong bao gio ban som hon luat cho phep. (Cach chinh xac
+        # hon — doc ts BUY fill gan nhat tu bang orders nhu 7b5d6aa dung cho
+        # _highest — can dependency DB trong broker, de sau neu chu du an muon.)
+        for sym, p in positions.items():
+            if p.qty > 0:
+                broker._lots[sym] = [Lot(day_index=0, qty=p.qty)]
         return broker

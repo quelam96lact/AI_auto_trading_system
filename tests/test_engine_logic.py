@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 
+from trading.broker import Fill
 from trading.calendar_vn import TZ
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.models import Bar
@@ -171,26 +172,118 @@ def test_trailing_stop_exits_before_bear_crossover_would_fire():
     marks: dict[str, float] = {}
     day_state: dict = {}
 
-    # Tang manh 10->23 (bull crossover + vi the mo), roi giat lui vua phai
-    # xuong 21 - du de cham trailing stop (theo ATR%1.0) nhung KHONG du de
-    # lam MA (fast=2,slow=4) dao chieu thanh bear crossover trong chuoi nay.
-    prices = [10, 10, 10, 10, 20, 21, 22, 23, 21]
+    # Tang manh 10->23 (bull crossover + vi the mo), roi giat lui vua phai —
+    # du de cham trailing stop (theo ATR) nhung KHONG du de lam MA (fast=2,
+    # slow=4) dao chieu thanh bear crossover trong chuoi nay.
+    # SPEC-1a: trailing stop cung phai ton trong T+2,5 — mua ngay 16/07, cham
+    # stop ngay 17-18/07 bi TU CHOI (chua settle), ngay 19/07 (D+3) moi thoat.
+    # Gia ngay 18-19 chi giam nhe (23.5 -> 23.4) de fast > slow, khong tao bear.
+    bars = [
+        bar_on(15, 0, 10.0), bar_on(15, 1, 10.0),
+        bar_on(15, 2, 10.0), bar_on(15, 3, 10.0),
+        bar_on(16, 0, 20.0), bar_on(16, 1, 20.5),
+        bar_on(17, 0, 22.0), bar_on(17, 1, 23.0),
+        bar_on(18, 0, 23.5),
+        bar_on(19, 0, 23.4),
+    ]
     all_fills = []
     crossovers = []
-    for i, p in enumerate(prices):
+    for b in bars:
         fills = process_bar(
-            bar_at(i, p), broker, strategy, risk, trailing_stop, marks, day_state
+            b, broker, strategy, risk, trailing_stop, marks, day_state
         )
         all_fills.extend(fills)
         crossovers.append(strategy.last_crossover("VCB"))
 
     sell_fills = [f for f in all_fills if f.side == "SELL"]
     assert len(sell_fills) == 1
-    assert sell_fills[0].price == 21.0
+    assert sell_fills[0].price == 23.4
     assert broker.position_qty("VCB") == 0
     # Crossover KHONG BAO GIO thanh "bear" trong ca chuoi nay - chung minh
     # lenh thoat den tu trailing stop, khong phai tu crossover.
     assert "bear" not in crossovers
+
+
+# ============ SPEC1-FIX: stop chạm khi CHƯA settle (T+2,5) ============
+
+
+def _run_stop_sequence(prices_by_day) -> tuple[list[Fill], PaperBroker, TrailingStopManager]:
+    """Chay process_bar tren chuoi gia theo ngay, tra ve (fills, broker, stop).
+    Gia moi ngay la 1 bar; bull crossover xay ra ngay 16 -> BUY fill, roi cac
+    ngay sau co the cham trailing stop."""
+    broker = PaperBroker(capital=100_000_000)
+    strategy = SmaCrossStrategy(fast=2, slow=4, atr_period=1, atr_pct_threshold=0.0)
+    risk = RiskManager(capital=100_000_000)
+    trailing_stop = TrailingStopManager(sl_multiplier=1.0)
+    marks: dict[str, float] = {}
+    day_state: dict = {}
+    all_fills: list[Fill] = []
+    for day, prices in prices_by_day:
+        for i, p in enumerate(prices):
+            all_fills.extend(
+                process_bar(
+                    bar_on(day, i, p),
+                    broker, strategy, risk, trailing_stop, marks, day_state,
+                )
+            )
+    return all_fills, broker, trailing_stop
+
+
+def test_stop_touch_before_settle_keeps_tracking_and_position():
+    """SPEC1-FIX Lỗi 1 (RED bat buoc): stop chạm khi vị thế CHƯA settle (mua
+    16/07, stop cham 17/07 = D+1, gia 19 <= stop 19.01) -> trailing stop VẪN
+    theo dõi (is_tracking True), vị thế giữ nguyên qty, KHÔNG có fill SELL
+    nào được append."""
+    fills, broker, trailing_stop = _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),   # warmup, chua crossover
+            (16, [20.0, 20.5]),               # bull crossover -> BUY fill
+            (17, [19.0]),                     # gia tut xuong 19: CHAM stop, chua settle (D+1)
+        ]
+    )
+    assert trailing_stop.is_tracking("VCB"), (
+        "stop chua settle: trailing stop phai VAN theo doi vi the (khong duoc xoa state)"
+    )
+    assert broker.position_qty("VCB") > 0, "vi the phai giu nguyen qty"
+    assert not any(f.side == "SELL" for f in fills), (
+        f"khong duoc co SELL fill nao (chua settle), thuc te: {[f for f in fills if f.side == 'SELL']}"
+    )
+
+
+def test_stop_touch_after_settle_exits_normally():
+    """SPEC1-FIX Lỗi 1 (rao chan hoi quy): stop cham khi DA settle (D+3) ->
+    thoat binh thuong nhu cu, dung 1 SELL fill."""
+    fills, broker, trailing_stop = _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),
+            (16, [20.0, 20.5]),   # BUY fill ngay 16
+            (17, [21.0, 22.0]),   # gia len, khong cham stop
+            (18, [23.0, 24.0]),   # tiep tuc len, khong cham
+            (19, [23.5]),         # giat nhe xuong: cham stop, D+3 -> thoat
+        ]
+    )
+    sell_fills = [f for f in fills if f.side == "SELL"]
+    assert len(sell_fills) == 1, f"phai co dung 1 SELL (D+3), thuc te {len(sell_fills)}"
+    assert broker.position_qty("VCB") == 0, "D+3: vi the phai dong"
+    assert not trailing_stop.is_tracking("VCB"), "da dong vi the -> stop het theo doi"
+
+
+def test_stop_blocked_then_exits_on_d3_state_survives():
+    """SPEC1-FIX Lỗi 1 (kiem chung 3): sau khi bi chan vi chua settle (17/07,
+    gia 19 cham stop), toi ngay D+3 (19/07) stop VAN thoat duoc — chung minh
+    trang thai khong bi mat giua chung."""
+    fills, broker, _ = _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),
+            (16, [20.0, 20.5]),
+            (17, [19.0]),   # cham stop (19 <= 19.01) + chan vi chua settle (D+1)
+            (18, [22.0, 23.0, 24.0]),   # gia hoi phuc, khong cham stop
+            (19, [23.5]),   # giat nhe: cham stop lan nua, D+3 -> thoat
+        ]
+    )
+    sell_fills = [f for f in fills if f.side == "SELL"]
+    assert len(sell_fills) == 1, f"D+3 phai thoat duoc, thuc te {len(sell_fills)} SELL"
+    assert broker.position_qty("VCB") == 0
 
 
 def bar_on(day, i, close, sym="VCB"):
