@@ -6,6 +6,7 @@ import pytest
 from trading.calendar_vn import TZ
 from trading.collector.main import (
     HousekeepingState,
+    held_symbols_for_pricing,
     housekeeping_loop,
     housekeeping_tick,
 )
@@ -35,6 +36,171 @@ def cfg():
     )
 
 
+class _Pos:
+    def __init__(self, qty):
+        self.qty = qty
+
+
+async def _noop_close():
+    pass
+
+
+class _FrozenDatetime:
+    """Chỉ đóng băng datetime.now(TZ) trong module collector.main — nhánh EOD
+    so sánh giờ thật, test không được phụ thuộc vào lúc nó chạy."""
+
+    def __init__(self, frozen):
+        self._frozen = frozen
+
+    def now(self, tz=None):
+        return self._frozen
+
+
+def _storage_with_positions(by_account):
+    st = MagicMock()
+    st.read_real_positions.side_effect = lambda acc: {
+        s: _Pos(q) for s, q in by_account.get(acc, {}).items()
+    }
+    return st
+
+
+def test_held_symbols_for_pricing_unions_all_accounts(cfg):
+    """MARGIN-2: lay ma dang giu cua MOI tai khoan trong ssi_equity_accounts,
+    khong chi real_order_account — quyet dinh chon tai khoan CHUA chot, va NAV
+    duoc tinh cho tung tai khoan."""
+    from dataclasses import replace
+
+    cfg = replace(cfg, symbols=["HII"], ssi_equity_accounts=["0434221", "0434226"])
+    storage = _storage_with_positions(
+        {"0434221": {"CAP": 100}, "0434226": {"HCM": 200, "TCX": 160}}
+    )
+
+    assert held_symbols_for_pricing(storage, cfg) == ["CAP", "HCM", "TCX"]
+
+
+def test_held_symbols_for_pricing_excludes_configured_symbols(cfg):
+    """Ma trong cfg.symbols da duoc backfill day du (ke ca intraday) o luot
+    truoc — keo lai lan hai la thua."""
+    from dataclasses import replace
+
+    cfg = replace(cfg, symbols=["VCB", "HII"], ssi_equity_accounts=["0434226"])
+    storage = _storage_with_positions({"0434226": {"VCB": 1500, "CAP": 100}})
+
+    assert held_symbols_for_pricing(storage, cfg) == ["CAP"]
+
+
+def test_held_symbols_for_pricing_deduplicates_across_accounts(cfg):
+    """Cung mot ma giu o CA HAI tai khoan chi duoc keo MOT lan."""
+    from dataclasses import replace
+
+    cfg = replace(cfg, symbols=[], ssi_equity_accounts=["0434221", "0434226"])
+    storage = _storage_with_positions(
+        {"0434221": {"CAP": 100}, "0434226": {"CAP": 500}}
+    )
+
+    assert held_symbols_for_pricing(storage, cfg) == ["CAP"]
+
+
+def test_held_symbols_for_pricing_skips_zero_quantity(cfg):
+    """qty <= 0 khong phai vi the dang giu — compute_nav cung bo qua chung."""
+    from dataclasses import replace
+
+    cfg = replace(cfg, symbols=[], ssi_equity_accounts=["0434226"])
+    storage = _storage_with_positions({"0434226": {"CAP": 0, "HCM": 200}})
+
+    assert held_symbols_for_pricing(storage, cfg) == ["HCM"]
+
+
+def test_held_symbols_for_pricing_isolates_failing_account(cfg):
+    """SYNC-1: mot tai khoan doc loi khong duoc giet cac tai khoan con lai."""
+    from dataclasses import replace
+
+    cfg = replace(cfg, symbols=[], ssi_equity_accounts=["BAD", "0434226"])
+    storage = MagicMock()
+
+    def _read(acc):
+        if acc == "BAD":
+            raise RuntimeError("db blew up")
+        return {"HCM": _Pos(200)}
+
+    storage.read_real_positions.side_effect = _read
+
+    assert held_symbols_for_pricing(storage, cfg) == ["HCM"]
+
+
+async def test_eod_backfills_held_symbols_daily_only(cfg, monkeypatch):
+    """MARGIN-2: sau luot backfill cho cfg.symbols, EOD phai keo THEM gia ngay
+    cho ma dang nam giu — neu khong, NAV dinh gia chung bang bar cu dan (do
+    that 14/08: CAP/HCM/SSI/TCX bar cuoi 06/08) va tut ra ngoai cua so 5 ngay."""
+    from dataclasses import replace
+
+    import trading.collector.main as collector_main
+
+    cfg = replace(cfg, symbols=["HII"], ssi_equity_accounts=["0434226"])
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+    monkeypatch.setattr(
+        collector_main, "SSIRestClient", lambda *a, **k: MagicMock(close=_noop_close)
+    )
+
+    calls = []
+
+    async def fake_run_backfill(storage, client, symbols, today, daily_only=False):
+        calls.append((list(symbols), daily_only))
+        return {}
+
+    monkeypatch.setattr(collector_main, "run_backfill", fake_run_backfill)
+
+    storage = _storage_with_positions({"0434226": {"CAP": 100, "HCM": 200}})
+    state = HousekeepingState()
+    state.last_account_sync = datetime.now(TZ)  # bo qua nhanh account sync
+    monkeypatch.setattr(
+        collector_main,
+        "datetime",
+        _FrozenDatetime(datetime(2026, 8, 14, 15, 10, tzinfo=TZ)),
+    )
+
+    await housekeeping_tick(cfg, storage, MagicMock(), state)
+
+    assert calls == [
+        (["HII"], False),
+        (["CAP", "HCM"], True),
+    ], "phai backfill cfg.symbols nhu cu, ROI keo daily_only cho ma dang giu"
+
+
+async def test_eod_skips_second_backfill_when_nothing_held(cfg, monkeypatch):
+    """Khong giu gi -> khong goi luot thu hai (khong ton loi goi API vo ich)."""
+    from dataclasses import replace
+
+    import trading.collector.main as collector_main
+
+    cfg = replace(cfg, symbols=["HII"], ssi_equity_accounts=["0434226"])
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+    monkeypatch.setattr(
+        collector_main, "SSIRestClient", lambda *a, **k: MagicMock(close=_noop_close)
+    )
+
+    calls = []
+
+    async def fake_run_backfill(storage, client, symbols, today, daily_only=False):
+        calls.append((list(symbols), daily_only))
+        return {}
+
+    monkeypatch.setattr(collector_main, "run_backfill", fake_run_backfill)
+
+    storage = _storage_with_positions({"0434226": {}})
+    state = HousekeepingState()
+    state.last_account_sync = datetime.now(TZ)
+    monkeypatch.setattr(
+        collector_main,
+        "datetime",
+        _FrozenDatetime(datetime(2026, 8, 14, 15, 10, tzinfo=TZ)),
+    )
+
+    await housekeeping_tick(cfg, storage, MagicMock(), state)
+
+    assert calls == [(["HII"], False)]
+
+
 async def test_housekeeping_loop_survives_db_failure(cfg, monkeypatch):
     """Postgres restart vài giây không được giết collector."""
     import trading.collector.main as collector_main
@@ -55,7 +221,11 @@ async def test_housekeeping_loop_survives_db_failure(cfg, monkeypatch):
 
     assert storage.beat.call_count == 2, "loop phải chạy tiếp sau lần lỗi đầu"
     assert (
-        sum(1 for lvl, m in alerts_seen if lvl == "WARN" and "housekeeping tick failed" in m)
+        sum(
+            1
+            for lvl, m in alerts_seen
+            if lvl == "WARN" and "housekeeping tick failed" in m
+        )
         == 2
     )
 
@@ -150,7 +320,8 @@ async def test_stream_handler_skips_unparsable_message_without_raising(monkeypat
 
     wd.beat.assert_not_called()
     assert any(
-        lvl == "WARN" and "failed to parse stream message" in m for lvl, m in alerts_seen
+        lvl == "WARN" and "failed to parse stream message" in m
+        for lvl, m in alerts_seen
     )
 
 
@@ -242,6 +413,6 @@ async def test_housekeeping_loop_runs_no_tick_after_stop_event(cfg, monkeypatch)
     stop_event.set()
     await asyncio.wait_for(task, timeout=5)
 
-    assert ticks == [], (
-        f"khong duoc chay tick nao sau khi co lenh dung, thuc te {len(ticks)}"
-    )
+    assert (
+        ticks == []
+    ), f"khong duoc chay tick nao sau khi co lenh dung, thuc te {len(ticks)}"

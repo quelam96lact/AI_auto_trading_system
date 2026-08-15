@@ -20,6 +20,31 @@ from trading.storage.db import Storage
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
 
 
+def held_symbols_for_pricing(storage, cfg) -> list[str]:
+    """MARGIN-2: ma DANG NAM GIU can gia tuoi de tinh NAV, tru ma da co trong
+    cfg.symbols (luot backfill truoc da keo day du).
+
+    Doc MOI tai khoan trong cfg.ssi_equity_accounts chu khong chi
+    real_order_account: quyet dinh chon tai khoan CHUA chot, va NAV duoc tinh
+    cho tung tai khoan. SYNC-1: mot tai khoan doc loi -> WARN + bo qua, khong
+    giet cac tai khoan con lai (dung bug e20e647 da tung xoa so 0434226).
+    Sap xep de thu tu on dinh giua cac lan chay."""
+    held: set[str] = set()
+    for account_no in cfg.ssi_equity_accounts:
+        try:
+            positions = storage.read_real_positions(account_no)
+        except Exception as e:
+            alert(
+                "WARN",
+                "khong doc duoc vi the de lay ma can dinh gia, bo qua tai khoan",
+                account_no=account_no,
+                error=f"{type(e).__name__}: {e}"[:100],
+            )
+            continue
+        held.update(sym for sym, pos in positions.items() if pos.qty > 0)
+    return sorted(held - set(cfg.symbols))
+
+
 def _install_stop_handlers(stop_event: asyncio.Event) -> None:
     """Bắt SIGTERM/SIGINT -> set stop_event để các vòng lặp dừng sạch.
 
@@ -123,6 +148,17 @@ async def housekeeping_tick(cfg, storage, wd, state: HousekeepingState) -> None:
         try:
             counts = await run_backfill(storage, eod_client, cfg.symbols, now.date())
             alert("INFO", "eod backfill done", counts=counts)
+            # MARGIN-2: ma DANG NAM GIU khong nam trong cfg.symbols nen khong co
+            # duong nao cap nhat gia cho chung — do that 14/08: CAP/HCM/SSI/TCX
+            # bar cuoi 06/08, tut ra ngoai cua so 5 ngay cua compute_nav nen NAV
+            # tinh chung bang 0 va hut ~55%. Chi keo DAILY: chung khong giao
+            # dich, NAV chi can gia dong cua.
+            held = held_symbols_for_pricing(storage, cfg)
+            if held:
+                held_counts = await run_backfill(
+                    storage, eod_client, held, now.date(), daily_only=True
+                )
+                alert("INFO", "eod held-symbol pricing done", counts=held_counts)
         finally:
             await eod_client.close()
 

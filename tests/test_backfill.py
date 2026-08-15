@@ -88,6 +88,65 @@ async def test_run_backfill_continues_after_one_symbol_fails():
     assert counts.get("TCB") == 1
 
 
+class RecordingClient:
+    """Ghi lai TUNG loi goi de kiem nhanh daily_only co thuc su bo intraday."""
+
+    def __init__(self):
+        self.intraday_calls: list[str] = []
+        self.daily_calls: list[tuple[str, date, date]] = []
+
+    async def daily_ohlc(self, symbol, frm, to):
+        self.daily_calls.append((symbol, frm, to))
+        return [Bar(symbol, datetime(2026, 8, 14, tzinfo=TZ), 1, 2, 1, 2, 10)]
+
+    async def intraday_ohlc(self, symbol, frm, to):
+        self.intraday_calls.append(symbol)
+        return [Bar(symbol, datetime(2026, 8, 14, 9, 0, tzinfo=TZ), 1, 2, 1, 2, 10)]
+
+
+async def test_daily_only_skips_intraday_entirely():
+    """MARGIN-2: ma DANG NAM GIU (CAP/HCM/SSI/TCX) khong giao dich nen khong
+    can bar 5m — chi can gia dong cua de dinh gia NAV. Keo intraday cho chung
+    la lang phi loi goi API va ghi rac vao bang `bars`."""
+    st = FakeStorage(last=None)
+    client = RecordingClient()
+
+    counts = await run_backfill(
+        st, client, ["CAP"], today=date(2026, 8, 14), daily_only=True
+    )
+
+    assert client.intraday_calls == [], "daily_only=True KHONG duoc goi intraday_ohlc"
+    assert st.bars == [], "daily_only=True KHONG duoc ghi vao bang bars (5m)"
+    assert len(st.daily) == 1, "van phai ghi bar daily"
+    assert counts["CAP"] == 1, "counts dem so bar daily da ghi khi daily_only"
+
+
+async def test_daily_only_uses_fixed_window_not_last_bar_ts():
+    """`last_bar_ts` doc bang `bars` (5m) — ma khong giao dich thi VINH VIEN
+    None, nen cua so 7 ngay cua nhanh cu chi dung do tinh co. daily_only dung
+    cua so co dinh 10 ngay, khong phu thuoc bang 5m."""
+    st = FakeStorage(last=None)
+    client = RecordingClient()
+
+    await run_backfill(st, client, ["HCM"], today=date(2026, 8, 14), daily_only=True)
+
+    symbol, frm, to = client.daily_calls[0]
+    assert symbol == "HCM"
+    assert to == date(2026, 8, 14)
+    assert frm == date(2026, 8, 4), "cua so co dinh 10 ngay tinh nguoc tu today"
+
+
+async def test_default_is_not_daily_only():
+    """Hanh vi mac dinh KHONG doi: 3 caller hien tai (backfill._run,
+    main.housekeeping_tick, main.run) goi khong kem tham so nay."""
+    st = FakeStorage(last=None)
+    client = RecordingClient()
+
+    await run_backfill(st, client, ["VCB"], today=date(2026, 8, 14))
+
+    assert client.intraday_calls == ["VCB"], "mac dinh phai VAN keo intraday"
+
+
 class FakeMarketDataDaily:
     """Bat params thuc te truyen vao get_ohlc_1day_historical de kiem tra format."""
 

@@ -323,14 +323,32 @@ class SSIRestClient:
         return list(by_ts.values())
 
 
+_DAILY_ONLY_LOOKBACK_DAYS = 10
+
+
 async def run_backfill(
-    storage, client, symbols: list[str], today: date
+    storage, client, symbols: list[str], today: date, daily_only: bool = False
 ) -> dict[str, int]:
+    """daily_only=True: CHI keo bar ngay, bo hoan toan intraday (MARGIN-2).
+
+    Dung cho ma DANG NAM GIU nhung khong giao dich (CAP/HCM/SSI/TCX): NAV chi
+    can gia dong cua, keo bar 5m cho chung la lang phi loi goi va ghi rac vao
+    bang `bars`. Cua so co dinh _DAILY_ONLY_LOOKBACK_DAYS ngay thay vi
+    `last_bar_ts` — ham do doc bang `bars` (5m), ma khong giao dich thi VINH
+    VIEN None nen cua so 7 ngay cua nhanh cu chi dung do tinh co. Ghi bar la
+    UPSERT (_UPSERT_BAR) nen keo trung ngay khong sinh dong thua.
+    """
     from trading.alerts import alert
 
     counts: dict[str, int] = {}
     for sym in symbols:
         try:
+            if daily_only:
+                frm = today - timedelta(days=_DAILY_ONLY_LOOKBACK_DAYS)
+                daily = await client.daily_ohlc(sym, frm, today)
+                storage.write_daily(daily)
+                counts[sym] = len(daily)
+                continue
             last = storage.last_bar_ts(sym)
             frm = last.astimezone(TZ).date() if last else today - timedelta(days=7)
             intraday = [
