@@ -19,7 +19,12 @@ Kèm phân phối theo mã: số mã thắng/thua mua-và-giữ, trung vị chê
 CLI:
   uv run python scripts/measure_daily_breakout.py [--dsn ...] [--capital 1e9]
       [--from 2016-01-04] [--to 2026-08-13] [--limit N] [--dirty-pct 0.05]
+      [--exclude-file FILE]
 --limit: chỉ đo N mã đầu (smoke test); mặc định 0 = tất cả.
+--exclude-file: file 1 mã/dòng, loại khỏi phép đo trước khi chạy. Sinh ra bằng
+`check_price_adjustment.py --emit-exclusions FILE` (mã còn chia tách chưa điều
+chỉnh + mã quá bẩn). Đo 2026-08-15: loại 245 mã thì khoản "lãi" +33,5 tỷ biến
+mất hoàn toàn (-696 triệu) — nó nằm trọn trong số mã bị loại.
 --dirty-pct: tỷ lệ bar rác của mã >= ngưỡng này thì kết quả mã đó bị gắn cờ
 "không đáng tin".
 """

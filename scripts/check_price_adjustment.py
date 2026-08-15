@@ -21,6 +21,10 @@ Kết luận: "đã điều chỉnh" / "chưa điều chỉnh" / "không đủ b
 
 CLI:
   uv run python scripts/check_price_adjustment.py [--dsn ...] [--top 20]
+      [--dirty-pct 0.05] [--emit-exclusions FILE]
+--emit-exclusions: ghi danh sách mã KHÔNG đáng tin để đo (mã còn chia tách chưa
+điều chỉnh + mã có tỉ lệ bar rác >= --dirty-pct) ra file, 1 mã/dòng. Đưa thẳng
+vào `measure_daily_breakout.py --exclude-file`.
 """
 
 import argparse
