@@ -21,12 +21,11 @@ CHỈ ĐỌC. Token từ ssi_auth_state, không OTP mới. Không commit/push.
 
 import argparse
 import asyncio
-import os
 import sys
 from datetime import date, timedelta
-from pathlib import Path
 
 import httpx
+from _db_common import load_dotenv, resolve_dsn
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,25 +49,6 @@ CASES = [
 ]
 
 
-def _load_dotenv() -> None:
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn() -> str:
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env")
-    return dsn.replace("localhost", "127.0.0.1")
-
 
 def _fmt(d: str) -> str:
     """YYYY-MM-DD -> YYYY/MM/DD (định dạng API)."""
@@ -87,7 +67,7 @@ async def _fetch(client: httpx.AsyncClient, headers: dict, symbol: str,
 
 
 async def _run() -> None:
-    _load_dotenv()
+    load_dotenv()
     from trading.config import load_config
     from trading.storage.db import Storage
 

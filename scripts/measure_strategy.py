@@ -38,12 +38,13 @@ chỉnh + mã quá bẩn). Đo 2026-08-15: với daily_breakout, loại 245 mã 
 """
 
 import argparse
-import os
 import statistics
 import sys
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from _db_common import resolve_dsn
 
 from trading.backtest import STRATEGIES, run_backtest
 from trading.calendar_vn import TZ
@@ -61,29 +62,6 @@ DEFAULT_CAPITAL = 1_000_000_000.0
 DEFAULT_FROM = "2016-01-04"
 DEFAULT_TO = "2026-08-13"
 
-
-def _load_dotenv() -> None:
-    """uv run KHÔNG nạp .env — script tự đọc, không nhúng secret vào file."""
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn(override: str | None) -> str:
-    if override:
-        return override
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env hoặc --dsn")
-    # Windows máy này: DSN dùng localhost bị IPv6 làm mỗi kết nối chậm ~130s.
-    return dsn.replace("localhost", "127.0.0.1")
 
 
 def liquidity_spec(strategy) -> tuple[float, int] | None:

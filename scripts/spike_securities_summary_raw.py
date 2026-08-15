@@ -20,11 +20,10 @@ CLI:
 import argparse
 import asyncio
 import json
-import os
 import sys
-from pathlib import Path
 
 import httpx
+from _db_common import load_dotenv, resolve_dsn
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -33,28 +32,8 @@ if hasattr(sys.stdout, "reconfigure"):
 API_URL = "https://api.ssi.com.vn/api/v3/data/securitiesSummary"
 
 
-def _load_dotenv() -> None:
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn() -> str:
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env")
-    return dsn.replace("localhost", "127.0.0.1")
-
-
 async def _run(symbol: str, frm: str, to: str) -> None:
-    _load_dotenv()
+    load_dotenv()
     from trading.config import load_config
     from trading.storage.db import Storage
 

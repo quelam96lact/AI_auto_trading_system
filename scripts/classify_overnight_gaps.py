@@ -30,12 +30,12 @@ CLI:
 
 import argparse
 import csv
-import os
 import statistics
 import sys
 from pathlib import Path
 
 import psycopg
+from _db_common import resolve_dsn
 
 from trading.calendar_vn import TZ
 
@@ -57,27 +57,6 @@ ODD_SPLIT_MAX_K = 600
 # do định nghĩa chồng lấn thì KHÔNG tính vào phần dư.
 STRONG_SPLIT_RATIOS = {0.5, 1 / 3, 2 / 3}
 
-
-def _load_dotenv() -> None:
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn(override: str | None) -> str:
-    if override:
-        return override
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env hoặc --dsn")
-    return dsn.replace("localhost", "127.0.0.1")
 
 
 def _is_dirty(o: float, h: float, l: float, c: float) -> bool:

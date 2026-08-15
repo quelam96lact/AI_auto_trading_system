@@ -18,10 +18,10 @@ CLI:
 
 import argparse
 import asyncio
-import os
 import sys
 from datetime import date, datetime, timedelta
-from pathlib import Path
+
+from _db_common import load_dotenv, resolve_dsn
 
 from trading.calendar_vn import TZ
 from trading.config import load_config
@@ -31,25 +31,6 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-
-def _load_dotenv() -> None:
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn() -> str:
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env")
-    return dsn.replace("localhost", "127.0.0.1")
 
 
 def _db_rows(storage, symbol: str, frm: datetime, to: datetime) -> dict[date, tuple]:
@@ -87,7 +68,7 @@ def _compare_row(d: date, db: tuple | None, ssi: tuple | None) -> str:
 
 async def _run(cases: list[tuple[str, date]], window: int) -> None:
     dsn = resolve_dsn()
-    _load_dotenv()
+    load_dotenv()
     cfg = load_config("config/config.yaml")
     storage = Storage(dsn)
 

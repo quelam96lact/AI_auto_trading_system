@@ -28,13 +28,13 @@ vào `measure_strategy.py --exclude-file`.
 """
 
 import argparse
-import os
 import statistics
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import psycopg
+from _db_common import resolve_dsn
 
 from trading.calendar_vn import TZ
 
@@ -57,29 +57,6 @@ GAP_LO, GAP_HI = 0.75, 1.25
 VOL_ANOMALY_X = 5.0  # volume >= 5x trung vị = "bất thường tương ứng"
 MAX_CAL_DAYS = 60  # hơn = tạm ngừng giao dịch dài, không phải chia tách
 
-
-def _load_dotenv() -> None:
-    """uv run KHÔNG nạp .env — script tự đọc, không nhúng secret vào file."""
-    p = Path(__file__).resolve().parents[1] / ".env"
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        os.environ.setdefault(k.strip(), v.strip())
-
-
-def resolve_dsn(override: str | None) -> str:
-    if override:
-        return override
-    _load_dotenv()
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        raise SystemExit("DB_DSN chưa set — cần .env hoặc --dsn")
-    # Windows máy này: DSN dùng localhost bị IPv6 làm mỗi kết nối chậm ~130s.
-    return dsn.replace("localhost", "127.0.0.1")
 
 
 def _is_dirty(o: float, h: float, l: float, c: float) -> bool:
