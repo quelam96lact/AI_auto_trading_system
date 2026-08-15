@@ -10,15 +10,18 @@ phải sửa**, vì trong đợt này đã sai ba lần và mỗi lần đều t
 
 ## Câu trả lời ngắn
 
-1. **Dữ liệu bẩn nằm tại NGUỒN SSI, không phải ở đường ingest của ta.** Đối chiếu
+1. **Đường ingest được minh oan: DB khớp API SSI từng dòng.** Đối chiếu
    từng dòng DB vs API SSI trên 9 mẫu: mọi ngày chung khớp 100% cả OHLC lẫn volume.
    Backfill lại sẽ ghi y hệt. Cơ chế loại trừ (`--emit-exclusions` /`--exclude-file`)
    là cách xử lý đúng, không phải giải pháp tạm.
 2. **Bước nhảy xảy ra TẠI PHIÊN, không phải qua đêm.** Bar ngày t mở cửa đã ở mức
    +32% so với `close(t-1)`. Không có phiên giao dịch nào bị DB bỏ sót giữa hai dòng
    (kiểm 10/10 mẫu với cửa sổ ±10 ngày) — nên **không phải** lỗi bộ đếm ngày mở cửa.
-3. **Cơ chế chính xác vẫn chưa biết** và cần lịch sự kiện doanh nghiệp (ngày GDKHQ,
-   chuyển sàn, đấu giá) để chốt. Không suy đoán thêm.
+3. **Cơ chế đã chốt (mục cuối tài liệu): quy tắc giá tham chiếu của UPCoM**, không
+   phải sự kiện doanh nghiệp và cũng không phải dữ liệu hỏng. 214/228 mã trong phần dư
+   là UPCOM, nơi giá tham chiếu lấy theo **bình quân phiên trước** chứ không phải giá
+   đóng cửa — nên với mã khớp 2–6 lô, `close(t)/close(t-1)` vượt 25% là hợp lệ.
+   **Tiền đề của chính bộ dò bước nhảy mới là thứ sai**, không phải dữ liệu.
 
 ## Phân loại 837 bước nhảy
 
@@ -82,7 +85,55 @@ Lọc theo **thanh khoản** có căn cứ; lọc theo **giá** thì không (xem
 bảng này không so sánh trực tiếp được giữa các mã). Cơ chế loại trừ hiện có đã đủ cho
 mục đích đo.
 
+## ĐÃ CHỐT — cơ chế (B) là quy tắc giá tham chiếu của UPCoM, KHÔNG phải sự kiện doanh nghiệp
+
+Bổ sung 2026-08-15, sau khi đo `refPrice` qua `securitiesSummary` của SSI.
+
+**Không cần lịch sự kiện doanh nghiệp.** API trả `priceChangePercentage`, suy ra
+`refPrice(t) = close(t) / (1 + pct/100)`. Công thức được kiểm chứng độc lập trên một
+phiên bình thường (HNB 2016-03-30: suy ra 15.470,77 so với `close(t-1)` = 15.468,67,
+lệch 0,014%).
+
+Kết quả 8 mã có dữ liệu: **8/8 đều có `refPrice(t) ≠ close(t-1)`** — tham chiếu bị
+đặt lại. (KSV và IPA không xác định được: API trả `priceChangePercentage = null` cho
+toàn chuỗi hai mã này.)
+
+**Nhưng nguyên nhân KHÔNG phải sự kiện doanh nghiệp.** Sự kiện doanh nghiệp luôn kéo
+giá tham chiếu **xuống**; ở đây `refPrice(t)` cao hơn `close(t-1)` 15–38% ở cả 8 mã.
+Đo tiếp thì lộ ra cái đúng:
+
+```
+mã   phiên t-1: open      close     KL     refPrice(t)   ref / tb(open,close)
+HNB  17.725,902  13.676,164    200      15.729,83          0,9982
+PTH   3.972,275   3.001,274    200       3.487,51          0,9998
+TUG   3.522,435   2.641,827    200       3.081,75          1,0001
+VRG   2.053,465   1.555,655    200       1.804,45          1,0001
+```
+
+`refPrice(t)` **gần như đúng bằng giá bình quân của phiên trước**, và nằm trong khoảng
+cao–thấp của phiên trước ở 7/8 mã.
+
+Và mảnh ghép cuối: **8/8 mã này đều thuộc UPCOM**, còn trong toàn bộ phần dư 422 thì
+**214/228 mã (94%) là UPCOM** (10 HOSE, 4 HNX).
+
+UPCoM lấy giá tham chiếu là **bình quân gia quyền của phiên liền trước**, không phải giá
+đóng cửa phiên trước như HOSE/HNX. Với mã chỉ khớp 2–6 lô, giá bình quân nằm rất xa giá
+đóng cửa, nên biên độ ±15% của phiên sau được neo ở một mức khác hẳn — và
+`close(t)/close(t-1)` vượt 25% **hoàn toàn hợp lệ, không cần bất kỳ sự kiện nào**.
+
+### Hệ quả: 422 bar này KHÔNG bẩn
+
+Tiền đề của cả bộ dò bước nhảy — *"biên độ tối đa ±15% nên một phiên không thể nhảy
+25%"* — **sai với UPCoM**, vì biên độ ở đó không neo vào giá đóng cửa phiên trước. Dữ
+liệu đúng; phép đo của chúng ta mới là thứ sai.
+
+Vẫn nên loại các mã này khi đo chiến lược, nhưng **vì lý do khác**: chúng khớp 2–6 lô
+một phiên, tức là không giao dịch được, chứ không phải vì dữ liệu hỏng.
+
+Lưu ý về hệ số: tỉ lệ đo được (1,15–1,38) là giữa hai giá **đã back-adjust**, nên không
+đọc nó như hệ số điều chỉnh thô của bất kỳ sự kiện nào.
+
 ## Còn mở
 
-Cơ chế (B) cụ thể. Bước tiếp rẻ nhất nếu muốn chốt: lấy lịch sự kiện doanh nghiệp
-(ngày GDKHQ / chuyển sàn) cho ~10 mã trên rồi đối chiếu ngày nhảy. Chưa làm.
+KSV và IPA (đều HNX) chưa xác định được vì API không trả `priceChangePercentage`. Hai
+mã trên 228 — không đáng đào tiếp trừ khi có lý do khác.
