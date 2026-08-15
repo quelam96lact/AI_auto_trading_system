@@ -5,6 +5,7 @@ from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
+from trading.strategies.octopus_pullback import OctopusPullbackStrategy
 from trading.strategies.sma_cross import SmaCrossStrategy
 from trading.trailing_stop import TrailingStopManager
 
@@ -157,6 +158,7 @@ from trading.storage.db import Storage
 STRATEGIES = {
     "sma_cross": lambda: SmaCrossStrategy(),
     "daily_breakout": lambda: DailyBreakoutStrategy(),
+    "octopus_pullback": lambda: OctopusPullbackStrategy(),
 }
 
 # (bang_nguon, ham_resample). Khung noi ngay tinh tu bar 5m trong `bars`;
