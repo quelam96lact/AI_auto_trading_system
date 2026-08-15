@@ -92,6 +92,8 @@ có phải tính chất bền không, hay chỉ là hệ quả của việc giao
 - Đối đầu 3 mã: `uv run python -m trading.backtest --strategy <tên> --symbols VCB,HPG,TCB
   --from 2016-01-04 --to 2026-08-13 --tf 1d --capital 1000000000`
   (`sma_cross` đã bị gỡ khỏi `STRATEGIES` nên phải gọi trực tiếp `SmaCrossStrategy()`).
-- Diện rộng: `scripts/measure_daily_breakout.py`, `scripts/measure_octopus.py`. Với
-  `sma_cross` chạy một lần bằng script tạm cùng giao thức (mỗi mã một `run_backtest()`
-  riêng, vốn 1e9, cộng dồn) — không thêm script vào repo cho một chiến lược đã bỏ.
+- Diện rộng: `scripts/measure_strategy.py --strategy <tên>` (gộp từ hai script
+  `measure_daily_breakout.py` + `measure_octopus.py`, kiểm chứng tái lập đúng số của cả
+  hai). Với `sma_cross` chạy một lần bằng script tạm cùng giao thức (mỗi mã một
+  `run_backtest()` riêng, vốn 1e9, cộng dồn) — không thêm script vào repo, và nay
+  `sma_cross` cũng không còn trong `STRATEGIES` nên không chạy được qua script này.

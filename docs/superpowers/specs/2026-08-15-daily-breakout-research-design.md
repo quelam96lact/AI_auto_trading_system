@@ -148,7 +148,7 @@ không phải 3 mã. Mục đích là đủ số lệnh để kết luận, KHÔ
   >
   > **Cách dùng:** đừng vứt cả bảng — loại đúng các mã hỏng.
   > `--emit-exclusions FILE` ghi ra 245 mã không đáng tin (49 chia tách chưa điều
-  > chỉnh + 209 mã có >=5% bar rác), `measure_daily_breakout.py --exclude-file FILE`
+  > chỉnh + 209 mã có >=5% bar rác), `measure_strategy.py --exclude-file FILE`
   > loại chúng trước khi đo.
   >
   > Còn mở, ghi lại chứ không giả vờ đã giải quyết: **837 bước nhảy >25% trên 367

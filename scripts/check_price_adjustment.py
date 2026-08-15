@@ -24,7 +24,7 @@ CLI:
       [--dirty-pct 0.05] [--emit-exclusions FILE]
 --emit-exclusions: ghi danh sách mã KHÔNG đáng tin để đo (mã còn chia tách chưa
 điều chỉnh + mã có tỉ lệ bar rác >= --dirty-pct) ra file, 1 mã/dòng. Đưa thẳng
-vào `measure_daily_breakout.py --exclude-file`.
+vào `measure_strategy.py --exclude-file`.
 """
 
 import argparse
