@@ -38,6 +38,13 @@ from trading.storage.db import Storage
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
 from trading.trailing_stop import TrailingStopManager
 
+# Console/redirect tren Windows mac dinh cp1252: print tieng Viet nem
+# UnicodeEncodeError SAU KHI da do xong toan bo 1.306 ma (do that
+# 2026-08-15 — mat sach ket qua o dong print dau tien cua bao cao).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DEFAULT_CAPITAL = 1_000_000_000.0
 DEFAULT_FROM = "2016-01-04"
 DEFAULT_TO = "2026-08-13"
@@ -102,6 +109,9 @@ def main() -> None:
     ap.add_argument("--to", dest="to", default=DEFAULT_TO, help="YYYY-MM-DD")
     ap.add_argument("--limit", type=int, default=0, help="0 = tất cả mã")
     ap.add_argument("--dirty-pct", type=float, default=0.05)
+    ap.add_argument("--exclude-file", default=None,
+                    help="file 1 ma/dong — loai khoi phep do (xem "
+                         "check_price_adjustment.py --emit-exclusions)")
     args = ap.parse_args()
     dsn = resolve_dsn(args.dsn)
 
@@ -113,6 +123,14 @@ def main() -> None:
         symbols = [r[0] for r in c.execute(
             "SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol"
         )]
+    excluded: set[str] = set()
+    if args.exclude_file:
+        excluded = {
+            s.strip().upper()
+            for s in Path(args.exclude_file).read_text(encoding="utf-8").splitlines()
+            if s.strip()
+        }
+        symbols = [s for s in symbols if s.upper() not in excluded]
     if args.limit > 0:
         symbols = symbols[: args.limit]
 
@@ -142,6 +160,9 @@ def main() -> None:
     print("ĐO DIỆN RỘNG — DAILY BREAKOUT N=20/M=10, KHUNG 1D (T+2,5, có phí)")
     print(f"Kỳ đo: {args.frm} -> {args.to} | vốn MỖI MÃ: {args.capital:,.0f} | "
           f"số mã: {n}")
+    if excluded:
+        print(f"Đã LOẠI {len(excluded)} mã không đáng tin trước khi đo "
+              f"(file: {args.exclude_file})")
     print("=" * 78)
 
     print("\n[1] TỔNG PNL — CHIẾN LƯỢC vs MUA-VÀ-GIỮ (cùng mã, cùng kỳ, cùng vốn, cùng phí)")

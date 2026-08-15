@@ -124,6 +124,36 @@ không phải 3 mã. Mục đích là đủ số lệnh để kết luận, KHÔ
   phải bằng chứng đủ mạnh. Nếu chưa điều chỉnh, breakout sẽ sinh tín hiệu giả tại
   các ngày chia tách. **Cần kiểm trước khi tin kết quả** — đây là câu hỏi mở, ghi
   lại chứ không giả vờ đã giải quyết.
+
+  > **ĐÃ KIỂM — 2026-08-15, `scripts/check_price_adjustment.py`.** Câu trả lời là
+  > **ĐÃ điều chỉnh, nhưng KHÔNG trọn vẹn.**
+  >
+  > Bằng chứng trực tiếp: **69,4% bar (2.012.464/2.897.911) có giá KHÔNG tròn bước
+  > giá sàn**, 1.108/1.551 mã có >=50% bar giá phân số. Sàn VN yết theo bước
+  > 10/50/100 đồng, nên `close = 12657.375` (VCB 2016-01-04) chỉ có thể sinh ra từ
+  > hệ số back-adjust. Giá thô sẽ tròn.
+  >
+  > Phần chưa trọn vẹn: **51 bước nhảy tỉ lệ chia tách trên 49 mã** vẫn còn nguyên
+  > sau khi đã loại bar không khớp lệnh (vd ACC 2022-01-05: 37.156 -> 18.602, khối
+  > lượng 510k và 203k hai bên — chia tách thật, chưa điều chỉnh).
+  >
+  > **ĐÍNH CHÍNH lần đo đầu (bản báo cáo nói "CHƯA điều chỉnh", 233 sự kiện/129
+  > mã) — SAI.** Phần lớn số đó là cổ phiếu chết có `volume = 0` một hoặc cả hai
+  > bên (SD8: 1.200 đứng im volume 0 suốt 5 phiên rồi bước xuống 800). Bar volume 0
+  > là **giá tham chiếu treo, không phải giá thị trường** — bước nhảy giữa hai giá
+  > như vậy không chứng minh được gì. Bộ lọc volume cũ không bắt được vì nó so với
+  > volume TRUNG VỊ của chính mã đó, mà mã chết có trung vị cũng bằng 0 -> tỉ lệ
+  > `None` -> lọt qua như "volume bình thường". Sửa bằng cách bắt buộc CÓ khớp lệnh
+  > cả hai bên: 17.297 sự kiện bị phân loại lại, bằng chứng còn 233 -> 51.
+  >
+  > **Cách dùng:** đừng vứt cả bảng — loại đúng các mã hỏng.
+  > `--emit-exclusions FILE` ghi ra 245 mã không đáng tin (49 chia tách chưa điều
+  > chỉnh + 209 mã có >=5% bar rác), `measure_daily_breakout.py --exclude-file FILE`
+  > loại chúng trước khi đo.
+  >
+  > Còn mở, ghi lại chứ không giả vờ đã giải quyết: **837 bước nhảy >25% trên 367
+  > mã** không khớp tỉ lệ chia tách nào và CÓ khớp lệnh hai bên. Nghi dữ liệu
+  > backfill hỏng, chưa truy được nguồn.
 - Quy ước settle D+3 là cách làm tròn thận trọng của T+2,5. Nếu SSI thực tế cho
   bán sớm hơn, phép đo sẽ hơi bi quan — chấp nhận được, vì sai theo hướng an toàn.
 
