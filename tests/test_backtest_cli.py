@@ -39,6 +39,10 @@ def test_cli_registry_has_sma_cross():
     assert "sma_cross" in STRATEGIES
 
 
+def test_cli_registry_has_daily_breakout():
+    assert "daily_breakout" in STRATEGIES
+
+
 def test_read_resample_replay_is_deterministic_from_real_db(storage):
     _seed_bars(storage, n=25)
     frm = datetime(2026, 7, 1, tzinfo=TZ)

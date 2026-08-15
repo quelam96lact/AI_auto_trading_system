@@ -4,6 +4,7 @@ from trading.broker import Fill
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
+from trading.strategies.daily_breakout import DailyBreakoutStrategy
 from trading.strategies.sma_cross import SmaCrossStrategy
 from trading.trailing_stop import TrailingStopManager
 
@@ -153,7 +154,10 @@ from trading.resample import (
 )
 from trading.storage.db import Storage
 
-STRATEGIES = {"sma_cross": lambda: SmaCrossStrategy()}
+STRATEGIES = {
+    "sma_cross": lambda: SmaCrossStrategy(),
+    "daily_breakout": lambda: DailyBreakoutStrategy(),
+}
 
 # (bang_nguon, ham_resample). Khung noi ngay tinh tu bar 5m trong `bars`;
 # 1d/1w/1M tinh tu `bars_daily`. Xem plan 2026-08-09-multi-timeframe-data.md.
