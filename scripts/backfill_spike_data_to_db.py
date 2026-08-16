@@ -9,10 +9,11 @@ Không gọi SSI API, không sửa code production.
 """
 
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from _db_common import resolve_dsn
 
 from trading.calendar_vn import TZ
 from trading.models import Bar
@@ -107,7 +108,7 @@ def _process_file(storage: Storage, path: Path) -> None:
 
 
 def main() -> None:
-    dsn = os.environ["DB_DSN"]
+    dsn = resolve_dsn()
     storage = Storage(dsn)
 
     for path in SPIKE_FILES:

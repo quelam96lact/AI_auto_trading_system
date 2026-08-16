@@ -12,9 +12,10 @@ cau noi duy nhat giua 2 noi luu token (Phase 4, xem PLAN_PHASE4_E2E.md).
 """
 
 import json
-import os
 from pathlib import Path
 from urllib.parse import urlparse
+
+from _db_common import resolve_dsn
 
 from trading.storage.db import Storage
 
@@ -22,14 +23,7 @@ TOKEN_FILE = Path(__file__).parent / ".ssi_sdk_token.json"
 
 
 def main() -> None:
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        print(
-            "Thieu bien env DB_DSN (vi du: "
-            "postgresql://user:pass@127.0.0.1:5432/trading). "
-            "Khong doc tu YAML de tranh phu thuoc 6 bien SSI_* khong can thiet."
-        )
-        raise SystemExit(1)
+    dsn = resolve_dsn()
 
     if not TOKEN_FILE.exists():
         print(
