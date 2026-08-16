@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass, field
 
 from trading.broker import Fill
@@ -5,7 +6,10 @@ from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
-from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+from trading.strategies.octopus_pullback import (
+    OctopusPullbackStrategy,
+    liquidity_avg_before,
+)
 from trading.strategy import Strategy
 from trading.trailing_stop import TrailingStopManager
 
@@ -29,6 +33,27 @@ class BacktestReport:
 def _is_dirty(bar: Bar) -> bool:
     """SPEC-1c: bar rac = co open/high/low/close <= 0."""
     return bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0
+
+
+def ever_liquid(bars: list[Bar], threshold: float, window: int) -> bool:
+    """Mã có từng đủ thanh khoản chưa: >= 1 bar mà rolling-`window` (KHÔNG tính
+    bar hiện tại) của close*volume >= threshold.
+
+    MỘT NGUỒN SỰ THẬT với OctopusPullbackStrategy._liquidity_ok (2026-08-16):
+    bar rác (OHLC<=0) bị loại HẲN khỏi cửa sổ, không bao giờ được append — đúng
+    hành vi strategy, nơi run_backtest đã lọc bar rác TRƯỚC khi strategy nhìn
+    thấy. Bản cũ của hàm này (trong scripts/measure_strategy.py) append cả bar
+    rác vào deque rồi mới continue, nên bình quân cửa sổ bị kéo lệch. Cửa sổ
+    tính qua liquidity_avg_before — cùng hàm lõi strategy dùng."""
+    vals: deque = deque(maxlen=window + 1)
+    for b in bars:
+        if _is_dirty(b):
+            continue  # bar rác KHÔNG vào cửa sổ — bar rác không phải phiên thật
+        vals.append(b.close * b.volume)
+        avg = liquidity_avg_before(list(vals), window)
+        if avg is not None and avg >= threshold:
+            return True
+    return False
 
 
 def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rate: float, slippage_bps: float) -> float:

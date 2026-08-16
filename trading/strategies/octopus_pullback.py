@@ -46,6 +46,19 @@ from trading.strategy import Context, Signal
 Crossover = Literal["bull", "bear"]
 
 
+def liquidity_avg_before(values: list[float], window: int) -> float | None:
+    """Bình quân `window` phiên TRƯỚC phần tử cuối (phần tử cuối = bar hiện tại
+    vừa append — bị loại). None nếu chưa đủ window+1 phần tử (không đoán).
+
+    MỘT NGUỒN SỰ THẬT cho công thức cửa sổ thanh khoản: strategy
+    (_liquidity_ok) và phép đo diện rộng (ever_liquid) cùng gọi hàm này, để
+    không bao giờ lệch nhau về hình dạng cửa sổ nữa (task 2026-08-16: bản cũ
+    của ever_liquid để bar rác lọt vào cửa sổ, kéo bình quân lệch đi)."""
+    if len(values) < window + 1:
+        return None
+    return sum(values[:window]) / window
+
+
 class OctopusPullbackStrategy:
     def __init__(
         self,
@@ -110,12 +123,13 @@ class OctopusPullbackStrategy:
 
     def _liquidity_ok(self, symbol: str) -> bool:
         """Bình quân gia_tri_gd `liquidity_window` phiên TRƯỚC bar hiện tại
-        (phần tử cuối deque là bar hiện tại vừa append — bị loại)."""
+        (phần tử cuối deque là bar hiện tại vừa append — bị loại). Gọi
+        liquidity_avg_before — một nguồn chung với ever_liquid (đo diện rộng)."""
         vals = self._values.get(symbol)
-        if not vals or len(vals) < self.liquidity_window + 1:
+        if not vals:
             return False
-        prior = list(vals)[: self.liquidity_window]
-        return sum(prior) / self.liquidity_window >= self.min_avg_value_20
+        avg = liquidity_avg_before(list(vals), self.liquidity_window)
+        return avg is not None and avg >= self.min_avg_value_20
 
     def compute_crossover(self, bar: Bar) -> Crossover | None:
         """Cập nhật state (CHỈ gọi đúng 1 lần/bar/symbol), trả về "bull" khi

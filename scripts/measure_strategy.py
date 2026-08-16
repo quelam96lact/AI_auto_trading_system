@@ -40,13 +40,12 @@ chỉnh + mã quá bẩn). Đo 2026-08-15: với daily_breakout, loại 245 mã 
 import argparse
 import statistics
 import sys
-from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from _db_common import resolve_dsn
 
-from trading.backtest import STRATEGIES, run_backtest
+from trading.backtest import STRATEGIES, ever_liquid, run_backtest
 from trading.calendar_vn import TZ
 from trading.risk import RiskManager
 from trading.storage.db import Storage
@@ -71,26 +70,6 @@ def liquidity_spec(strategy) -> tuple[float, int] | None:
     if threshold is None or window is None:
         return None
     return float(threshold), int(window)
-
-
-def ever_liquid(bars, threshold: float, window: int) -> bool:
-    """Mã có từng đủ thanh khoản chưa: >= 1 bar mà rolling-`window` (KHÔNG tính
-    bar hiện tại) của close*volume >= `threshold`. Cùng công thức với strategy."""
-    vals: deque = deque(maxlen=window)
-    for b in bars:
-        if (
-            b.open <= 0
-            or b.high <= 0
-            or b.low <= 0
-            or b.close <= 0
-            or len(vals) < window
-        ):
-            vals.append(b.close * b.volume)
-            continue
-        if sum(vals) / window >= threshold:
-            return True
-        vals.append(b.close * b.volume)
-    return False
 
 
 def measure_one(
