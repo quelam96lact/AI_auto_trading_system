@@ -22,11 +22,11 @@ jobs:
       - name: Install deps
         run: uv sync --extra dev --frozen
 
-      # Chi lint trading/ va tests/. scripts/ con 8 loi pre-existing da duoc
-      # ghi nhan co chu dich (docs/superpowers/specs/2026-08-08-fix-preexisting-ruff-findings-design.md);
-      # them scripts/ vao day se lam CI do vi ly do khong lien quan.
+      # scripts/ nam trong pham vi lint tu 2026-08-18: 8 loi pre-existing da
+      # duoc don. scripts/ chua confirm_real_order.py va heartbeat_check.py
+      # (dead-man's switch) nen de ngoai lint la de ho dung cho quan trong nhat.
       - name: Ruff
-        run: uv run ruff check trading tests
+        run: uv run ruff check trading tests scripts
 
       # Bo qua test integration: chung can Postgres/NATS that dang chay.
       - name: Pytest

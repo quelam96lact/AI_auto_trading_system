@@ -12,11 +12,10 @@ import sys
 import traceback
 from datetime import datetime
 
+# 2 import dưới chỉ tham chiếu class/enum, không có I/O — dry-run (real_trading_enabled=false)
+# không thực sự kết nối SSI dù các symbol này được import ở module level.
 from ssi_sdk import AsyncTrading
 from ssi_sdk.enums import OrderSide
-
-# 2 import trên chỉ tham chiếu class/enum, không có I/O — dry-run (real_trading_enabled=false)
-# không thực sự kết nối SSI dù các symbol này được import ở module level.
 
 from trading.alerts import alert
 from trading.calendar_vn import TZ

@@ -21,10 +21,12 @@ Cần env SSI_API_KEY, SSI_API_SECRET.
 import base64
 import dataclasses
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from _ssi_spike_common import make_auth
+
+from trading.calendar_vn import TZ
 
 ACCOUNT_NO = "0434228"
 INDEX_NAME = "VN30"
@@ -189,7 +191,7 @@ async def find_front_month_contract(data) -> str | None:
         front = preferred
         print(f"\n=> Mã hợp đồng VN30 front-month chọn (ưu tiên UI): {front}")
     else:
-        today = date.today()
+        today = datetime.now(TZ).date()
 
         def _maturity_distance(record: dict) -> float:
             maturity = _parse_date(record.get("maturityDate"))
@@ -212,7 +214,7 @@ async def find_front_month_contract(data) -> str | None:
             "symbol": front,
             "index": INDEX_NAME,
             "candidates": verified,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )
     print(f"Đã lưu → {CONTRACT_OUT}")

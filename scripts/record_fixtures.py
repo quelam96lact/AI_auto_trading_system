@@ -22,29 +22,33 @@ class _Cfg:  # đúng attrs SDK yêu cầu (xác minh từ fc_md_client.py/fc_md
 
 
 def record_stream(seconds: int = 180, channel: str = "B:VCB-TCB-HPG") -> None:
-    from ssi_fc_data.fc_md_stream import MarketDataStream  # đã xác minh Step 1
     from ssi_fc_data.fc_md_client import MarketDataClient
+    from ssi_fc_data.fc_md_stream import MarketDataStream  # đã xác minh Step 1
 
-    out_b = open("tests/fixtures/ssi_b_messages.jsonl", "a", encoding="utf-8")
-    out_mi = open("tests/fixtures/ssi_mi_messages.jsonl", "a", encoding="utf-8")
+    # with: dam bao flush/dong file khi stream dung hoac nem loi - truoc day hai
+    # handle nay khong bao gio duoc dong, fixture mat dong cuoi neu thoat dot ngot.
+    with (
+        open("tests/fixtures/ssi_b_messages.jsonl", "a", encoding="utf-8") as out_b,
+        open("tests/fixtures/ssi_mi_messages.jsonl", "a", encoding="utf-8") as out_mi,
+    ):
 
-    def on_message(msg):  # SDK đã json.loads → msg là dict
-        line = json.dumps(msg, ensure_ascii=False, default=str)
-        dt = str(msg.get("DataType", msg.get("datatype", ""))) if isinstance(msg, dict) else ""
-        (out_mi if dt.upper() == "MI" else out_b).write(line + "\n")
+        def on_message(msg):  # SDK đã json.loads → msg là dict
+            line = json.dumps(msg, ensure_ascii=False, default=str)
+            dt = str(msg.get("DataType", msg.get("datatype", ""))) if isinstance(msg, dict) else ""
+            (out_mi if dt.upper() == "MI" else out_b).write(line + "\n")
 
-    def on_error(err):
-        print("ERROR:", err, file=sys.stderr)
+        def on_error(err):
+            print("ERROR:", err, file=sys.stderr)
 
-    def on_close():
-        print("STREAM CLOSED", file=sys.stderr)
+        def on_close():
+            print("STREAM CLOSED", file=sys.stderr)
 
-    cfg = _Cfg()
-    stream = MarketDataStream(cfg, MarketDataClient(cfg), on_close=on_close)
-    # Kênh MI: SDK không nêu format; thử "MI:VNINDEX" qua --channel và ghi kết quả vào findings
-    stream.start(on_message, on_error, channel)
-    # start() non-blocking (đã xác minh từ signalr/transports/_transport.py) → giữ tiến trình:
-    time.sleep(seconds)
+        cfg = _Cfg()
+        stream = MarketDataStream(cfg, MarketDataClient(cfg), on_close=on_close)
+        # Kênh MI: SDK không nêu format; thử "MI:VNINDEX" qua --channel và ghi kết quả vào findings
+        stream.start(on_message, on_error, channel)
+        # start() non-blocking (đã xác minh từ signalr/transports/_transport.py) → giữ tiến trình:
+        time.sleep(seconds)
 
 
 def record_rest() -> None:

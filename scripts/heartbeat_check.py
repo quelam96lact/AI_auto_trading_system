@@ -21,10 +21,12 @@ import psycopg
 import yaml
 
 from trading.calendar_vn import TZ, is_trading_time
-from trading.engine.main import CAPITAL  # LEDGER-1: import hang so tu trading/ —
+
+# LEDGER-1: import hang so tu trading/ —
 # da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
 # storage/nats nam trong ham). KHONG chep so sang day (hai noi lech = bao lao
 # mai mai hoac im mai mai).
+from trading.engine.main import CAPITAL
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 

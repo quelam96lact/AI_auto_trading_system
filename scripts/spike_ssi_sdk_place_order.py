@@ -37,6 +37,8 @@ from pathlib import Path
 
 from _ssi_spike_common import make_auth
 
+from trading.calendar_vn import TZ
+
 MAX_BUY_SELL_OUT = Path(__file__).parent / ".spike_max_buy_sell.json"
 PLACE_OUT = Path(__file__).parent / ".spike_place_order.json"
 CANCEL_OUT = Path(__file__).parent / ".spike_cancel_order.json"
@@ -84,7 +86,7 @@ async def main() -> None:
         f"\nBước 2 — lấy giá đóng cửa gần nhất của {symbol} (chỉ đọc, qua AsyncData)..."
     )
     data = AsyncData(auth)
-    today = datetime.now().date()
+    today = datetime.now(TZ).date()
     rows = await data.market_data.get_ohlc_1day_historical(
         symbol,
         (today - timedelta(days=10)).strftime("%Y/%m/%d"),
