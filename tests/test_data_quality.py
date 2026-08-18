@@ -3,6 +3,9 @@ from datetime import date
 import pytest
 
 from trading.data_quality import (
+    SymbolCompleteness,
+    classify_missing_dates,
+    compute_daily_missing_counts,
     evaluate_symbol_completeness,
     find_missing_dates,
     infer_trading_sessions,
@@ -308,5 +311,181 @@ def test_daily_data_check_main_config_error(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
+
+
+def test_classify_missing_dates_isolated_vs_correlated():
+    # 3 ngày thiếu của 1 mã:
+    # Day 1: thị trường vắng 5 mã (<100) -> NO_TRADING
+    # Day 2: thị trường vắng 200 mã (>=100) -> COLLECTION_ERROR
+    # Day 3: thị trường vắng đúng 100 mã (>=100) -> COLLECTION_ERROR
+    # Day 4: thị trường vắng 99 mã (<100) -> NO_TRADING
+    session_missing_counts = {
+        date(2026, 1, 5): 5,
+        date(2026, 1, 6): 200,
+        date(2026, 1, 7): 100,
+        date(2026, 1, 8): 99,
+    }
+    missing_dates = [
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+        date(2026, 1, 7),
+        date(2026, 1, 8),
+    ]
+    no_trading, collection_error = classify_missing_dates(
+        missing_dates=missing_dates,
+        session_missing_counts=session_missing_counts,
+        threshold=100,
+    )
+    assert no_trading == [date(2026, 1, 5), date(2026, 1, 8)]
+    assert collection_error == [date(2026, 1, 6), date(2026, 1, 7)]
+
+
+def test_compute_daily_missing_counts():
+    trading_sessions = [date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)]
+    # 3 mã:
+    # A: [Jan 5, Jan 7] (in lifespan cả 3 ngày)
+    # B: [Jan 5, Jan 6] (in lifespan Jan 5, 6)
+    # C: [Jan 6, Jan 7] (in lifespan Jan 6, 7)
+    summaries = [
+        {"symbol": "A", "first_date": date(2026, 1, 5), "last_date": date(2026, 1, 7)},
+        {"symbol": "B", "first_date": date(2026, 1, 5), "last_date": date(2026, 1, 6)},
+        {"symbol": "C", "first_date": date(2026, 1, 6), "last_date": date(2026, 1, 7)},
+    ]
+    # Jan 5: in_lifespan = A, B (2). present = 2 -> missing = 0
+    # Jan 6: in_lifespan = A, B, C (3). present = 1 -> missing = 2
+    # Jan 7: in_lifespan = A, C (2). present = 1 -> missing = 1
+    daily_counts = {
+        date(2026, 1, 5): 2,
+        date(2026, 1, 6): 1,
+        date(2026, 1, 7): 1,
+    }
+    missing_map = compute_daily_missing_counts(
+        summaries=summaries,
+        trading_sessions=trading_sessions,
+        daily_counts=daily_counts,
+    )
+    assert missing_map[date(2026, 1, 5)] == 0
+    assert missing_map[date(2026, 1, 6)] == 2
+    assert missing_map[date(2026, 1, 7)] == 1
+
+
+def test_evaluate_symbol_completeness_with_gap_causes():
+    trading_sessions = [
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+        date(2026, 1, 7),
+        date(2026, 1, 8),
+        date(2026, 1, 9),
+    ]
+    # Mã X có bar ngày 5, 8, 9 (thiếu ngày 6 và 7).
+    # Ngày 6: market missing = 2 (<100) -> NO_TRADING
+    # Ngày 7: market missing = 150 (>=100) -> COLLECTION_ERROR
+    session_missing_counts = {
+        date(2026, 1, 5): 0,
+        date(2026, 1, 6): 2,
+        date(2026, 1, 7): 150,
+        date(2026, 1, 8): 0,
+        date(2026, 1, 9): 0,
+    }
+    present_dates = {date(2026, 1, 5), date(2026, 1, 8), date(2026, 1, 9)}
+    res = evaluate_symbol_completeness(
+        symbol="X",
+        first_date=date(2026, 1, 5),
+        last_date=date(2026, 1, 9),
+        total_bars=3,
+        dirty_bars=0,
+        trading_sessions=trading_sessions,
+        as_of_date=date(2026, 1, 9),
+        present_dates=present_dates,
+        session_missing_counts=session_missing_counts,
+        collection_error_threshold=100,
+    )
+    assert res.expected_in_lifespan == 5
+    assert res.missing_middle == 2
+    assert res.missing_middle_no_trading == 1
+    assert res.missing_middle_collection_error == 1
+    assert res.missing_tail == 0
+
+
+def test_evaluate_symbol_completeness_bars_beyond_last_consensus_session_never_exceeds_100_pct():
+    # Consensus trading sessions chỉ tới 2026-08-07 (5 phiên)
+    trading_sessions = [
+        date(2026, 8, 3),
+        date(2026, 8, 4),
+        date(2026, 8, 5),
+        date(2026, 8, 6),
+        date(2026, 8, 7),
+    ]
+    # Mã AAA là mã live collector ghi thêm bar ngày 2026-08-18 (tổng 6 bar > 5 phiên consensus)
+    res = evaluate_symbol_completeness(
+        symbol="AAA",
+        first_date=date(2026, 8, 3),
+        last_date=date(2026, 8, 18),
+        total_bars=6,
+        dirty_bars=0,
+        trading_sessions=trading_sessions,
+        as_of_date=date(2026, 8, 7),
+    )
+    assert res.expected_in_lifespan == 5
+    assert res.missing_middle == 0
+    assert res.missing_tail == 0
+
+
+def test_get_status_str_cause_tags():
+    from scripts.check_data_completeness import get_status_str
+
+    full = SymbolCompleteness(
+        symbol="FULL",
+        first_date=date(2026, 1, 5),
+        last_date=date(2026, 1, 7),
+        total_bars=3,
+        dirty_bars=0,
+        expected_in_lifespan=3,
+        missing_middle=0,
+        missing_tail=0,
+    )
+    assert get_status_str(full) == "FULL"
+
+    coll_err = SymbolCompleteness(
+        symbol="ERR",
+        first_date=date(2026, 1, 5),
+        last_date=date(2026, 1, 7),
+        total_bars=2,
+        dirty_bars=0,
+        expected_in_lifespan=3,
+        missing_middle=1,
+        missing_tail=0,
+        missing_middle_collection_error=1,
+    )
+    assert get_status_str(coll_err) == "COLLECTION_ERROR"
+
+    no_trade = SymbolCompleteness(
+        symbol="NOTRADE",
+        first_date=date(2026, 1, 5),
+        last_date=date(2026, 1, 7),
+        total_bars=2,
+        dirty_bars=0,
+        expected_in_lifespan=3,
+        missing_middle=1,
+        missing_tail=0,
+        missing_middle_no_trading=1,
+    )
+    assert get_status_str(no_trade) == "NO_TRADING"
+
+    mixed = SymbolCompleteness(
+        symbol="MIXED",
+        first_date=date(2026, 1, 5),
+        last_date=date(2026, 1, 9),
+        total_bars=2,
+        dirty_bars=1,
+        expected_in_lifespan=5,
+        missing_middle=2,
+        missing_tail=1,
+        missing_middle_collection_error=1,
+        missing_middle_no_trading=1,
+    )
+    assert get_status_str(mixed) == "COLLECTION_ERROR+NO_TRADING+MISSING_TAIL+DIRTY_BARS"
+
+
 
 
