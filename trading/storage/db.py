@@ -868,3 +868,79 @@ class Storage:
                 "error = EXCLUDED.error, updated_at = now()",
                 (symbol, timeframe, last_done_date, status, error),
             )
+
+    def read_daily_symbol_counts(self) -> dict[date, int]:
+        """Thống kê số lượng symbol có bar theo từng ngày (quy về Asia/Ho_Chi_Minh)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS d, "
+                "       count(DISTINCT symbol) AS n "
+                "FROM bars_daily "
+                "GROUP BY 1 ORDER BY 1"
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def read_symbol_completeness_summaries(
+        self, symbols: list[str] | None = None
+    ) -> list[dict]:
+        """Thống kê theo mã: first_date, last_date, total_bars, dirty_bars."""
+        query = (
+            "SELECT symbol, "
+            "       MIN((ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS first_date, "
+            "       MAX((ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS last_date, "
+            "       COUNT(*) AS total_bars, "
+            "       COUNT(*) FILTER (WHERE open <= 0 OR high <= 0 OR low <= 0 OR close <= 0) AS dirty_bars "
+            "FROM bars_daily "
+        )
+        params: tuple = ()
+        if symbols:
+            query += "WHERE symbol = ANY(%s) "
+            params = (list(symbols),)
+        query += "GROUP BY symbol ORDER BY symbol"
+        with self.conn() as c:
+            rows = c.execute(query, params).fetchall()
+        return [
+            {
+                "symbol": r[0],
+                "first_date": r[1],
+                "last_date": r[2],
+                "total_bars": int(r[3]),
+                "dirty_bars": int(r[4]),
+            }
+            for r in rows
+        ]
+
+    def read_symbol_present_dates(self, symbol: str) -> set[date]:
+        """Lấy danh sách các ngày có bar của 1 mã (chỉ gọi cho các mã có lỗ hổng)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date "
+                "FROM bars_daily WHERE symbol = %s ORDER BY 1",
+                (symbol,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def read_latest_bar_date(self) -> date | None:
+        """Ngày bar mới nhất trong bars_daily (quy về Asia/Ho_Chi_Minh)."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT MAX((ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) FROM bars_daily"
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def read_symbols_with_bar_on_date(
+        self, day: date, symbols: list[str] | None = None
+    ) -> set[str]:
+        """Tập các mã có bar trong 1 ngày cụ thể (quy về Asia/Ho_Chi_Minh)."""
+        query = (
+            "SELECT DISTINCT symbol FROM bars_daily "
+            "WHERE (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %s "
+        )
+        params: list = [day]
+        if symbols:
+            query += "AND symbol = ANY(%s)"
+            params.append(list(symbols))
+        with self.conn() as c:
+            rows = c.execute(query, tuple(params)).fetchall()
+        return {r[0] for r in rows}
+

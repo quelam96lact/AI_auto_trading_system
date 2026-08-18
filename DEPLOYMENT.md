@@ -201,6 +201,9 @@ sudo crontab -e
 # tiền-phiên 8:00-8:59 (cảnh báo token trước giờ mở cửa, 7700992) — lịch 9-15
 # sẽ không bao giờ gọi nhánh đó (CRON-1).
 */5 8-15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/heartbeat_check.py >> /var/log/trading-heartbeat.log 2>&1
+
+# Kiểm tra sót bar daily sau phiên giao dịch (chạy 15:30 thứ 2 - thứ 6 hàng tuần)
+30 15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/daily_data_check.py >> /var/log/trading-daily-data-check.log 2>&1
 ```
 
 Script kiểm **bốn thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
