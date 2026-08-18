@@ -1,0 +1,136 @@
+"""Kiểm tra định kỳ sau phiên: các mã is_active trong symbol_universe đã có bar daily chưa.
+
+Hợp đồng exit code (theo đúng scripts/heartbeat_check.py):
+- 0: Ổn (toàn bộ mã active đã có bar, HOẶC cả feed không có bar nào -> im lặng nhường 2A).
+- 1: Đã gửi cảnh báo Telegram (feed sống nhưng sót mã active).
+- 2: Sai cấu hình / không kết nối được DB.
+
+Phân định với heartbeat 2A:
+- 2A bắt "bar ngừng về" (toàn bộ feed chết).
+- Job này bắt "feed sống nhưng SÓT mã". Nếu 0 mã nào có bar (feed chết hoặc ngày nghỉ),
+  job này PHẢI IM LẶNG để không bắn cảnh báo trùng.
+
+CLI:
+  uv run python scripts/daily_data_check.py [--dsn ...] [--date YYYY-MM-DD]
+"""
+
+import argparse
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# Đảm bảo import được _db_common và trading
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from _db_common import resolve_dsn
+
+from trading.calendar_vn import TZ
+from trading.storage.db import Storage
+from trading.telegram import send_telegram
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Kiểm tra các mã active đã có bar daily của phiên gần nhất chưa"
+    )
+    parser.add_argument("--dsn", default=None, help="Postgres connection DSN")
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="Ngày kiểm tra (YYYY-MM-DD), mặc định: ngày hiện tại theo giờ VN",
+    )
+    return parser.parse_args()
+
+
+def evaluate_daily_completeness(
+    active_symbols: list[str],
+    present_symbols: set[str],
+) -> tuple[int, set[str], str]:
+    """Hàm thuần đánh giá trạng thái bar daily của các mã active.
+
+    Trả về: (exit_code, missing_symbols, message)
+    - exit_code 0: Không có lỗi cần cảnh báo (hoặc cả feed không có bar -> nhường 2A).
+    - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác.
+    """
+    if not active_symbols:
+        return 0, set(), "Không có mã active nào trong symbol_universe."
+
+    # Nếu toàn bộ thị trường 0 có bar nào: ngày nghỉ hoặc feed chết toàn diện (việc của 2A)
+    if not present_symbols:
+        return (
+            0,
+            set(),
+            "Không có mã nào có bar trong ngày (ngày nghỉ hoặc feed ngừng toàn diện — nhường Heartbeat 2A).",
+        )
+
+    missing = set(active_symbols) - set(present_symbols)
+    if not missing:
+        return (
+            0,
+            set(),
+            f"Đầy đủ: toàn bộ {len(active_symbols)} mã active đều đã có bar daily.",
+        )
+
+    missing_list = sorted(missing)
+    sample_missing = ", ".join(missing_list[:15])
+    if len(missing_list) > 15:
+        sample_missing += f" ... (+{len(missing_list) - 15} mã nữa)"
+
+    msg = (
+        f"⚠️ [AI Trading] CẢNH BÁO: Sót bar daily sau phiên!\n"
+        f"Tổng số mã active: {len(active_symbols)}\n"
+        f"Số mã có bar: {len(set(active_symbols) & set(present_symbols))}\n"
+        f"Số mã THIẾU bar ({len(missing)} mã): {sample_missing}"
+    )
+    return 1, missing, msg
+
+
+def main() -> None:
+    args = parse_args()
+
+    try:
+        dsn = resolve_dsn(args.dsn)
+        storage = Storage(dsn)
+    except Exception as e:
+        print(f"LỖI CẤU HÌNH / KẾT NỐI DB: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        except ValueError as e:
+            print(f"LỖI ĐỊNH DẠNG NGÀY (--date YYYY-MM-DD): {e}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        target_date = datetime.now(TZ).date()
+
+    try:
+        active_symbols = storage.read_active_universe()
+        present_symbols = storage.read_symbols_with_bar_on_date(target_date)
+    except Exception as e:
+        print(f"LỖI TRUY VẤN DB: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    code, _missing, msg = evaluate_daily_completeness(active_symbols, present_symbols)
+
+    print(f"[{target_date}] {msg}")
+
+    if code == 1:
+        try:
+            send_telegram(f"[{target_date}] {msg}")
+            print("-> Đã gửi cảnh báo qua Telegram.")
+        except Exception as e:
+            print(f"Lỗi khi gửi Telegram: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
