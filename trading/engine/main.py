@@ -113,43 +113,56 @@ async def run(
                     f"fill hoac khong co bar tu luc vao lenh — vi the nay DANG "
                     f"KHONG co trailing stop",
                 )
-    # CAP-1: vốn lệnh thật đọc SỐ DƯ THẬT từ account_balance_snapshot (chủ
-    # dự án BỎ real_order_capital khỏi config — quyết định 13/08, đã cảnh báo
-    # và ghi GO_LIVE_AUDIT). Dùng withdrawable (tiền thật dùng được), không
-    # dùng account_balance (có thể bao phần đang bị giữ — vd 0434226
-    # holdSubscription 2.5tr). Ba nhánh, KHÔNG nhánh nào im lặng: không có
-    # dòng nào -> capital=0 + CRITICAL (fail-safe: approve() từ chối MỌI lệnh,
-    # KHÔNG rơi về số dễ dãi); cũ >24h -> vẫn dùng + WARN kèm tuổi; bình
-    # thường -> INFO nêu số tiền + mốc thời gian (người vận hành phải nhìn
-    # được hệ thống đang tính rủi ro trên con số nào).
-    balance = storage.read_account_balance(cfg.real_order_account)
-    if balance is None:
+    # NAV-CI: vốn lệnh thật đọc NAV từ account_nav_snapshot (chủ dự án BỎ
+    # real_order_capital khỏi config — quyết định 13/08; và 14/08 chốt vốn rủi
+    # ro = NAV = tiền mặt + Σ(qty×giá) − nợ, KHÔNG phải withdrawable: 1% rủi
+    # ro/lệnh phải là 1% của thứ mình THỰC SỰ sở hữu, không phải 1% của thứ
+    # mình vay được. NAV do collector ghi (account_sync._sync_nav), engine chỉ
+    # đọc. Ba nhánh fail-safe của CAP-1 giữ nguyên, KHÔNG nhánh nào im lặng:
+    # không có dòng nào -> capital=0 + CRITICAL (fail-safe: approve() từ chối
+    # MỌI lệnh, KHÔNG rơi về read_account_balance cho "đỡ gắt"); cũ >24h -> vẫn
+    # dùng + WARN kèm tuổi; bình thường -> INFO nêu số tiền + mốc thời gian
+    # (người vận hành phải nhìn được hệ thống đang tính rủi ro trên con số
+    # nào). Nhánh thứ tư: unpriced_symbols không rỗng -> WARN nêu rõ mã nào
+    # (account_sync tính mã không định giá được THÀNH 0 nên NAV bị tính HỤT —
+    # hụt là an toàn nên vẫn dùng, nhưng im lặng thì không chấp nhận được).
+    nav_row = storage.read_nav(cfg.real_order_account)
+    if nav_row is None:
         real_capital = 0.0
         alert(
             "CRITICAL",
-            "khong doc duoc so du that (account_balance_snapshot khong co dong "
+            "khong doc duoc NAV (account_nav_snapshot khong co dong "
             "cho tai khoan nay) — real capital = 0, MOI lenh that bi tu choi "
-            "(fail-safe)",
+            "(fail-safe, khong roi ve account_balance_snapshot)",
             account=cfg.real_order_account,
         )
     else:
-        real_capital, balance_ts = balance
-        age_h = (datetime.now(TZ) - balance_ts).total_seconds() / 3600
+        real_capital, nav_ts, unpriced = nav_row
+        age_h = (datetime.now(TZ) - nav_ts).total_seconds() / 3600
         if age_h > 24:
             alert(
                 "WARN",
-                f"so du that cu hon 24h ({age_h:.1f}h) — van dung de tinh rui ro",
+                f"NAV cu hon 24h ({age_h:.1f}h) — van dung de tinh rui ro",
                 account=cfg.real_order_account,
-                withdrawable=real_capital,
-                ts=str(balance_ts),
+                nav=real_capital,
+                ts=str(nav_ts),
             )
         else:
             alert(
                 "INFO",
-                "so du that (withdrawable) lam real capital",
+                "NAV lam real capital",
                 account=cfg.real_order_account,
-                withdrawable=real_capital,
-                ts=str(balance_ts),
+                nav=real_capital,
+                ts=str(nav_ts),
+            )
+        if unpriced:
+            alert(
+                "WARN",
+                f"NAV tinh thieu: {len(unpriced)} ma khong dinh gia duoc (tinh 0) "
+                f"— van dung NAV nhung co the dat lenh nho hon",
+                account=cfg.real_order_account,
+                nav=real_capital,
+                unpriced=",".join(unpriced),
             )
     real_risk = RiskManager(capital=real_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
@@ -171,8 +184,8 @@ async def run(
                     f"he thong) — vi the nay DANG KHONG co trailing stop",
                 )
     # GUARD-1: kiem tra duong dat lenh that co that su co the sinh lenh BUY
-    # khong. Tran gia tri lenh = SO DU THAT * max_order_value_pct (CAP-1: doc tu
-    # account_balance_snapshot, khong con real_order_capital trong config); neu
+    # khong. Tran gia tri lenh = NAV * max_order_value_pct (NAV-CI: doc tu
+    # account_nav_snapshot, khong con real_order_capital trong config); neu
     # khong du mua noi 1 lo 100 cp cua ma re nhat trong cfg.symbols (gia dong
     # gan nhat) -> alert CRITICAL noi ro: duong lenh that INERT. CHI canh bao,
     # khong chan engine — luong paper van chay dung va van co gia tri; van de

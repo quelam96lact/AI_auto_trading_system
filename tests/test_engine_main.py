@@ -67,6 +67,19 @@ def _seed_balance(storage, withdrawable: float, ts=None) -> None:
         )
 
 
+def _seed_nav(storage, nav: float, unpriced: list[str] | None = None, ts=None) -> None:
+    """Seed account_nav_snapshot cho ACC_RTS (2026-08-18: engine lay real
+    capital tu NAV thay vi account_balance_snapshot — quyet dinh chu du an
+    14/08, noi dung task NAV-CI-CLEANUP)."""
+    ts = ts or datetime(2026, 7, 15, 15, 0, tzinfo=TZ)
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO account_nav_snapshot (account_no, ts, nav, unpriced_symbols) "
+            "VALUES (%s, %s, %s, %s)",
+            (RTS_ACCOUNT, ts, nav, unpriced or []),
+        )
+
+
 @pytest.fixture
 def storage():
     s = Storage(DSN)
@@ -84,6 +97,9 @@ def storage():
         c.execute(
             "DELETE FROM account_balance_snapshot WHERE account_no = 'ACC_RTS'"
         )  # CAP-1: tests seed so du that
+        c.execute(
+            "DELETE FROM account_nav_snapshot WHERE account_no = 'ACC_RTS'"
+        )  # NAV-CI: engine real capital doc tu bang nay tu 2026-08-18
         c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")  # WARM-1: warm-up doc bars tu DB
         c.execute("DELETE FROM bars_daily WHERE symbol = 'ENGT'")
         # WARM-1: test warmup seed ts0 = 2026-07-14 -> persist_fills ghi pnl_daily
@@ -112,6 +128,9 @@ def storage():
         c.execute(
             "DELETE FROM account_balance_snapshot WHERE account_no = 'ACC_RTS'"
         )  # CAP-1: tests seed so du that
+        c.execute(
+            "DELETE FROM account_nav_snapshot WHERE account_no = 'ACC_RTS'"
+        )  # NAV-CI: engine real capital doc tu bang nay tu 2026-08-18
         c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")  # WARM-1: warm-up doc bars tu DB
         c.execute("DELETE FROM bars_daily WHERE symbol = 'ENGT'")
         c.execute("DELETE FROM pnl_daily WHERE date IN ('2026-07-14', '2026-07-15')")
@@ -533,10 +552,10 @@ async def test_engine_alerts_warn_when_trailing_stop_cannot_restore(storage, mon
     ), f"phai alert WARN neu ro symbol va vi the khong co trailing stop, thuc te: {alerts_seen}"
 
 
-async def test_engine_alerts_critical_when_real_balance_too_small(storage, monkeypatch):
-    """GUARD-1 (CAP-1): so du that nho den muc tran gia tri lenh khong du mua
+async def test_engine_alerts_critical_when_real_nav_too_small(storage, monkeypatch):
+    """GUARD-1 (NAV-CI): NAV nho den muc tran gia tri lenh khong du mua
     1 lo 100 cp cua ma re nhat -> alert CRITICAL noi ro ca hai con so. Seed
-    account_balance_snapshot thay vi real_order_capital (da bo khoi config)."""
+    account_nav_snapshot thay vi real_order_capital (da bo khoi config)."""
     import trading.engine.main as engine_main
 
     alerts_seen = []
@@ -544,7 +563,7 @@ async def test_engine_alerts_critical_when_real_balance_too_small(storage, monke
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
 
-    _seed_balance(storage, 21459)  # tran 4.292d < 1 lo ENGT 2.200.000d
+    _seed_nav(storage, 21459)  # tran 4.292d < 1 lo ENGT 2.200.000d
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
     ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
     storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
@@ -559,8 +578,8 @@ async def test_engine_alerts_critical_when_real_balance_too_small(storage, monke
     ), f"phai alert CRITICAL noi ro tran (4.292) va gia lo re nhat (2.200.000), thuc te: {alerts_seen}"
 
 
-async def test_engine_silent_when_trading_disabled_and_balance_tiny(storage, monkeypatch):
-    """GUARD-2 (CAP-1): real_trading_enabled=False + so du nho = trang thai
+async def test_engine_silent_when_trading_disabled_and_nav_tiny(storage, monkeypatch):
+    """GUARD-2 (NAV-CI): real_trading_enabled=False + NAV nho = trang thai
     dang chay -> phai IM LANG hoan toan. Neu test nay fail nghia la ta vua
     them mot nguon canh bao rac vinh vien."""
     import trading.engine.main as engine_main
@@ -570,7 +589,7 @@ async def test_engine_silent_when_trading_disabled_and_balance_tiny(storage, mon
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
 
-    _seed_balance(storage, 21459)
+    _seed_nav(storage, 21459)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=False)
     ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
     storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
@@ -584,8 +603,8 @@ async def test_engine_silent_when_trading_disabled_and_balance_tiny(storage, mon
     )
 
 
-async def test_engine_no_critical_alert_when_balance_sufficient(storage, monkeypatch):
-    """GUARD-1 (CAP-1): so du du lon (100 trieu, tran 20 trieu > 1 lo
+async def test_engine_no_critical_alert_when_nav_sufficient(storage, monkeypatch):
+    """GUARD-1 (NAV-CI): NAV du lon (100 trieu, tran 20 trieu > 1 lo
     2.200.000) -> KHONG co alert CRITICAL — canh bao khong keu bua."""
     import trading.engine.main as engine_main
 
@@ -594,7 +613,7 @@ async def test_engine_no_critical_alert_when_balance_sufficient(storage, monkeyp
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
 
-    _seed_balance(storage, 100_000_000)
+    _seed_nav(storage, 100_000_000)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
     ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
     storage.write_bars([Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000)])
@@ -618,7 +637,7 @@ async def test_engine_skips_guard_silently_when_no_prices(storage, monkeypatch):
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
 
-    _seed_balance(storage, 21459)
+    _seed_nav(storage, 21459)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     with storage.conn() as c:
         c.execute("DELETE FROM bars WHERE symbol = 'ENGT'")
@@ -633,13 +652,14 @@ async def test_engine_skips_guard_silently_when_no_prices(storage, monkeypatch):
     )
 
 
-# ============ CAP-1: vốn lệnh thật đọc từ account_balance_snapshot ============
+# ============ CAP-1/NAV-CI: vốn lệnh thật đọc từ account_nav_snapshot ============
 
 
-async def test_engine_informs_real_balance_at_startup(storage, monkeypatch):
-    """CAP-1 A2 nhanh INFO: seed account_balance_snapshot = 5.021.459 -> engine
-    khoi dong -> alert INFO neu dung so tien + moc thoi gian (nguoi van hanh
-    phai nhin duoc he thong dang tinh rui ro tren con so nao)."""
+async def test_engine_informs_real_nav_at_startup(storage, monkeypatch):
+    """NAV-CI: seed account_nav_snapshot = 5.021.459 -> engine khoi dong ->
+    alert INFO neu dung so tien + moc thoi gian (nguoi van hanh phai nhin duoc
+    he thong dang tinh rui ro tren con so nao). NAV = capital (quyet dinh chu
+    du an 14/08), khong phai withdrawable."""
     import trading.engine.main as engine_main
 
     alerts_seen = []
@@ -647,32 +667,36 @@ async def test_engine_informs_real_balance_at_startup(storage, monkeypatch):
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
     )
 
-    ts_bal = datetime.now(TZ) - timedelta(hours=1)  # moi nhat — < 24h bat ky ngay nao
-    _seed_balance(storage, 5_021_459, ts=ts_bal)
+    ts_nav = datetime.now(TZ) - timedelta(hours=1)  # moi nhat — < 24h bat ky ngay nao
+    _seed_nav(storage, 5_021_459, ts=ts_nav)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     await _publish(cfg, make_bars([10]))
     await run(cfg, max_messages=1)
 
     assert any(
         level == "INFO"
-        and "withdrawable" in msg
-        and f.get("withdrawable") == 5_021_459
-        and datetime.fromisoformat(f.get("ts", "")).astimezone(TZ) == ts_bal
+        and "NAV" in msg
+        and f.get("nav") == 5_021_459
+        and datetime.fromisoformat(f.get("ts", "")).astimezone(TZ) == ts_nav
         for level, msg, f in alerts_seen
-    ), f"phai INFO neu so du that + moc thoi gian, thuc te: {alerts_seen}"
+    ), f"phai INFO neu NAV that + moc thoi gian, thuc te: {alerts_seen}"
 
 
-async def test_engine_critical_and_blocks_buy_when_no_balance(storage, monkeypatch):
-    """CAP-1 A2 nhanh fail-safe: khong co dong account_balance_snapshot nao ->
-    CRITICAL + real capital = 0 -> MOI lenh that bi approve() tu choi (khong
-    tao pending). RED bat buoc: doi fallback thanh so de dai -> test phai FAIL."""
+async def test_engine_critical_and_blocks_buy_when_no_nav(storage, monkeypatch):
+    """NAV-CI fail-safe: khong co dong account_nav_snapshot nao -> CRITICAL +
+    real capital = 0 -> MOI lenh that bi approve() tu choi (khong tao pending).
+    KHONG duoc roi ve read_account_balance cho 'do gat'. RED bat buoc: doi
+    fallback thanh so de dai -> test phai FAIL."""
     import trading.engine.main as engine_main
 
     alerts_seen = []
     monkeypatch.setattr(
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
-    # KHONG seed balance — bang rong
+    # KHONG seed nav — bang rong. NHUNG seed balance LON: neu ai do cai
+    # fallback ve read_account_balance thi capital se to va sinh lenh —
+    # day la cai bay bat dung hanh vi bi cam.
+    _seed_balance(storage, 500_000_000.0)
 
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     bars = make_bars([10] * 20 + [20] * 5)  # crossover bull o bar 21
@@ -680,9 +704,9 @@ async def test_engine_critical_and_blocks_buy_when_no_balance(storage, monkeypat
     await run(cfg, max_messages=len(bars))
 
     assert any(
-        level == "CRITICAL" and "khong doc duoc so du that" in msg
+        level == "CRITICAL" and "khong doc duoc NAV" in msg
         for level, msg in alerts_seen
-    ), f"phai CRITICAL khi khong doc duoc so du, thuc te: {alerts_seen}"
+    ), f"phai CRITICAL khi khong doc duoc NAV, thuc te: {alerts_seen}"
     with storage.conn() as c:
         n = c.execute(
             "SELECT count(*) FROM pending_real_orders WHERE symbol = 'ENGT'"
@@ -690,9 +714,9 @@ async def test_engine_critical_and_blocks_buy_when_no_balance(storage, monkeypat
     assert n == 0, f"capital=0 (fail-safe) -> MOI lenh that bi tu choi, thuc te pending={n}"
 
 
-async def test_engine_warns_when_balance_stale(storage, monkeypatch):
-    """CAP-1 A2 nhanh WARN: dong so du cu hon 24h -> VAN dung nhung alert
-    WARN kem tuoi cua du lieu (khong im lang ve du lieu cu)."""
+async def test_engine_warns_when_nav_stale(storage, monkeypatch):
+    """NAV-CI WARN: dong NAV cu hon 24h -> VAN dung nhung alert WARN kem tuoi
+    cua du lieu (khong im lang ve du lieu cu)."""
     import trading.engine.main as engine_main
 
     alerts_seen = []
@@ -701,7 +725,7 @@ async def test_engine_warns_when_balance_stale(storage, monkeypatch):
     )
 
     stale_ts = datetime(2026, 7, 13, 9, 0, tzinfo=TZ)  # 2 ngay truoc test day
-    _seed_balance(storage, 5_021_459, ts=stale_ts)
+    _seed_nav(storage, 5_021_459, ts=stale_ts)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     await _publish(cfg, make_bars([10]))
     await run(cfg, max_messages=1)
@@ -710,6 +734,36 @@ async def test_engine_warns_when_balance_stale(storage, monkeypatch):
         level == "WARN" and "cu hon 24h" in msg and "h)" in msg
         for level, msg in alerts_seen
     ), f"phai WARN kem tuoi du lieu cu, thuc te: {alerts_seen}"
+
+
+async def test_engine_warns_when_nav_unpriced(storage, monkeypatch):
+    """NAV-CI nhanh thu tu: unpriced_symbols khong rong -> VAN dung NAV (tinh
+    hut la an toan — vốn nho hon thuc te -> lenh nho hon) nhung phai WARN neu
+    ro ma nao, khong im lang. 0434226 that co unpriced=['MIRHCM261'] nen nhanh
+    nay chay that."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    _seed_nav(storage, 197_222_417, unpriced=["MIRHCM261"], ts=datetime.now(TZ))
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    await _publish(cfg, make_bars([10]))
+    await run(cfg, max_messages=1)
+
+    assert any(
+        level == "WARN"
+        and "NAV tinh thieu" in msg
+        and f.get("unpriced") == "MIRHCM261"
+        for level, msg, f in alerts_seen
+    ), f"phai WARN neu ro ma khong dinh gia duoc, thuc te: {alerts_seen}"
+    # Van dung NAV (khong bi chan vi co unpriced): phai INFO nav bang dung so
+    assert any(
+        level == "INFO" and f.get("nav") == 197_222_417
+        for level, msg, f in alerts_seen
+    ), f"NAV van duoc dung lam capital, thuc te: {alerts_seen}"
 
 
 # ============ RTS-1: trailing stop luong lenh THAT ============

@@ -218,6 +218,26 @@ class Storage:
             ).fetchone()
         return (row[0], row[1]) if row else None
 
+    def read_nav(self, account_no: str) -> tuple[float, datetime, list[str]] | None:
+        """Tai san rong (NAV) moi nhat cua tai khoan — nguon CAPITAL cho
+        RiskManager luong lenh that tu 2026-08-18 (quyet dinh chu du an 14/08:
+        von rui ro = NAV = tien mat + Σ(qty × gia) − no, KHONG phai tien mat
+        rut duoc). Bang rieng account_nav_snapshot vi NAV tinh tu positions +
+        gia (nguon khac field SSI). Tra (nav, ts, unpriced_symbols) — KHONG
+        duoc bo unpriced: main.py can no de WARN ma nao bi tinh 0 (NAV tinh
+        hut la an toan nhung khong duoc im lang). Tra None neu chua co dong
+        nao — main.py alert CRITICAL + capital=0 (fail-safe), KHONG duoc roi
+        ve read_account_balance cho \"do gat\"."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT nav, ts, unpriced_symbols FROM account_nav_snapshot "
+                "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
+                (account_no,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (row[0], row[1], list(row[2]) if row[2] else [])
+
     def read_last_close(self, symbol: str) -> float | None:
         """Gia dong cua gan nhat cua symbol (bars truoc, bars_daily sau) —
         dung de kiem tra tran gia tri lenh that luc khoi dong (GUARD-1): neu

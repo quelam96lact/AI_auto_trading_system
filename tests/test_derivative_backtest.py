@@ -2,8 +2,6 @@ import json
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
-import pytest
-
 from trading.calendar_vn import TZ
 from trading.derivative_backtest import DERIVATIVE_SYMBOL, run_derivative_backtest
 from trading.derivative_position import DERIVATIVE_CONTRACT_MULTIPLIER
@@ -474,13 +472,9 @@ def test_halted_day_blocks_new_open_after_loss_breaches_threshold():
 def test_real_captured_ohlc_sample_runs_end_to_end():
     # Smoke test doi voi du lieu OHLC that da capture (Phase 0/khao sat
     # 2026-08-07) - dam bao code chay duoc voi shape response that, khong
-    # chi bar tong hop. File nay gitignored (du lieu that), khong commit -
-    # skip gon neu khong co san thay vi fail.
+    # chi bar tong hop. File da nam TRONG repo (commit cc8048e, 2026-08-18)
+    # nen luon co san - khong con can nhanh skip gitignored.
     sample_path = Path("scripts/.spike_derivative_ohlc_5m_2m_sample.json")
-    if not sample_path.exists():
-        pytest.skip(
-            "scripts/.spike_derivative_ohlc_5m_2m_sample.json khong co san (gitignored)"
-        )
 
     raw = json.loads(sample_path.read_text())
     bars = sorted(
