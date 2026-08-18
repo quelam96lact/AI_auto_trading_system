@@ -3,17 +3,31 @@ name: CI
 on:
   push:
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - uses: actions/setup-python@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
-      - run: uv sync --extra dev
-      - run: uv run pytest -m "not integration" -v
-      - run: uv run ruff check trading tests
+          enable-cache: true
+          # Ghim 3.11 cho khop may dev (3.11.15). Truoc day ghim 3.12 -> CI
+          # chay tren interpreter khac han cho dev, sai lech se lo ra muon.
+          python-version: "3.11"
+
+      - name: Install deps
+        run: uv sync --extra dev --frozen
+
+      # Chi lint trading/ va tests/. scripts/ con 8 loi pre-existing da duoc
+      # ghi nhan co chu dich (docs/superpowers/specs/2026-08-08-fix-preexisting-ruff-findings-design.md);
+      # them scripts/ vao day se lam CI do vi ly do khong lien quan.
+      - name: Ruff
+        run: uv run ruff check trading tests
+
+      # Bo qua test integration: chung can Postgres/NATS that dang chay.
+      - name: Pytest
+        run: uv run pytest -m "not integration" -q
