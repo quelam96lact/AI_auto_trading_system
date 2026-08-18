@@ -1,0 +1,25 @@
+#!/bin/sh
+# Chan push len main neu ruff hoac unit test do.
+# Branch protection tren GitHub can goi Pro cho repo private, nen chan tai may.
+# Thoat hiem khi that su can: git push --no-verify
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main) ;;
+        *) continue ;;
+    esac
+
+    echo "pre-push: kiem tra truoc khi day len main..."
+
+    if ! uv run ruff check trading tests scripts; then
+        echo "pre-push: RUFF DO -> huy push." >&2
+        exit 1
+    fi
+
+    if ! uv run pytest -m "not integration" -q; then
+        echo "pre-push: TEST DO -> huy push." >&2
+        exit 1
+    fi
+
+    echo "pre-push: sach, cho push."
+done
+exit 0
