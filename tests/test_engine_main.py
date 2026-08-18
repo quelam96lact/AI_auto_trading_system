@@ -513,8 +513,18 @@ async def test_engine_restores_trailing_stop_after_restart(storage, monkeypatch)
 
     # Bar moi: gia quanh dinh (de ATR co gia tri) roi BUT xuong low 5 — duoi
     # stop tinh tu dinh 20 (20 - atr*2 ~ 19.8). Trailing stop DUNG phai trigger.
-    bars = make_bars([20] * 20 + [21] * 4)
-    bars.append(Bar("ENGT", bars[-1].ts + timedelta(minutes=15), 21.0, 21.0, 5.0, 21.0, 1000))
+    # T+2,5 (commit 4a61186): PaperBroker.restore dat lot day_index=0 (ngay
+    # restart), chi ban duoc khi today - day_index >= SETTLE_DAYS=3. Bar kich
+    # hoat PHAI nam o D+3 (ngay giao dich thu 4), khong duoc cung ngay 15/07 —
+    # khong thi force_exit tra qty=0 (chua settle) va vi the khong bao gio dong.
+    bars = make_bars([20] * 20 + [21] * 4)  # 15/07 (day 0): warm-up ATR quanh dinh
+    d2 = datetime(2026, 7, 16, 9, 0, tzinfo=TZ)  # day 1
+    d3 = datetime(2026, 7, 17, 9, 0, tzinfo=TZ)  # day 2
+    for day in (d2, d3):
+        bars.append(Bar("ENGT", day, 21.0, 21.0, 21.0, 21.0, 1000))
+    bars.append(  # day 3 (D+3): BUT xuong low 5 — duoi stop, da settle -> ban duoc
+        Bar("ENGT", datetime(2026, 7, 20, 9, 0, tzinfo=TZ), 21.0, 21.0, 5.0, 21.0, 1000)
+    )
     await _publish(cfg, bars)
     await run(cfg, max_messages=len(bars))
 

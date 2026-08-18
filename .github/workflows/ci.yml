@@ -31,3 +31,55 @@ jobs:
       # Bo qua test integration: chung can Postgres/NATS that dang chay.
       - name: Pytest
         run: uv run pytest -m "not integration" -q
+
+  # ISO-1: 7 file integration test (test_backtest_cli, test_collector_main,
+  # test_dashboard_queries, test_engine_main, test_publisher, test_storage,
+  # test_storage_engine) chua tung chay tren CI — chi moi may dev. Job nay dung
+  # services: cho Postgres (timescaledb pg16) + docker run cho NATS JetStream.
+  # KHONG dat NATS trong services: service container cua GHA khoi dong TRUOC
+  # moi step (ke ca actions/checkout) nen khong the mount file config tu repo
+  # (lan dau lam the -> JetStream lang le khong bat, test chet kho hieu).
+  # conftest.py:52-66 TU DONG tao database trading_test + init schema qua /postgres
+  # nen service chi can len la du, khong can seed. conftest.py:27-29 chan cung:
+  # TEST_DB_DSN phai ket thuc bang _test — khong duoc lach.
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: trading
+          POSTGRES_PASSWORD: trading
+          POSTGRES_DB: trading
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trading"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # NATS chay bang docker run (Sau checkout nen runner da co repo, khong
+      # can mount file config) — truyen thang co -js (JetStream), tuong duong
+      # command ["-js"] cua docker-compose. Cau hinh .github/nats-ci.conf da
+      # bo: services: khong co field command, va service container khoi dong
+      # truoc checkout nen khong the doc file tu repo.
+      - name: Start NATS (JetStream)
+        run: docker run -d --name nats-ci -p 4223:4222 nats:2.10-alpine -js
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Install deps
+        run: uv sync --extra dev --frozen
+
+      - name: Pytest (integration)
+        env:
+          TEST_DB_DSN: postgresql://trading:trading@127.0.0.1:5432/trading_test
+          TEST_NATS_URL: nats://127.0.0.1:4223
+        run: uv run pytest -m "integration" -q
