@@ -75,6 +75,14 @@ class Storage:
         )
         with self.conn() as c:
             c.execute(sql)
+            # 2026-08-18 (backfill-universe): tách "đã HỎI API tới ngày X" khỏi
+            # "có dữ liệu thật tới ngày Y". attempted_until ghi ngày đã hỏi (kể
+            # cả khi mã không giao dịch — mảng rỗng), last_done_date chỉ tiến
+            # khi nhận được bar thật. ALTER idempotent cho bảng đã tồn tại.
+            c.execute(
+                "ALTER TABLE backfill_progress "
+                "ADD COLUMN IF NOT EXISTS attempted_until date"
+            )
 
     def _write(self, table: str, bars: list[Bar]) -> None:
         if not bars:
@@ -856,7 +864,7 @@ class Storage:
     def get_backfill_progress(self, symbol: str, timeframe: str) -> dict | None:
         with self.conn() as c:
             row = c.execute(
-                "SELECT symbol, timeframe, last_done_date, status, error "
+                "SELECT symbol, timeframe, last_done_date, status, error, attempted_until "
                 "FROM backfill_progress WHERE symbol = %s AND timeframe = %s",
                 (symbol, timeframe),
             ).fetchone()
@@ -868,6 +876,7 @@ class Storage:
             "last_done_date": row[2],
             "status": row[3],
             "error": row[4],
+            "attempted_until": row[5],
         }
 
     def set_backfill_progress(
@@ -877,16 +886,23 @@ class Storage:
         last_done_date,
         status: str,
         error: str | None = None,
+        attempted_until=None,
     ) -> None:
+        """Ghi trạng thái backfill. attempted_until = ngày ĐÃ HỎI API tới (kể cả
+        khi mã không giao dịch — mảng rỗng); last_done_date = ngày bar THẬT cuối
+        nhận được (chỉ tiến khi có dữ liệu). Tách hai khái niệm này từ
+        2026-08-18 để skip dựa trên attempted_until (chống fetch lại vĩnh viễn)
+        mà last_done_date vẫn trung thực (không ghi nhận độ phủ không có)."""
         with self.conn() as c:
             c.execute(
                 "INSERT INTO backfill_progress "
-                "(symbol, timeframe, last_done_date, status, error, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, now()) "
+                "(symbol, timeframe, last_done_date, status, error, attempted_until, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, now()) "
                 "ON CONFLICT (symbol, timeframe) DO UPDATE SET "
                 "last_done_date = EXCLUDED.last_done_date, status = EXCLUDED.status, "
-                "error = EXCLUDED.error, updated_at = now()",
-                (symbol, timeframe, last_done_date, status, error),
+                "error = EXCLUDED.error, attempted_until = EXCLUDED.attempted_until, "
+                "updated_at = now()",
+                (symbol, timeframe, last_done_date, status, error, attempted_until),
             )
 
     def read_daily_symbol_counts(self) -> dict[date, int]:

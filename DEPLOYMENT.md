@@ -230,6 +230,42 @@ thoát 0 im lặng nếu token còn > 60 phút; nếu token còn < 60 phút ho�
 hạn sẽ thấy WARN/CRITICAL trong `/var/log/trading-heartbeat.log`. Nếu không
 thấy gì trong khung đó — cron chưa gọi đúng giờ (kiểm `crontab -l`).
 
+## 9.5 Backfill vũ trụ (bars_daily/bars lịch sử)
+
+`bars_daily` toàn vũ trụ là dữ liệu BACKTEST — nó không tự cập nhật. Collector
+real-time chỉ ghi `config.symbols` + danh mục đang nắm; phần còn lại của ~1.594
+mã phải được backfill thủ công. Không chạy định kỳ thì dữ liệu cũ dần và mọi
+backtest lặng lẽ dùng dữ liệu cũ (sự cố 08/2026: bars_daily dừng ở 07/08 trong
+khi hôm nay là 18/08 — 11 ngày lệch, không ai nhìn).
+
+Chạy bằng cron **trên host**, sau giờ đóng cửa, ngày trong tuần:
+
+```bash
+sudo crontab -e
+# backfill bars_daily toàn vũ trụ — 20:30 thứ 2 - thứ 6 hàng tuần.
+# Lần chạy ĐẦU sau thời gian dài không chạy sẽ NẶNG: nhiều ngày × ~1.594 mã,
+# có thể chạm SSI rate-limit. Giới hạn phạm vi nếu cần: thêm --symbols A,B,C
+# (vài mã ưu tiên) hoặc --limit N (N mã đầu) — chạy nhiều đêm cho kịp.
+30 20 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:***@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/backfill_universe.py --timeframe 1d --from 2026-01-01 --to $(date +\%F) --use-universe --sleep-ms 200 >> /var/log/trading-backfill.log 2>&1
+```
+
+Lưu ý:
+
+- `--use-universe` đọc `symbol_universe` (cổ phiếu thật, `is_active`). Bỏ qua
+  thêm `--sleep-ms` nếu muốn nhanh hơn — mặc định 200ms/mã ~ 5 phút cho toàn
+  bộ.
+- Progress (`backfill_progress`) tách hai cột từ 2026-08-18: `attempted_until`
+  = ngày đã HỎI API tới (kể cả khi mã không giao dịch — chống fetch lại vĩnh
+  viễn), `last_done_date` = ngày bar THẬT cuối (chỉ tiến khi có dữ liệu). Skip
+  dựa trên `attempted_until >= to`; `last_done_date` thấp hơn `to` là BÌNH
+  THƯỜNG (mã ít thanh khoản không giao dịch mỗi ngày), không phải lỗi.
+- Nếu progress cũ nói dối (ghi `last_done_date = to` dù rỗng — bug đã sửa
+  2026-08-18): chạy `scripts/fix_backfill_progress.py` (chỉ-xem trước, `--apply`
+  để ghi) để sửa lại cho khớp bars_daily. Chỉ sửa bảng TRẠNG THÁI, không đụng
+  dữ liệu thị trường.
+- 5m (`--timeframe 5m`) backfill toàn vũ trụ KHÔNG nên chạy định kỳ — chỉ
+  backtest các mã cần thiết qua `--symbols` (7 ngày/lượt chunk, tốn API).
+
 ## Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.

@@ -72,10 +72,21 @@ async def backfill_one(
     to: date,
     sleep_ms: int,
 ) -> tuple[str, str, str]:
-    """Trả về (symbol, status, error_or_empty). Không bao giờ ném ra ngoài."""
+    """Trả về (symbol, status, error_or_empty). Không bao giờ ném ra ngoài.
+
+    2026-08-18 (backfill-universe): skip dựa trên `attempted_until` — ngày đã
+    HỎI API tới (kể cả khi mã không giao dịch), KHÔNG dựa trên last_done_date.
+    last_done_date ghi ngày bar THẬT cuối nhận được — chỉ tiến khi có dữ liệu,
+    rỗng thì không tiến (nguyên tắc: không ghi nhận độ phủ mình không có)."""
     try:
         prog = storage.get_backfill_progress(symbol, timeframe)
-        if prog is not None and prog["status"] == "ok" and prog["last_done_date"] is not None and prog["last_done_date"] >= to:
+        attempted = prog["attempted_until"] if prog else None
+        if (
+            prog is not None
+            and prog["status"] == "ok"
+            and attempted is not None
+            and attempted >= to
+        ):
             return symbol, "skip", ""
         if sleep_ms:
             await asyncio.sleep(sleep_ms / 1000)
@@ -88,7 +99,16 @@ async def backfill_one(
                 else:
                     bars = await client.intraday_ohlc(symbol, frm, to)
                     storage.write_bars(bars)
-                storage.set_backfill_progress(symbol, timeframe, to, "ok")
+                # last_done_date = ngày bar cuối THẬT (không tiến khi rỗng);
+                # attempted_until = to (đã hỏi tới đó, kể cả rỗng).
+                last_done = (
+                    max(b.ts.date() for b in bars) if bars else (
+                        prog["last_done_date"] if prog else None
+                    )
+                )
+                storage.set_backfill_progress(
+                    symbol, timeframe, last_done, "ok", attempted_until=to
+                )
                 return symbol, "ok", f"{len(bars)} bar"
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"[:200]
