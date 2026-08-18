@@ -1,0 +1,45 @@
+Antigravity — việc mới, chủ dự án đã duyệt. Tiếp nối chính công việc bạn vừa làm.
+
+KẾ HOẠCH ĐẦY ĐỦ: docs/superpowers/plans/2026-08-18-completeness-classify-gaps.md (base main = 1d0ebad, đã push). ĐỌC HẾT trước khi gõ dòng đầu tiên. Dưới đây chỉ là phần dễ làm sai nhất.
+
+TRƯỚC HẾT — CÔNG VIỆC ĐỢT TRƯỚC CỦA BẠN ĐÃ ĐẠT VÀ ĐÃ MERGE (4272730). Tôi tự kiểm mọi con số chịu lực và chúng khớp tuyệt đối: 0 cặp (symbol, ngày) trùng trên 2.969.366 dòng; khoảng [11, 635] trống hoàn toàn; 7 ngày cụm thấp (max 10 mã) / 2.647 ngày cụm cao (min 636 mã). Tôi còn kiểm thêm một điều bạn không nêu: MỌI ngưỡng từ 11 đến 635 đều cho cùng 2.647 phiên — kết quả bất biến trên dải rộng 60 lần, nên con số 100 không phải tham số tinh chỉnh. Đó là xác nhận mạnh nhất có thể cho thiết kế đồng thuận. CI đã xanh trên GitHub: 300 passed / 84 integration passed.
+
+VIỆC MỚI SINH RA TỪ LỖI CỦA TÔI, KHÔNG PHẢI CỦA BẠN.
+Công cụ bạn viết đo ĐÚNG. Plan cũ của tôi định nghĩa SAI. Tôi viết "thiếu = có phiên mà không có bar". Với bar 5 phút tôi đã nhận ra định nghĩa đó sai cho mã ít thanh khoản (không có lệnh khớp thì không có bar — bình thường) và loại bar 5m khỏi phạm vi vì lý do đó. Rồi tôi giả định sai rằng bar NGÀY không dính cùng vấn đề. Nó dính:
+  TET  HNX  avg_value_20d = 23,8tr   254 bar / 10 năm, 42 khoảng trống >20 ngày
+  SDC  HNX  avg_value_20d =  1,6tr
+  MCC  HNX  avg_value_20d =  2,0tr
+Ngưỡng thanh khoản của chiến lược là 2 TỶ. Những mã này thấp hơn 100-1000 lần. Chúng KHÔNG GIAO DỊCH nhiều phiên — không có bar là ĐÚNG.
+Hệ quả: con số tiêu đề "chỉ 97/1551 mã (6,3%) đầy đủ, thiếu 495.097 phiên" KHÔNG dùng để ra quyết định được.
+
+VIỆC: thêm một phân biệt nữa — LỖI THU THẬP khác KHÔNG CÓ GIAO DỊCH.
+
+TÍN HIỆU PHÂN BIỆT, có sẵn trong dữ liệu, không cần nguồn ngoài — chính là cơ chế đồng thuận bạn đã dùng cho phiên, áp cho lỗ hổng:
+- Ngày X thiếu ở MỘT mã trong khi gần như cả thị trường có bar -> mã đó không giao dịch. Đặc trưng riêng lẻ.
+- Ngày X thiếu ở NHIỀU mã cùng lúc -> lỗi thu thập. Đặc trưng tương quan.
+
+NGƯỠNG PHÂN ĐỊNH PHẢI ĐO, KHÔNG ĐƯỢC ĐOÁN — đúng kỷ luật bạn đã giữ với ngưỡng 100. Nếu phân bố KHÔNG tách bạch thì giả định của tôi lại sai lần nữa -> DỪNG và BÁO CÁO, đừng tự chế biến thể.
+
+Task 3: sửa 9 mã đang có completeness > 100% (AAA 100.08, TCX 103.52, HCM 100.26...). Nguyên nhân: chúng là mã collector real-time đang ghi nên có bar vượt quá phiên đồng thuận cuối (2026-08-07) trong khi expected chỉ đếm tới đó.
+
+Task 4 LÀ CÂU HỎI QUAN TRỌNG NHẤT: trong số mã mà chiến lược THỰC SỰ có thể giao dịch (avg_value_20d >= 2 tỷ), bao nhiêu mã có lỗ hổng do LỖI THU THẬP? Đó mới là con số quyết định có tin được backtest hay không. Mã thanh khoản 1,6 triệu/phiên thiếu 2.000 phiên thì không ảnh hưởng gì tới chiến lược không bao giờ mua nó.
+
+RÀNG BUỘC — vi phạm là hỏng việc thật:
+- KHÔNG commit, KHÔNG push. Xong báo cáo, tôi audit rồi merge.
+- KHÔNG đụng scripts/backfill_universe.py — HERMES ĐANG SỬA FILE ĐÓ CÙNG LÚC (backfill ghi nhận độ phủ nó không có). Chạm vào là hai luồng giẫm nhau.
+- KHÔNG đụng trading/storage/db.py — nếu cần hàm đọc mới ở đó thì BÁO CÁO, đừng tự thêm (Hermes có thể đang chạm file đó).
+- KHÔNG đụng: scripts/daily_data_check.py, trading/collector/, scripts/heartbeat_check.py, config/config.yaml, tests/conftest.py.
+- KHÔNG đổi cách suy phiên giao dịch (ngưỡng đồng thuận) — nó đã được kiểm và ổn định.
+- Postgres đang phục vụ collector + engine CHẠY THẬT. READ-ONLY tuyệt đối.
+- Plan này chỉ ĐO và PHÂN LOẠI. KHÔNG tự vá dữ liệu, KHÔNG gọi backfill.
+- scripts/ nằm trong phạm vi lint và đang SẠCH 0 lỗi — giữ nguyên.
+
+TDD: đỏ trước (dán output đỏ), xanh, RỒI tự phá bản sửa (dán output đỏ lần hai). Bài học đợt trước của Hermes, áp cho bạn luôn: SABOTAGE PHẢI NHẮM VÀO ĐIỀU PLAN YÊU CẦU (phân biệt được hai nguyên nhân), không phải vào dòng bạn vừa viết — phá đúng chỗ mình vừa viết chỉ chứng minh được nhánh đó.
+
+KIỂM CHỨNG CUỐI:
+  uv run ruff check trading tests scripts   -> All checks passed!
+  uv run pytest -m "not integration" -q     -> 300 + đúng số test bạn thêm
+  uv run pytest -m "integration" -q         -> 84 + đúng số test bạn thêm
+  (integration cần TEST_DB_DSN trỏ trading_test + TEST_NATS_URL cổng 4223)
+
+BÁO CÁO: dán output THẬT nguyên văn. Tách bạch "đã kiểm chứng" và "vẫn là suy luận". Việc nào không làm được thì nói rõ VÌ SAO, đừng đoán bừa cho đủ.

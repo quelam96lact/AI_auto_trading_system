@@ -1,0 +1,49 @@
+Hermes — việc mới, chủ dự án đã duyệt.
+
+KẾ HOẠCH ĐẦY ĐỦ: docs/superpowers/plans/2026-08-18-backfill-stale-universe.md (base main = 1d0ebad, đã push, working tree sạch). ĐỌC HẾT trước khi gõ dòng đầu tiên. Dưới đây chỉ là phần dễ làm sai nhất.
+
+BỐI CẢNH: tính năng kiểm đầy đủ (merge hôm nay, 4272730) phát hiện bars_daily toàn vũ trụ DỪNG Ở 2026-08-07, trong khi hôm nay là 18/08. Sau 07/08 chỉ còn 10 mã có dữ liệu — đúng config.symbols cộng danh mục đang nắm, tức phần do collector real-time ghi. Mọi backtest chạy hôm nay dùng dữ liệu cũ 11 ngày.
+
+HAI VẤN ĐỀ RIÊNG BIỆT, ĐỪNG GỘP:
+
+1. BUG — progress ghi ngày YÊU CẦU, không phải ngày CÓ THẬT.
+scripts/backfill_universe.py:91 gọi set_backfill_progress(symbol, timeframe, to, "ok") — ghi `to` bất kể `bars` chứa gì, KỂ CẢ KHI bars RỖNG. Rồi dòng 78: nếu last_done_date >= to thì `skip`. Lần chạy sau bỏ qua mã đó hoàn toàn. Lỗ hổng TỰ BỊT MIỆNG: ghi nhận thành công cho dữ liệu không có, rồi từ chối thử lại mãi mãi.
+Bằng chứng trong DB hiện nay:
+  backfill_progress: status=ok, last_done_date = 2026-08-10 (1594 mã, 1d)
+  bars_daily:        không mã vũ trụ nào có bar sau 2026-08-07
+Progress nói xong tới 10/08. Dữ liệu nói dừng ở 07/08.
+
+2. THIẾU VẬN HÀNH, KHÔNG PHẢI BUG — không ai chạy backfill vũ trụ.
+grep backfill DEPLOYMENT.md -> KHÔNG DÒNG NÀO. trading/collector/main.py không hề gọi backfill vũ trụ. scripts/backfill_universe.py là script CHẠY TAY. Dữ liệu cũ dần là hệ quả tất yếu.
+
+NGUYÊN TẮC CHỈ ĐẠO (không thương lượng): KHÔNG BAO GIỜ GHI NHẬN ĐỘ PHỦ MÀ MÌNH KHÔNG CÓ. Mọi cách sửa phải giữ tính chất đó.
+
+TASK 1 PHẢI LÀM TRƯỚC KHI SỬA: đo xem API trả gì khi một mã KHÔNG CÓ GIAO DỊCH trong khoảng — mảng rỗng hay lỗi? Quan trọng vì cách sửa ngây thơ ("chỉ ghi progress khi bars không rỗng") sẽ khiến hàng trăm mã ít thanh khoản bị fetch lại ở MỌI lần chạy, mãi mãi. Phải biết cái giá đó TRƯỚC khi chọn. Gọi thử dưới 10 mã (SDC, MCC, QST — avg_value_20d chỉ 1-11 triệu VND), dán response thật. KHÔNG quét toàn vũ trụ.
+
+TASK 2: sửa theo kết quả Task 1. Hướng tôi khuyến nghị — ghi last_done_date = ngày của bar cuối THỰC SỰ nhận được; không nhận được bar nào thì KHÔNG tiến. NHƯNG nếu Task 1 cho thấy "rỗng" là phổ biến thì cách đó làm mã ít thanh khoản bị fetch lại vĩnh viễn — khi đó ĐỀ XUẤT CÁCH KHÁC kèm số liệu và nói rõ đánh đổi. Đừng tự chọn trong im lặng.
+Test quan trọng nhất: lần chạy kế tiếp KHÔNG được `skip` mã chưa thực sự đủ dữ liệu — đó là test bắt đúng cơ chế tự bịt miệng.
+
+TASK 3: 1594 dòng progress đang nói dối. Viết công cụ sửa lại cho khớp thực tế. backfill_progress là bảng TRẠNG THÁI, được phép ghi — nhưng phải là script RIÊNG chạy có chủ đích, in ra sẽ sửa bao nhiêu dòng từ giá trị nào sang giá trị nào, và có chế độ CHỈ-XEM-KHÔNG-GHI. TUYỆT ĐỐI KHÔNG đụng bars, bars_daily hay bất kỳ bảng dữ liệu thị trường nào. CHẠY CHẾ ĐỘ CHỈ-XEM THÔI, dán output — ghi thật là quyết định của chủ dự án.
+
+TASK 4: thêm mục lịch chạy vào DEPLOYMENT.md theo khuôn mục cron hiện có (§9, xem mục heartbeat_check.py làm mẫu). KHÔNG tự cài cron lên máy.
+
+RÀNG BUỘC — vi phạm là hỏng việc thật:
+- KHÔNG commit, KHÔNG push. Xong báo cáo, tôi audit rồi commit.
+- KHÔNG đụng trading/data_quality.py — ANTIGRAVITY ĐANG SỬA FILE ĐÓ CÙNG LÚC. Chạm vào là hai luồng giẫm nhau.
+- KHÔNG đụng: trading/collector/, scripts/heartbeat_check.py, trading/real_orders.py, scripts/confirm_real_order.py, config/config.yaml, tests/conftest.py.
+- KHÔNG bật real_trading_enabled.
+- Postgres đang phục vụ collector + engine CHẠY THẬT. Điều tra READ-ONLY.
+- KHÔNG tự chạy backfill toàn vũ trụ để "vá luôn cho xong" — tốn hàng nghìn lượt gọi API SSI, là quyết định của chủ dự án.
+- Không xác thực OTP mới, không tạo credential mới.
+- scripts/ nằm trong phạm vi lint và đang SẠCH 0 lỗi — giữ nguyên.
+- gitnexus_impact trên set_backfill_progress và backfill_one TRƯỚC khi sửa, gitnexus_detect_changes sau khi xong.
+
+TDD: đỏ trước (dán output đỏ), xanh, RỒI tự phá bản sửa (dán output đỏ lần hai). Sabotage phải nhắm vào NGUYÊN TẮC CHỈ ĐẠO ở trên, không phải vào dòng bạn vừa viết — đúng bài học đợt CI vừa rồi.
+
+KIỂM CHỨNG CUỐI:
+  uv run ruff check trading tests scripts   -> All checks passed!
+  uv run pytest -m "not integration" -q     -> 300 + đúng số test bạn thêm
+  uv run pytest -m "integration" -q         -> 84 + đúng số test bạn thêm
+  (integration cần TEST_DB_DSN trỏ trading_test + TEST_NATS_URL cổng 4223)
+
+BÁO CÁO: dán output THẬT nguyên văn. Tách bạch "đã kiểm chứng" và "vẫn là suy luận" — bạn làm rất tốt việc này ở đợt CI, giữ nguyên. Việc nào không làm được thì nói rõ VÌ SAO.
