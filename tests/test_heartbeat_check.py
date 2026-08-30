@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta
 
-from scripts.heartbeat_check import bar_stale, stale_services, token_expiry_status
+from scripts.heartbeat_check import (
+    bar_stale,
+    position_sync_stale,
+    stale_services,
+    token_expiry_status,
+)
 from trading.calendar_vn import TZ
 
 NOW = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)  # thu 4, trong phien sang
@@ -142,8 +147,11 @@ def test_main_no_crash_when_no_bar_any_day(monkeypatch):
             return False
 
     monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
-    # token OK — chỉ test đường 2A
-    monkeypatch.setattr(hc, "Storage", lambda dsn: type("S", (), {"load_ssi_token": lambda self: {"refresh_token_expires_at": fixed_now.timestamp() + 7200}})())
+    # token OK — chỉ test đường 2A; vi the dong bo TUOI (2D im lang)
+    monkeypatch.setattr(hc, "Storage", lambda dsn: type("S", (), {
+        "load_ssi_token": lambda self: {"refresh_token_expires_at": fixed_now.timestamp() + 7200},
+        "read_position_sync_ts": lambda self, account_no: fixed_now - timedelta(minutes=2),
+    })())
 
     rc = hc.main()
     assert rc == 1, f"phai gui canh bao (feed chua tung noi), rc={rc}"
@@ -248,10 +256,13 @@ def _run_main_with_ledger(monkeypatch, engine_state, positions_rows, fixed_now=N
             return False
 
     monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn(None))
-    # token ok -> 2B im lang
+    # token ok -> 2B im lang; vi the dong bo TUOI -> 2D im lang
     monkeypatch.setattr(
         hc, "Storage",
-        lambda dsn: type("S", (), {"load_ssi_token": lambda self: {"refresh_token_expires_at": fixed_now.timestamp() + 7200}})(),
+        lambda dsn: type("S", (), {
+            "load_ssi_token": lambda self: {"refresh_token_expires_at": fixed_now.timestamp() + 7200},
+            "read_position_sync_ts": lambda self, account_no: fixed_now - timedelta(minutes=2),
+        })(),
     )
     # Khong monkeypatch open — main() doc config/config.yaml that (file ton tai)
     rc = hc.main()
@@ -275,3 +286,120 @@ def test_main_silent_when_ledger_matches_with_open_position(monkeypatch):
     # - capital = 0 == realized 0 -> khop
     rc, sent = _run_main_with_ledger(monkeypatch, (99_000_000.0, 0.0), [(1_000.0, 1_000)])
     assert rc == 0, f"khong duoc bao khi so sach khop, rc={rc} (tin: {sent})"
+
+
+# ============ 2D: vị thế ngừng đồng bộ ============
+
+
+def test_position_sync_fresh_no_alarm():
+    """2D (a): mới đồng bộ (2 phút trước) -> False — chưa cần báo."""
+    assert position_sync_stale(NOW - timedelta(minutes=2), NOW, 15) is False
+
+
+def test_position_sync_past_threshold_alarms():
+    """2D (b): quá ngưỡng (20 phút trước, ngưỡng 15) -> True — phải báo."""
+    assert position_sync_stale(NOW - timedelta(minutes=20), NOW, 15) is True
+
+
+def test_position_sync_never_synced_alarms():
+    """2D (c): sync_ts=None (chưa từng đồng bộ) -> True và KHÔNG ném exception —
+    ca dễ tuột nhất, giống max_ts=None của 2A."""
+    assert position_sync_stale(None, NOW, 15) is True
+
+
+def test_position_sync_at_threshold_boundary():
+    """2D (d): biên ngưỡng — đúng 15 phút thì CHƯA quá (> mới stale, cùng quy ước
+    bar_stale 2A: `now - ts > timedelta`); 15 phút + 1 giây thì quá."""
+    assert position_sync_stale(NOW - timedelta(minutes=15), NOW, 15) is False
+    assert position_sync_stale(NOW - timedelta(minutes=15, seconds=1), NOW, 15) is True
+
+
+def _run_main_with_position_sync(monkeypatch, sync_ts, fixed_now=None):
+    """Chay main() voi moc dong bo vi the cho truoc (2A/2B/2C im lang: bar moi,
+    token ok, ledger khop). Tra ve (rc, messages)."""
+    import scripts.heartbeat_check as hc
+
+    sent = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent.append(msg))
+    if fixed_now is None:
+        fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)  # thu 6, trong phien
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return fixed_now
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    class FakeCur:
+        def __init__(self, result):
+            self._result = result
+
+        def fetchall(self):
+            if isinstance(self._result, list):
+                return self._result
+            return []
+
+        def fetchone(self):
+            return self._result
+
+    class FakeConn:
+        def execute(self, query, *a, **k):
+            if "FROM heartbeat" in query:
+                return FakeCur([("collector", fixed_now - timedelta(seconds=30)), ("engine", fixed_now - timedelta(seconds=45))])
+            if "max(ts) FROM bars" in query:
+                return FakeCur((fixed_now - timedelta(minutes=2),))  # bar moi -> 2A im
+            if "FROM engine_state" in query:
+                return FakeCur(None)
+            if "FROM positions" in query:
+                return FakeCur([])
+            return FakeCur(None)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
+    # token ok -> 2B im lang; sync_ts theo tham so -> 2D quyet dinh
+    monkeypatch.setattr(
+        hc, "Storage",
+        lambda dsn: type(
+            "S", (),
+            {
+                "load_ssi_token": lambda self: {"refresh_token_expires_at": fixed_now.timestamp() + 7200},
+                "read_position_sync_ts": lambda self, account_no: sync_ts,
+            },
+        )(),
+    )
+    rc = hc.main()
+    return rc, sent
+
+
+def test_main_alerts_when_position_sync_stale(monkeypatch):
+    """2D qua DUONG DUNG TIN NHAN: moc dong bo 20 phut truoc (nguong 15) ->
+    dung MOT tin [CRITICAL] chua ten tai khoan va so phut."""
+    rc, sent = _run_main_with_position_sync(
+        monkeypatch, datetime(2026, 8, 14, 9, 40, tzinfo=TZ)
+    )  # 20 phut truoc fixed_now 10:00
+    assert rc == 1, f"phai bao khi vi the dong bo cu, rc={rc}"
+    assert sent, "phai gui tin nhan Telegram"
+    assert len(sent) == 1, f"dung mot tin, thuc te: {sent}"
+    msg = sent[0]
+    assert "[CRITICAL]" in msg, f"phai la CRITICAL, thuc te: {msg}"
+    assert "0434221" in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
+    assert "20 phút" in msg, f"tin nhan phai chua so phut, thuc te: {msg}"
+
+
+def test_main_never_synced_message_has_no_arithmetic(monkeypatch):
+    """2D: chua tung dong bo (sync_ts=None) -> tin RIENG, KHONG dung
+    `now - sync_ts` (bai hoc FEE-ALARM-2 Loi 1: chuong bao khong duoc nem
+    exception dung luc can nhat)."""
+    rc, sent = _run_main_with_position_sync(monkeypatch, None)
+    assert rc == 1, f"phai bao khi chua tung dong bo, rc={rc}"
+    assert sent, "phai gui tin nhan Telegram"
+    msg = sent[0]
+    assert "[CRITICAL]" in msg
+    assert "0434221" in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
+    assert "chưa từng đồng bộ" in msg, f"tin nhan phai noi ro ca chua-dong-bo, thuc te: {msg}"

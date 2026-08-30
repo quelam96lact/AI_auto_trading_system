@@ -53,6 +53,11 @@ CHECK_SESSIONS = [(time(9, 0), time(11, 30)), (time(13, 0), time(14, 30))]
 # kêu, mù 1/3 phiên chiều 90 phút.)
 DEFAULT_STALE_BAR_MINUTES = 15
 
+# 2D: ngưỡng vị thế cũ — ĐO trên DB thật (30/08/2026): account_sync_log + 8 mốc
+# liên tiếp account_position_snapshot cho nhịp 5 phút 05 giây, rất đều (7 dòng
+# mỗi mốc). Ngưỡng 15 phút = ~3x nhịp đo được — cùng hệ số an toàn với 2A.
+DEFAULT_STALE_POSITION_SYNC_MINUTES = 15
+
 
 def stale_services(rows, now, max_age_seconds, expected=SERVICES) -> list[str]:
     """rows: list[(service, last_seen)] đọc từ bảng heartbeat.
@@ -93,6 +98,21 @@ def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES) -> bool:
     if max_ts is None:
         return True  # "feed chưa từng nối được" — không có bar nào cả ngày
     return now - max_ts > timedelta(minutes=stale_minutes)
+
+
+def position_sync_stale(sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_MINUTES) -> bool:
+    """2D: vị thế ngừng đồng bộ. sync_ts = mốc đồng bộ gần nhất của
+    real_order_account (từ Storage.read_position_sync_ts — None = chưa từng
+    đồng bộ, bảng account_sync_log chưa có dòng).
+
+    None -> True: "chưa từng đồng bộ" là ca dễ tuột nhất (nếu sync có lỗi
+    logic không ném exception, đường đặt lệnh THẬT vẫn đọc vị thế cũ và không
+    ai được báo). Không cần cửa sổ kiểm tra riêng: main() đã chặn ngoài giờ
+    giao dịch ở đầu hàm (tiền lệ 2C).
+    """
+    if sync_ts is None:
+        return True
+    return now - sync_ts > timedelta(minutes=stale_minutes)
 
 
 def token_expiry_status(refresh_expires_at, now) -> str | None:
@@ -151,7 +171,10 @@ def main() -> int:
     try:
         cfg_path = os.path.join(os.path.dirname(__file__), "..", "config", "config.yaml")
         with open(cfg_path, encoding="utf-8") as f:
-            symbols = yaml.safe_load(f)["symbols"]
+            cfg = yaml.safe_load(f)
+        symbols = cfg["symbols"]
+        # 2D: dung LAI real_order_account — dung tai khoan ma read_real_positions() dung
+        real_order_account = cfg["real_order_account"]
     except Exception as e:
         send_telegram(
             f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
@@ -228,6 +251,24 @@ def main() -> int:
             "chạy scripts/spike_ssi_sdk_auth.py RỒI scripts/load_token_to_db.py "
             "(bước thứ hai là cầu nối sang DB — chính nó hay bị bỏ quên)"
         )
+
+    # 2D: vi the ngung dong bo — dung LAI Storage.read_position_sync_ts (tien le
+    # 2B dung lai Storage.load_ssi_token), KHONG viet truy van SQL moi
+    sync_ts = Storage(dsn).read_position_sync_ts(real_order_account)
+    if position_sync_stale(sync_ts, now):
+        # FEE-ALARM-2 bai hoc: sync_ts=None (chua tung dong bo) ma dung
+        # `now - sync_ts` -> TypeError, chuong bao CHET dung luc can nhat.
+        if sync_ts is None:
+            messages.append(
+                f"[CRITICAL] vị thế {real_order_account} chưa từng đồng bộ "
+                "(không có dòng account_sync_log) — đặt lệnh trên vị thế cũ"
+            )
+        else:
+            messages.append(
+                f"[CRITICAL] vị thế {real_order_account} ngừng đồng bộ: "
+                f"lần cuối {sync_ts} "
+                f"({(now - sync_ts).total_seconds() / 60:.0f} phút trước)"
+            )
 
     if messages:
         send_telegram("\n".join(messages))
