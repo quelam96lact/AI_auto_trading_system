@@ -54,6 +54,7 @@ def storage():
         c.execute("DELETE FROM pending_real_orders WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
+        c.execute("DELETE FROM backtest_runs")  # cascade xoa equity/fills
     return s
 
 
@@ -550,3 +551,103 @@ def test_parse_margin_ratio_variants():
     assert Storage.parse_margin_ratio("0%") == 0.0
     assert Storage.parse_margin_ratio("abc") is None
     assert Storage.parse_margin_ratio(None) is None
+
+
+# ============ backtest-grafana: bang backtest_runs / equity / fills ============
+
+
+def test_save_and_read_backtest_run(storage):
+    """Ghi 1 dong backtest_runs -> doc lai dung cac truong; run_id tu tang."""
+    rid1 = storage.save_backtest_run(
+        symbol="VCB", strategy="daily_breakout", timeframe="1d",
+        frm=date(2020, 1, 1), to_date=date(2020, 12, 31),
+        capital=100_000_000.0, realized_pnl=12_345.0, unrealized_pnl=0.0,
+        buy_and_hold_pnl=50_000.0, max_drawdown=0.05, win_rate=0.6,
+        trades=10, filtered_bars={"VCB": 3},
+    )
+    rid2 = storage.save_backtest_run(
+        symbol="HPG", strategy="octopus_pullback", timeframe="1d",
+        frm=date(2020, 1, 1), to_date=date(2020, 12, 31),
+        capital=100_000_000.0, realized_pnl=-1_000.0, unrealized_pnl=0.0,
+        buy_and_hold_pnl=20_000.0, max_drawdown=0.1, win_rate=0.3,
+        trades=5, filtered_bars={},
+    )
+    assert rid2 > rid1, "run_id phai tu tang"
+    runs = storage.read_backtest_runs()
+    assert len(runs) == 2
+    row = next(r for r in runs if r["run_id"] == rid2)
+    assert row["symbol"] == "HPG"
+    assert row["strategy"] == "octopus_pullback"
+    assert row["timeframe"] == "1d"
+    assert row["realized_pnl"] == -1_000.0
+    assert row["buy_and_hold_pnl"] == 20_000.0
+    assert row["win_rate"] == 0.3
+    assert row["trades"] == 5
+    assert row["filtered_bars"] == 0  # dict rong -> 0
+
+
+def test_save_and_read_backtest_equity(storage):
+    """Duong von ghi theo run_id, doc lai dung thu tu (ts, equity)."""
+    rid = storage.save_backtest_run(
+        symbol="VCB", strategy="daily_breakout", timeframe="1d",
+        frm=date(2020, 1, 1), to_date=date(2020, 12, 31),
+        capital=100_000_000.0, realized_pnl=0.0, unrealized_pnl=0.0,
+        buy_and_hold_pnl=0.0, max_drawdown=0.0, win_rate=0.0,
+        trades=0, filtered_bars={},
+    )
+    ts0 = datetime(2020, 1, 2, 9, 0, tzinfo=TZ)
+    ts1 = ts0 + timedelta(days=1)
+    storage.save_backtest_equity(
+        rid,
+        [(ts0, 100_000_000.0), (ts1, 101_000_000.0)],
+        [(ts0, 100_000_000.0), (ts1, 99_000_000.0)],
+    )
+    curve = storage.read_backtest_equity(rid)
+    assert curve == [
+        (ts0, 100_000_000.0, 100_000_000.0),
+        (ts1, 101_000_000.0, 99_000_000.0),
+    ]
+
+
+def test_backtest_equity_rejects_mismatched_buy_and_hold_curve(storage):
+    """Hai duong phai cung so diem. Neu lech -> ValueError chu KHONG ghi lech
+    roi de Grafana ve chong sai moc."""
+    import pytest
+
+    rid = storage.save_backtest_run(
+        symbol="VCB", strategy="daily_breakout", timeframe="1d",
+        frm=date(2020, 1, 1), to_date=date(2020, 12, 31),
+        capital=100_000_000.0, realized_pnl=0.0, unrealized_pnl=0.0,
+        buy_and_hold_pnl=0.0, max_drawdown=0.0, win_rate=0.0,
+        trades=0, filtered_bars={},
+    )
+    ts0 = datetime(2020, 1, 2, 9, 0, tzinfo=TZ)
+    with pytest.raises(ValueError, match="cung moc ts"):
+        storage.save_backtest_equity(
+            rid,
+            [(ts0, 1.0), (ts0 + timedelta(days=1), 2.0)],
+            [(ts0, 1.0)],
+        )
+
+
+def test_save_and_read_backtest_fills(storage):
+    """Lenh ghi theo run_id, doc lai dung side/qty/price/fee."""
+    from trading.broker import Fill
+
+    rid = storage.save_backtest_run(
+        symbol="VCB", strategy="daily_breakout", timeframe="1d",
+        frm=date(2020, 1, 1), to_date=date(2020, 12, 31),
+        capital=100_000_000.0, realized_pnl=0.0, unrealized_pnl=0.0,
+        buy_and_hold_pnl=0.0, max_drawdown=0.0, win_rate=0.0,
+        trades=0, filtered_bars={},
+    )
+    ts = datetime(2020, 1, 5, 9, 0, tzinfo=TZ)
+    storage.save_backtest_fills(rid, [
+        Fill("VCB", "BUY", 100, 20_000.0, 12_000.0, ts),
+        Fill("VCB", "SELL", 100, 21_000.0, 12_600.0, ts + timedelta(days=3), pnl=88_000.0),
+    ])
+    fills = storage.read_backtest_fills(rid)
+    assert len(fills) == 2
+    # row = (ts, side, qty, price, fee) — khuon plan: backtest_fills khong co pnl
+    assert fills[0][1] == "BUY" and fills[0][2] == 100 and fills[0][3] == 20_000.0
+    assert fills[1][1] == "SELL" and fills[1][3] == 21_000.0

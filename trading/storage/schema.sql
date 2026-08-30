@@ -231,3 +231,41 @@ CREATE TABLE IF NOT EXISTS account_nav_snapshot (
   unpriced_symbols text[] NOT NULL DEFAULT '{}',
   PRIMARY KEY (account_no, ts)
 );
+
+-- backtest-grafana: ket qua mo phong chien luoc tung ma, Grafana doc bang nay.
+CREATE TABLE IF NOT EXISTS backtest_runs (
+  run_id bigserial PRIMARY KEY,
+  ts timestamptz NOT NULL DEFAULT now(),
+  symbol text NOT NULL,
+  strategy text NOT NULL,
+  timeframe text NOT NULL,
+  frm date NOT NULL,
+  to_date date NOT NULL,
+  capital double precision NOT NULL,
+  realized_pnl double precision,
+  unrealized_pnl double precision,
+  buy_and_hold_pnl double precision,
+  max_drawdown double precision,
+  win_rate double precision,
+  trades int,
+  filtered_bars int
+);
+
+CREATE TABLE IF NOT EXISTS backtest_equity (
+  run_id bigint NOT NULL REFERENCES backtest_runs(run_id) ON DELETE CASCADE,
+  ts timestamptz NOT NULL,
+  equity double precision NOT NULL,
+  -- Duong mua-va-giu THAT tai cung moc ts (khong phai noi suy). Grafana chi
+  -- DOC cot nay; tinh benchmark trong SQL la ban thu hai cua cong thuc.
+  equity_bh double precision
+);
+ALTER TABLE backtest_equity ADD COLUMN IF NOT EXISTS equity_bh double precision;
+
+CREATE TABLE IF NOT EXISTS backtest_fills (
+  run_id bigint NOT NULL REFERENCES backtest_runs(run_id) ON DELETE CASCADE,
+  ts timestamptz NOT NULL,
+  side text NOT NULL,
+  qty int NOT NULL,
+  price double precision NOT NULL,
+  fee double precision NOT NULL
+);

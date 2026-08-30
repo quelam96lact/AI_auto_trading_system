@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from trading.backtest import BacktestReport, run_backtest
 from trading.calendar_vn import TZ
 from trading.models import Bar
@@ -154,3 +156,101 @@ def test_dirty_bar_filtered_reported_and_never_filled_at_zero():
     r_clean = _run(prices)
     assert r.trades == r_clean.trades
     assert abs(r.realized_pnl - r_clean.realized_pnl) < 1e-6
+
+
+# ============ Equity curve phoi ra BacktestReport (backtest-grafana) ============
+
+
+def test_equity_curve_exposed_as_ts_equity_pairs():
+    """Duong von phai phoi ra BacktestReport: moi phan tu la (ts, equity) voi
+    ts lay tu bar; diem DAU = (ts bar dau, capital)."""
+    bars = make_daily_bars([10.0] * 5)
+    r = run_backtest(
+        bars,
+        SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0),
+        RiskManager(capital=CAP),
+        TrailingStopManager(),
+        CAP,
+    )
+    curve = r.equity_curve
+    assert len(curve) == len(bars) + 1, (
+        f"diem dau capital + 1 diem/bar, thuc te {len(curve)} vs {len(bars) + 1}"
+    )
+    assert curve[0] == (bars[0].ts, CAP)
+    assert all(
+        isinstance(ts, datetime) and isinstance(equity, (int, float))
+        for ts, equity in curve
+    ), f"moi phan tu phai la (ts, equity), thuc te: {curve[:2]}"
+    for i, b in enumerate(bars, start=1):
+        assert curve[i][0] == b.ts, f"ts diem {i} phai lay tu bar, thuc te {curve[i][0]}"
+
+
+def test_equity_curve_length_follows_clean_bars_not_raw():
+    """Do dai duong von theo so bar SACH (bar rac bi loc TRUOC vong lap) —
+    khong phai so bar tho. Chen 1 bar rac vao 5 bar sach -> len = 6
+    (5 sach + diem dau capital), KHONG phai 7 (6 tho + diem dau)."""
+    bars = make_daily_bars([10.0] * 5)
+    bars.insert(3, Bar("VCB", bars[2].ts + timedelta(hours=1), 0.0, 0.0, 0.0, 0.0, 0))
+    r = run_backtest(
+        bars,
+        SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0),
+        RiskManager(capital=CAP),
+        TrailingStopManager(),
+        CAP,
+    )
+    assert len(r.equity_curve) == 6, (
+        f"5 bar sach + 1 diem dau = 6, thuc te {len(r.equity_curve)} (bar rac khong duoc tinh)"
+    )
+    assert r.filtered_bars == {"VCB": 1}
+
+
+def _bh_run(prices: list[float]):
+    """Chay backtest tren mot day gia, tra ve BacktestReport."""
+    return run_backtest(
+        make_daily_bars(prices),
+        SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0),
+        RiskManager(capital=CAP),
+        TrailingStopManager(),
+        CAP,
+    )
+
+
+def test_buy_and_hold_curve_ends_exactly_at_buy_and_hold_pnl():
+    """BAT BIEN chong "mot cong thuc hai ban": diem CUOI cua duong mua-va-giu
+    phai bang chinh xac capital + buy_and_hold_pnl. Neu ai do tinh lai duong
+    nay bang cong thuc khac (vd noi suy tuyen tinh trong SQL) thi test do."""
+    r = _bh_run([10.0, 11.0, 9.0, 12.0, 10.5, 13.0])
+    assert r.buy_and_hold_curve, "phai phoi ra duong mua-va-giu"
+    _, end_equity = r.buy_and_hold_curve[-1]
+    assert end_equity == pytest.approx(CAP + r.buy_and_hold_pnl), (
+        f"diem cuoi {end_equity} phai == capital + buy_and_hold_pnl "
+        f"{CAP + r.buy_and_hold_pnl} — hai cong thuc dang lech nhau"
+    )
+
+
+def test_buy_and_hold_curve_aligns_with_equity_curve():
+    """Hai duong phai cung so diem va cung moc ts thi Grafana moi ve chong
+    len nhau duoc."""
+    r = _bh_run([10.0, 11.0, 9.0, 12.0, 10.5])
+    assert len(r.buy_and_hold_curve) == len(r.equity_curve)
+    assert [ts for ts, _ in r.buy_and_hold_curve] == [ts for ts, _ in r.equity_curve]
+
+
+def test_buy_and_hold_curve_shows_real_drawdown_when_price_dips():
+    """Day la LOI da bat duoc khi audit: Grafana ve mua-va-giu bang mot duong
+    THANG noi suy, nen drawdown cua benchmark luon = 0 va cu sap that bi che
+    di (do that: VCB 2020-02-26 gia -7,5% ma duong ve dang di LEN).
+
+    Gia tut sau o giua -> duong mua-va-giu PHAI co drawdown > 0. Duong thang
+    khong bao gio pass duoc test nay."""
+    r = _bh_run([10.0, 12.0, 6.0, 11.0, 13.0])  # sap giua ky roi hoi
+    curve = [e for _, e in r.buy_and_hold_curve]
+    peak = curve[0]
+    max_dd = 0.0
+    for e in curve:
+        peak = max(peak, e)
+        max_dd = max(max_dd, (peak - e) / peak)
+    assert max_dd > 0.10, (
+        f"gia tut 50% giua ky ma duong mua-va-giu chi sut {max_dd:.1%} — "
+        f"dau hieu duong bi lam phang/noi suy"
+    )

@@ -980,3 +980,118 @@ class Storage:
             rows = c.execute(query, tuple(params)).fetchall()
         return {r[0] for r in rows}
 
+    # ============ backtest-grafana: bang backtest_runs / equity / fills ============
+
+    def save_backtest_run(
+        self,
+        symbol: str,
+        strategy: str,
+        timeframe: str,
+        frm: date,
+        to_date: date,
+        capital: float,
+        realized_pnl: float,
+        unrealized_pnl: float,
+        buy_and_hold_pnl: float,
+        max_drawdown: float,
+        win_rate: float,
+        trades: int,
+        filtered_bars: dict[str, int] | None = None,
+    ) -> int:
+        """Ghi 1 dong backtest_runs, tra ve run_id. filtered_bars la dict
+        (tong cac ma) — luu TONG so bar rac vao cot filtered_bars (int)."""
+        total_filtered = sum((filtered_bars or {}).values())
+        with self.conn() as c:
+            row = c.execute(
+                "INSERT INTO backtest_runs "
+                "(symbol, strategy, timeframe, frm, to_date, capital, realized_pnl, "
+                " unrealized_pnl, buy_and_hold_pnl, max_drawdown, win_rate, trades, "
+                " filtered_bars) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING run_id",
+                (
+                    symbol, strategy, timeframe, frm, to_date, capital,
+                    realized_pnl, unrealized_pnl, buy_and_hold_pnl,
+                    max_drawdown, win_rate, trades, total_filtered,
+                ),
+            ).fetchone()
+        assert row is not None, "RETURNING run_id phai co dong"
+        return int(row[0])
+
+    def read_backtest_runs(self, limit: int = 100) -> list[dict]:
+        """Doc cac lan chay backtest gan nhat (Grafana dung lam nguon bien)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT run_id, ts, symbol, strategy, timeframe, frm, to_date, "
+                "       capital, realized_pnl, unrealized_pnl, buy_and_hold_pnl, "
+                "       max_drawdown, win_rate, trades, filtered_bars "
+                "FROM backtest_runs ORDER BY run_id DESC LIMIT %s",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "run_id": int(r[0]), "ts": r[1], "symbol": r[2], "strategy": r[3],
+                "timeframe": r[4], "frm": r[5], "to_date": r[6], "capital": r[7],
+                "realized_pnl": r[8], "unrealized_pnl": r[9],
+                "buy_and_hold_pnl": r[10], "max_drawdown": r[11],
+                "win_rate": r[12], "trades": int(r[13]) if r[13] is not None else 0,
+                "filtered_bars": int(r[14]) if r[14] is not None else 0,
+            }
+            for r in rows
+        ]
+
+    def save_backtest_equity(
+        self, run_id: int, curve: list[tuple], bh_curve: list[tuple] | None = None
+    ) -> None:
+        """Ghi duong von (list[(ts, equity)]) kem duong mua-va-giu THAT.
+
+        bh_curve phai cung do dai va cung moc ts voi curve (run_backtest bao
+        dam dieu do). Grafana chi DOC hai cot nay — khong tinh benchmark trong
+        SQL, vi do la ban thu hai cua cong thuc _buy_and_hold."""
+        if not curve:
+            return
+        bh = [e for _, e in bh_curve] if bh_curve else [None] * len(curve)
+        if len(bh) != len(curve):
+            raise ValueError(
+                f"bh_curve {len(bh)} diem != equity_curve {len(curve)} diem — "
+                "hai duong phai cung moc ts thi moi ve chong len nhau duoc"
+            )
+        with self.conn() as c:
+            c.cursor().executemany(
+                "INSERT INTO backtest_equity (run_id, ts, equity, equity_bh) "
+                "VALUES (%s,%s,%s,%s)",
+                [(run_id, ts, eq, b) for (ts, eq), b in zip(curve, bh)],
+            )
+
+    def read_backtest_equity(self, run_id: int) -> list[tuple]:
+        """Doc duong von theo run_id, sap theo ts. Tra (ts, equity, equity_bh)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT ts, equity, equity_bh FROM backtest_equity "
+                "WHERE run_id = %s ORDER BY ts",
+                (run_id,),
+            ).fetchall()
+        return [
+            (r[0], float(r[1]), float(r[2]) if r[2] is not None else None) for r in rows
+        ]
+
+    def save_backtest_fills(self, run_id: int, fills: list[Fill]) -> None:
+        """Ghi cac lenh cua 1 lan chay backtest."""
+        if not fills:
+            return
+        with self.conn() as c:
+            c.cursor().executemany(
+                "INSERT INTO backtest_fills (run_id, ts, side, qty, price, fee) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                [(run_id, f.ts, f.side, f.qty, f.price, f.fee) for f in fills],
+            )
+
+    def read_backtest_fills(self, run_id: int) -> list[tuple]:
+        """Doc cac lenh theo run_id, sap theo ts (khong co pnl — khuon plan)."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT ts, side, qty, price, fee FROM backtest_fills "
+                "WHERE run_id = %s ORDER BY ts",
+                (run_id,),
+            ).fetchall()
+        return [(r[0], r[1], int(r[2]), float(r[3]), float(r[4])) for r in rows]
+

@@ -1,0 +1,220 @@
+{
+  "title": "Backtest Explorer",
+  "uid": "backtest-explorer",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-10y",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Đường vốn: chiến lược vs mua-và-giữ (run $run_id)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "TimescaleDB"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyVND",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "-- Ca hai duong chi DOC tu backtest_equity. Truoc day duong mua-va-giu\n-- duoc NOI SUY TUYEN TINH o day (capital -> capital+pnl theo ty le thoi\n-- gian): duong thang do co drawdown = 0 nen che mat cu sap that cua\n-- benchmark (do that: VCB 2020 sut 39,5%), va la ban thu hai cua cong\n-- thuc _buy_and_hold viet bang SQL. Nay run_backtest tinh mot lan, ghi\n-- vao cot equity_bh; SQL khong tinh gi nua.\nSELECT e.ts AS time, e.equity AS value, 'strategy' AS metric\nFROM backtest_equity e\nWHERE e.run_id = $run_id\nUNION ALL\nSELECT e.ts AS time, e.equity_bh AS value, 'buy_and_hold' AS metric\nFROM backtest_equity e\nWHERE e.run_id = $run_id AND e.equity_bh IS NOT NULL\nORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Các lệnh (run $run_id)",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "TimescaleDB"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ts AS \"Thời điểm\", side AS \"Lệnh\", qty AS \"KL\", price AS \"Giá\", fee AS \"Phí\"\nFROM backtest_fills WHERE run_id = $run_id ORDER BY ts",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tổng kết (run $run_id)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "TimescaleDB"
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Realized PnL"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyVND"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unrealized PnL"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyVND"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Buy&Hold PnL"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyVND"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MaxDD"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Win rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT trades AS \"Trades\",\n       win_rate AS \"Win rate\",\n       max_drawdown AS \"MaxDD\",\n       filtered_bars AS \"Filtered bars\",\n       realized_pnl AS \"Realized PnL\",\n       unrealized_pnl AS \"Unrealized PnL\",\n       buy_and_hold_pnl AS \"Buy&Hold PnL\"\nFROM backtest_runs WHERE run_id = $run_id",
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "symbol",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "TimescaleDB"
+        },
+        "query": "SELECT DISTINCT symbol FROM backtest_runs ORDER BY 1",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "description": "Mã chứng khoán có kết quả backtest."
+      },
+      {
+        "name": "strategy",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "TimescaleDB"
+        },
+        "query": "SELECT DISTINCT strategy FROM backtest_runs ORDER BY 1",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "description": "Chiến lược đã chạy (chỉ các chiến lược trong STRATEGIES)."
+      },
+      {
+        "name": "timeframe",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "TimescaleDB"
+        },
+        "query": "SELECT DISTINCT timeframe FROM backtest_runs ORDER BY 1",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "description": "Khung thời gian (5m..1M, từ _TF_SPEC)."
+      },
+      {
+        "name": "run_id",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "TimescaleDB"
+        },
+        "query": "SELECT run_id::text, 'run ' || run_id || ' — ' || symbol || ' / ' || strategy || ' / ' || timeframe || ' (' || to_char(ts AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI') || ')' FROM backtest_runs WHERE symbol = '$symbol' AND strategy = '$strategy' AND timeframe = '$timeframe' ORDER BY run_id DESC",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "description": "Chọn lần chạy cụ thể cho bộ symbol/strategy/timeframe."
+      }
+    ]
+  }
+}

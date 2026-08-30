@@ -28,6 +28,17 @@ class BacktestReport:
     buy_and_hold_pnl: float = 0.0
     # SPEC-1c: so dong bar bi loai vi OHLC <= 0, theo tung ma.
     filtered_bars: dict[str, int] = field(default_factory=dict)
+    # backtest-grafana: duong von moi bar — (ts, equity), ts lay tu bar sach.
+    # Phoi ra tu run_backtest (NOI BO da tinh) — KHONG tinh lai trong script
+    # (commit 4ea4c8d: mot cong thuc hai ban = hai tap bar khac nhau).
+    equity_curve: list[tuple] = field(default_factory=list)
+    # backtest-grafana: duong MUA-VA-GIU that, cung moc ts voi equity_curve.
+    # Diem cuoi LUON bang capital + buy_and_hold_pnl (co test khang dinh) — do
+    # la cach chung minh day KHONG phai ban thu hai cua cong thuc _buy_and_hold.
+    # Truoc day Grafana noi suy tuyen tinh capital -> capital+pnl: duong thang
+    # do co drawdown = 0, che mat cu sap that cua benchmark (VCB 2020-02 dang
+    # lo 7,5% ma duong ve dang lai) va la mot ban SQL cua cung cong thuc.
+    buy_and_hold_curve: list[tuple] = field(default_factory=list)
 
 
 def _is_dirty(bar: Bar) -> bool:
@@ -80,6 +91,64 @@ def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rat
     return total
 
 
+def _buy_and_hold_curve(
+    bars: list[Bar],
+    capital: float,
+    fee_rate: float,
+    sell_tax_rate: float,
+    slippage_bps: float,
+) -> list[tuple]:
+    """Duong von MUA-VA-GIU that, mot diem moi bar (cung moc ts voi
+    equity_curve cua run_backtest).
+
+    Dung NGUYEN cach tinh cua `_buy_and_hold` — cung gia mua/ban, cung phi,
+    cung cach chia von — chi khac o cho no ghi lai gia tri TUNG BAR thay vi
+    chi tra ve lai/lo cuoi ky. Bat bien: diem cuoi == capital +
+    _buy_and_hold(...). Neu hai ham nay lech nhau thi test se do; do la co y,
+    vi mot cong thuc ton tai hai ban chinh la loi 4ea4c8d da phai di sua.
+
+    Trong khi con giu: mark-to-market theo close (chua tru phi ban — chua ban).
+    Tu bar CUOI cua moi ma tro di: quy ra tien da tru phi ban + thue.
+    """
+    if not bars:
+        return []
+    symbols = sorted({b.symbol for b in bars})
+    per_symbol = capital / len(symbols)
+    slip = slippage_bps / 10_000
+
+    qty: dict[str, int] = {}
+    sold_value: dict[str, float] = {}
+    last_idx: dict[str, int] = {}
+    spent = 0.0
+    for sym in symbols:
+        sym_bars = [b for b in bars if b.symbol == sym]
+        first, last = sym_bars[0], sym_bars[-1]
+        buy_price = first.open * (1 + slip)
+        q = int(per_symbol // (buy_price * (1 + fee_rate)))
+        if q <= 0:
+            continue
+        qty[sym] = q
+        spent += q * buy_price * (1 + fee_rate)
+        sell_price = last.close * (1 - slip)
+        sold_value[sym] = q * sell_price * (1 - fee_rate - sell_tax_rate)
+    for i, b in enumerate(bars):
+        last_idx[b.symbol] = i
+
+    leftover = capital - spent
+    marks: dict[str, float] = {}
+    curve: list[tuple] = [(bars[0].ts, capital)]
+    for i, bar in enumerate(bars):
+        marks[bar.symbol] = bar.close
+        held = 0.0
+        for sym, q in qty.items():
+            if i >= last_idx[sym]:
+                held += sold_value[sym]  # da ban xong ma nay
+            else:
+                held += q * marks.get(sym, 0.0)
+        curve.append((bar.ts, leftover + held))
+    return curve
+
+
 def run_backtest(
     bars: list[Bar],
     strategy: Strategy,
@@ -102,7 +171,11 @@ def run_backtest(
     broker = PaperBroker(capital)
     marks: dict[str, float] = {}
     all_fills: list[Fill] = []
-    equity_curve: list[float] = [capital]
+    # backtest-grafana: (ts, equity) — ts diem DAU lay tu bar dau tien (sach),
+    # equity = capital; moi bar sau them 1 diem. bars rong (khong co bar sach
+    # nao) -> chi con diem dau, ts=None.
+    first_ts = bars[0].ts if bars else None
+    equity_curve: list[tuple] = [(first_ts, capital)]
 
     for bar in bars:
         fills = broker.on_bar(bar)
@@ -141,11 +214,11 @@ def run_backtest(
         equity = broker.cash + sum(
             p.qty * marks.get(s, p.avg_price) for s, p in broker.positions.items()
         )
-        equity_curve.append(equity)
+        equity_curve.append((bar.ts, equity))
 
-    peak = equity_curve[0]
+    peak = equity_curve[0][1]
     max_dd = 0.0
-    for e in equity_curve:
+    for _, e in equity_curve:
         peak = max(peak, e)
         if peak > 0:
             max_dd = max(max_dd, (peak - e) / peak)
@@ -165,6 +238,10 @@ def run_backtest(
             bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
         ),
         filtered_bars=filtered,
+        equity_curve=equity_curve,
+        buy_and_hold_curve=_buy_and_hold_curve(
+            bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
+        ),
     )
 
 
