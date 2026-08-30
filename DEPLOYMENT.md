@@ -102,7 +102,12 @@ it, and prunes backups older than 14 days (override with
 chmod +x scripts/backup_db.sh
 sudo crontab -e
 # add:
-0 2 * * * /opt/trading/scripts/backup_db.sh /var/backups/trading-db >> /var/log/trading-backup.log 2>&1
+# `cd /opt/trading` la BAT BUOC: script goi `docker compose exec`, ma lenh do tim
+# docker-compose.yml o THU MUC HIEN TAI. Cron chay voi cwd = home cua user
+# (thuong /root) nen thieu `cd` se bao "no configuration file provided" va
+# backup that bai NGAY DEM DAU — khong co canh bao Telegram cho backup, nen
+# se khong ai biet cho toi luc CAN restore.
+0 2 * * * cd /opt/trading && ./scripts/backup_db.sh /var/backups/trading-db >> /var/log/trading-backup.log 2>&1
 ```
 
 Restore:
@@ -206,7 +211,7 @@ sudo crontab -e
 30 15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/daily_data_check.py >> /var/log/trading-daily-data-check.log 2>&1
 ```
 
-Script kiểm **bốn thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
+Script kiểm **năm thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
 chạy — các nhánh khác tự bỏ qua):
 
 | Kiểm | Cảnh báo | Từ commit |
@@ -215,6 +220,7 @@ chạy — các nhánh khác tự bỏ qua):
 | Dữ liệu ngừng chảy (bar không về, cửa sổ 9:00-11:30/13:00-14:30) | CRITICAL | `7700992` |
 | Token SSI sắp/đã hết hạn (kể cả khung 8:00-8:59) | WARN / CRITICAL | `7700992` |
 | Hai sổ sách lệch (`cash + Σ(avg_price×qty) − CAPITAL == realized_pnl`) | CRITICAL | `d775ebb` |
+| Vị thế ngừng đồng bộ (`account_position_snapshot` của `real_order_account` quá 15 phút chưa cập nhật, hoặc chưa từng đồng bộ) | CRITICAL | `ebfec3c` |
 
 Thay `trading:trading` bằng user/password Postgres thật nếu bạn đã đổi khỏi giá
 trị mặc định trong `docker-compose.yml`.

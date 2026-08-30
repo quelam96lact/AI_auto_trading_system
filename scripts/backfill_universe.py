@@ -20,12 +20,23 @@ Thiết kế (bắt buộc từ plan 2026-08-09-multi-timeframe-data.md Task 5):
 import argparse
 import asyncio
 import json
+import sys
 from datetime import date, datetime
 from pathlib import Path
 
 from trading.collector.backfill import SSIRestClient
 from trading.config import load_config
 from trading.storage.db import Storage
+
+# Script nay chay qua CRON (DEPLOYMENT.md §9.5), stdout la file log chu khong
+# phai terminal — locale khong-UTF-8 se lam moi `print` tieng Viet duoi day nem
+# UnicodeEncodeError va bo do backfill giua chung. Khong ai duoc bao (script nay
+# KHONG gui Telegram, chi ghi log), nen hong am tham dung kieu su co 08/2026:
+# bars_daily cu di 11 ngay khong ai biet. Cung cach daily_data_check.py da lam.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 PROGRESS_EVERY = 25
 
