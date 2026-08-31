@@ -18,10 +18,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "claudekit-hooks run typecheck-project"
-          },
-          {
-            "type": "command",
             "command": "claudekit-hooks run lint-project"
           },
           {
