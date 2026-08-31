@@ -10,31 +10,12 @@ __pycache__/
 .agents/
 .codex/
 scripts/.ssi_sdk_token.json
-scripts/.spike_ohlc_sample.json
-scripts/.spike_stream_sample.jsonl
-scripts/.spike_account_info.json
-scripts/.spike_equity_balance.json
-scripts/.spike_equity_positions.json
-scripts/.spike_all_symbols.json
-scripts/.spike_all_symbols_classified.json
-scripts/.spike_max_buy_sell.json
-scripts/.spike_place_order.json
-scripts/.spike_cancel_order.json
-scripts/.spike_index_stream_sample.jsonl
-scripts/.spike_derivative_balance.json
-scripts/.spike_derivative_ppmmr.json
-scripts/.spike_derivative_positions.json
-scripts/.spike_derivative_contract_symbol.json
-scripts/.spike_derivative_ohlc_sample.json
-scripts/.spike_derivative_stream_sample.jsonl
-scripts/.spike_hnx_upcom_symbols.json
-scripts/.spike_ohlc_hnx_sample.json
-scripts/.spike_ohlc_upcom_sample.json
-scripts/.spike_stream_hnx_upcom_sample.jsonl
-scripts/.spike_equity_10y_symbols.json
-scripts/.spike_equity_10y_*.json
-scripts/.spike_indexes.json
-scripts/.spike_index_summary.json
+# Du lieu spike (dot-prefixed) — 25 dong liet ke tay da gop lai 2026-09-01.
+# NGOAI LE duy nhat: mau OHLC phai sinh la du lieu THAT ma
+# tests/test_derivative_backtest.py doc truc tiep — co y commit (cc8048e).
+scripts/.spike_*.json
+scripts/.spike_*.jsonl
+!scripts/.spike_derivative_ohlc_5m_2m_sample.json
 scripts/.spike_*.py
 scripts/.repro_*.py
 scripts/.probe_*.py

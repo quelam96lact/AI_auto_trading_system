@@ -956,14 +956,6 @@ class Storage:
             ).fetchall()
         return {r[0] for r in rows}
 
-    def read_latest_bar_date(self) -> date | None:
-        """Ngày bar mới nhất trong bars_daily (quy về Asia/Ho_Chi_Minh)."""
-        with self.conn() as c:
-            row = c.execute(
-                "SELECT MAX((ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) FROM bars_daily"
-            ).fetchone()
-        return row[0] if row and row[0] is not None else None
-
     def read_symbols_with_bar_on_date(
         self, day: date, symbols: list[str] | None = None
     ) -> set[str]:
