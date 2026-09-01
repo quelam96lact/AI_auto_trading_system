@@ -211,6 +211,33 @@ sudo crontab -e
 30 15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/daily_data_check.py >> /var/log/trading-daily-data-check.log 2>&1
 ```
 
+### Windows (máy dev / máy chạy thật nếu dùng Windows)
+
+Máy Windows dùng Task Scheduler, không phải cron. Ba task tương ứng với ba dòng
+cron ở trên (tên task `trading-*`):
+
+| Task | Lịch | Lệnh (qua Git Bash `bash.exe -lc`) |
+|---|---|---|
+| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `cd /d/My_Vault_Obsidian/Project/AI_auto_trading_system && set -a && . ./.env && set +a && DB_DSN=$(echo "$DB_DSN" \| sed 's/localhost/127.0.0.1/') && uv run python scripts/heartbeat_check.py >> logs/heartbeat.log 2>&1` |
+| `trading-daily-data-check` | 15:30 T2–T6 | cùng tiền tố, `scripts/daily_data_check.py >> logs/daily-data-check.log` |
+| `trading-backfill-universe` | 20:30 T2–T6 | cùng tiền tố, `scripts/backfill_universe.py --timeframe 1d --from 2026-09-01 --to $(date +%F) --use-universe --sleep-ms 200 >> logs/backfill.log` |
+
+Điểm bắt buộc khi tạo trên Windows:
+
+- **`DB_DSN` phải dùng `127.0.0.1`, KHÔNG `localhost`** — trên Windows
+  `localhost` phân giải IPv6 trước, pool treo ~30s mỗi lần. Lệnh trên thay
+  inline bằng `sed`.
+- **`bash.exe` chứ không phải `cmd.exe`** — script cần `set -a && . ./.env`
+  (cú pháp shell). Đường dẫn: `C:\Program Files\Git\bin\bash.exe`.
+- Log ghi vào `logs/<tên>.log` trong repo; mỗi lần chạy ghi thêm dòng
+  timestamp + `EXIT=<code>` để phân biệt "đã chạy" với "chưa bao giờ chạy".
+- Kiểm chứng task thật sự chạy: `schtasks /query /fo LIST /v` phải cho
+  `Last Run Time` khác rỗng **và** file log có dòng mới — "đã tạo task"
+  không tính (sự cố 31/08: chuông có sẵn nhưng chưa từng được cài lịch).
+- Cấu hình XML (repetition 5 phút trong khung 08:00–15:00 T2–T6, bỏ chặn
+  pin/battery): xem bản đã đăng ký trên máy dev
+  (`schtasks /query /tn trading-heartbeat-check /xml`).
+
 Script kiểm **năm thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
 chạy — các nhánh khác tự bỏ qua):
 

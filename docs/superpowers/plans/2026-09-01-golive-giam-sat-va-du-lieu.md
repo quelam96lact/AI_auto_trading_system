@@ -38,9 +38,17 @@ Nên nếu không ai nạp dữ liệu, trong khoảng một tuần NAV sẽ t�
 phần tiền mặt — kèm cảnh báo, không im lặng, nhưng vẫn sai. Và NAV vừa trở thành
 **số nhân kích thước lệnh thật** (commit `6159d39`).
 
-Đã thấy tận mắt trong log: `{"msg": "NAV tinh thieu: mot so ma khong dinh gia
-duoc (tinh 0)", "symbols": "CAP", "nav": 148348000.0}` — có lúc còn thiếu tới 5/7
-mã (`CAP,HCM,MIRHCM261,SSI,TCX`, NAV rớt xuống 91.978.997).
+> **ĐÍNH CHÍNH 2026-09-01 (viết sau khi audit báo cáo agent).** Bản đầu của
+> plan này trích các dòng log `NAV tinh thieu ... "symbols": "CAP", "nav":
+> 148348000.0` và `CAP,HCM,MIRHCM261,SSI,TCX -> nav 91.978.997` như thể đó là
+> **hiện trạng**. Sai: đó là log **cũ**, từ trước đợt nạp lại dữ liệu 30/08.
+> Đo lại hôm nay: `account_nav_snapshot` mới nhất có `unpriced_symbols = {}`
+> cho cả hai tài khoản (0434226 = 200.188.000), và **0 cảnh báo `NAV tinh
+> thieu` nào trong log ngày 01/09**. NAV hiện đang định giá đủ.
+>
+> Cơ chế nêu ở trên vẫn đúng và vẫn là rủi ro thật — `bars_daily` đứng yên thì
+> trong ~5 phiên NAV sẽ xẹp. Nhưng nó **chưa xảy ra**, và nói nó đã xảy ra là
+> phóng đại. Giữ đoạn này để nhớ: trích log phải xem mốc thời gian của dòng log.
 
 ### Mâu thuẫn còn treo, không phải việc của plan này nhưng phải nói ra
 
