@@ -1,0 +1,41 @@
+Antigravity — việc CHẠY THEO GIỜ, không phải việc code. Chỉ thực thi khi chủ dự án đã duyệt.
+
+KẾ HOẠCH ĐẦY ĐỦ: docs/superpowers/plans/2026-08-20-deadman-switch-live-drill.md
+ĐỌC HẾT trước khi gõ lệnh đầu tiên. Dưới đây chỉ là phần dễ làm sai nhất.
+
+VIỆC: giết collector 20 phút giữa phiên sáng 2026-08-20 để kiểm dead-man's switch
+(scripts/heartbeat_check.py) có thật sự kêu không, rồi đo xem lỗ hổng bar có được vá không.
+
+VÌ SAO KHÔNG LÀM ĐƯỢC NGOÀI PHIÊN: heartbeat_check.py tự thoát sớm khi is_trading_time()
+false, và cả ba nhánh cảnh báo đều định nghĩa trên dòng dữ liệu đang chảy. Chạy lúc 22h
+thì nó xanh vô nghĩa. Đây là lý do việc này còn tồn từ 2026-08-09 tới giờ.
+
+BA ĐIỀU DỄ LÀM SAI NHẤT:
+
+1. CHẠY heartbeat_check.py TRÊN HOST, KHÔNG TRONG CONTAINER. Chạy trong chính container
+   đang chết thì nó chết theo — cả bài kiểm mất ý nghĩa. DEPLOYMENT.md §9 nói rõ.
+
+2. MỐC GIỜ LÀ MỘT PHẦN CỦA PHÉP ĐO, KHÔNG PHẢI GỢI Ý. 09:36 kiểm ngưỡng heartbeat 300s;
+   09:47 kiểm ngưỡng 2A 15 phút không bar. Chạy sớm 2 phút thì thấy xanh và kết luận
+   ngược. Bỏ lỡ mốc nào thì GHI GIỜ THẬT, đừng viết lại cho khớp bảng.
+
+3. TASK 3/4 LÀ ĐO, KHÔNG PHẢI PASS/FAIL. Câu hỏi: 4 bar mất trong 09:30-09:50 được vá bởi
+   backfill lúc khởi động, bởi EOD repair 15:05, hay KHÔNG được vá? Đáp án "không được vá"
+   là lỗ hổng go-live thật — nêu bật lên đầu báo cáo, đừng chôn ở cuối. Và đối chiếu mức
+   nền bằng chính 3 mã đó ở cửa sổ 09:00-09:30, đừng so với con số lý thuyết 4 bar/mã
+   (mã ít khớp lệnh thiếu khung là chuyện bình thường — bài học từ đợt trước).
+
+RÀNG BUỘC — vi phạm là hỏng hệ thống thật:
+- KHÔNG sửa file code nào. Đây là plan chạy và đo. Thấy bug -> BÁO CÁO, phiên sau sửa TDD.
+- KHÔNG commit, KHÔNG push.
+- KHÔNG bật real_trading_enabled.
+- CHỈ dừng `collector`. KHÔNG đụng engine / postgres / nats.
+- KHÔNG quá 20 phút. Quá 09:50 chưa start lại -> START LẠI TRƯỚC, điều tra sau.
+- KHÔNG chạy backfill thủ công trong lúc diễn tập — sẽ phá phép đo Task 3/4.
+- Task 1 mà đã đỏ sẵn -> DỪNG, BÁO CÁO. Không diễn tập trên hệ thống đang hỏng.
+- Chuông không kêu -> start lại collector NGAY rồi mới điều tra. Đừng kéo dài lỗ hổng
+  dữ liệu để ngồi debug.
+
+BÁO CÁO: dán output THẬT nguyên văn — exit code, stdout, SQL, nội dung tin Telegram
+nhận được (không chấp nhận "script bảo đã gửi"). Tách bạch "đã kiểm chứng bằng chạy thật"
+và "vẫn là suy luận".
