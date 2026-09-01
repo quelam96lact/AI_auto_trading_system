@@ -267,7 +267,7 @@ async def test_engine_run_calls_real_orders_handle_crossover_on_crossover(storag
 
     calls = []
 
-    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar, atr=None):
         calls.append((crossover, bar))
 
     monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
@@ -316,7 +316,7 @@ async def test_engine_run_persists_real_risk_halt_on_transition(storage, monkeyp
 
     halt_day = None
 
-    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar, atr=None):
         nonlocal halt_day
         if halt_day is None:
             halt_day = bar.ts.date()
@@ -367,7 +367,7 @@ async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatc
 
     signals_seen = []
 
-    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar):
+    def fake_handle_crossover(cfg_arg, storage_arg, risk_arg, crossover, bar, atr=None):
         signals_seen.append((risk_arg.halted_date, crossover, bar))
 
     monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
@@ -1152,3 +1152,58 @@ async def test_engine_warmup_does_not_generate_orders(storage, monkeypatch):
     with storage.conn() as c:
         n = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
     assert n == 0, f"warm-up KHONG duoc sinh lenh, thuc te orders={n}"
+
+
+# ============ Plan 2026-09-01 T2-B1: GUARD-3 cong bo quyen ban ============
+
+
+async def test_guard3_silent_when_no_intersection(storage, monkeypatch):
+    """GUARD-3 (a): giao cfg.symbols vs danh muc that RONG -> im lang. Khi
+    trading bat ma khong co gi de ban, canh bao chi la tieng on (NOISE-1)."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
+    # danh muc that rong — khong seed gi
+    await run(cfg, max_messages=0)
+    assert not any(
+        level == "WARN" and "quyền bán" in msg for level, msg in alerts_seen
+    ), f"giao rong phai im lang, thuc te: {alerts_seen}"
+
+
+async def test_guard3_alerts_sell_entitlement_when_intersection(storage, monkeypatch):
+    """GUARD-3 (b): giao co ENGT 1500 -> alert WARN liet ke ma + khoi luong +
+    sellable_qty, noi ro engine co the sinh lenh BAN so co phieu nay."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    _seed_real_position(storage, qty=1500, sellable=1400)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
+    await run(cfg, max_messages=0)
+    assert any(
+        level == "WARN" and "quyền bán" in msg and "ENGT" in msg and "1500" in msg and "1400" in msg
+        for level, msg in alerts_seen
+    ), f"phai WARN cong bo quyen ban ENGT 1500 (sellable 1400), thuc te: {alerts_seen}"
+
+
+async def test_guard3_silent_when_trading_disabled(storage, monkeypatch):
+    """GUARD-3 (c): real_trading_enabled=False -> im lang DU danh muc that co
+    giao voi symbols (bai hoc NOISE-1: canh bao khi trading tat la nhieu)."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+    _seed_real_position(storage, qty=1500, sellable=1400)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=False)
+    await run(cfg, max_messages=0)
+    assert not any(
+        level == "WARN" and "quyền bán" in msg for level, msg in alerts_seen
+    ), f"trading tat phai im lang, thuc te: {alerts_seen}"

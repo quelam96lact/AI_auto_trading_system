@@ -9,28 +9,69 @@ from trading.strategies.sma_cross import Crossover
 from trading.strategy import Signal
 
 PENDING_ORDER_TTL_MINUTES = 15
-BUY_QTY = 100  # lô tối thiểu HOSE/HNX — KHÔNG lấy theo SmaCrossStrategy.qty (đó là
-               # tham số mô phỏng cho paper trading, không nên quyết định khối lượng
-               # lệnh thật; xem PLAN_REAL_ORDER_PLACEMENT.md).
+# Plan 2026-09-01 T1-B2: nguong "suc mua cu" — nhịp dong bo do duoc ~5 phut,
+# 15 = 3x nhip (cung ly le chuong 2A/2D). Neu do lai thay nhip khac, bao cao
+# truoc khi doi so.
+BUYING_POWER_MAX_AGE_MINUTES = 15
+# Dong ho module-level de test tiêm duoc (plan: khong goi datetime.now() tran
+# trong ham).
+_now = datetime.now
 
 
 def handle_crossover(
-    cfg: Config, storage: Storage, risk: RiskManager, crossover: Crossover, bar: Bar
+    cfg: Config,
+    storage: Storage,
+    risk: RiskManager,
+    crossover: Crossover,
+    bar: Bar,
+    atr: float | None = None,
 ) -> None:
     """Gate 1 sự kiện crossover (từ SmaCrossStrategy.last_crossover() — thuần kỹ
     thuật, KHÔNG liên quan PaperBroker) qua RiskManager riêng cho lệnh thật, dựa
     HOÀN TOÀN trên vị thế THẬT của tài khoản Cash.
+
+    Plan 2026-09-01 T1: nhanh BUY that gio day duoc DINH CO — goi LAI
+    risk.approve_sized() (ATR sizing + tran 20%, KHONG chep lai cong thuc —
+    bai hoc 4ea4c8d) roi kep tran CUNG max_buy_qty tu SSI (lam tron xuong boi
+    100). atr truyen tu closure on_real_crossover (engine/main.py) — khong keo
+    object strategy vao day. SELL van dung sellable_qty, khong qua suc mua.
 
     KHÔNG gọi bất kỳ API đặt lệnh nào — chỉ ghi DB + cảnh báo. Việc đặt lệnh thật
     là scripts/confirm_real_order.py, chạy thủ công bởi ngườ dùng.
     """
     positions = storage.read_real_positions(cfg.real_order_account)
     real_pos = positions.get(bar.symbol)
+    max_buy_qty = 0  # chi dung cho nhanh BUY; tranh possibly-unbound
 
     if crossover == "bull":
         if real_pos is not None and real_pos.qty > 0:
             return  # tài khoản thật đã nắm giữ mã này rồi, không mua thêm
-        signal = Signal(symbol=bar.symbol, side="BUY", qty=BUY_QTY)
+        signal = Signal(symbol=bar.symbol, side="BUY", qty=1)
+        # T1-B2 fail-safe suc mua (khuon NAV engine/main.py:122-136): thieu du
+        # lieu => tu choi + CRITICAL, KHONG roi ve gia tri "cho do gat".
+        bp = storage.read_buying_power(cfg.real_order_account, bar.symbol)
+        if bp is None:
+            alert(
+                "CRITICAL",
+                f"khong co dong sức mua (account_buying_power) cho {bar.symbol} "
+                f"— TU CHOI lenh BUY that (fail-safe, khong doan max_buy_qty)",
+                account=cfg.real_order_account,
+                symbol=bar.symbol,
+            )
+            return
+        max_buy_qty, _, _, bp_ts = bp
+        age_min = (_now(bar.ts.tzinfo) - bp_ts).total_seconds() / 60
+        if age_min > BUYING_POWER_MAX_AGE_MINUTES:
+            alert(
+                "CRITICAL",
+                f"sức mua {bar.symbol} cu {age_min:.0f} phút (nguong "
+                f"{BUYING_POWER_MAX_AGE_MINUTES}) — TU CHOI lenh BUY that "
+                f"(fail-safe, khong dat lenh tren so lieu cu)",
+                account=cfg.real_order_account,
+                symbol=bar.symbol,
+                ts=str(bp_ts),
+            )
+            return
     elif crossover == "bear":
         sellable = real_pos.sellable_qty if real_pos is not None else 0
         if sellable <= 0:
@@ -42,19 +83,45 @@ def handle_crossover(
     today = bar.ts.date()
     daily_pnl = storage.read_real_daily_pnl(cfg.real_order_account, today)
 
-    if not risk.approve(signal, bar.close, positions, daily_pnl, today):
-        # SIZE-1 Viec 2: moi lan tu choi noi duoc ly do — caller ghi log INFO
-        # (tu choi la chuyen binh thuong, khong WARN — bay NOISE-1).
-        alert(
-            "INFO",
-            "lenh that bi tu choi",
-            symbol=signal.symbol,
-            side=signal.side,
-            reason=risk.last_reject_reason,
-        )
-        return
+    if signal.side == "BUY":
+        # T1-B3: approve_sized resize BUY theo ATR + tran 20% (min qty_atr/cap)
+        sized = risk.approve_sized(signal, bar.close, atr, positions, daily_pnl, today)
+        if sized is None:
+            # SIZE-1 Viec 2: moi lan tu choi noi duoc ly do
+            alert(
+                "INFO",
+                "lenh that bi tu choi",
+                symbol=signal.symbol,
+                side=signal.side,
+                reason=risk.last_reject_reason,
+            )
+            return
+        # Tran CUNG suc mua SSI, ap SAU approve_sized — lam tron xuong boi 100
+        qty = min(sized.qty, max_buy_qty) // 100 * 100
+        if qty < 100:
+            alert(
+                "INFO",
+                "lenh that bi tu choi",
+                symbol=signal.symbol,
+                side=signal.side,
+                reason=f"suc mua {max_buy_qty} khong du 1 lo 100 cp",
+            )
+            return
+        signal = Signal(signal.symbol, "BUY", qty)
+    else:
+        if not risk.approve(signal, bar.close, positions, daily_pnl, today):
+            # SIZE-1 Viec 2: moi lan tu choi noi duoc ly do — caller ghi log INFO
+            # (tu choi la chuyen binh thuong, khong WARN — bay NOISE-1).
+            alert(
+                "INFO",
+                "lenh that bi tu choi",
+                symbol=signal.symbol,
+                side=signal.side,
+                reason=risk.last_reject_reason,
+            )
+            return
 
-    expires_at = datetime.now(bar.ts.tzinfo) + timedelta(minutes=PENDING_ORDER_TTL_MINUTES)
+    expires_at = _now(bar.ts.tzinfo) + timedelta(minutes=PENDING_ORDER_TTL_MINUTES)
     order_id = storage.create_pending_order(
         account_no=cfg.real_order_account,
         symbol=signal.symbol,

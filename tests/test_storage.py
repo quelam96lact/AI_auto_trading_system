@@ -55,6 +55,7 @@ def storage():
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
         c.execute("DELETE FROM backtest_runs")  # cascade xoa equity/fills
+        c.execute("DELETE FROM account_buying_power WHERE account_no = 'ACC_TEST'")
     return s
 
 
@@ -651,3 +652,23 @@ def test_save_and_read_backtest_fills(storage):
     # row = (ts, side, qty, price, fee) — khuon plan: backtest_fills khong co pnl
     assert fills[0][1] == "BUY" and fills[0][2] == 100 and fills[0][3] == 20_000.0
     assert fills[1][1] == "SELL" and fills[1][3] == 21_000.0
+
+
+# ============ real-order-sizing: read_buying_power tra them moc thoi gian ============
+
+
+def test_read_buying_power_returns_latest_ts(storage):
+    """Plan 2026-09-01 T1-B1: ghi 2 dong cung (account, symbol) khac ts,
+    doc ra phai la dong MOI NHAT kem dung ts (de engine tinh tuoi sức mua)."""
+    ts1 = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    ts2 = datetime(2026, 9, 1, 9, 5, tzinfo=TZ)
+    storage.record_buying_power("ACC_TEST", "VCB", ts1, 1000, 500, 50.0)
+    storage.record_buying_power("ACC_TEST", "VCB", ts2, 800, 600, 40.0)
+
+    got = storage.read_buying_power("ACC_TEST", "VCB")
+    assert got == (800, 600, 40.0, ts2), f"phai la dong moi nhat kem ts, thuc te: {got}"
+
+
+def test_read_buying_power_none_when_no_row(storage):
+    """Khong co dong nao -> None (khong phai tuple gia gia)."""
+    assert storage.read_buying_power("ACC_TEST", "VCB") is None

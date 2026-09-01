@@ -70,11 +70,15 @@ class RiskManager:
         daily_pnl: float,
         today: date,
     ) -> Signal | None:
-        """Giống approve() nhưng cho luồng paper trading: BUY được resize qty
-        theo ATR (risk_pct vốn / (atr * atr_multiplier), làm tròn xuống bội
-        100) thay vì dùng signal.qty gốc từ Strategy. SELL đi qua nguyên vẹn,
-        không đổi qty — chỉ BUY được sizing theo ATR (quyết định phạm vi rõ
-        ràng, xem spec). KHÔNG dùng cho real_orders.py — đó vẫn gọi approve().
+        """Giống approve() nhưng BUY được resize qty theo ATR (risk_pct vốn /
+        (atr * atr_multiplier), làm tròn xuống bội 100) thay vì dùng signal.qty
+        gốc từ Strategy. SELL đi qua nguyên vẹn, không đổi qty — chỉ BUY được
+        sizing theo ATR (quyết định phạm vi rõ ràng, xem spec).
+
+        Plan 2026-09-01 T1: KHÔNG còn giới hạn cho riêng paper — real_orders.py
+        (nhánh BUY thật) cũng gọi hàm này, sau đó kẹp trần max_buy_qty từ SSI.
+        Phép toán ATR sizing + trần 20% CHỈ tồn tại ở đây, một nguồn duy nhất
+        (bài học 4ea4c8d: một công thức hai bản = hai tập bar khác nhau).
 
         SIZE-1: qty = min(qty_atr, qty_cap) — cap cho vừa trần 20% thay vì từ
         chối thẳng (logic cũ triệt tiêu capital hai vế -> đòi ATR/giá >= 2,5%,

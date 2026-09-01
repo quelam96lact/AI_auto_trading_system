@@ -210,6 +210,29 @@ async def run(
                 f"{cheapest * 100:,.0f} VND/lo) trong cfg.symbols — se khong bao "
                 f"gio sinh lenh BUY",
             )
+        # GUARD-3 (plan 2026-09-01 T2): cong bo QUYEN BAN. Khi doi
+        # real_order_account sang tai khoan khac, engine dot nhien co quyen ban
+        # nhung co phieu that ma cfg.symbols giao voi danh muc — truoc day im
+        # lang. Liet ke tung ma + qty + sellable_qty de nguoi van hanh nhin
+        # thay minh vua trao quyen gi. Giao rong -> im lang (NOISE-1). CHI
+        # chay khi real_trading_enabled=True, cung khuon GUARD-1/2.
+        real_positions = storage.read_real_positions(cfg.real_order_account)
+        overlap = [
+            (sym, p.qty, p.sellable_qty)
+            for sym in cfg.symbols
+            if (p := real_positions.get(sym)) is not None and p.qty > 0
+        ]
+        if overlap:
+            detail = ", ".join(
+                f"{sym} {qty} cp (sellable {sellable})" for sym, qty, sellable in overlap
+            )
+            alert(
+                "WARN",
+                f"engine co quyền bán {detail} — cfg.symbols giao voi danh muc "
+                f"that cua {cfg.real_order_account}; crossover bear se sinh lenh "
+                f"BAN so co phieu nay",
+                account=cfg.real_order_account,
+            )
     marks: dict[str, float] = {}
     day_state: dict = {}
 
@@ -249,7 +272,11 @@ async def run(
             alert("WARN", "real pending orders expired without confirmation", count=n)
 
     def on_real_crossover(crossover, bar) -> None:
-        real_orders.handle_crossover(cfg, storage, real_risk, crossover, bar)
+        # Plan 2026-09-01 T1: truyen atr (float | None) cho dinh co BUY that —
+        # khong keo object strategy vao real_orders.py
+        real_orders.handle_crossover(
+            cfg, storage, real_risk, crossover, bar, atr=strategy.last_atr(bar.symbol)
+        )
 
     def idle_maintenance() -> None:
         """expire + heartbeat, không được để lỗi DB tạm thời giết engine."""

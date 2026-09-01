@@ -694,15 +694,17 @@ class Storage:
                 (account_no, symbol, ts, max_buy_qty, max_sell_qty, margin_ratio_pct),
             )
 
-    def read_buying_power(self, account_no: str, symbol: str) -> tuple[int, int, float | None] | None:
-        """Suc mua moi nhat cua (account_no, symbol) — (max_buy_qty, max_sell_qty, margin_ratio_pct)."""
+    def read_buying_power(self, account_no: str, symbol: str) -> tuple[int, int, float | None, datetime] | None:
+        """Suc mua moi nhat cua (account_no, symbol) — (max_buy_qty,
+        max_sell_qty, margin_ratio_pct, ts). Kem ts de engine tinh TUOI du lieu
+        (plan 2026-09-01 T1-B1: fail-safe chong dat lenh tren suc mua cu)."""
         with self.conn() as c:
             row = c.execute(
-                "SELECT max_buy_qty, max_sell_qty, margin_ratio_pct FROM account_buying_power "
+                "SELECT max_buy_qty, max_sell_qty, margin_ratio_pct, ts FROM account_buying_power "
                 "WHERE account_no = %s AND symbol = %s ORDER BY ts DESC LIMIT 1",
                 (account_no, symbol),
             ).fetchone()
-        return (row[0], row[1], row[2]) if row else None
+        return (row[0], row[1], row[2], row[3]) if row else None
 
     @staticmethod
     def parse_margin_ratio(value) -> float | None:
