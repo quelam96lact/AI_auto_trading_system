@@ -133,7 +133,26 @@ async def test_async_feed_restart_disconnects_current_stream(monkeypatch):
 
     await _wait_until(lambda: len(FakeStreaming.instances) >= 1)
     current = FakeStreaming.instances[-1]
-    await feed.restart()
+    did = await feed.restart()
     await feed.stop()
 
+    assert did is True, "co stream dang nối thi restart phai that su disconnect"
     assert current.disconnect_calls >= 1
+
+
+async def test_async_feed_restart_noop_when_never_connected(monkeypatch):
+    """Brief 2026-09-01 (dot 3) Task C: khi _stream None (feed chua tung nối,
+    dang trong backoff) thi restart() KHONG lam gi va tra False — de watchdog
+    khong kêu 'forcing reconnect' cho mot hanh dong khong xay ra (H2)."""
+    import ssi_sdk
+
+    monkeypatch.setattr(ssi_sdk, "AsyncStream", FakeAsyncStream)
+    monkeypatch.setattr(feed_module, "ensure_authenticated", fake_ensure_authenticated)
+
+    cfg = SimpleNamespace(symbols=["VCB"])
+    feed = SSIFeed(
+        cfg, storage=object(), on_message=lambda msg: None, backoff_base=0.01
+    )
+    # CHUA goi feed.start() -> _stream = None ngay tu dau
+    did = await feed.restart()
+    assert did is False, "khong co stream thi restart phai la no-op (False)"

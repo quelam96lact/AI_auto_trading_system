@@ -271,6 +271,11 @@ def main() -> int:
             )
 
     if messages:
+        # Brief 2026-09-01 (dot 3) Task B: in ly do ra stdout TRUOC khi gui —
+        # truoc day chi gui Telegram roi return 1, log chi co EXIT=1 khong biet
+        # nhanh nao no; va neu send_telegram nem exception thi khong con ban ghi
+        # nao o dau. Chuong bao phai de lai dau vet tai cho.
+        print("\n".join(messages))
         send_telegram("\n".join(messages))
         return 1
     return 0

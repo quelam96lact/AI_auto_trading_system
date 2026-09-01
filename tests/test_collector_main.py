@@ -104,7 +104,6 @@ def test_held_symbols_for_pricing_deduplicates_across_accounts(cfg):
 def test_held_symbols_for_pricing_skips_zero_quantity(cfg):
     """qty <= 0 khong phai vi the dang giu — compute_nav cung bo qua chung."""
     from dataclasses import replace
-
     cfg = replace(cfg, symbols=[], ssi_equity_accounts=["0434226"])
     storage = _storage_with_positions({"0434226": {"CAP": 0, "HCM": 200}})
 
@@ -416,3 +415,38 @@ async def test_housekeeping_loop_runs_no_tick_after_stop_event(cfg, monkeypatch)
     assert (
         ticks == []
     ), f"khong duoc chay tick nao sau khi co lenh dung, thuc te {len(ticks)}"
+
+
+# ============ Brief 2026-09-01 (dot 3) Task C: chuong khong keu suong ============
+
+
+async def test_restart_feed_alerts_only_when_stream_actually_disconnected(monkeypatch):
+    """Khi feed.restart() tra True (that su disconnect duoc) -> kêu WARN."""
+    import trading.collector.main as collector_main
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **k: alerts.append((level, msg)))
+
+    class FakeFeed:
+        async def restart(self):
+            return True
+
+    await collector_main._restart_feed_and_alert(FakeFeed())
+    assert alerts == [("WARN", "feed stale, forcing reconnect")], f"thuc te: {alerts}"
+
+
+async def test_restart_feed_silent_when_noop(monkeypatch):
+    """Khi feed.restart() tra False (khong co stream de ngat — feed chua tung
+    nối, dang trong backoff) -> KHONG kêu 'forcing reconnect' (H2: chuong mo
+    ta hanh dong khong xay ra)."""
+    import trading.collector.main as collector_main
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **k: alerts.append((level, msg)))
+
+    class FakeFeed:
+        async def restart(self):
+            return False
+
+    await collector_main._restart_feed_and_alert(FakeFeed())
+    assert alerts == [], f"restart no-op thi khong duoc kêu gi, thuc te: {alerts}"

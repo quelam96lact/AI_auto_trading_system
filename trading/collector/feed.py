@@ -131,10 +131,16 @@ class SSIFeed:
         if self._task is not None:
             await self._task
 
-    async def restart(self) -> None:
-        """Disconnect immediately so _run can reconnect without waiting for stale data."""
+    async def restart(self) -> bool:
+        """Brief 2026-09-01 (dot 3) Task C: tra ve True neu that su disconnect
+        duoc stream (feed dang nối/đang connect), False neu khong co stream nao
+        de ngat (_stream None = dang giu~ trong backoff chua tung nối). Caller
+        (watchdog) chi duoc kêu "forcing reconnect" khi True — truoc day kêu
+        ca khi khong reconnect duoc gi (H2: chuong mo ta hanh dong khong xay ra)."""
         if self._stream is not None:
             await self._stream.streaming.disconnect()
+            return True
+        return False
 
     async def _run(self) -> None:
         backoff = self._backoff_base

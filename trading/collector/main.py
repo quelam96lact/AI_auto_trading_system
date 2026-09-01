@@ -20,6 +20,15 @@ from trading.storage.db import Storage
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
 
 
+async def _restart_feed_and_alert(feed) -> None:
+    """Brief 2026-09-01 (dot 3) Task C: chi kêu "forcing reconnect" khi
+    feed.restart() that su disconnect duoc stream (tra True). Khi _stream None
+    (feed chua tung nối, dang trong backoff) restart la no-op — kêu luc do la
+    chuong mo ta hanh dong khong xay ra (H2)."""
+    if await feed.restart():
+        alert("WARN", "feed stale, forcing reconnect")
+
+
 def held_symbols_for_pricing(storage, cfg) -> list[str]:
     """MARGIN-2: ma DANG NAM GIU can gia tuoi de tinh NAV, tru ma da co trong
     cfg.symbols (luot backfill truoc da keo day du).
@@ -225,8 +234,11 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
         await client.close()
 
     def _on_stale():
-        alert("WARN", "feed stale, forcing reconnect")
-        asyncio.create_task(feed.restart())
+        # Brief 2026-09-01 (dot 3) Task C: restart() tra True chi khi that su
+        # disconnect duoc stream. Khi _stream None (feed chua tung nối, dang
+        # trong backoff) thi restart khong lam gi — kêu "forcing reconnect" luc
+        # do la chuong mo ta hanh dong khong xay ra (H2). Keu dung viec da lam.
+        asyncio.create_task(_restart_feed_and_alert(feed))
 
     wd = Watchdog(
         cfg.watchdog_stale_seconds,

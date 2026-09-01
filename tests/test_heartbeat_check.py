@@ -403,3 +403,23 @@ def test_main_never_synced_message_has_no_arithmetic(monkeypatch):
     assert "[CRITICAL]" in msg
     assert "0434221" in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
     assert "chưa từng đồng bộ" in msg, f"tin nhan phai noi ro ca chua-dong-bo, thuc te: {msg}"
+
+
+def test_main_prints_message_to_stdout_before_sending(monkeypatch, capsys):
+    """Brief 2026-09-01 (dot 3) Task B: khi co canh bao, noi dung phai duoc in
+    ra stdout — de log tai cho co ly do, khong phai chi EXIT=1 (chuong bao
+    khong de lai dau vet = chuong nua voi)."""
+    rc, sent = _run_main_with_position_sync(
+        monkeypatch, datetime(2026, 8, 14, 9, 40, tzinfo=TZ)
+    )  # 20 phut truoc fixed_now 10:00
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert sent, "phai gui Telegram"
+    assert "[CRITICAL]" in captured.out, (
+        f"stdout phai chua noi dung canh bao, thuc te: {captured.out!r}"
+    )
+    assert "0434221" in captured.out
+    # stdout phai giong noi dung da gui Telegram
+    assert captured.out.strip() == sent[0], (
+        f"stdout phai bang noi dung gui Telegram, thuc te stdout={captured.out!r} sent={sent[0]!r}"
+    )
