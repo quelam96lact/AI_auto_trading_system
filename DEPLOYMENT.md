@@ -331,6 +331,46 @@ Lưu ý:
 - 5m (`--timeframe 5m`) backfill toàn vũ trụ KHÔNG nên chạy định kỳ — chỉ
   backtest các mã cần thiết qua `--symbols` (7 ngày/lượt chunk, tốn API).
 
+## 10. Sau khi sửa code trong `trading/` — BẮT BUỘC dựng lại container
+
+Sửa file trên host **không có tác dụng gì** với stack đang chạy: collector/engine
+chạy code **trong image**, không phải từ repo. Toàn bộ thay đổi trong `trading/`
+từ 15/08/2026 tới 01/09/2026 chưa từng chạy vì không ai dựng lại (sự cố đợt 5:
+kiểm "sửa đã hoạt động" trên container vẫn chạy image cũ → kết luận sai).
+
+Sau khi commit sửa code, dựng lại (chỉ 2 service — không `down`, không đụng
+postgres/nats/grafana, không xoá volume):
+
+```bash
+docker compose up -d --build collector engine
+```
+
+**Cảnh báo đã đo (01/09):** lệnh trên **cũng tạo lại `nats` và `postgres`**,
+dù không nêu tên chúng — `docker compose up` đồng bộ toàn bộ project. Lần đó
+dữ liệu an toàn (đã kiểm `max(ts)` và số dòng `bars`/`bars_daily` trước–sau,
+không đổi), nhưng đừng trông vào may. Muốn chắc chắn chỉ đụng hai service:
+
+```bash
+docker compose build collector engine
+docker compose up -d --no-deps collector engine
+```
+
+Kiểm chứng code MỚI thật sự nằm trong container — cả ba phải **> 0**, nếu còn
+0 thì build không lấy source mới, **dừng lại** và tìm hiểu trước khi restart:
+
+```bash
+docker exec ai_auto_trading_system-collector-1 sh -c \
+  'grep -c _connected $(python -c "import trading.collector.feed as m; print(m.__file__)")'
+docker exec ai_auto_trading_system-collector-1 sh -c \
+  'grep -c _restart_feed_and_alert $(python -c "import trading.collector.main as m; print(m.__file__)")'
+docker exec ai_auto_trading_system-collector-1 sh -c \
+  'grep -c backoff_cap_429 $(python -c "import trading.collector.feed as m; print(m.__file__)")'
+```
+
+Ba con số này là chữ ký của code mới (`_connected` + backoff 429 trong
+`trading/collector/feed.py` từ `f8e3392`, `_restart_feed_and_alert` trong
+`trading/collector/main.py`). Nếu sau này thêm sửa mới, đổi chữ ký theo.
+
 ## Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.
