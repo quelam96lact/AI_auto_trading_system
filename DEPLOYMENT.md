@@ -216,11 +216,31 @@ sudo crontab -e
 Máy Windows dùng Task Scheduler, không phải cron. Ba task tương ứng với ba dòng
 cron ở trên (tên task `trading-*`):
 
+Cả ba đi qua `scripts/run_if_docker_up.sh` — xem "Cổng Docker" ngay dưới bảng.
+
 | Task | Lịch | Lệnh (qua Git Bash `bash.exe -lc`) |
 |---|---|---|
-| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `cd /d/My_Vault_Obsidian/Project/AI_auto_trading_system && set -a && . ./.env && set +a && DB_DSN=$(echo "$DB_DSN" \| sed 's/localhost/127.0.0.1/') && uv run python scripts/heartbeat_check.py >> logs/heartbeat.log 2>&1` |
-| `trading-daily-data-check` | 15:30 T2–T6 | cùng tiền tố, `scripts/daily_data_check.py >> logs/daily-data-check.log` |
-| `trading-backfill-universe` | 20:30 T2–T6 | cùng tiền tố, `scripts/backfill_universe.py --timeframe 1d --from 2026-09-01 --to $(date +%F) --use-universe --sleep-ms 200 >> logs/backfill.log` |
+| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `/d/My_Vault_Obsidian/Project/AI_auto_trading_system/scripts/run_if_docker_up.sh heartbeat.log heartbeat-check uv run python scripts/heartbeat_check.py` |
+| `trading-daily-data-check` | 15:30 T2–T6 | cùng wrapper, `daily-data-check.log daily-data-check uv run python scripts/daily_data_check.py` |
+| `trading-backfill-universe` | 20:30 T2–T6 | cùng wrapper, `backfill.log backfill uv run python scripts/backfill_universe.py --timeframe 1d --from 2026-09-01 --to $(date +%F) --use-universe --sleep-ms 200` |
+
+#### Cổng Docker — `scripts/run_if_docker_up.sh`
+
+Trước 01/09 ba task chạy vô điều kiện. Khi máy bật lên mà Docker Desktop chưa
+khởi động, chúng vẫn chạy, vẫn bật cửa sổ console, vẫn đổ lỗi kết nối DB vào
+log — tiếng ồn che mất cái báo thật. Wrapper kiểm container
+`ai_auto_trading_system-postgres-1` đang chạy hay không:
+
+- Không chạy ⇒ ghi **một dòng** `SKIP: docker chua chay` vào đúng file log đó
+  rồi thoát 0. Bỏ qua thì bỏ qua, nhưng **không bao giờ im lặng**.
+- Đang chạy ⇒ nạp `.env`, thay `localhost` → `127.0.0.1` trong `DB_DSN`, chạy
+  lệnh, ghi `EXIT=<code>`.
+
+Wrapper dùng chung cho **cả cron Ubuntu** — dòng cron ở §9 gọi cùng script,
+không phải dựng lại chuỗi `set -a && . ./.env`.
+
+Kiểm chứng cổng (đã chạy 01/09): giả lập Docker tắt bằng một `docker` giả trong
+`PATH` trả mã 1 ⇒ payload **không** chạy, log ra dòng `SKIP`, exit 0.
 
 Điểm bắt buộc khi tạo trên Windows:
 
