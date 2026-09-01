@@ -10,6 +10,7 @@ from trading.strategies.octopus_pullback import (
     OctopusPullbackStrategy,
     liquidity_avg_before,
 )
+from trading.strategies.sma_cross import SmaCrossStrategy
 from trading.strategy import Strategy
 from trading.trailing_stop import TrailingStopManager
 
@@ -261,9 +262,14 @@ from trading.storage.db import Storage
 # 4 cau hinh deu lo TRUOC KHI tinh phi, va no chua bao gio duoc chung minh co bien loi
 # the. Class van con vi `trading/engine/main.py:71` dang chay no o che do paper —
 # go khoi engine la mot quyet dinh KHAC, can co chien luoc thay the.
+# Brief 2026-09-01 (dot 4) Task 0: sma_cross duoc THEM LAI vao day — nhung day la
+# SO DANG KY DE DO, khong phai danh sach chien luoc duoc phep chay that. No co mat
+# o day chinh vi can do lai thu engine dang chay (lo hong: chua bao gio do tren ro
+# da loc). Giu nguyen comment lich su o tren (boi canh quyet dinh 15/08).
 STRATEGIES = {
     "daily_breakout": lambda: DailyBreakoutStrategy(),
     "octopus_pullback": lambda: OctopusPullbackStrategy(),
+    "sma_cross": lambda: SmaCrossStrategy(),
 }
 
 # (bang_nguon, ham_resample). Khung noi ngay tinh tu bar 5m trong `bars`;
