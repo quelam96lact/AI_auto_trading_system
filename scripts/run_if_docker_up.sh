@@ -48,5 +48,12 @@ set +a
 # localhost tren may Windows nay ra IPv6 truoc, treo ~30s moi lan ket noi.
 export DB_DSN="${DB_DSN//localhost/127.0.0.1}"
 
+# Stdout o day LUON chuyen huong ra file, nen Python khong doan duoc encoding va
+# tren Windows chon cp1252. Moi script trong dam nay deu in tieng Viet: mot ky tu
+# ngoai cp1252 (vd "d" trong "du lieu") lam UnicodeEncodeError giet ca tien trinh.
+# Da xay ra that 01/09: heartbeat_check chet 5 lan lien, khong gui duoc canh bao
+# nao dung luc feed dang chet.
+export PYTHONIOENCODING=utf-8
+
 "$@" >> "$LOG" 2>&1
 echo "EXIT=$?" >> "$LOG"

@@ -150,7 +150,34 @@ def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, c
     return (cash + positions_value - capital) - realized_pnl
 
 
+def _print_safe(text: str) -> None:
+    """In ly do canh bao ma KHONG BAO GIO nem.
+
+    2026-09-01: print() da lam CHET chuong bao tren Windows. Scheduled task
+    chuyen huong stdout ra file, Python chon cp1252, ky tu "dữ" khong ma hoa
+    duoc -> UnicodeEncodeError nem ra TRUOC send_telegram. Nam lan chay
+    13:00-13:17 ngay 01/09 khong gui duoc tin nhan nao, dung luc feed dang
+    chet. Nguyen tac FEE-ALARM-2: dead-man's switch tuyet doi khong duoc nem.
+    """
+    try:
+        print(text)
+        return
+    except Exception:
+        pass
+    # Ha cap: mat dau tieng Viet con hon mat ca canh bao.
+    try:
+        print(text.encode("ascii", "replace").decode("ascii"))
+    except Exception:
+        pass
+
+
 def main() -> int:
+    # Ep utf-8 de ly do canh bao con dau tieng Viet; that bai cung khong sao,
+    # _print_safe da co duong lui.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     dsn = os.environ.get("DB_DSN")
     if not dsn:
         print("DB_DSN chưa được set", file=sys.stderr)
@@ -275,7 +302,7 @@ def main() -> int:
         # truoc day chi gui Telegram roi return 1, log chi co EXIT=1 khong biet
         # nhanh nao no; va neu send_telegram nem exception thi khong con ban ghi
         # nao o dau. Chuong bao phai de lai dau vet tai cho.
-        print("\n".join(messages))
+        _print_safe("\n".join(messages))
         send_telegram("\n".join(messages))
         return 1
     return 0

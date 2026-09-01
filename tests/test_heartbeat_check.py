@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta
 
 from scripts.heartbeat_check import (
@@ -423,3 +424,36 @@ def test_main_prints_message_to_stdout_before_sending(monkeypatch, capsys):
     assert captured.out.strip() == sent[0], (
         f"stdout phai bang noi dung gui Telegram, thuc te stdout={captured.out!r} sent={sent[0]!r}"
     )
+
+
+def test_main_still_sends_telegram_when_stdout_cannot_encode(monkeypatch):
+    """Chuong bao khong duoc chet vi khong in duoc.
+
+    Su co that 01/09: scheduled task chuyen huong stdout ra file, Python chon
+    cp1252, ky tu "dữ" trong "dữ lieu ngung chay" nem UnicodeEncodeError NGAY
+    TRUOC send_telegram. Nam lan chay 13:00-13:17 khong gui duoc gi, dung luc
+    feed dang chet. capsys bat stdout bang utf-8 nen test cu KHONG bat duoc —
+    test nay tiem thang mot stdout tu choi ma hoa.
+    """
+
+    class RefusingStdout:
+        encoding = "cp1252"
+
+        def write(self, text):
+            if any(ord(c) > 127 for c in text):
+                raise UnicodeEncodeError("charmap", text, 0, 1, "khong ma hoa duoc")
+            return len(text)
+
+        def flush(self):
+            pass
+
+        def reconfigure(self, **kwargs):
+            raise OSError("khong reconfigure duoc")
+
+    monkeypatch.setattr(sys, "stdout", RefusingStdout())
+    rc, sent = _run_main_with_position_sync(
+        monkeypatch, datetime(2026, 8, 14, 9, 40, tzinfo=TZ)
+    )
+    assert rc == 1, f"van phai bao, rc={rc}"
+    assert sent, "stdout hong KHONG duoc lam mat tin nhan Telegram"
+    assert "[CRITICAL]" in sent[0]
