@@ -177,6 +177,29 @@ async def run(
             print(f"  {sym}: {err}")
 
 
+def resolve_use_universe_symbols(storage, cfg):
+    """Brief 2026-09-01 (dot 2): hop hai tap cho backfill hang dem.
+
+    Tra ve (symbols, active, must_price, n_outside) voi:
+    - active: ma is_active (vai "dang giao dich" — thanh khoan).
+    - must_price: ma BAT BUOC co gia = cfg.symbols + ma dang nam giu cua
+      cfg.ssi_equity_accounts (vai "phai co bar hang ngay").
+    - symbols: hop sap xep cua hai tap.
+    - n_outside: so ma must_price khong nam trong active (duoc nap qua duong
+      bat buoc, khong phai duong thanh khoan).
+
+    Bat bien trung tam: mot ma dang nam giu nhung KHONG du thanh khoan van
+    phai duoc nap (CAP 0,63 ty < nguong — thieu bar 5 phien -> NAV tinh 0).
+    """
+    active = storage.read_active_universe()
+    must_price = storage.read_must_price_symbols(
+        cfg.ssi_equity_accounts, cfg.symbols
+    )
+    symbols = sorted(set(active) | set(must_price))
+    n_outside = len(set(must_price) - set(active))
+    return symbols, active, must_price, n_outside
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeframe", required=True, choices=["1d", "5m"])
@@ -199,8 +222,19 @@ def main() -> None:
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",")]
     elif args.use_universe:
-        symbols = storage.read_active_universe()
-        print(f"[load] {len(symbols)} ma tu universe (is_active)")
+        # Brief 2026-09-01 (dot 2): tach hai vai cua is_active. Backfill chay
+        # tren HOP cua hai tap: (1) ma thanh khoan (is_active — vai "dang giao
+        # dich"), (2) ma BAT BUOC co gia (must_price = cfg.symbols + ma dang
+        # nam giu — vai "phai co bar hang ngay"). Ma dang nam giu DU thanh
+        # khoan thap van phai duoc nap (CAP 0,63 ty < nguong van phai co gia;
+        # thieu bar 5 phien -> NAV tinh 0 -> lenh that nho di, 6159d39).
+        symbols, active, must_price, n_outside = resolve_use_universe_symbols(
+            storage, cfg
+        )
+        print(
+            f"[load] {len(active)} ma thanh khoan + {len(must_price)} ma bat buoc "
+            f"co gia ({n_outside} ngoai universe) = {len(symbols)} ma"
+        )
     else:
         symbols = load_symbols(
             cfg, storage, set(args.exchanges.split(",")) if args.exchanges else None

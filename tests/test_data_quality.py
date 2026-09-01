@@ -1,4 +1,5 @@
 from datetime import date
+from typing import ClassVar
 
 import pytest
 
@@ -302,6 +303,42 @@ def test_daily_data_check_no_active_symbols():
     )
     assert code == 0
     assert missing == set()
+
+
+def test_daily_data_check_union_includes_must_price(monkeypatch):
+    """Brief 2026-09-01 (dot 2): daily_data_check kiem tren HOP active +
+    must_price (cfg.symbols + ma dang nam giu). Ma nang giu CAP thieu bar ->
+    phai bao THIEU (truoc khi sua thi khong — chi soi active)."""
+    import scripts.daily_data_check as ddc
+
+    # Storage gia: active chi co {VCB, SSI}; must_price (read_real_positions
+    # cua account) tra CAP; bar hom nay chi co VCB, SSI -> CAP thieu
+    class FakeStorage:
+        def read_active_universe(self):
+            return ["VCB", "SSI"]
+
+        def read_must_price_symbols(self, accounts, extra):
+            return ["CAP"]
+
+        def read_symbols_with_bar_on_date(self, d):
+            return {"VCB", "SSI"}
+
+    class FakeCfg:
+        ssi_equity_accounts: ClassVar[list[str]] = ["CAP"]
+        symbols: ClassVar[list[str]] = []
+
+    sent = []
+    monkeypatch.setattr(ddc, "send_telegram", lambda msg: sent.append(msg))
+    monkeypatch.setattr(ddc, "load_config", lambda path: FakeCfg())
+    monkeypatch.setattr(ddc, "Storage", lambda dsn: FakeStorage())
+    monkeypatch.setattr(ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x")
+    monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "2026-09-01"])
+
+    with pytest.raises(SystemExit) as exc:
+        ddc.main()
+    assert exc.value.code == 1, f"CAP thieu bar phai bao, thuc te code={exc.value.code}"
+    assert sent, "phai gui Telegram"
+    assert "CAP" in sent[0], f"tin nhan phai nhac CAP, thuc te: {sent[0]}"
 
 
 def test_daily_data_check_main_config_error(monkeypatch):

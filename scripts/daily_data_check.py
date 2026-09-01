@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _db_common import resolve_dsn
 
 from trading.calendar_vn import TZ
+from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 
@@ -111,7 +112,16 @@ def main() -> None:
         target_date = datetime.now(TZ).date()
 
     try:
-        active_symbols = storage.read_active_universe()
+        # Brief 2026-09-01 (dot 2): kiem tren HOP hai tap, cung tap voi backfill
+        # hang dem — neu backfill nap CAP ma kiem tra khong soi CAP, ngay CAP
+        # thieu bar se khong ai biet (dung kieu hong am tham ca dot nay sinh ra
+        # de diet). read_must_price_symbols = cfg.symbols + ma dang nam giu.
+        cfg = load_config("config/config.yaml")
+        active = storage.read_active_universe()
+        must_price = storage.read_must_price_symbols(
+            cfg.ssi_equity_accounts, cfg.symbols
+        )
+        active_symbols = sorted(set(active) | set(must_price))
         present_symbols = storage.read_symbols_with_bar_on_date(target_date)
     except Exception as e:
         print(f"LỖI TRUY VẤN DB: {e}", file=sys.stderr)

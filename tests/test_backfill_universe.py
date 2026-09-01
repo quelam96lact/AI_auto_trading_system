@@ -181,3 +181,55 @@ async def test_full_data_still_records_to_and_skips_next_time():
     # Lần sau: skip
     status2, _ = await _run_backfill_one(storage, client, symbol="AAH")
     assert status2 == "skip"
+
+
+# ============ Brief 2026-09-01 (dot 2): tach hai vai cua is_active ============
+
+
+class FakeUniverseStorage:
+    """Storage gia chi co 2 ham resolve_use_universe_symbols can."""
+
+    def __init__(self, active=None, must_price=None):
+        self._active = active or []
+        self._must_price = must_price or []
+
+    def read_active_universe(self) -> list[str]:
+        return list(self._active)
+
+    def read_must_price_symbols(self, accounts, extra) -> list[str]:
+        return sorted(set(self._must_price) | set(extra))
+
+
+def _fake_cfg(accounts=None, symbols=None):
+    class Cfg:
+        pass
+
+    c = Cfg()
+    c.ssi_equity_accounts = accounts or ["ACC1"]
+    c.symbols = symbols or []
+    return c
+
+
+def test_resolve_use_universe_symbols_holds_must_price_even_if_illiquid():
+    """Bat bien trung tam cua brief: is_active chi co {VCB, SSI}, ma dang nam
+    giu la CAP (thanh khoan thap, khong is_active), cfg.symbols la HII ->
+    danh sach tra ve PHAI chua ca CAP lan HII."""
+    from scripts.backfill_universe import resolve_use_universe_symbols
+
+    storage = FakeUniverseStorage(active=["VCB", "SSI"], must_price=["CAP"])
+    cfg = _fake_cfg(accounts=["ACC1"], symbols=["HII"])
+
+    symbols, active, must_price, n_outside = resolve_use_universe_symbols(storage, cfg)
+
+    assert "CAP" in symbols, (
+        f"ma dang nam giu nhung KHONG du thanh khoan van phai duoc nap, thuc te: {symbols}"
+    )
+    assert "HII" in symbols, f"cfg.symbols phai co mat, thuc te: {symbols}"
+    assert "VCB" in symbols and "SSI" in symbols
+    assert active == ["VCB", "SSI"]
+    assert "CAP" in must_price
+    assert n_outside >= 1, (
+        f"CAP khong is_active nen phai nam ngoai tap active (duoc nap qua duong "
+        f"bat buoc), thuc te n_outside={n_outside}"
+    )
+    assert symbols == sorted(set(active) | set(must_price) | {"HII"})

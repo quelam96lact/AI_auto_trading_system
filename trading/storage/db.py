@@ -863,6 +863,30 @@ class Storage:
             ).fetchall()
         return [r[0] for r in rows]
 
+    def read_must_price_symbols(
+        self, accounts: list[str], extra: list[str]
+    ) -> list[str]:
+        """Brief 2026-09-01 (dot 2): tap ma BAT BUOC phai co gia hang ngay.
+
+        = extra (vi du cfg.symbols — ma engine giao dich) HOP voi ma dang nam
+        giu cua TUNG tai khoan trong accounts. Day la vai thu hai cua is_active
+        cu: ma dang nam giu phai duoc nap bar DU thanh khoan thap (CAP 0,63 ty
+        < nguong 1 ty van phai co gia — neu khong sau 5 phien NAV tinh chung
+        bang 0, ma NAV la so nhan kich thuoc lenh that, commit 6159d39).
+
+        BAT BUOC dung lai self.read_real_positions(account) de lay ma dang nam —
+        khong viet truy van account_position_snapshot moi (bai hoc 4ea4c8d: mot
+        cong thuc hai ban). Ham do da xu ly: bam moc account_sync_log (phan biet
+        "chua dong bo" voi "da dong bo va rong") va chi tra ma quantity > 0.
+
+        Tra ve danh sach sap xep, khong trung.
+        """
+        must: set[str] = set(extra)
+        for account in accounts:
+            positions = self.read_real_positions(account)
+            must.update(positions.keys())
+        return sorted(must)
+
     def get_backfill_progress(self, symbol: str, timeframe: str) -> dict | None:
         with self.conn() as c:
             row = c.execute(

@@ -49,13 +49,15 @@ def storage():
     with s.conn() as c:
         c.execute("DELETE FROM bars WHERE symbol = 'TEST'")
         c.execute("DELETE FROM account_balance_snapshot WHERE account_no = 'ACC_TEST'")
-        c.execute("DELETE FROM account_position_snapshot WHERE account_no = 'ACC_TEST'")
-        c.execute("DELETE FROM account_sync_log WHERE account_no = 'ACC_TEST'")
+        c.execute("DELETE FROM account_position_snapshot WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
+        c.execute("DELETE FROM account_sync_log WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
         c.execute("DELETE FROM pending_real_orders WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM real_risk_state WHERE id = 1")
         c.execute("DELETE FROM backtest_runs")  # cascade xoa equity/fills
         c.execute("DELETE FROM account_buying_power WHERE account_no = 'ACC_TEST'")
+        c.execute("DELETE FROM account_position_snapshot WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
+        c.execute("DELETE FROM account_sync_log WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
     return s
 
 
@@ -672,3 +674,66 @@ def test_read_buying_power_returns_latest_ts(storage):
 def test_read_buying_power_none_when_no_row(storage):
     """Khong co dong nao -> None (khong phai tuple gia gia)."""
     assert storage.read_buying_power("ACC_TEST", "VCB") is None
+
+
+# ============ brief 2026-09-01 dot 2: tach hai vai cua is_active ============
+
+
+def test_read_must_price_symbols_union_of_all_sources(storage):
+    """B1 (a): read_must_price_symbols = extra hop voi ma dang nam giu cua
+    TUNG tai khoan — ca ba nguon deu co mat."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    # Tai khoan 1 nam VCB + CAP; tai khoan 2 nam SSI
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [
+            {"symbol": "VCB", "quantity": 100, "cost_price": 10.0, "sellable_quantity": 100},
+            {"symbol": "CAP", "quantity": 50, "cost_price": 5.0, "sellable_quantity": 0},
+        ],
+    )
+    storage.record_position_sync("ACC_TEST2", ts)
+    storage.save_account_positions(
+        "ACC_TEST2", ts, [
+            {"symbol": "SSI", "quantity": 200, "cost_price": 20.0, "sellable_quantity": 200},
+        ],
+    )
+    got = storage.read_must_price_symbols(["ACC_TEST", "ACC_TEST2"], ["HII"])
+    assert got == ["CAP", "HII", "SSI", "VCB"], f"hop ca 3 nguon, sap xep, thuc te: {got}"
+
+
+def test_read_must_price_symbols_deduplicates(storage):
+    """B1 (b): cung ma xuat hien o ca extra lan vi the -> chi 1 lan."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [{"symbol": "HII", "quantity": 100, "cost_price": 10.0, "sellable_quantity": 100}],
+    )
+    got = storage.read_must_price_symbols(["ACC_TEST"], ["HII"])
+    assert got == ["HII"], f"khong trung lap, thuc te: {got}"
+
+
+def test_read_must_price_symbols_excludes_zero_qty(storage):
+    """B1 (c): ma quantity=0 KHONG xuat hien (read_real_positions chi tra qty>0)."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [
+            {"symbol": "VCB", "quantity": 0, "cost_price": 10.0, "sellable_quantity": 0},
+            {"symbol": "CAP", "quantity": 50, "cost_price": 5.0, "sellable_quantity": 50},
+        ],
+    )
+    got = storage.read_must_price_symbols(["ACC_TEST"], [])
+    assert got == ["CAP"], f"qty=0 phai bi loai, thuc te: {got}"
+
+
+def test_read_must_price_symbols_unsynced_account_no_crash(storage):
+    """B1 (d): tai khoan CHUA TUNG dong bo (khong co account_sync_log) ->
+    khong lam ham no, chi bo qua tai khoan do."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    # Chi seed ACC_TEST, khong seed ACC_UNSYNCED
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [{"symbol": "VCB", "quantity": 100, "cost_price": 10.0, "sellable_quantity": 100}],
+    )
+    got = storage.read_must_price_symbols(["ACC_TEST", "ACC_UNSYNCED"], ["AAA"])
+    assert got == ["AAA", "VCB"], f"tai khoan chua dong bo phai duoc bo qua, thuc te: {got}"
