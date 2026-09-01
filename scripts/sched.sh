@@ -54,8 +54,12 @@ case "${1:-}" in
       --to "$(date +%F)" \
       --use-universe --sleep-ms 200
     ;;
+  deploy-drift)
+    exec "$RUN" deploy-drift.log deploy-drift \
+      uv run python scripts/deploy_drift_check.py
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift}" >&2
     exit 2
     ;;
 esac

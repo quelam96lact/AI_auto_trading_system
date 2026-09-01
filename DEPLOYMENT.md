@@ -394,6 +394,25 @@ phương (`+07:00`) còn `docker inspect` in UTC (`Z`); so hai chuỗi đó bằ
 so với image `13:33:33Z` bị đọc thành "image cũ hơn" trong khi thực tế image
 mới hơn 1 giờ 42 phút. Lỗi này bị bắt lúc thử lệnh trước khi viết vào đây.
 
+### Job tự kêu: `scripts/deploy_drift_check.py` (từ `f831344`)
+
+Phép kiểm trên chỉ có giá trị nếu có người nhớ chạy — nên nó đã được đóng
+thành **job chạy 08:00 T2–T6** (trước giờ mở cửa 09:00, biết stack chạy code
+cũ kịp xử lý). Cảnh báo lệch triển khai KHÔNG khẩn cấp theo phút nên có chuông
+riêng, KHÔNG thêm vào `heartbeat_check.py` (chuông đó chỉ được phụ thuộc
+DB + config — docker/git là mở rộng bề mặt phụ thuộc của chính chuông báo).
+
+- Windows (máy dev): scheduled task `trading-deploy-drift`, 08:00 T2–T6, qua
+  `scripts/run_hidden.vbs` (khuôn ba task cũ, một lần/ngày — không lặp 5 phút).
+- Ubuntu: `0 8 * * 1-5 /opt/trading/scripts/sched.sh deploy-drift`
+  (job `deploy-drift` trong `scripts/sched.sh`, log ra `logs/deploy-drift.log`).
+
+Có cảnh báo ⇒ in lý do ra log, gửi Telegram, exit 1; ổn ⇒ in một dòng `OK` và
+exit 0. Test: `tests/test_deploy_drift_check.py` (hàm `drift_report` thuần
+tuý — không cần Docker). Kiểm chứng task đã cài: `schtasks /run /tn
+trading-deploy-drift` rồi xem `logs/deploy-drift.log` có dòng mới — "đã tạo
+task" không tính (bài học 31/08: chuông có sẵn nhưng chưa từng được cài lịch).
+
 ## Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.
