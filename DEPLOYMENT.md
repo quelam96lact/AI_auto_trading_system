@@ -205,10 +205,10 @@ sudo crontab -e
 # thêm — chạy 8:00-15:59 ngày giao dịch. KHÔNG ghi 9-15: script có nhánh
 # tiền-phiên 8:00-8:59 (cảnh báo token trước giờ mở cửa, 7700992) — lịch 9-15
 # sẽ không bao giờ gọi nhánh đó (CRON-1).
-*/5 8-15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/heartbeat_check.py >> /var/log/trading-heartbeat.log 2>&1
+*/5 8-15 * * 1-5 /opt/trading/scripts/sched.sh heartbeat
 
 # Kiểm tra sót bar daily sau phiên giao dịch (chạy 15:30 thứ 2 - thứ 6 hàng tuần)
-30 15 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:trading@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/daily_data_check.py >> /var/log/trading-daily-data-check.log 2>&1
+30 15 * * 1-5 /opt/trading/scripts/sched.sh daily-check
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
@@ -216,13 +216,25 @@ sudo crontab -e
 Máy Windows dùng Task Scheduler, không phải cron. Ba task tương ứng với ba dòng
 cron ở trên (tên task `trading-*`):
 
-Cả ba đi qua `scripts/run_if_docker_up.sh` — xem "Cổng Docker" ngay dưới bảng.
+Cả ba gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
+sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
-| Task | Lịch | Lệnh (qua Git Bash `bash.exe -lc`) |
+| Task | Lịch | Action |
 |---|---|---|
-| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `/d/My_Vault_Obsidian/Project/AI_auto_trading_system/scripts/run_if_docker_up.sh heartbeat.log heartbeat-check uv run python scripts/heartbeat_check.py` |
-| `trading-daily-data-check` | 15:30 T2–T6 | cùng wrapper, `daily-data-check.log daily-data-check uv run python scripts/daily_data_check.py` |
-| `trading-backfill-universe` | 20:30 T2–T6 | cùng wrapper, `backfill.log backfill uv run python scripts/backfill_universe.py --timeframe 1d --from 2026-09-01 --to $(date +%F) --use-universe --sleep-ms 200` |
+| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `wscript.exe //B //Nologo "D:\...\scripts\run_hidden.vbs" heartbeat` |
+| `trading-daily-data-check` | 15:30 T2–T6 | cùng vbs, tham số `daily-check` |
+| `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
+
+#### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
+
+Task chạy với `LogonType=Interactive` nên Windows cấp console cho `bash.exe` —
+cửa sổ nhảy lên **mỗi 5 phút suốt giờ giao dịch**. Cách sạch hơn là đổi principal
+sang **S4U** (`New-ScheduledTaskPrincipal -LogonType S4U`), nhưng việc đó **cần
+PowerShell elevated**; không có quyền admin thì `Set-ScheduledTask` trả
+`Access is denied` (đã gặp 01/09). `scripts/run_hidden.vbs` chạy `bash.exe` với
+window style `0` (ẩn) và `bWaitOnReturn = True` — Task Scheduler biết thời lượng
+thật nên lần chạy sau không chồng lên lần trước. VPS Ubuntu không cần file này.
 
 #### Cổng Docker — `scripts/run_if_docker_up.sh`
 
@@ -299,7 +311,7 @@ sudo crontab -e
 # Lần chạy ĐẦU sau thời gian dài không chạy sẽ NẶNG: nhiều ngày × ~1.594 mã,
 # có thể chạm SSI rate-limit. Giới hạn phạm vi nếu cần: thêm --symbols A,B,C
 # (vài mã ưu tiên) hoặc --limit N (N mã đầu) — chạy nhiều đêm cho kịp.
-30 20 * * 1-5 cd /opt/trading && set -a && . ./.env && set +a && DB_DSN=postgresql://trading:***@127.0.0.1:5432/trading /usr/local/bin/uv run python scripts/backfill_universe.py --timeframe 1d --from 2026-01-01 --to $(date +\%F) --use-universe --sleep-ms 200 >> /var/log/trading-backfill.log 2>&1
+30 20 * * 1-5 /opt/trading/scripts/sched.sh backfill
 ```
 
 Lưu ý:
