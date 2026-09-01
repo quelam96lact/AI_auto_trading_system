@@ -1,5 +1,5 @@
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from scripts.heartbeat_check import (
     bar_stale,
@@ -457,3 +457,26 @@ def test_main_still_sends_telegram_when_stdout_cannot_encode(monkeypatch):
     assert rc == 1, f"van phai bao, rc={rc}"
     assert sent, "stdout hong KHONG duoc lam mat tin nhan Telegram"
     assert "[CRITICAL]" in sent[0]
+
+
+def test_ngay_le_khong_bao_lao():
+    """Su co 01/09/2026: nghi Quoc khanh, khong phien nao, nhung 2A no moi 5
+    phut suot ca ngay vi bar_stale/token_expiry_status bo qua danh sach ngay
+    nghi. Duong tinh gia lap lai thi lan sau khong ai doc canh bao nua.
+    """
+    le = date(2026, 9, 1)
+    giua_phien = datetime(2026, 9, 1, 10, 0, tzinfo=TZ)  # thu Ba, trong khung 2A
+
+    # Khong khai bao ngay nghi -> van bao (hanh vi cu, giu lam moc doi chieu)
+    assert bar_stale(None, giua_phien) is True
+    # Khai bao roi -> im
+    assert bar_stale(None, giua_phien, holidays=frozenset({le})) is False, (
+        "ngay nghi thi khong duoc bao du lieu ngung chay"
+    )
+
+    # 2B cung phai im, ca trong khung tien-phien 8:00-8:59
+    tien_phien = datetime(2026, 9, 1, 8, 30, tzinfo=TZ)
+    assert token_expiry_status(None, tien_phien) == "CRITICAL"
+    assert token_expiry_status(None, tien_phien, frozenset({le})) is None, (
+        "ngay nghi thi khong duoc nhac token o khung tien-phien"
+    )

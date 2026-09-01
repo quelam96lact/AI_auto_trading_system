@@ -15,7 +15,7 @@ còn sống nhưng việc thật đã chết):
 
 import os
 import sys
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 import psycopg
 import yaml
@@ -73,27 +73,29 @@ def stale_services(rows, now, max_age_seconds, expected=SERVICES) -> list[str]:
     ]
 
 
-def in_bar_check_window(ts: datetime) -> bool:
+def in_bar_check_window(ts: datetime, holidays: frozenset = frozenset()) -> bool:
     """Trong cửa sổ kiểm tra bar 2A (9:00-11:30 / 13:00-14:30, ngày giao dịch)?"""
     ts = ts.astimezone(TZ)
-    if ts.weekday() >= 5:
+    if ts.weekday() >= 5 or ts.date() in holidays:
         return False
     t = ts.time()
     return any(start <= t <= end for start, end in CHECK_SESSIONS)
 
 
-def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES) -> bool:
+def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES,
+              holidays: frozenset = frozenset()) -> bool:
     """2A: dữ liệu ngừng chảy. max_ts = max(ts) gộp các mã ĐANG CẤU HÌNH
     (None = không có bar nào cả ngày — ca "feed chưa từng nối được").
 
     Chỉ báo trong cửa sổ kiểm tra 2A. Ngoài cửa sổ (cuối tuần, khung ATC,
     ngoài giờ) -> False.
 
-    Hạn chế đã biết: is_trading_time(holidays=frozenset()) mặc định rỗng ->
-    ngày lễ VN sẽ báo láo cả ngày (không có bar nào). Đây là hạn chế đã biết,
-    tham số holidays là chỗ mở rộng — KHÔNG tự dựng lịch nghỉ lễ (chưa được giao).
+    2026-09-01: hạn chế "ngày lễ báo láo cả ngày" ĐÃ ĐÓNG. Trước đó hàm này bỏ
+    qua tham số holidays nên ngày 01/09 (nghỉ Quốc khánh) 2A nổ mỗi 5 phút suốt
+    cả ngày — cảnh báo dương tính giả, và dương tính giả lặp lại thì lần sau
+    không ai đọc nữa. Danh sách ngày nghỉ lấy từ config.yaml, KHÔNG tự dựng.
     """
-    if not in_bar_check_window(now):
+    if not in_bar_check_window(now, holidays):
         return False
     if max_ts is None:
         return True  # "feed chưa từng nối được" — không có bar nào cả ngày
@@ -115,7 +117,8 @@ def position_sync_stale(sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_
     return now - sync_ts > timedelta(minutes=stale_minutes)
 
 
-def token_expiry_status(refresh_expires_at, now) -> str | None:
+def token_expiry_status(refresh_expires_at, now,
+                        holidays: frozenset = frozenset()) -> str | None:
     """2B: token SSI sắp/đã hết hạn. refresh_expires_at = epoch seconds
     (từ Storage.load_ssi_token) hoặc None (ssi_auth_state rỗng).
 
@@ -126,13 +129,21 @@ def token_expiry_status(refresh_expires_at, now) -> str | None:
     liên quan khung ATC), CỘNG THÊM khung 8:00-9:00 sáng ngày giao dịch để
     cảnh báo kịp hành động trước giờ mở cửa (điểm khác biệt so với 2A).
     """
-    if refresh_expires_at is None:
-        return "CRITICAL"
     now_tz = now.astimezone(TZ)
     t = now_tz.time()
-    pre_market = time(8, 0) <= t < time(9, 0) and now_tz.weekday() < 5
-    if not (is_trading_time(now) or pre_market):
+    pre_market = (
+        time(8, 0) <= t < time(9, 0)
+        and now_tz.weekday() < 5
+        and now_tz.date() not in holidays
+    )
+    if not (is_trading_time(now, holidays) or pre_market):
         return None
+    # Kiem "khong co token" phai nam SAU cong gio giao dich, dung nhu docstring
+    # hua. Truoc day no nam TRUOC nen ham bao CRITICAL 24/7; main() vo tinh che
+    # mat vi da gac cong san — nhung hop dong cua ham thi sai, va ngay 01/09 test
+    # ngay le lam lo ra.
+    if refresh_expires_at is None:
+        return "CRITICAL"
     remaining = refresh_expires_at - now.timestamp()
     if remaining < 0:
         return "CRITICAL"
@@ -185,14 +196,12 @@ def main() -> int:
     max_age = int(os.environ.get("HEARTBEAT_MAX_AGE_SECONDS", DEFAULT_MAX_AGE_SECONDS))
 
     now = datetime.now(TZ)
-    # Chỉ cảnh báo trong giờ giao dịch: cả 2 service đều đập 24/7, nhưng ngoài
-    # phiên thì service chết không gây hại ngay — tránh spam đêm/cuối tuần.
-    if not is_trading_time(now) and not (
-        time(8, 0) <= now.astimezone(TZ).time() < time(9, 0)
-        and now.astimezone(TZ).weekday() < 5
-    ):
-        return 0
 
+    # Doc config TRUOC cong gio giao dich: chinh cong do can biet hom nay co la
+    # ngay nghi khong. Truoc 2026-09-01 config duoc doc SAU cong, nen danh sach
+    # holidays khong bao gio toi duoc cho quyet dinh — ngay le van bao lao ca ngay.
+    # Doi lai: config hong se bao CRITICAL ke ca ngoai gio giao dich. Chap nhan —
+    # config hong la van de that, va im lang ve no moi la sai.
     # 2A: chỉ nhìn mã ĐANG CẤU HÌNH — bảng bars còn 302 mã universe nạp theo
     # lô, gộp chúng vào sẽ che mất một feed đã chết.
     try:
@@ -202,11 +211,28 @@ def main() -> int:
         symbols = cfg["symbols"]
         # 2D: dung LAI real_order_account — dung tai khoan ma read_real_positions() dung
         real_order_account = cfg["real_order_account"]
+        # Cung cach doc nhu trading/config.py:38. Co y KHONG import load_config():
+        # ham do doi day du SSI_* trong moi truong, ma chuong bao phai chay duoc
+        # ngay ca khi cau hinh SSI thieu.
+        holidays = frozenset(
+            date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
+        )
     except Exception as e:
         send_telegram(
             f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
         )
         return 1
+
+    # Chỉ cảnh báo trong giờ giao dịch: cả 2 service đều đập 24/7, nhưng ngoài
+    # phiên thì service chết không gây hại ngay — tránh spam đêm/cuối tuần/ngày lễ.
+    now_tz = now.astimezone(TZ)
+    pre_market = (
+        time(8, 0) <= now_tz.time() < time(9, 0)
+        and now_tz.weekday() < 5
+        and now_tz.date() not in holidays
+    )
+    if not is_trading_time(now, holidays) and not pre_market:
+        return 0
 
     try:
         with psycopg.connect(dsn, connect_timeout=10) as c:
@@ -247,7 +273,7 @@ def main() -> int:
                 f"= {cash + positions_value - CAPITAL:,.2f}, vế phải (realized_pnl) "
                 f"= {realized:,.2f}, độ lệch {dev:,.2f} VND"
             )
-    if bar_stale(max_ts, now):
+    if bar_stale(max_ts, now, holidays=holidays):
         # FEE-ALARM-2 Lỗi 1: max_ts=None (feed chưa từng nối được) mà dựng
         # tin nhắn với `now - max_ts` -> TypeError, chuông báo CHẾT đúng lúc
         # cần nhất. Dead-man's switch tuyệt đối không được ném exception.
@@ -265,7 +291,7 @@ def main() -> int:
     # 2B: dùng lại Storage.load_ssi_token — không viết truy vấn mới
     saved = Storage(dsn).load_ssi_token()
     expiry = saved.get("refresh_token_expires_at") if saved else None
-    status = token_expiry_status(expiry, now)
+    status = token_expiry_status(expiry, now, holidays)
     if status == "WARN":
         messages.append(
             f"[WARN] token SSI sắp hết hạn ({datetime.fromtimestamp(expiry, TZ):%H:%M %d/%m}) — "
