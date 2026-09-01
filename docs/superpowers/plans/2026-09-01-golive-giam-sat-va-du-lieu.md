@@ -6,6 +6,42 @@ Viết sau khi đo trạng thái hệ thống lúc 07:11 ngày 01/09/2026.
 
 ## 0. Phát hiện chính: hệ thống mất trọn một phiên và không có gì báo
 
+> **ĐÍNH CHÍNH 2026-09-01 (viết cuối ngày, sau khi chủ dự án cho biết 01/09
+> không có giao dịch).** Tiêu đề mục này và tiền đề trung tâm của cả plan —
+> *"hệ thống mất trọn phiên thứ Hai 31/08"* — **SAI**. Không có phiên nào để mất.
+>
+> Bằng chứng, đo trên chính DB này:
+>
+> ```
+> 2026-08-27 Thu  862 mã      2026-08-31 Mon    0 mã
+> 2026-08-28 Fri  965 mã      2026-09-01 Tue    0 mã
+> ```
+>
+> Mọi ngày làm việc khác có 850-980 mã; riêng 31/08 và 01/09 đều 0. Backfill gọi
+> SSI cho đúng khoảng đó cũng trả về rỗng. Hai ngày này là **nghỉ lễ Quốc khánh**,
+> không phải dữ liệu bị mất. `bars_daily` chưa từng thiếu: phiên gần nhất 28/08
+> có đủ 965 mã.
+>
+> Agent thực hiện brief đợt 1 đã kết luận đúng điều này ngay trong ngày (Task C1,
+> gọi SSI thật). Tôi ghi nhận con số nhưng để nguyên cách diễn đạt của plan — lỗi
+> của người viết plan, không phải của agent.
+>
+> **Cái gì vẫn đúng:** `heartbeat_check.py` thật sự chưa từng được cài lịch, và
+> đó vẫn là một lỗ hổng thật đã được vá (Task 1). Toàn bộ công việc sinh ra từ
+> plan này — lịch tự chạy, cổng Docker, tách hai vai `is_active`, sizing theo NAV
+> — vẫn đúng và vẫn có giá trị.
+>
+> **Cái gì không đúng:** mức khẩn cấp. Không có sự cố mất dữ liệu nào. Và chính
+> việc tin vào tiền đề sai đó đã dẫn tới một chuỗi chẩn đoán sai suốt ngày 01/09
+> ("feed chết", "hai phiên liên tiếp mất dữ liệu") — trong khi lỗi thật lại là
+> `heartbeat_check` không đọc danh sách ngày nghỉ, nên 2A báo láo cả ngày lễ
+> (đã sửa, commit `fad3a34`).
+>
+> Bài học: **trước khi gọi một khoảng trống dữ liệu là sự cố, phải hỏi thị trường
+> hôm đó có mở không.** Đây là lần thứ ba dự án vấp đúng chỗ này — 07/08 và 28/08
+> đã từng bị đọc nhầm là "thiếu vì job chưa chạy".
+
+
 | Đo | Kết quả | Nguồn |
 |---|---|---|
 | Container khởi động lại | `2026-08-31T18:08 UTC` = **01/09 01:08 giờ VN** | `docker inspect .State.StartedAt` |
