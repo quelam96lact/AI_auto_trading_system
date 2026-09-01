@@ -369,7 +369,30 @@ docker exec ai_auto_trading_system-collector-1 sh -c \
 
 Ba con số này là chữ ký của code mới (`_connected` + backoff 429 trong
 `trading/collector/feed.py` từ `f8e3392`, `_restart_feed_and_alert` trong
-`trading/collector/main.py`). Nếu sau này thêm sửa mới, đổi chữ ký theo.
+`trading/collector/main.py`).
+
+**Nhược điểm phải biết:** phép kiểm chữ ký **tự hết hạn**. Sáu tháng nữa ba
+tên đó vẫn còn trong code, `grep` vẫn trả `> 0`, và nó sẽ báo "đã triển khai"
+cho một image cũ ba tháng — đúng lớp lỗi mà chính nó sinh ra để bắt. Dùng nó
+để trả lời *"bản sửa CỤ THỂ này đã vào chưa"*, không phải *"stack có cũ không"*.
+
+### Phép kiểm không hết hạn: so mốc build với commit gần nhất chạm `trading/`
+
+```bash
+C=$(git log -1 --format=%ct -- trading/)
+I=$(date -d "$(docker inspect -f '{{.Created}}' \
+     $(docker inspect -f '{{.Image}}' ai_auto_trading_system-collector-1))" +%s)
+[ "$I" -ge "$C" ] && echo 'OK: da trien khai' || echo 'CANH BAO: image CU hon commit'
+```
+
+Đúng với mọi thay đổi tương lai, không cần bảo trì. Chạy nó sau mỗi lần
+`git pull` là biết ngay stack có đang chạy code hiện tại hay không.
+
+**Bắt buộc dùng `%ct` (epoch), KHÔNG dùng `%cI`.** Git in giờ theo múi địa
+phương (`+07:00`) còn `docker inspect` in UTC (`Z`); so hai chuỗi đó bằng
+`>` cho kết quả NGƯỢC. Đo thật 01/09: commit `18:51:10+07:00` (= `11:51:10Z`)
+so với image `13:33:33Z` bị đọc thành "image cũ hơn" trong khi thực tế image
+mới hơn 1 giờ 42 phút. Lỗi này bị bắt lúc thử lệnh trước khi viết vào đây.
 
 ## Not covered here (needs a decision, not just infra)
 
