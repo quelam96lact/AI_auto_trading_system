@@ -37,6 +37,15 @@ shift 2
 
 mkdir -p "$REPO/logs"
 
+# Xoay log theo kich thuoc TRUOC khi ghi dong nao (brief agent B phan 1).
+# Mot cong thuc mot noi: Windows Task Scheduler VA cron Ubuntu deu goi job qua
+# file nay, nen log_rotate.sh source o day la du cho ca hai ben — khong viet
+# ban Ubuntu rieng (4ea4c8d). Xoay hong khong bao gio duoc chan ghi log:
+# rotate_log tu nuot moi loi (xem file do).
+# shellcheck disable=SC1091
+. "$REPO/scripts/log_rotate.sh"
+rotate_log "$LOG"
+
 # 1. .env phai co — khong co thi khong co gi de chay ca (ke ca docker_down_alert
 # can token de gui). Giu nguyen hanh vi cu.
 if [ ! -f "$REPO/.env" ]; then

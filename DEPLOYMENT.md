@@ -160,6 +160,29 @@ container), xoay theo tuần, giữ vài bản, nén:
 
 Test cấu hình: `sudo logrotate -d /etc/logrotate.d/trading` (dry-run).
 
+### Windows (máy dev) — xoay theo kích thước, ngay trong cổng ghi log
+
+Không có logrotate trên Windows. Các file log của đám scheduled task
+(`logs/heartbeat.log`, `daily-data-check.log`, `backfill.log`,
+`deploy-drift.log`) được xoay bởi `scripts/log_rotate.sh`, **source từ
+`run_if_docker_up.sh`** — cửa ngõ duy nhất ghi log, và cron Ubuntu cũng gọi
+job qua chính file này nên không cần bản Ubuntu riêng (4ea4c8d: một công thức
+một nơi).
+
+- **Xoay theo kích thước, không theo ngày**: ngày nghỉ không sinh log, xoay
+  theo ngày chỉ tạo đống file rỗng. Mặc định xoay khi file vượt **1 MB**
+  (`LOG_MAX_BYTES`, đổi được bằng biến môi trường), giữ **5 bản cũ**
+  (`LOG_KEEP`) rồi xoá dần. Con số dựa trên đo 02/09: ~14 KB/ngày cao nhất
+  (8,6 KB thường + ~85 dòng SKIP khi Docker tắt) ⇒ 1 MB ≈ 2-3 tháng liên tục,
+  5 bản ≈ hơn 1 năm hồi cứu trước khi bản cũ nhất bị xoá (~6 MB/file tối đa).
+- **Không bao giờ làm hỏng việc ghi log**: mọi lỗi xoay (đĩa đầy, file bị
+  khoá bởi tiến trình khác) đều bị nuốt trong `rotate_log` — ưu tiên mất bản
+  xoay còn hơn mất dòng log. Test: `tests/test_log_rotate.py` (gọi thẳng
+  `scripts/log_rotate.sh`, chạy được trên CI không cần Docker).
+- Test xoay hằng chạy bằng tay:
+  `LOG_MAX_BYTES=200 scripts/run_if_docker_up.sh demo.log demo echo hi` —
+  file vượt 200 byte sẽ thành `demo.log.1` và file mới nhận dòng ghi tiếp.
+
 ## 8.5 SSI token — quy trình ngày giao dịch (DEPGAP-1)
 
 Collector đọc token từ **DB** (`ssi_auth_state`), không đọc file. Refresh token
