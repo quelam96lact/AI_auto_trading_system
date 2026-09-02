@@ -114,3 +114,35 @@ chạm `trading/`" gần cạn. Đừng bịa thêm việc để lấp chỗ tr�
 sớm, nộp sớm. Mọi thứ lớn còn lại (đường ống chiến lược, gộp `_print_safe`)
 đều chạm `trading/` và bị khoá tới sau phiên 03/09, vì dựng lại container
 trước phiên đầu tiên chạy code mới là tự huỷ phép đo.
+
+---
+
+## 6. ĐÍNH CHÍNH Mục 4 (Claude, sau audit đợt 11)
+
+**Mục 4 nói sai một phần.** Agent đợt 11 chỉ ra, và Claude đã kiểm chứng bằng
+chạy thật: `scripts/daily_data_check.py` **có** `sys.stdout.reconfigure(...)` và
+`sys.stderr.reconfigure(...)` ở **mức module** (dòng 33–36), với
+`errors="replace"`.
+
+Chứng minh — chạy với stdout ép sang cp1252:
+
+```
+encoding truoc khi import: cp1252
+encoding sau khi import : utf-8
+[2026-09-03] ⚠️ [AI Trading] CẢNH BÁO: Sót bar daily sau phiên!  ← in được
+SONG SOT — print khong nem                                        EXIT=0
+```
+
+Nên câu *"chỉ được bảo vệ bởi `PYTHONIOENCODING` mà cổng đặt; chạy tay ngoài
+cổng là mất lá chắn"* là **sai**. Chạy tay vẫn tự ép utf-8, và `errors="replace"`
+đóng luôn đường ném `UnicodeEncodeError`.
+
+Khác biệt với sự cố `heartbeat_check` 01/09 nằm ở **thứ tự**, không ở việc có
+hay không có reconfigure: bản hỏng hôm đó reconfigure *bên trong* `main()` và
+lệnh `print()` gây chết nằm **trước** chỗ đó. Ở đây reconfigure chạy lúc import,
+tức trước mọi thứ.
+
+**Điểm yếu thật còn lại** (vẫn nên gom vào B2, nhưng mức khẩn cấp thấp):
+`daily_data_check.py` không có lớp `try/except` bọc `print()` như ba script kia.
+Lý do gộp là đồng bộ một-công-thức-một-nơi, **không phải** vì nó đang hở lá chắn
+mã hoá.
