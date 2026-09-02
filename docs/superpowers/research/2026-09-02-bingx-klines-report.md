@@ -120,3 +120,69 @@ tests\test_bingx_klines.py:143: AssertionError
 | 6 | Không hồi quy test suite | **ĐẠT** | `uv run pytest -m "not integration" -q` $\rightarrow$ 370 passed, 97 deselected |
 | 7 | Linter sạch | **ĐẠT** | `uv run ruff check trading tests scripts` $\rightarrow$ All checks passed! |
 | 8 | Ràng buộc an toàn | **ĐẠT** | Không sửa `trading/`, không chạm `config/config.yaml`, không gọi API key, không commit/push |
+
+---
+
+## 6. ĐỢT 13: NẠP DỮ LIỆU KHUNG 1H (HOÀN TẤT GIAI ĐOẠN 1)
+
+Ngày thực hiện: **02/09/2026 (Đêm)**.  
+Kế hoạch thực thi: [`docs/superpowers/plans/2026-09-02-brief-bingx-nap-khung-1h.md`](file:///D:/My_Vault_Obsidian/Project/AI_auto_trading_system/docs/superpowers/plans/2026-09-02-brief-bingx-nap-khung-1h.md).
+
+### 6.1. Quy trình Thực hiện
+1. **Chụp số DB trước khi chạy:**
+   - `bars_crypto (1d)`: `27.124`
+   - `bars_crypto (1h)`: `0`
+   - `bars_daily`: `2.982.903`
+2. **Chạy thử 1 mã (`BTC-USDT`):**
+   ```bash
+   uv run python scripts/bingx_klines.py --symbols BTC-USDT --interval 1h
+   ```
+   - Thu thập được **20.598 nến 1h** (từ `2024-04-27 10:00` đến `2026-09-02 15:00`, độ sâu ~2,4 năm) trong 21 calls và 37,2 giây.
+   - Chạy lại lần 2 cho `BTC-USDT`: Tổng số nến `1h` trong DB vẫn giữ nguyên **20.598 nến** (idempotent chuẩn xác).
+3. **Chạy nạp toàn bộ 20 cặp:**
+   ```bash
+   uv run python scripts/bingx_klines.py --interval 1h --limit-symbols 20
+   ```
+   - Tổng số nến 1h đã nạp: **385.363 nến**.
+   - Tổng số calls API: **393 calls**.
+   - Tổng thời gian thực tế: **693,5 giây (~11,6 phút)** — nhanh hơn mức ước tính ban đầu (~17 phút) do độ sâu nến 1h của sàn BingX giới hạn tối đa ở mức ~20.598 nến (~2,4 năm) thay vì 5 năm như khung 1d.
+
+### 6.2. Bảng Thống kê Dữ liệu Khung 1H của 20 Cặp
+
+| # | Cặp giao dịch (Symbol) | Số nến 1H | Mốc đầu (Earliest) | Mốc cuối (Latest) | Độ dài (ngày) | Số calls |
+|---|---|---:|:---:|:---:|---:|---:|
+| 1 | **BTC-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 2 | **ETH-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 3 | **ADA-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 4 | **XRP-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 5 | **SOL-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 6 | **AAVE-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 7 | **DOGE-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 8 | **UNI-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 9 | **TRX-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 10 | **CRV-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 11 | **LDO-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 12 | **ORDI-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 13 | **1000PEPE-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 14 | **ARB-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 15 | **KAS-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 16 | **TAO-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 17 | **STRK-USDT** | 20.598 | 2024-04-27 10:00 | 2026-09-02 15:00 | 858,2 ngày | 21 |
+| 18 | **HYPE-USDT** | 14.933 | 2024-12-19 11:00 | 2026-09-02 15:00 | 622,2 ngày | 15 |
+| 19 | **XAUT-USDT** | 12.410 | 2025-04-03 14:00 | 2026-09-02 15:00 | 517,0 ngày | 13 |
+| 20 | **ZEC-USDT** | 7.854 | 2025-10-10 10:00 | 2026-09-02 15:00 | 327,2 ngày | 8 |
+| | **Tổng cộng** | **385.363** | | | | **393** |
+
+### 6.3. Kiểm chứng An toàn & Tiêu chí Hoàn thành Đợt 13
+
+| # | Tiêu chí | Trạng thái | Chi tiết kiểm chứng |
+|---|---|:---:|---|
+| 1 | Chạy thử 1 mã trước | **ĐẠT** | `BTC-USDT` chạy trong 37,2s, nạp 20.598 nến, độ sâu từ `2024-04-27` |
+| 2 | Nạp `1h` cho 20 mã | **ĐẠT** | 385.363 nến 1h lưu vào `bars_crypto`, 393 calls, 11,6 phút |
+| 3 | Khung `1d` không đổi | **ĐẠT** | `SELECT count(*) FROM bars_crypto WHERE interval = '1d'` trước và sau đều là **`27.124`** |
+| 4 | `bars_daily` không đổi | **ĐẠT** | `SELECT count(*) FROM bars_daily` trước và sau đều là **`2.982.903`** |
+| 5 | Chạy lại 1 mã không trùng | **ĐẠT** | Rerun `ETH-USDT` trên khung 1h, tổng số nến 1h vẫn là **`385.363`** |
+| 6 | Không hồi quy test | **ĐẠT** | `uv run pytest -m "not integration" -q` $\rightarrow$ **370 passed, 97 deselected** |
+| 7 | Linter sạch | **ĐẠT** | `uv run ruff check trading tests scripts` $\rightarrow$ **All checks passed!** |
+| 8 | Ràng buộc an toàn | **ĐẠT** | Không sửa `trading/`, không bật `real_trading_enabled`, không commit/push |
+
