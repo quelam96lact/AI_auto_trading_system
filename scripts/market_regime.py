@@ -4,6 +4,7 @@ Brief đợt 9 — Chiến lược theo chế độ thị trường, giai đoạ
 - Không có VNINDEX trong bars_daily -> dựng độ rộng thị trường từ rổ cổ phiếu.
 - breadth(d) = tỷ lệ mã có close(d) > SMA200(close, d), tính trên các mã có đủ 200 phiên lịch sử tính tới ngày d.
 - Phân loại:
+    UNKNOWN:  số mã đủ 200 phiên < 50 (mẫu không xác định)
     RISK_ON:  breadth >= 0.60
     NEUTRAL:  0.40 <= breadth < 0.60
     RISK_OFF: breadth < 0.40
@@ -29,6 +30,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+MIN_ELIGIBLE_SYMBOLS = 50
+
 
 def _is_dirty(bar: Bar) -> bool:
     """SPEC-1c: bar rác = có open/high/low/close <= 0."""
@@ -40,9 +43,14 @@ def _bar_date(b: Bar) -> date:
     return b.ts.astimezone(TZ).date() if b.ts.tzinfo else b.ts.date()
 
 
-def compute_breadth(bars_by_symbol: Mapping[str, list[Bar]], as_of: date) -> float:
+def compute_breadth(
+    bars_by_symbol: Mapping[str, list[Bar]],
+    as_of: date,
+    min_symbols: int = MIN_ELIGIBLE_SYMBOLS,
+) -> float | None:
     """breadth(d) = tỷ lệ mã có close(d) > SMA200(close, d), tính trên các mã
     có đủ 200 phiên lịch sử tính tới ngày d (as_of).
+    Nếu số mã đủ điều kiện < min_symbols (mặc định 50): trả về None (UNKNOWN).
     Hàm thuần, không phụ thuộc DB, chống look-ahead.
     """
     denom = 0
@@ -60,17 +68,20 @@ def compute_breadth(bars_by_symbol: Mapping[str, list[Bar]], as_of: date) -> flo
         denom += 1
         if current_close > sma200:
             num += 1
-    if denom == 0:
-        return 0.0
+    if denom < min_symbols:
+        return None
     return num / denom
 
 
-def classify_regime(breadth: float) -> str:
+def classify_regime(breadth: float | None) -> str:
     """Phân loại 3 chế độ theo ngưỡng cố định 0.40 / 0.60:
+    UNKNOWN:  breadth is None (không đủ mẫu)
     RISK_ON:  breadth >= 0.60
     NEUTRAL:  0.40 <= breadth < 0.60
     RISK_OFF: breadth < 0.40
     """
+    if breadth is None:
+        return "UNKNOWN"
     if breadth >= 0.60:
         return "RISK_ON"
     elif breadth >= 0.40:
@@ -83,6 +94,7 @@ def compute_breadth_series(
     bars_by_symbol: Mapping[str, list[Bar]],
     start_date: date | None = None,
     end_date: date | None = None,
+    min_symbols: int = MIN_ELIGIBLE_SYMBOLS,
 ) -> list[dict]:
     """Tính chuỗi breadth và regime cho tất cả các ngày giao dịch từ dữ liệu bars.
     Được tối ưu hóa tuần tự để tránh quét lặp O(N*M).
@@ -131,9 +143,14 @@ def compute_breadth_series(
                 if curr > sma200:
                     num += 1
 
-        if (start_date is None or d >= start_date) and (end_date is None or d <= end_date):
+        if denom < min_symbols:
+            b_val = None
+            reg = "UNKNOWN"
+        else:
             b_val = (num / denom) if denom > 0 else 0.0
             reg = classify_regime(b_val)
+
+        if (start_date is None or d >= start_date) and (end_date is None or d <= end_date):
             results.append({
                 "date": d.strftime("%Y-%m-%d"),
                 "breadth": b_val,
@@ -202,11 +219,12 @@ def main() -> None:
     with out_path.open("w", encoding="utf-8") as f:
         f.write("date,breadth,regime\n")
         for row in series:
-            f.write(f"{row['date']},{row['breadth']:.6f},{row['regime']}\n")
+            b_str = f"{row['breadth']:.6f}" if row["breadth"] is not None else ""
+            f.write(f"{row['date']},{b_str},{row['regime']}\n")
     print(f"Đã ghi {len(series)} phiên vào {out_path}")
 
     # Thống kê phân bố chế độ
-    counts: dict[str, int] = {"RISK_ON": 0, "NEUTRAL": 0, "RISK_OFF": 0}
+    counts: dict[str, int] = {"UNKNOWN": 0, "RISK_ON": 0, "NEUTRAL": 0, "RISK_OFF": 0}
     for row in series:
         counts[row["regime"]] += 1
 
@@ -216,7 +234,7 @@ def main() -> None:
     print("=" * 60)
     print(f"{'Chế độ':<12} {'Số phiên':>10} {'Tỷ lệ %':>10}")
     print("-" * 34)
-    for regime in ["RISK_ON", "NEUTRAL", "RISK_OFF"]:
+    for regime in ["UNKNOWN", "RISK_ON", "NEUTRAL", "RISK_OFF"]:
         cnt = counts[regime]
         pct = (cnt / total) if total else 0.0
         print(f"{regime:<12} {cnt:>10} {pct:>9.1%}")
@@ -225,6 +243,8 @@ def main() -> None:
     print("=" * 60)
 
     for regime, cnt in counts.items():
+        if regime == "UNKNOWN":
+            continue
         pct = cnt / total if total else 0.0
         if pct < 0.10:
             print(f"CẢNH BÁO: Chế độ {regime} chiếm {pct:.1%} < 10% số phiên!")

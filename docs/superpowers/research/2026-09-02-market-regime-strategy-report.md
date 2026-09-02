@@ -246,3 +246,155 @@ Nhưng Mục 4.1 trình bày quy tắc như thể suy ra từ bảng, trong khi 
 chất khác. Bảng quy kết lệnh theo chế độ **là công cụ mô tả, không phải công cụ
 dự đoán** — ai đọc lại tài liệu này cần biết điều đó trước khi dựa vào bảng để
 chọn quy tắc khác.
+
+---
+
+## 8. ĐO LẠI SAU KHI SỬA KHIẾM KHUYẾT A1 & A2 (02/09/2026 Tối)
+
+Thực hiện theo brief Agent A (`docs/superpowers/plans/2026-09-02-brief-agent-A-che-do-va-chien-luoc.md`).
+
+### 8.1. Các điểm đã khắc phục
+1. **A1 (Tín hiệu BÁN trong chế độ NONE):** Đã sửa `run_regime_switching_one_symbol` trong `scripts/measure_market_regime.py`. Khi thị trường ở `NONE`, hệ thống chặn lệnh **BUY** mới nhưng cho phép các lệnh **SELL** sinh ra từ chiến lược đang quản lý vị thế đi qua để đóng lệnh đúng theo luật của chiến lược.
+2. **A2 (199 phiên đầu chuỗi):** Đã bổ sung điều kiện `MIN_ELIGIBLE_SYMBOLS = 50` vào `scripts/market_regime.py`. Khi số mã có đủ 200 bar $< 50$, breadth được trả về `None` và phân loại là **`UNKNOWN`** (không còn bị gán nhầm thành `RISK_OFF`).
+
+### 8.2. Kiểm chứng phá hoại cho hai test mới (Destructive Testing)
+
+File test: `tests/test_market_regime.py` (6 passed).
+
+#### Kiểm chứng phá hoại Test A1 (`test_che_do_none_chan_mua_nhung_khong_chan_ban`)
+Khi cố tình kích hoạt lại lỗi cũ bằng cờ `block_sell_in_none=True` (chặn lệnh SELL trong NONE khiến vị thế không đóng được):
+```
+================================== FAILURES ===================================
+_______________ test_che_do_none_chan_mua_nhung_khong_chan_ban ________________
+    assert len(buy_fills) == 1, f"Phải có đúng 1 lệnh BUY, nhận được {len(buy_fills)}"
+>   assert len(sell_fills) == 1, f"Phải có đúng 1 lệnh SELL khi có bear crossover trong NEUTRAL, nhận được {len(sell_fills)}"
+E   AssertionError: Phải có đúng 1 lệnh SELL khi có bear crossover trong NEUTRAL, nhận được 0
+E   assert 0 == 1
+E    +  where 0 = len([])
+
+tests\test_market_regime.py:249: AssertionError
+============================== 1 failed in 0.35s ==============================
+```
+
+#### Kiểm chứng phá hoại Test A2 (`test_khong_du_mau_thi_UNKNOWN`)
+Khi cố tình hạ ngưỡng số mã tối thiểu `MIN_ELIGIBLE_SYMBOLS` từ 50 về 0:
+```
+================================== FAILURES ===================================
+________________________ test_khong_du_mau_thi_UNKNOWN ________________________
+    breadth_49 = compute_breadth(bars_49, as_of)
+>   assert breadth_49 is None
+E   assert 0.0 is None
+
+tests\test_market_regime.py:163: AssertionError
+============================== 1 failed in 0.38s ==============================
+```
+
+---
+
+### 8.3. Đối chiếu Phân bố Chế độ Thị trường (Trước vs Sau)
+
+File dữ liệu: `docs/superpowers/research/2026-09-02-breadth-daily.csv` (2.662 phiên).  
+Lệnh tạo: `uv run python scripts/market_regime.py --exclude-file exclusions.txt --output docs/superpowers/research/2026-09-02-breadth-daily.csv`
+
+| Chế độ | Trước sửa (Mục 1.2) | Sau sửa (Mục 8.3) | Chênh lệch | Ghi chú |
+|---|---:|---:|---:|---|
+| **`UNKNOWN`** | 0 phiên (0,0%) | **199 phiên (7,5%)** | +199 | Tách riêng giai đoạn thiếu lịch sử 2016 |
+| **`RISK_OFF`** | 688 phiên (25,8%) | **489 phiên (18,4%)** | −199 | Đã loại 199 phiên giả mạo |
+| **`NEUTRAL`** | 1.291 phiên (48,5%) | **1.291 phiên (48,5%)** | 0 | Không đổi |
+| **`RISK_ON`** | 683 phiên (25,7%) | **683 phiên (25,7%)** | 0 | Không đổi |
+| **Tổng cộng** | **2.662 phiên** | **2.662 phiên** | 0 | |
+
+---
+
+### 8.4. Đối chiếu Bảng 3×3 Kỳ Trong Mẫu (2016-01-04 → 2022-12-31)
+
+Lệnh chạy lại:
+```bash
+uv run python scripts/measure_market_regime.py --task task2 --exclude-file exclusions.txt
+```
+
+| Chiến lược | `RISK_ON` (PnL / Lệnh / Win%) | `NEUTRAL` (PnL / Lệnh / Win%) | `RISK_OFF` (Sau sửa) | `RISK_OFF` (Trước sửa) |
+|---|:---:|:---:|:---:|:---:|
+| `daily_breakout` | **+3,42 tỷ** \| 4.140 \| 33,6% | **−1,30 tỷ** \| 5.617 \| 29,2% | **−1,65 tỷ** \| 1.301 \| 28,0% | *−5,15 tỷ \| 3.601 \| 30,7%* |
+| `octopus_pullback` | **−0,04 tỷ** \| 525 \| 39,6% | **−0,51 tỷ** \| 273 \| 30,8% | **−0,01 tỷ** \| 42 \| 33,3% | *−0,01 tỷ \| 42 \| 33,3%* |
+| `sma_cross` | **−0,85 tỷ** \| 3.831 \| 32,8% | **−7,49 tỷ** \| 6.936 \| 29,2% | **−2,68 tỷ** \| 1.740 \| 29,1% | *−6,75 tỷ \| 4.464 \| 31,3%* |
+
+*Nhận xét:* Khi loại bỏ 199 phiên `UNKNOWN` đầu năm 2016, cột `RISK_OFF` phản ánh đúng số liệu: số lệnh rơi vào `RISK_OFF` của `daily_breakout` giảm từ 3.601 xuống 1.301 lệnh và mức lỗ giảm từ −5,15 tỷ về −1,65 tỷ. `RISK_ON` và `NEUTRAL` không bị ảnh hưởng.
+
+---
+
+### 8.5. Đối chiếu Kết quả Kỳ Ngoài Mẫu (2023-01-01 → 2026-08-28)
+
+Lệnh chạy lại:
+```bash
+uv run python scripts/measure_market_regime.py --task task3 --exclude-file exclusions.txt
+```
+
+Quy tắc đóng băng: `{'RISK_ON': 'daily_breakout', 'NEUTRAL': 'NONE', 'RISK_OFF': 'NONE'}`.
+
+| Chỉ số / Mốc so sánh | Trước sửa (Mục 4.2) | Sau sửa (Mục 8.5) | Thay đổi |
+|---|---:|---:|---:|
+| **PnL Quy tắc ngoài mẫu** | **−8.829.397.869 (−8,83 tỷ)** | **−8.822.571.724 (−8,82 tỷ)** | **+6.826.145 (+6,8 triệu)** |
+| **Số lệnh ngoài mẫu** | 4.054 lệnh | 4.054 lệnh | 0 |
+| **Win rate ngoài mẫu** | 26,6% | 26,6% | 0,0% |
+| **Chênh lệch so với Mua-và-giữ ngoài mẫu** | −666.801.741.520 | −666.794.915.375 | +6.826.145 |
+| **Mốc 1: Mua-và-giữ ngoài mẫu (2023→2026-08)** | +657.972.343.651 (+657,97 tỷ) | +657.972.343.651 (+657,97 tỷ) | 0 |
+| **Mốc 2: Chiến lược đơn tốt nhất ngoài mẫu (`octopus`)** | −1.094.143.389 (−1,09 tỷ) | −1.094.143.389 (−1,09 tỷ) | 0 |
+| *-- Đơn `daily_breakout` (không chuyển)* | *−17.157.516.859 (−17,16 tỷ)* | *−17.157.516.859 (−17,16 tỷ)* | 0 |
+| *-- Đơn `sma_cross` (không chuyển)* | *−24.130.355.584 (−24,13 tỷ)* | *−24.130.355.584 (−24,13 tỷ)* | 0 |
+| **Mốc 3: Chính quy tắc trên kỳ trong mẫu (2016→2022)** | +1.105.457.094 (+1,11 tỷ) | +1.111.776.762 (+1,11 tỷ) | +6.319.668 |
+
+---
+
+### 8.6. Kết luận sau khi đo lại
+1. **Khẳng định tính đúng đắn của dự đoán:** Đúng như kỳ vọng nêu trước khi chạy, việc sửa khiếm khuyết A1 (cho phép SELL thoát lệnh trong NEUTRAL) giúp PnL ngoài mẫu bớt xấu đi một lượng nhỏ (+6,8 triệu VNĐ, từ −8,829 tỷ lên −8,823 tỷ).
+2. **Kết luận cuối cùng không hề thay đổi:** Kết quả ngoài mẫu vẫn là **lỗ −8,82 tỷ VNĐ**, thua xa Mua-và-giữ (+657,97 tỷ) và thua chiến lược đơn lẻ `octopus_pullback` (−1,09 tỷ).
+3. **Đóng chặn thành công:** Việc đo đạc đã hoàn toàn loại trừ các sai số kỹ thuật (look-ahead, chặn nhầm SELL, phân loại nhầm dữ liệu thiếu lịch sử). Kết quả "KHÔNG" là kết luận định lượng vững chắc. Khuyến nghị giữ nguyên trạng thái Engine ở Paper trading (`real_trading_enabled: false`).
+
+---
+
+## 9. GHI CHÚ AUDIT ĐỢT 10 (Claude, 02/09/2026)
+
+Chạy lại độc lập Task 3 sau sửa: **7/7 con số tái lập đúng đến từng đồng**
+(−8.822.571.724 / 4.054 lệnh / 26,6% / chênh BH −666.794.915.375 / trong mẫu
++1.111.776.762 / 9.340 lệnh / các mốc đơn không đổi). **Chấp nhận.**
+
+Kiểm bổ sung: `UNKNOWN` = 199 và `RISK_OFF` = 489 đếm lại từ CSV; ngưỡng
+0,40/0,60 nguyên vẹn (`MIN_ELIGIBLE_SYMBOLS = 50` là hằng số mới duy nhất);
+Mục 1–7 **0 dòng bị xoá**; `trading/`, `config.yaml`, `heartbeat_check.py`
+diff rỗng.
+
+### 9.1. Vì sao số lệnh không đổi — điều báo cáo nên nói mà chưa nói
+
+Mục 8.5 ghi "số lệnh: 0 thay đổi" (4.054 trước và sau) mà không giải thích,
+khiến nó dễ bị đọc nhầm thành *bản sửa không có tác dụng*. Thực ra **số đếm
+không đổi là điều phải xảy ra**: mỗi vị thế sinh đúng **một** lệnh thoát, dù
+thoát bằng trailing stop hay bằng SELL của chiến lược. Bản sửa đổi *cách* và
+*thời điểm* thoát, không đổi *số lần* thoát.
+
+Và vì trailing stop được xét **trước** SELL trong cả ba vòng lặp
+(`engine/logic.py`, `trading/backtest.py`, script này — `if stop_price is not
+None: ... elif signal is not None:`), SELL của chiến lược chỉ có tiếng nói khi
+giá chưa chạm stop. Với `daily_breakout` dùng trailing stop 3×ATR, phần lớn
+lệnh thoát bằng stop — nên chênh lệch nhỏ (+6,8 triệu / 8,8 tỷ = 0,08%) là hợp
+lý, không phải dấu hiệu bản sửa trơ.
+
+### 9.2. Cách kiểm chứng phá hoại ở đây tốt hơn brief yêu cầu
+
+Brief yêu cầu phá tạm rồi khôi phục. Agent để lại cờ `block_sell_in_none`
+(mặc định `False`, chỉ test dùng) và khẳng định **cả hai chiều**: code mới cho
+1 lệnh SELL, code cũ cho 0. Đó là kiểm chứng phá hoại **vĩnh viễn** — nếu ai
+sau này vô tình khôi phục lỗi cũ, test bắt ngay, thay vì một phép thử một lần
+rồi mất.
+
+Test A1 cũng cô lập đúng: dựng giá 94,5 so với trailing stop ~93,6 để stop
+**không** kích hoạt, nên lối thoát duy nhất là SELL của chiến lược. Không cô
+lập như vậy thì test sẽ xanh vì lý do sai.
+
+### 9.3. Kết luận không đổi
+
+Ba sai số kỹ thuật đã bị loại (look-ahead, chặn nhầm SELL, phân loại nhầm dữ
+liệu thiếu lịch sử) và kết quả ngoài mẫu vẫn là **lỗ −8,82 tỷ**, thua mua-và-giữ
+−666,79 tỷ và thua cả `octopus_pullback` đơn lẻ (−1,09 tỷ).
+
+**Không triển khai chuyển đổi theo chế độ vào engine. Giữ paper.**

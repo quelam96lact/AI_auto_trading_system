@@ -4,9 +4,11 @@ Giai đoạn 1: ĐO
 - Task 2: Đo từng chiến lược (daily_breakout, octopus_pullback, sma_cross)
   theo từng chế độ (RISK_ON, NEUTRAL, RISK_OFF) trên KỲ TRONG MẪU (2016-01-04 -> 2022-12-31).
   Quy kết từng giao dịch về chế độ tại ngày mở lệnh (anti-lookahead: dùng regime của ngày T-1).
+  Ngày UNKNOWN (chưa đủ 50 mã) không tính vào 3 chế độ.
   So sánh với 2 mốc: Mua-và-giữ cùng kỳ và Chiến lược đơn tốt nhất suốt kỳ.
 
 - Task 3: Chạy quy tắc chuyển đổi đã đóng băng trên KỲ NGOÀI MẪU (2023-01-01 -> 2026-08-28).
+  Sửa khiếm khuyết A1: Chế độ NONE chặn BUY nhưng cho SELL từ chiến lược đang giữ vị thế đi qua.
   So sánh với 3 mốc: Mua-và-giữ ngoài mẫu, Chiến lược đơn tốt nhất ngoài mẫu, và chính quy tắc trên kỳ trong mẫu.
 """
 
@@ -22,9 +24,11 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
-from trading.backtest import STRATEGIES, _is_dirty, run_backtest
+from trading.backtest import STRATEGIES, _buy_and_hold, _is_dirty, run_backtest
 from trading.broker import Fill
 from trading.calendar_vn import TZ
+from trading.models import Bar
+from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.trailing_stop import TrailingStopManager
@@ -72,6 +76,7 @@ def attribute_trades(
 ) -> dict[str, list[Fill]]:
     """Quy kết các lệnh SELL về chế độ tại ngày mở lệnh (BUY date) theo FIFO."""
     trades_by_regime: dict[str, list[Fill]] = {
+        "UNKNOWN": [],
         "RISK_ON": [],
         "NEUTRAL": [],
         "RISK_OFF": [],
@@ -95,7 +100,7 @@ def attribute_trades(
                     sell_qty = 0
 
             # Chế độ tại thời điểm mở lệnh (dùng regime của ngày trước đó để chống look-ahead)
-            regime = prior_regime_by_date.get(entry_date, "RISK_OFF")
+            regime = prior_regime_by_date.get(entry_date, "UNKNOWN")
             trades_by_regime.setdefault(regime, []).append(f)
 
     return trades_by_regime
@@ -118,6 +123,7 @@ def measure_strategy_on_symbols(
     total_wins = 0
 
     regime_stats = {
+        "UNKNOWN": {"pnl": 0.0, "trades": 0, "wins": 0},
         "RISK_ON": {"pnl": 0.0, "trades": 0, "wins": 0},
         "NEUTRAL": {"pnl": 0.0, "trades": 0, "wins": 0},
         "RISK_OFF": {"pnl": 0.0, "trades": 0, "wins": 0},
@@ -142,12 +148,13 @@ def measure_strategy_on_symbols(
         # Phân bổ trade theo regime
         by_reg = attribute_trades(report.fills, prior_regime_by_date)
         for reg, fills in by_reg.items():
+            reg_dict = regime_stats.setdefault(reg, {"pnl": 0.0, "trades": 0, "wins": 0})
             for f in fills:
                 if f.pnl is not None:
-                    regime_stats[reg]["pnl"] += f.pnl
-                    regime_stats[reg]["trades"] += 1
+                    reg_dict["pnl"] += f.pnl
+                    reg_dict["trades"] += 1
                     if f.pnl > 0:
-                        regime_stats[reg]["wins"] += 1
+                        reg_dict["wins"] += 1
 
         if i % 300 == 0 or i == len(symbols):
             print(f"    [{strat_name}] đã chạy {i}/{len(symbols)} mã", file=sys.stderr)
@@ -163,112 +170,147 @@ def measure_strategy_on_symbols(
     }
 
 
+def run_regime_switching_one_symbol(
+    bars: list[Bar],
+    rule: dict[str, str],
+    prior_regime_by_date: dict[date, str],
+    capital: float,
+    block_sell_in_none: bool = False,
+) -> tuple[float, float, list[Fill]]:
+    """Chạy backtest regime switching cho 1 mã độc lập.
+
+    A1 Fix:
+    - Khi rule[regime] == 'NONE' hoặc 'KHONG_GIAO_DICH' hoặc 'UNKNOWN':
+      * Chặn BUY signals (không mở vị thế mới).
+      * Cho phép SELL signals từ chiến lược đang giữ vị thế đi qua để đóng vị thế theo luật.
+    - block_sell_in_none: cờ phá hoại (nếu True: chặn luôn cả SELL như code cũ để test đỏ).
+    """
+    clean_bars = [b for b in bars if not _is_dirty(b)]
+    if not clean_bars:
+        return 0.0, 0.0, []
+
+    broker = PaperBroker(capital)
+    risk = RiskManager(capital=capital)
+    trailing_stop = TrailingStopManager()
+
+    strat_instances = {name: factory() for name, factory in STRATEGIES.items()}
+    all_fills: list[Fill] = []
+    marks: dict[str, float] = {}
+
+    current_holding_strat: str | None = None
+    pending_buy_strat: str | None = None
+
+    for bar in clean_bars:
+        fills = broker.on_bar(bar)
+        all_fills.extend(fills)
+        marks[bar.symbol] = bar.close
+        for f in fills:
+            if f.side == "BUY":
+                trailing_stop.on_position_opened(f.symbol, f.price)
+                current_holding_strat = pending_buy_strat
+                pending_buy_strat = None
+            else:
+                if broker.position_qty(bar.symbol) == 0:
+                    trailing_stop.on_position_closed(f.symbol)
+                    current_holding_strat = None
+
+        bar_d = bar.ts.astimezone(TZ).date() if bar.ts.tzinfo else bar.ts.date()
+        current_regime = prior_regime_by_date.get(bar_d, "UNKNOWN")
+        active_strat_name = rule.get(current_regime, "NONE")
+
+        # Update tất cả chiến lược
+        strategy_signals = {}
+        for sname, s_inst in strat_instances.items():
+            strategy_signals[sname] = s_inst.on_bar(bar, broker)
+
+        # Quyết định signal
+        signal = None
+        acting_strat_name = None
+
+        if block_sell_in_none:
+            # CODE CŨ (BỊ LỖI A1): chỉ lấy signal nếu sname == active_strat_name
+            if active_strat_name in strat_instances:
+                signal = strategy_signals.get(active_strat_name)
+                acting_strat_name = active_strat_name
+        else:
+            # CODE MỚI (ĐÃ SỬA A1):
+            if broker.position_qty(bar.symbol) > 0 and current_holding_strat in strat_instances:
+                # Vị thế đang mở: Cho phép SELL signal từ chiến lược đang giữ vị thế
+                holding_sig = strategy_signals.get(current_holding_strat)
+                if holding_sig is not None and holding_sig.side == "SELL":
+                    signal = holding_sig
+                    acting_strat_name = current_holding_strat
+            elif broker.position_qty(bar.symbol) == 0 and active_strat_name in STRATEGIES:
+                # Chưa có vị thế: Chỉ lấy BUY signal từ chiến lược đang active theo regime
+                active_sig = strategy_signals.get(active_strat_name)
+                if active_sig is not None and active_sig.side == "BUY":
+                    signal = active_sig
+                    acting_strat_name = active_strat_name
+
+        # Trailing stop check
+        stop_price = None
+        if broker.position_qty(bar.symbol) > 0:
+            atr = None
+            if current_holding_strat in strat_instances:
+                atr = strat_instances[current_holding_strat].last_atr(bar.symbol)
+            if atr is None:
+                for s_inst in strat_instances.values():
+                    atr = s_inst.last_atr(bar.symbol)
+                    if atr is not None:
+                        break
+            stop_price = trailing_stop.check(bar, atr)
+
+        if stop_price is not None:
+            forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
+            if forced.qty > 0:
+                if broker.position_qty(bar.symbol) == 0:
+                    trailing_stop.on_position_closed(bar.symbol)
+                    current_holding_strat = None
+                all_fills.append(forced)
+        elif signal is not None and acting_strat_name is not None:
+            daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
+            atr = strat_instances[acting_strat_name].last_atr(bar.symbol)
+            sized = risk.approve_sized(
+                signal,
+                bar.close,
+                atr,
+                broker.positions,
+                daily_pnl,
+                bar.ts.date(),
+            )
+            if sized is not None:
+                broker.submit(sized)
+                if sized.side == "BUY":
+                    pending_buy_strat = acting_strat_name
+
+    bh_pnl = _buy_and_hold(clean_bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps)
+    strat_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
+    return strat_pnl, bh_pnl, all_fills
+
+
 def run_regime_switching_backtest(
     storage: Storage,
     symbols: list[str],
-    rule: dict[str, str],  # VD: {"RISK_ON": "daily_breakout", "NEUTRAL": "NONE", "RISK_OFF": "NONE"}
+    rule: dict[str, str],
     frm: datetime,
     to: datetime,
     capital: float,
     prior_regime_by_date: dict[date, str],
 ) -> dict:
-    """Chạy backtest theo quy tắc chuyển đổi regime trên danh sách mã.
-
-    Tại mỗi bar của mã:
-    - Xác định regime thị trường tại ngày hôm đó (sử dụng prior_regime_by_date để chống lookahead).
-    - Lấy chiến lược tương ứng từ rule:
-      * Nếu rule[regime] == 'NONE' hoặc 'KHONG_GIAO_DICH': không mở vị thế mới (không sinh BUY signal).
-        Vị thế đang có vẫn được quản lý thoát lệnh theo TrailingStop / logic hiện hành.
-      * Nếu rule[regime] in STRATEGIES: dùng strategy tương ứng để sinh signal.
-    """
+    """Chạy backtest theo quy tắc chuyển đổi regime trên danh sách mã."""
     total_strat_pnl = 0.0
     total_bh_pnl = 0.0
     total_trades = 0
     total_wins = 0
 
-    # Khởi tạo strategies
-    # Chúng ta cần chạy từng mã độc lập
     for i, sym in enumerate(symbols, 1):
         bars = storage.read_daily_bars(sym, frm, to)
-        clean_bars = [b for b in bars if not _is_dirty(b)]
-        if not clean_bars:
-            continue
-
-        # Dựng PaperBroker, RiskManager, TrailingStop
-        from trading.paper_broker import PaperBroker
-
-        broker = PaperBroker(capital)
-        risk = RiskManager(capital=capital)
-        trailing_stop = TrailingStopManager()
-
-        # Dựng các strategy instances cho mã này
-        strat_instances = {name: factory() for name, factory in STRATEGIES.items()}
-        all_fills: list[Fill] = []
-        marks: dict[str, float] = {}
-
-        for bar in clean_bars:
-            fills = broker.on_bar(bar)
-            all_fills.extend(fills)
-            marks[bar.symbol] = bar.close
-            for f in fills:
-                if f.side == "BUY":
-                    trailing_stop.on_position_opened(f.symbol, f.price)
-                else:
-                    trailing_stop.on_position_closed(f.symbol)
-
-            bar_d = bar.ts.astimezone(TZ).date() if bar.ts.tzinfo else bar.ts.date()
-            current_regime = prior_regime_by_date.get(bar_d, "RISK_OFF")
-            active_strat_name = rule.get(current_regime, "NONE")
-
-            # Update bars cho tất cả strategy để duy trì chỉ báo (warmup, ATR...)
-            # Nhưng chỉ lấy signal từ chiến lược đang active
-            signal = None
-            for sname, s_inst in strat_instances.items():
-                s_sig = s_inst.on_bar(bar, broker)
-                if sname == active_strat_name:
-                    signal = s_sig
-
-            stop_price = None
-            if broker.position_qty(bar.symbol) > 0:
-                # Lấy last_atr từ active strategy nếu có, hoặc từ strategy bất kỳ
-                atr = None
-                if active_strat_name in strat_instances:
-                    atr = strat_instances[active_strat_name].last_atr(bar.symbol)
-                if atr is None:
-                    for s_inst in strat_instances.values():
-                        atr = s_inst.last_atr(bar.symbol)
-                        if atr is not None:
-                            break
-                stop_price = trailing_stop.check(bar, atr)
-
-            if stop_price is not None:
-                forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
-                if forced.qty > 0:
-                    trailing_stop.on_position_closed(bar.symbol)
-                    all_fills.append(forced)
-            elif signal is not None:
-                # Nếu rule là NONE / KHONG_GIAO_DICH, signal là None nên không vào lệnh
-                daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
-                atr = strat_instances[active_strat_name].last_atr(bar.symbol)
-                sized = risk.approve_sized(
-                    signal,
-                    bar.close,
-                    atr,
-                    broker.positions,
-                    daily_pnl,
-                    bar.ts.date(),
-                )
-                if sized is not None:
-                    broker.submit(sized)
-
-        # Tính PnL cho mã
-        from trading.backtest import _buy_and_hold
-        bh_pnl = _buy_and_hold(clean_bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps)
-        strat_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
-
+        strat_pnl, bh_pnl, fills = run_regime_switching_one_symbol(
+            bars, rule, prior_regime_by_date, capital
+        )
         total_strat_pnl += strat_pnl
         total_bh_pnl += bh_pnl
-        sell_fills = [f for f in all_fills if f.side == "SELL"]
+        sell_fills = [f for f in fills if f.side == "SELL"]
         total_trades += len(sell_fills)
         total_wins += sum(1 for f in sell_fills if f.pnl is not None and f.pnl > 0)
 
@@ -341,7 +383,7 @@ def main() -> None:
             in_sample_results[sname] = res
 
         print("\n" + "=" * 78)
-        print("BẢNG 3x3 KỲ TRONG MẪU (2016-01-04 -> 2022-12-31)")
+        print("BẢNG 3x3 KỲ TRONG MẪU (2016-01-04 -> 2022-12-31, loại trừ ngày UNKNOWN)")
         print("=" * 78)
         header = f"{'Chiến lược':<18} | {'RISK_ON (PnL / Lệnh / Win%)':<28} | {'NEUTRAL (PnL / Lệnh / Win%)':<28} | {'RISK_OFF (PnL / Lệnh / Win%)':<28}"
         print(header)
@@ -351,7 +393,7 @@ def main() -> None:
             res = in_sample_results[sname]
             cols = []
             for reg in ["RISK_ON", "NEUTRAL", "RISK_OFF"]:
-                st = res["by_regime"][reg]
+                st = res["by_regime"].get(reg, {"pnl": 0.0, "trades": 0, "wins": 0})
                 wr = (st["wins"] / st["trades"]) if st["trades"] else 0.0
                 pnl_b = st["pnl"] / 1e9  # Tỷ đồng
                 cols.append(f"{pnl_b:>+7.2f} tỷ | {st['trades']:>5} | {wr:>5.1%}")
@@ -359,11 +401,9 @@ def main() -> None:
 
         print("=" * 78)
         print("\nHAI MỐC SO SÁNH KỲ TRONG MẪU (2016-01-04 -> 2022-12-31):")
-        # Mua-và-giữ cùng kỳ
         bh_pnl_in = in_sample_results["daily_breakout"]["total_bh_pnl"]
         print(f"  1. Mua-và-giữ cùng kỳ ({len(symbols)} mã) : {bh_pnl_in:>18,.0f} ({bh_pnl_in / 1e9:>+.2f} tỷ)")
 
-        # Chiến lược đơn tốt nhất suốt kỳ
         for sname in ["daily_breakout", "octopus_pullback", "sma_cross"]:
             res = in_sample_results[sname]
             print(f"  2. {sname:<18} (toàn kỳ, ko chuyển) : PnL {res['total_strat_pnl']:>15,.0f} ({res['total_strat_pnl'] / 1e9:>+7.2f} tỷ) | lệnh {res['total_trades']:>6} | win {res['overall_win_rate']:>5.1%}")
@@ -379,11 +419,6 @@ def main() -> None:
         print("TASK 3: QUY TẮC CHUYỂN ĐỔI ĐÓNG BĂNG — KỲ NGOÀI MẪU (2023 -> 2026-08-28)")
         print("=" * 78)
 
-        # Đóng băng quy tắc: từ bảng Task 2, kiểm tra xem quy tắc nào tốt nhất trên kỳ trong mẫu
-        # Cấu hình rule đóng băng:
-        # Giả định quy tắc: RISK_ON -> daily_breakout, NEUTRAL -> KHONG_GIAO_DICH, RISK_OFF -> KHONG_GIAO_DICH
-        # Hoặc theo kết quả thực tế của Task 2.
-        # Chúng ta sẽ chạy rule đóng băng và đo lường.
         rule_frozen = {
             "RISK_ON": "daily_breakout",
             "NEUTRAL": "NONE",
@@ -391,19 +426,16 @@ def main() -> None:
         }
         print(f"Quy tắc chuyển đổi đóng băng: {rule_frozen}")
 
-        # Chạy quy tắc đóng băng trên kỳ trong mẫu để có mốc so sánh
         in_frm = datetime(2016, 1, 4, tzinfo=TZ)
         in_to = datetime(2022, 12, 31, tzinfo=TZ) + timedelta(days=1)
         res_rule_in = run_regime_switching_backtest(
             storage, symbols, rule_frozen, in_frm, in_to, args.capital, prior_regime_by_date
         )
 
-        # Chạy quy tắc đóng băng trên kỳ ngoài mẫu
         res_rule_out = run_regime_switching_backtest(
             storage, symbols, rule_frozen, out_frm, out_to, args.capital, prior_regime_by_date
         )
 
-        # Chạy các chiến lược đơn trên kỳ ngoài mẫu để làm mốc so sánh
         out_sample_single = {}
         for sname, factory in STRATEGIES.items():
             res = measure_strategy_on_symbols(
@@ -423,7 +455,6 @@ def main() -> None:
         bh_out = res_rule_out["bh_pnl"]
         print(f"  1. Mua-và-giữ ngoài mẫu (2023->2026-08)      : {bh_out:>18,.0f} ({bh_out/1e9:>+7.2f} tỷ)")
 
-        # Tìm chiến lược đơn tốt nhất ngoài mẫu
         best_single_name = max(out_sample_single, key=lambda k: out_sample_single[k]["total_strat_pnl"])
         best_single_pnl = out_sample_single[best_single_name]["total_strat_pnl"]
         print(f"  2. Chiến lược đơn tốt nhất ngoài mẫu ({best_single_name}) : {best_single_pnl:>18,.0f} ({best_single_pnl/1e9:>+7.2f} tỷ)")
