@@ -32,7 +32,8 @@ Scheduler. Và `scripts/deploy_drift_check.py:80` chỉ so mốc build image v�
 
 | Mã | Việc | Chạm | Làm được trước phiên 04/09? |
 |---|---|---|---|
-| **C** | BingX giai đoạn 2 — đo chiến lược | chỉ `scripts/` | Được (nhưng xem 2.1) |
+| **C-b** | BingX giai đoạn 2 — đo chiến lược | chỉ `scripts/` | Được (nhưng xem 2.1) |
+| **C-a** | Đơn vị lô cho `RiskManager` | `trading/risk.py` | **Không** — tối nay sau 14:45 |
 | **G** | Chạy bộ test integration | không sửa gì | **Đã làm — xem mục 2.2** |
 | — | Viết brief, audit chỉ-đọc | `docs/` | Được |
 | **C2** | Docker Desktop tự khởi động | thiết lập OS | Được |
@@ -43,10 +44,10 @@ Scheduler. Và `scripts/deploy_drift_check.py:80` chỉ so mốc build image v�
 | — | xác nhận gói A lúc 13:00 | cần phiên sống | **Bất khả ngoài giờ** |
 | **D1** | diễn tập dead-man's switch | cần phiên sống, KHÔNG phải 04/09 | **Bất khả ngoài giờ** |
 
-Lý do cấm B1/B2/C3 trước phiên hôm nay không đổi: **13:00 hôm nay là phép đo
+Lý do cấm B1/B2/C3/C-a trước phiên hôm nay không đổi: **13:00 hôm nay là phép đo
 thực địa duy nhất của gói A.** Dựng lại image lần nữa trước đó là trộn hai biến
-vào một phiên và mất luôn phép đo. Ba việc này gộp thành **một** lần dựng lại
-tối nay, không phải ba.
+vào một phiên và mất luôn phép đo. Bốn việc này gộp thành **một** lần dựng lại
+tối nay, không phải bốn.
 
 ---
 
@@ -63,8 +64,8 @@ tối nay, không phải ba.
 không dừng từ giờ tới 09:00, token tự refresh như 03/09 (T1 lúc 08:59). Chỉ làm
 tay nếu sáng dậy thấy Docker đã tắt.
 
-Gói **C** hợp lệ về kỹ thuật ngay lúc này, nhưng **không nên bắt đầu lúc nửa
-đêm**: nó là phép đo đòi kỷ luật (đóng băng ngưỡng trước, kỳ ngoài mẫu niêm
+Phần đo của gói C (**C-b**) hợp lệ về kỹ thuật ngay lúc này — nhưng chỉ *chạy*
+được sau khi **C-a** lên (xem 3.5), và **không nên bắt đầu lúc nửa đêm**: nó là phép đo đòi kỷ luật (đóng băng ngưỡng trước, kỳ ngoài mẫu niêm
 phong, số phải tái lập được). Bắt đầu mệt là cách chắc chắn nhất phá chính kỷ
 luật đó. Nó cũng còn treo ở quyết định **F**: phần spot chạy được không cần F,
 phần perpetual thì không — và nếu đo perpetual mà chưa mô hình hoá funding thì
@@ -101,10 +102,16 @@ chạy thật). Test cũ không ai sửa vì `pytestmark = pytest.mark.integrati
 
 ---
 
-## 3. Gói tối nay sau 14:45 — B1 + B2 + C3, **một** lần dựng lại
+## 3. Gói tối nay sau 14:45 — B1 + B2 + C3 + C-a, **một** lần dựng lại
 
-Ba việc, gộp một commit-và-dựng để phiên thứ Hai chỉ có một biến mới. Cuối tuần
+Bốn việc, gộp một commit-và-dựng để phiên thứ Hai chỉ có một biến mới. Cuối tuần
 là thời gian kiểm.
+
+**C-a thêm vào sau khi viết plan này** (04/09, 01:20): `RiskManager` đóng cứng lô
+100 đơn vị của sàn HOSE, làm mọi lệnh crypto giá cao bị từ chối **im lặng**.
+Nó chạm `trading/risk.py` ⇒ vào image ⇒ phải đi cùng đợt này, nếu không cuối
+tuần lại phải dựng lại lần nữa. Brief đầy đủ:
+`2026-09-04-plan-bingx-giai-doan-2-do-chien-luoc.md` mục 4.1.
 
 ### 3.1 B1 — hợp đồng chiến lược (đã thu hẹp, xem 3.2)
 
@@ -266,8 +273,8 @@ ngày mà không ai biết.
 Bây giờ 00:45   để máy chạy — token tự refresh, không đụng image
 Sáng 04/09      chỉ chạy tay token NẾU Docker đã tắt
 13:00 04/09     xác nhận gói A — mốc kiểm chứng thật
-Sau 14:45       B1 + B2 + C3 → một commit → MỘT lần dựng lại
-Cuối tuần       kiểm gói tối nay + gói C (BingX, chỉ scripts/)
+Sau 14:45       B1 + B2 + C3 + C-a → một commit → MỘT lần dựng lại
+Cuối tuần       kiểm gói tối nay + C-b (đo BingX, chỉ scripts/)
 Tuần sau        D1 diễn tập dead-man's switch
 Bất kỳ lúc nào  chủ dự án trả lời C1/C2/C3/E/F — F chặn gói C
 ```

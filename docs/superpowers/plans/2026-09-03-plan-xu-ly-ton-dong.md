@@ -40,7 +40,7 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **B** | `run_backtest` nhận tham số phí/thanh toán | `trading/` (không chạm engine) | **tối nay** |
 | **B1** | Hợp đồng chiến lược + sổ đăng ký + conformance test | `trading/` (chạm engine) | tối thứ Sáu |
 | **B2** | Gộp `_print_safe` vào `trading/alerts.py` | `trading/` + 3 script | tối thứ Sáu |
-| **C** | BingX giai đoạn 2 — đo chiến lược trên crypto | chỉ `scripts/` | cuối tuần |
+| **C** | BingX giai đoạn 2 — đo chiến lược trên crypto | ~~chỉ `scripts/`~~ **SAI — xem mục 5** | cuối tuần |
 | **D1** | Diễn tập dead-man's switch | không sửa code | phiên KHÔNG phải 04/09 |
 | **E** | Vốn engine lấy từ 0434221 trong khi tiền ở 0434226 | `config.yaml` | chờ chủ dự án |
 
@@ -243,6 +243,15 @@ Dữ liệu đã sẵn: `bars_crypto` có **27.124 nến 1d** và **385.363 nế
 cặp. Không cần nạp thêm gì.
 
 Chặn duy nhất là gói B. Sau khi B xong, gói C **chỉ chạm `scripts/`**.
+
+> **ĐÍNH CHÍNH 04/09 — câu trên SAI, giữ lại để không ai lặp lại.**
+> `RiskManager.approve_sized` (`trading/risk.py:99-108`) làm tròn khối lượng
+> xuống bội **100** (lô HOSE) và từ chối lệnh < 100. Đã chạy thật: vốn 100.000
+> USD, BTC giá 60.000 ⇒ trả **`None`** — lệnh bị từ chối **im lặng**, còn coin
+> giá thấp thì vẫn có số. Đo crypto trên code hiện tại cho ra bảng thiên lệch
+> mà không có gì báo. Gói C **phải tách đôi**: C-a chạm `trading/risk.py` (vào
+> image), C-b mới chỉ chạm `scripts/`.
+> Chi tiết: `2026-09-04-plan-bingx-giai-doan-2-do-chien-luoc.md` mục 2 và 4.
 
 Kỷ luật đo bắt buộc giữ nguyên — chính ba chốt này đã bắt được một quy tắc lãi
 +1,11 tỷ trong mẫu hoá ra lỗ −8,82 tỷ ngoài mẫu:

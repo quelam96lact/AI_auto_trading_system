@@ -79,7 +79,7 @@ những thứ tốn nhiều công nhất và đã có test — không phải vi�
 | `paper_broker.py` | `SETTLE_DAYS = 3` (T+2,5), `FEE_RATE = 0.0025`, `SELL_TAX_RATE = 0.001` — thuế bán và chu kỳ thanh toán **không tồn tại** ở crypto |
 | `collector/*` | Toàn bộ dựng quanh SSI FastConnect: auth, stream, parser B/MI, backfill |
 | `real_orders.py` | Đường đặt lệnh SSI |
-| `engine/main.py`, `engine/logic.py`, `backtest.py` | Đều import `calendar_vn` |
+| `engine/main.py`, `engine/logic.py`, ~~`backtest.py`~~ | Đều import `calendar_vn`. **ĐÍNH CHÍNH 04/09: `backtest.py` KHÔNG thuộc nhóm này** — nó chỉ dùng `TZ` (dòng 273/324/325), không dùng `SESSIONS`, không gọi `is_trading_time`, nên `run_backtest` chạy được trên nến crypto 24/7 mà không âm thầm vứt bar. Chỗ chặn thật nằm ở `risk.py` (lô 100) — xem `2026-09-04-plan-bingx-giai-doan-2-do-chien-luoc.md` |
 | Bốn chuông báo | **Tất cả** dựng trên khung giờ phiên VN |
 
 ### 7. Ba thứ crypto có mà hệ thống hiện tại chưa có khái niệm
