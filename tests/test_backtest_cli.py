@@ -35,7 +35,7 @@ def _seed_bars(storage, n=25):
     return bars
 
 
-def test_cli_registry_offers_sma_cross_de_DO():
+def test_cli_registry_has_sma_cross():
     """sma_cross NAM trong so dang ky — them lai co chu y 2026-09-01 (dot 4 Task 0).
 
     Ban truoc cua test nay khang dinh dieu nguoc lai (quyet dinh 15/08: go khoi
