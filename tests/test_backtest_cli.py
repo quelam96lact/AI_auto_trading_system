@@ -35,9 +35,18 @@ def _seed_bars(storage, n=25):
     return bars
 
 
-def test_cli_registry_no_longer_offers_sma_cross():
-    """Go bo co chu y (2026-08-15) — khong phai sot. Xem comment tren STRATEGIES."""
-    assert "sma_cross" not in STRATEGIES
+def test_cli_registry_offers_sma_cross_de_DO():
+    """sma_cross NAM trong so dang ky — them lai co chu y 2026-09-01 (dot 4 Task 0).
+
+    Ban truoc cua test nay khang dinh dieu nguoc lai (quyet dinh 15/08: go khoi
+    so). Quyet dinh do da bi DAO NGUOC ngay 01/09 vi can do lai chinh thu engine
+    dang chay tren ro da loc — xem comment tren STRATEGIES. Test cu thanh DO tu
+    hom do nhung `pytestmark = integration` o dau file lam no bien mat khoi moi
+    lan chay `-m "not integration"`, nen khong ai thay trong ba ngay.
+
+    STRATEGIES la SO DANG KY DE DO, khong phai danh sach duoc phep chay that.
+    """
+    assert "sma_cross" in STRATEGIES
 
 
 def test_cli_registry_has_daily_breakout():
@@ -75,8 +84,15 @@ def test_tf_registry_covers_all_timeframes_and_sources():
     assert set(_TF_SPEC) == {"5m", "10m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"}
     # khung noi ngay doc bang `bars`, khung tu 1d tro len doc `bars_daily`
     assert {tf for tf, (src, _) in _TF_SPEC.items() if src == "bars"} == {
-        "5m", "10m", "15m", "30m", "1h", "4h"
+        "5m",
+        "10m",
+        "15m",
+        "30m",
+        "1h",
+        "4h",
     }
     assert {tf for tf, (src, _) in _TF_SPEC.items() if src == "bars_daily"} == {
-        "1d", "1w", "1M"
+        "1d",
+        "1w",
+        "1M",
     }
