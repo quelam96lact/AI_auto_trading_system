@@ -34,9 +34,23 @@ Và nợ giảm mạnh trong đêm:
 2026-09-04 00:29:35  total_debt = 17.308.028
 ```
 
-**Chủ dự án đã bán CAP và mua FOX chiều 03/09**, nợ ký quỹ giảm theo. Vị thế FOX
-chỉ hiện lên trong `account_position_snapshot` lúc **00:29:35** đêm nay, không
-phải trong phiên.
+**Đây là một lệnh hoán đổi ngày 28/08 (bán CAP, mua FOX) vừa THANH TOÁN xong
+đêm nay, không phải giao dịch chiều 03/09.** Bản đầu của plan này đoán sai
+nguyên nhân; chủ dự án đã đính chính và dữ liệu xác nhận:
+
+- FOX có `cost_price = 65.000` **ngay từ bản chụp đầu tiên 29/08 21:25** — lệnh
+  mua đã tồn tại từ 28/08.
+- `quantity` của FOX = 0 suốt 29/08 → 03/09, chỉ lật thành 1.100 lúc
+  **00:29:35** đêm nay — **đúng khoảnh khắc** CAP lật 1.200 → 0. Hai chân của
+  cùng một lệnh, thanh toán cùng lúc.
+- Nợ giảm **51.299.820**, xấp xỉ giá trị CAP đã bán.
+
+**Lịch T+2 khớp chính xác:** 28/08 là thứ Sáu; 31/08, 01/09, 02/09 đều là ngày
+nghỉ lễ đã khai trong `config.yaml`. Nên 03/09 = T+1, **04/09 = T+2**.
+
+**Hệ quả cần theo dõi hôm nay:** `sellable_quantity` của FOX hiện **= 0**, và sẽ
+lật thành **1.100 vào khoảng 13:00** hôm nay khi thanh toán hoàn tất. Đây là mốc
+kiểm chứng được, thêm vào mục 5.
 
 ### Mốc nghiệm thu mới
 
@@ -82,15 +96,25 @@ Không cần chạy tay quy trình token buổi sáng **nếu máy không tắt*
 FOX là **khoản nắm giữ lớn nhất** của danh mục (1.100 cổ ≈ 70,7 triệu ≈ **33%**).
 Nhưng `bars_daily` không có bar 03/09 cho FOX — giá mới nhất là **28/08**.
 
-Nguyên nhân, đã truy đến gốc và **không phải lỗi**:
+Nguyên nhân — và đây **là** một lỗ hổng cấu trúc, không phải trùng hợp về
+thời điểm như bản đầu của plan này viết:
 
 - Backfill hằng đêm chạy trên *174 mã thanh khoản + 8 mã bắt buộc có giá*, không
   phải toàn bộ 965 mã (`logs/backfill.log`: `[load] 174 ma thanh khoan + 8 ma
   bat buoc co gia (1 ngoai universe) = 175 ma`).
-- Danh sách "bắt buộc có giá" lấy từ **vị thế đang nắm giữ**. Lúc backfill chạy
-  (21:40), FOX vẫn còn `quantity = 0` — nó chỉ thành 1.100 lúc **00:29:35**.
+- `Storage.read_must_price_symbols` dựng danh sách "bắt buộc có giá" từ
+  `read_real_positions`, mà hàm đó — theo đúng docstring của nó — **chỉ trả mã
+  có `quantity > 0`**.
+- Một lệnh mua T+2 có `quantity = 0` **trong suốt cửa sổ thanh toán**. Nên
+  **mọi mã vừa mua đều vô hình với danh sách bắt buộc có giá cho tới khi thanh
+  toán xong** — đúng những ngày nó cần được nạp giá nhất.
 
-Nên backfill làm đúng việc của nó; chỉ là vị thế xuất hiện **sau** khi nó chạy.
+FOX chịu trọn 5 phiên như vậy (29/08 → 03/09). Và đến khi nó hiện ra lúc
+00:29:35, backfill đêm **đã chạy xong từ 21:40** — nên phiên đầu tiên NAV tính
+đến FOX lại là phiên dùng giá cũ nhất.
+
+Đây không phải lỗi của backfill, cũng không phải lỗi của gói A. Nó là hệ quả của
+việc lấy "đang nắm giữ" theo `quantity > 0` ở một thị trường T+2.
 
 **Điều nguy hiểm là nó im lặng:** kiểm tra tuổi giá của gói A tính theo **ngày
 giao dịch**, mà 31/08–02/09 là nghỉ lễ, nên 28/08 → 04/09 chỉ là **2 ngày giao
@@ -108,9 +132,18 @@ DONE: ok=1 skip=0 err=0 / 1
 Kết quả: FOX 03/09 = **64.300** (trước đó dùng 65.100 của 28/08). Giá trị danh
 mục 217.094.000 → **216.214.000**.
 
-**Việc còn lại — KHÔNG làm hôm nay:** vá này chữa triệu chứng của hôm nay, không
-chữa cơ chế. Mua một mã ngoài rổ 174 vào buổi chiều sẽ lặp lại y hệt vào lần
-sau, và vẫn im lặng. Ghi vào sổ tồn đọng, xử lý cùng đợt tối nay hoặc cuối tuần.
+**Việc còn lại — KHÔNG làm hôm nay:** vá này chữa triệu chứng của hôm nay,
+không chữa cơ chế. **Mọi lệnh mua mã ngoài rổ 174 đều sẽ lặp lại y hệt**, vì
+mọi lệnh mua đều đi qua cửa sổ T+2 với `quantity = 0`. Ghi thành mục tồn đọng
+mới:
+
+> **H — mã đang trong cửa sổ thanh toán phải được nạp giá.**
+> `read_must_price_symbols` cần tính cả mã đã mua nhưng chưa về (`quantity = 0`
+> mà `cost_price > 0`, hoặc đọc từ nguồn khác). Chạm `trading/storage/db.py`
+> ⇒ vào image ⇒ đi cùng đợt tối nay hoặc cuối tuần, **không phải hôm nay**.
+> Lưu ý khi làm: `read_real_positions` là **một nguồn duy nhất** theo luật
+> `4ea4c8d` — sửa ở đó hay thêm hàm mới là một quyết định cần cân nhắc, không
+> được viết truy vấn `account_position_snapshot` thứ hai.
 
 ---
 
@@ -175,6 +208,7 @@ không phải ngày triển khai.
 | 11:30–13:00 | Nghỉ trưa — **im lặng là đúng** | — |
 | **13:00** | **Điện thoại KHÔNG kêu.** Đây là phép đo | Kêu CRITICAL ⇒ gói A chưa chữa được, giữ nguyên log để phân tích |
 | 13:00–13:15 | Bar quay lại sau nghỉ trưa | — |
+| **~13:00** | FOX `sellable_quantity` lật **0 → 1.100** (T+2 của lệnh mua 28/08) | Nếu tới 14:45 vẫn = 0 ⇒ hỏi SSI, không phải lỗi hệ thống |
 | 14:45 | Phiên đóng, đếm bar/lệnh | — |
 
 Mốc 13:00 là điểm mấu chốt: hôm 03/09 lúc 13:00:03 chuông kêu CRITICAL giả (bar
