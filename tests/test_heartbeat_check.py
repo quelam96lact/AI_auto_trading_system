@@ -72,6 +72,50 @@ def test_bar_stale_weekend_no_alarm():
     assert bar_stale(now_sat - timedelta(hours=3), now_sat) is False
 
 
+def test_bar_stale_1300_after_lunch_no_alarm():
+    """2026-09-03 13:00:03, bar cuoi 11:25 (phien sang) — tai hien dung loi
+    chuong bao GIA 13:00:03: dong ho 95 phut nhung trong phien chi ~5 phut
+    (11:25-11:30; nghi trua khong tinh; 13:00 moi mo cua phien chieu). Phai
+    KHONG bao dong (bar phien chieu dau tien ve ~13:05)."""
+    holidays = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
+    assert (
+        bar_stale(
+            datetime(2026, 9, 3, 11, 25, tzinfo=TZ),
+            datetime(2026, 9, 3, 13, 0, 3, tzinfo=TZ),
+            holidays=holidays,
+        )
+        is False
+    )
+
+
+def test_bar_stale_1300_feed_dead_still_alarms():
+    """Cung 13:00 nhung bar cuoi 09:30 (feed chet tu sang): 120 phut trong
+    phien > 15 -> VAN bao dong. Sửa chuong khong duoc lam no cam khi feed
+    chet that (tieu chi 3, quan trong ngang tieu chi 2)."""
+    assert (
+        bar_stale(
+            datetime(2026, 9, 3, 9, 30, tzinfo=TZ),
+            datetime(2026, 9, 3, 13, 0, 3, tzinfo=TZ),
+        )
+        is True
+    )
+
+
+def test_bar_stale_first_minutes_of_morning_no_alarm():
+    """09:00:09 sang dau phien, bar cuoi la phien truoc (28/08) — 0 phut trong
+    phien hom nay troi qua, bar dau phien ve ~09:05. Khong bao (truoc day bao
+    GIA vi dem ca dem + ngay le theo dong ho)."""
+    holidays = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
+    assert (
+        bar_stale(
+            datetime(2026, 8, 28, 14, 45, tzinfo=TZ),
+            datetime(2026, 9, 3, 9, 0, 9, tzinfo=TZ),
+            holidays=holidays,
+        )
+        is False
+    )
+
+
 # ============ FEE-ALARM-1 Viec 2B: token SSI ============
 
 

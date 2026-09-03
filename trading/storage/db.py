@@ -1,4 +1,5 @@
 import threading
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -225,6 +226,18 @@ class Storage:
                 (account_no,),
             ).fetchone()
         return (row[0], row[1]) if row else None
+
+    def read_account_balance_with_debt(self, account_no: str) -> tuple[float, float, datetime] | None:
+        """(withdrawable, total_debt, ts) moi nhat — MARGIN-1 tinh NAV can CA no
+        (debt), read_account_balance chi tra withdrawable. Dung chung bang
+        account_balance_snapshot; total_debt la so SSI tra ve, khong tu tinh."""
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT withdrawable, total_debt, ts FROM account_balance_snapshot "
+                "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
+                (account_no,),
+            ).fetchone()
+        return (row[0], row[1], row[2]) if row else None
 
     def read_nav(self, account_no: str) -> tuple[float, datetime, list[str]] | None:
         """Tai san rong (NAV) moi nhat cua tai khoan — nguon CAPITAL cho
@@ -728,6 +741,7 @@ class Storage:
         price_fn,
         now: datetime,
         max_price_age_days: int = 5,
+        price_age_ok: Callable[[datetime, datetime], bool] | None = None,
     ) -> tuple[float, list[str]]:
         """NAV = tien mat + Σ(qty × gia) − no. THUAN — test duoc khong can DB.
 
@@ -737,7 +751,14 @@ class Storage:
         giao dich) -> tinh vao NAV; khong co gia / qua cu -> TINH 0 va them vao
         danh sach "khong dinh gia duoc" (canh bao — NAV tinh hut ma khong ai biet
         thi te hon NAV khong tinh). Dung cost_price thay the la SAI: gia von co
-        the cao hon thi gia rat nhieu (nhat la margin)."""
+        the cao hon thi gia rat nhieu (nhat la margin).
+
+        price_age_ok(price_ts, now) -> bool (2026-09-03, goi A): vị từ "gia con
+        tuoi" do caller tiêm vao. db.py TRUNG LAP voi thi truong — khong import
+        calendar_vn, khong biet ngay le/ngay giao dich VN la gi. Caller gan voi
+        SSI (account_sync.py) truyen vị từ dem NGAY GIAO DICH (trading_days_
+        between); khi None -> fallback ngay LICH (hanh vi cu) cho caller khong
+        co lich VN."""
         nav = cash - debt
         unpriced = []
         for symbol, qty in positions.items():
@@ -748,8 +769,12 @@ class Storage:
                 unpriced.append(symbol)  # khong co gia -> tinh 0
                 continue
             price, ts = got
-            if (now - ts).days > max_price_age_days:
-                unpriced.append(symbol)  # gia qua cu -> tinh 0
+            if price_age_ok is not None:
+                if not price_age_ok(ts, now):
+                    unpriced.append(symbol)  # gia qua cu -> tinh 0
+                    continue
+            elif (now - ts).days > max_price_age_days:
+                unpriced.append(symbol)  # gia qua cu (ngay lich) -> tinh 0
                 continue
             nav += qty * price
         return nav, unpriced

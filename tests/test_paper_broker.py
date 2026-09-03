@@ -274,3 +274,48 @@ def test_force_exit_only_closes_settled_portion():
     # D+3 (18/07): force_exit dong duoc toan bo
     fill = b.force_exit("VCB", price=9.0, ts=datetime(2026, 7, 18, 9, 10, tzinfo=TZ))
     assert fill.qty == 100 and b.position_qty("VCB") == 0
+
+
+# ============ goi B (2026-09-03): tham so phi/thue/settle cho crypto ============
+
+
+def test_settle_days_zero_ban_duoc_ngay_mua():
+    """Crypto khong co T+3: settle_days=0 -> SELL khop NGAY trong ngay mua
+    (truoc day SETTLE_DAYS=3 hang so module chan ban den D+3)."""
+    b = PaperBroker(capital=100_000_000, settle_days=0)
+    b.submit(Signal("VCB", "BUY", 100))
+    assert len(b.on_bar(bar(10.0, 10.0, 10.0, 10.0, day=15))) == 1
+    # Cung ngay D: SELL phai khop ngay (settle_days=0)
+    b.submit(Signal("VCB", "SELL", 100))
+    fills = b.on_bar(bar(11.0, 11.0, 11.0, 11.0, day=15, m=5))
+    assert len(fills) == 1 and fills[0].qty == 100
+    assert b.position_qty("VCB") == 0
+
+
+def test_settle_days_default_van_la_3():
+    """Engine goi PaperBroker(CAPITAL) khong tham so (engine/main.py:58) — phai
+    van ra T+3 VN cu: SELL ngay mua bi tu choi (tieu chi 4 — ranh gioi an toan
+    voi phien 04/09)."""
+    b = PaperBroker(capital=100_000_000)
+    assert b.settle_days == 3
+    b.submit(Signal("VCB", "BUY", 100))
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0, day=15))
+    b.submit(Signal("VCB", "SELL", 100))
+    assert b.on_bar(bar(11.0, 11.0, 11.0, 11.0, day=15, m=5)) == []
+    assert b.position_qty("VCB") == 100
+
+
+def test_fee_rates_parameterized():
+    """Truyen fee/thue khac (crypto: khong thue ban) -> fee tinh theo tham so,
+    khong phai hang so VN."""
+    b = PaperBroker(capital=100_000_000, fee_rate=0.001, sell_tax_rate=0.0)
+    b.submit(Signal("VCB", "BUY", 100))
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0))
+    # phi = gross * 0.001, KHONG co thue ban (sell_tax_rate=0) — nhung day la
+    # lenh MUA nen thue ban khong ap; kiem qua force_exit ben duoi
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0, day=16))
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0, day=17))
+    b.on_bar(bar(10.0, 10.0, 10.0, 10.0, day=18))
+    fill = b.force_exit("VCB", price=10.0, ts=datetime(2026, 7, 18, 9, 10, tzinfo=TZ))
+    # SELL: fee = gross*0.001 + gross*0.0 (khong thue ban)
+    assert abs(fill.fee - 10.0 * 100 * 0.001) < 1e-9

@@ -20,7 +20,7 @@ from datetime import date, datetime, time, timedelta
 import psycopg
 import yaml
 
-from trading.calendar_vn import TZ, is_trading_time
+from trading.calendar_vn import TZ, is_trading_time, market_minutes_between
 
 # LEDGER-1: import hang so tu trading/ —
 # da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
@@ -99,7 +99,15 @@ def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES,
         return False
     if max_ts is None:
         return True  # "feed chưa từng nối được" — không có bar nào cả ngày
-    return now - max_ts > timedelta(minutes=stale_minutes)
+    # 2026-09-03 (goi A): do phut TRONG PHIEN (bo nghi trua/cuoi tuan/ngay le),
+    # khong phai phut dong ho. Truoc day 13:00:03 voi bar cuoi 11:25 (phien
+    # sang) tinh la 95 phut -> bao dong GIA moi phien chieu. Phut trong phien
+    # = 5 phut (11:25-11:30) + ~0 (13:00 moi mo) -> khong bao. Nguong 15 phut
+    # GIU NGUYEN (khong noi) — chi doi dai luong do.
+    return (
+        market_minutes_between(max_ts, now, holidays, sessions=CHECK_SESSIONS)
+        > stale_minutes
+    )
 
 
 def position_sync_stale(sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_MINUTES) -> bool:

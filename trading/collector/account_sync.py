@@ -3,7 +3,7 @@ from datetime import datetime
 from ssi_sdk.constant import EP_ACCOUNT_BALANCE
 
 from trading.alerts import alert
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, trading_days_between
 from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
 from trading.config import Config
 from trading.storage.db import Storage
@@ -33,7 +33,7 @@ async def sync_account_data(cfg: Config, storage: Storage) -> None:
                 # MARGIN-1 (phan 1): thu thap + tinh, CHUA noi vao duong dat lenh.
                 # Suc mua theo tung ma trong cfg.symbols (trần cứng — phan 2).
                 await _sync_buying_power(trading, account_no, now, cfg.symbols, storage)
-                await _sync_nav(account_no, now, storage)
+                await _sync_nav(account_no, now, storage, cfg.holidays)
             except Exception as e:
                 alert(
                     "WARN",
@@ -119,16 +119,23 @@ async def _sync_buying_power(trading, account_no: str, ts: datetime, symbols: li
             continue
 
 
-async def _sync_nav(account_no: str, ts: datetime, storage: Storage) -> None:
+async def _sync_nav(account_no: str, ts: datetime, storage: Storage,
+                    holidays: frozenset) -> None:
     """MARGIN-1 (phan 1): tinh tai san rong (NAV) = tien mat + Σ(qty × gia) − no
     tu account_balance_snapshot (moi nhat) + account_position_snapshot (moi nhat)
     + gia tu bars_daily/bars. Fail-safe: ma khong dinh gia duoc (khong co gia /
     gia qua cu > 5 ngay giao dich) -> TINH 0 + WARN neu danh sach khong rong
-    (NAV tinh hut ma khong ai biet thi te hon NAV khong tinh)."""
-    bal = storage.read_account_balance(account_no)
+    (NAV tinh hut ma khong ai biet thi te hon NAV khong tinh).
+
+    2026-09-03 (goi A): (1) debt doc THAT tu snapshot (total_debt) thay vi nap
+    cung 0.0 — truoc day tai khoan margin (withdrawable=0, no 68,6tr) ra NAV
+    = 0.0 sai ~160tr; (2) do tuoi gia theo NGAY GIAO DICH (trading_days_between
+    + holidays) thay vi ngay lich — truoc day nghi le 31/08-02/09 lam gia daily
+    28/08 (chi cach 1 phien) bi loai nham, NAV = 0."""
+    bal = storage.read_account_balance_with_debt(account_no)
     if bal is None:
         return  # chua co balance -> chua tinh duoc, khong bao (heartbeat da phu)
-    withdrawable = bal[0]
+    withdrawable, total_debt = bal[0], bal[1]
 
     # positions moi nhat (account_position_snapshot) — dung read_real_positions
     # (da xu ly moc sync) de lay danh sach vi the dang giu
@@ -140,7 +147,16 @@ async def _sync_nav(account_no: str, ts: datetime, storage: Storage) -> None:
             return None
         return (row[1], row[0])  # (price, ts)
 
-    nav, unpriced = storage.compute_nav(withdrawable, 0.0, {s: p.qty for s, p in pos.items()}, price_fn, ts)
+    # db.py trung lap voi thi truong: vị từ "gia con tuoi" tinh o day (ben gan
+    # SSI/VN), dem NGAY GIAO DICH khong phai ngay lich (4ea4c8d — cung cong
+    # thuc voi chuong 2A, xem calendar_vn.market_minutes_between).
+    def price_age_ok(price_ts: datetime, now: datetime) -> bool:
+        return trading_days_between(price_ts, now, holidays) <= 5
+
+    nav, unpriced = storage.compute_nav(
+        withdrawable, total_debt, {s: p.qty for s, p in pos.items()},
+        price_fn, ts, price_age_ok=price_age_ok,
+    )
     storage.record_nav(account_no, ts, nav, unpriced)
     if unpriced:
         alert(

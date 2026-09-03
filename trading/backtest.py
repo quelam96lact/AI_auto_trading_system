@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 
 from trading.broker import Fill
 from trading.models import Bar
-from trading.paper_broker import PaperBroker
+from trading.paper_broker import (
+    FEE_RATE,
+    SELL_TAX_RATE,
+    SETTLE_DAYS,
+    SLIPPAGE_BPS,
+    PaperBroker,
+)
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
 from trading.strategies.octopus_pullback import (
@@ -156,7 +162,16 @@ def run_backtest(
     risk: RiskManager,
     trailing_stop: TrailingStopManager,
     capital: float,
+    fee_rate: float | None = None,
+    sell_tax_rate: float | None = None,
+    slippage_bps: float | None = None,
+    settle_days: int | None = None,
 ) -> BacktestReport:
+    """(goi B 2026-09-03) Nhan tham so phi/thue/settle — crypto khong co thue
+    ban / T+3, ep luat VN len crypto la sai am tham (con so dep gia tao). Mac
+    dinh None = dung hang so VN (FEE_RATE/SELL_TAX_RATE/SLIPPAGE_BPS/
+    SETTLE_DAYS) — hanh vi cu bat bien, engine/main.py:58 PaperBroker(CAPITAL)
+    khong doi."""
     # SPEC-1c: loai bar rac TRUOC khi vao vong lap — khong co lenh nao khop o
     # gia 0, va so dong loai duoc bao cao theo tung ma (im lang loc = che giau
     # van de du lieu).
@@ -169,7 +184,13 @@ def run_backtest(
             clean_bars.append(b)
     bars = clean_bars
 
-    broker = PaperBroker(capital)
+    broker = PaperBroker(
+        capital,
+        fee_rate=fee_rate if fee_rate is not None else FEE_RATE,
+        sell_tax_rate=sell_tax_rate if sell_tax_rate is not None else SELL_TAX_RATE,
+        slippage_bps=slippage_bps if slippage_bps is not None else SLIPPAGE_BPS,
+        settle_days=settle_days if settle_days is not None else SETTLE_DAYS,
+    )
     marks: dict[str, float] = {}
     all_fills: list[Fill] = []
     # backtest-grafana: (ts, equity) — ts diem DAU lay tu bar dau tien (sach),

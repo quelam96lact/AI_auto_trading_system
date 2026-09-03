@@ -254,3 +254,43 @@ def test_buy_and_hold_curve_shows_real_drawdown_when_price_dips():
         f"gia tut 50% giua ky ma duong mua-va-giu chi sut {max_dd:.1%} — "
         f"dau hieu duong bi lam phang/noi suy"
     )
+
+
+# ============ goi B (2026-09-03): run_backtest nhan phi/thue/settle ============
+
+
+def _crypto_prices() -> list[float]:
+    """Chuoi co giao dich round-trip (bull roi bear) — de thay phi ap vao dau."""
+    return [10.0] * 20 + [20.0] * 10 + [10.0] * 10
+
+
+def test_run_backtest_default_identical_to_no_params():
+    """Khong truyen gi (mac dinh None -> hang so VN) phai ra Y HET khi khong
+    co tham so moi — chan ranh gioi an toan voi phien 04/09 (engine goi qua
+    PaperBroker khong tham so)."""
+    bars = make_daily_bars(_crypto_prices())
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
+    base = run_backtest(bars, strat, RiskManager(capital=CAP), TrailingStopManager(), CAP)
+    with_params = run_backtest(
+        bars, strat, RiskManager(capital=CAP), TrailingStopManager(), CAP,
+        fee_rate=None, sell_tax_rate=None, slippage_bps=None, settle_days=None,
+    )
+    assert base.ending_cash == with_params.ending_cash
+    assert base.realized_pnl == with_params.realized_pnl
+    assert base.buy_and_hold_pnl == with_params.buy_and_hold_pnl
+    assert base.fills == with_params.fills
+
+
+def test_run_backtest_settle_zero_lets_sell_next_day():
+    """settle_days=0 (crypto): SELL sau crossover bear khop ngay — khong bi T+3
+    chan, so lenh/PNL khac voi mac dinh VN."""
+    # Bull 3 ngay roi bear ngay — bear crossover xay ra < D+3 sau khi mua, nen
+    # VN (settle=3) bi chan SELL den khi du ngay, crypto (settle=0) khop ngay.
+    bars = make_daily_bars([10.0] * 6 + [20.0] * 3 + [10.0] * 6)
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
+    vn = run_backtest(bars, strat, RiskManager(capital=CAP), TrailingStopManager(), CAP)
+    crypto = run_backtest(
+        bars, strat, RiskManager(capital=CAP), TrailingStopManager(), CAP, settle_days=0
+    )
+    # crypto ban duoc som hon -> so lenh phai khac (khong the bang nhau)
+    assert crypto.trades != vn.trades or crypto.ending_cash != vn.ending_cash

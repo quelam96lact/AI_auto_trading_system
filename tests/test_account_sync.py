@@ -199,12 +199,16 @@ async def test_sync_account_data_isolates_failing_account(monkeypatch):
 
     monkeypatch.setattr(account_sync, "_sync_balance", fake_balance)
     monkeypatch.setattr(account_sync, "_sync_positions", fake_positions)
-    # MARGIN-1: 2 ham moi co test rieng — o day no-op de chi kiem SYNC-1
+    # MARGIN-1: 2 ham moi co test rieng (_sync_buying_power o test rieng, _sync_nav
+    # o test_nav_vn_market_time.py) — o day no-op de chi kiem SYNC-1
     # (ky vong cua test cu KHONG doi: dung 1 WARN cho ACC_BAD)
     monkeypatch.setattr(account_sync, "_sync_buying_power", lambda *a, **k: _noop())
     monkeypatch.setattr(account_sync, "_sync_nav", lambda *a, **k: _noop())
 
-    cfg = NS(ssi_equity_accounts=["ACC_BAD", "ACC_OK"], symbols=["HII"])
+    cfg = NS(
+        ssi_equity_accounts=["ACC_BAD", "ACC_OK"], symbols=["HII"],
+        holidays=frozenset(),  # goi A: _sync_nav doc cfg.holidays
+    )
     await account_sync.sync_account_data(cfg, FakeStorage())
 
     assert calls["balance"] == ["ACC_BAD", "ACC_OK"], (

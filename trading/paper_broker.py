@@ -13,9 +13,9 @@ FEE_RATE = 0.0025
 SELL_TAX_RATE = 0.001
 SLIPPAGE_BPS = 5
 
-# SPEC-1a: mua ngay D -> ban duoc tu ngay giao dich D+3 (lam tron len tu T+2,5,
-# khop cach real_orders.py doc sellable_qty tu SSI). Dung NGAY GIAO DICH (so bar
-# ngay), khong dung ngay lich.
+# SPEC-1a: mua ngay D -> ban duoc tu ngay giao dich D+3 (lam tron len tu
+# T+2,5, khop cach real_orders.py doc sellable_qty tu SSI). Dung NGAY
+# GIAO DICH (so bar ngay), khong dung ngay lich.
 SETTLE_DAYS = 3
 
 
@@ -36,12 +36,17 @@ class PaperBroker:
         fee_rate: float = FEE_RATE,
         sell_tax_rate: float = SELL_TAX_RATE,
         slippage_bps: float = SLIPPAGE_BPS,
+        settle_days: int = SETTLE_DAYS,
     ):
         self.capital = capital
         self.cash = capital
         self.fee_rate = fee_rate
         self.sell_tax_rate = sell_tax_rate
         self.slippage_bps = slippage_bps
+        # 2026-09-03 (goi B): settle_days thanh tham so — crypto khong co T+3,
+        # dat 0 de ban duoc ngay. Mac dinh = SETTLE_DAYS (3) — hanh vi VN cu
+        # giu NGUYEN (engine/main.py:58 goi PaperBroker(CAPITAL) khong doi).
+        self.settle_days = settle_days
         self.positions: dict[str, Position] = {}
         self.realized_pnl = 0.0
         self._pending: dict[str, Signal] = {}
@@ -61,17 +66,17 @@ class PaperBroker:
 
     def sellable_qty(self, symbol: str, ts: datetime) -> int:
         """SPEC-1a: phan co the ban hom nay = tong qty cac lo co day_index sao
-        cho ngay hom nay >= day_index + SETTLE_DAYS (mua D -> ban duoc D+3)."""
+        cho ngay hom nay >= day_index + settle_days (mua D -> ban duoc D+3)."""
         today = self._day_index(ts)
         return sum(
             lot.qty
             for lot in self._lots.get(symbol, [])
-            if today - lot.day_index >= SETTLE_DAYS
+            if today - lot.day_index >= self.settle_days
         )
 
     def _consume_lots(self, symbol: str, qty: int, today: int) -> None:
         """Tru qty da ban khoi cac lo (FIFO: lo cu nhat — day_index nho nhat —
-        truoc). Chi tru vao lo da settle (today - day_index >= SETTLE_DAYS); vi
+        truoc). Chi tru vao lo da settle (today - day_index >= settle_days); vi
         caller da gioi han qty <= sellable_qty nen luon du lo de tru."""
         lots = self._lots.get(symbol)
         if not lots:
@@ -82,7 +87,7 @@ class PaperBroker:
             if remaining <= 0:
                 kept.append(lot)
                 continue
-            if today - lot.day_index < SETTLE_DAYS:
+            if today - lot.day_index < self.settle_days:
                 kept.append(lot)  # chua settle — khong dong toi
                 continue
             if lot.qty > remaining:
