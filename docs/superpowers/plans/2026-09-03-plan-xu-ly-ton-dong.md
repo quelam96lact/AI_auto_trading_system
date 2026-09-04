@@ -396,6 +396,7 @@ chắn. Thứ tự đúng: A lên → 04/09 xác nhận A đúng → tuần sau 
 | **C1** | VPS Ubuntu | `sched.sh` và `DEPLOYMENT.md §1–§10` đã sẵn |
 | **E** | Vốn engine: 0434221 (5tr) hay 0434226 (tiền thật) | vô hại khi `real_trading_enabled=false`, **phải xong trước khi bật thật** |
 | **F** | Phạm vi BingX: spot hay perpetual? có đòn bẩy không? | quyết định này định hình gói C và mọi thứ sau nó |
+| **G** | Giữ octopus làm chiến lược engine, hay quay lại sma_cross, hay không chạy chiến lược nào? | lựa chọn hiện tại **chưa có phép đo ủng hộ** — xem `2026-09-05-brief-giao-viec-dot-4.md` §1 |
 
 Câu hỏi F đáng trả lời sớm nhất: **"không dùng đòn bẩy"** làm toàn bộ đường
 crypto nhỏ đi rất nhiều (không thanh lý, không margin, gần với cổ phiếu).

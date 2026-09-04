@@ -53,7 +53,7 @@ docker compose logs -f engine
 **Data flow: SSI stream → Collector → DB/NATS → Engine → PaperBroker**
 
 - `trading/collector/`: SSI feed (real-time stream), parser (B/MI messages), backfill (REST API), aggregator (1m→5m bars)
-- `trading/engine/`: Main loop, bar processing, strategy (SMA cross), risk management
+- `trading/engine/`: Main loop, bar processing, strategy (octopus_pullback từ 04/09, trước đó SMA cross — xem `_default_strategy()`), risk management
 - `trading/broker`: PaperBroker (simulates order fills with VN fees + slippage)
 - `trading/storage/`: PostgreSQL + TimescaleDB (bars, orders, positions, PnL)
 - `trading/bus/`: NATS JetStream publisher (bars → engine subscription)

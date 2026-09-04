@@ -52,6 +52,17 @@ def _default_strategy() -> Strategy:
     truoc khi doi: HII 3.211 / IJC 4.719 / AAA 4.597 bar trong bang bars — du
     xa. Them ma moi vao cfg.symbols thi ma do bao "VAN DANG MU" o main.py cho
     den khi du 201 bar — canh bao that, khong phai nhieu.
+
+    LUA CHON NAY CHUA CO PHEP DO UNG HO — doc truoc khi dua vao no.
+    research/2026-09-01-strategy-comparison-v2.md do tren ro da loc 1.308 ma
+    (bieu phi VN, T+2,5): octopus_pullback -1.615.319.902 tren 1.514 lenh.
+    Ket luan §3 cua bao cao do: khong chien luoc nao trong ba chien luoc thang
+    mua-va-giu tren ro da loc. Diem sang MaxDD 2,0% / thang 56% chi do tren DUNG
+    BA ma (VCB, HPG, TCB, 25 lenh) — co mau lon mau thuan voi co mau nho.
+
+    Engine dang chay PAPER nen chi phi bang 0. Nhung neu ai do dinh bat
+    real_trading_enabled: doc them muc J (octopus khong bao gio phat "bear" nen
+    duong lenh that chi MUA, khong bao gio BAN).
     """
     return OctopusPullbackStrategy()
 
