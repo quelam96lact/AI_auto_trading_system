@@ -4,6 +4,25 @@
 - Rate limit >= 1.0s giữa các request.
 - Báo cáo rõ ràng: có sẵn không, khung nào, nến sớm nhất, số nến.
 - Bắt lỗi per-symbol, không crash script.
+
+CẢNH BÁO — SỐ ĐO ĐỘ SÂU CỦA SCRIPT NÀY THẤP HƠN SỰ THẬT (audit 04/09).
+
+Vòng lùi ở probe_symbol_spot() đặt `endTime = nến_cũ_nhất - 1`. Nhưng BingX bắt
+`endTime` phải nằm trong ~380 ngày gần đây, nên ngay sau khối ĐẦU TIÊN nó đã vượt
+mốc đó, API trả lỗi 100410/100204 và vòng lặp `break`. Kết quả: script luôn chỉ
+lấy ĐÚNG MỘT KHỐI, và `range(5)` không bao giờ có tác dụng.
+
+Hệ quả đã đo: script báo khung 1d chỉ lùi tới 2023-12-10 (~2,7 năm). Sự thật là
+neo `endTime` sát mốc 380 ngày rồi lấy 1.000 nến lùi về thì chạm tới ~2022-12
+(~3,8 năm). Khung 1h thì con số của script đúng — spot thật sự nông ở khung đó.
+
+Thêm một cái bẫy KHÔNG nằm trong script: ánh xạ perp <-> spot không phải 1:1 theo
+tên. `1000PEPE-USDT` (perp) tồn tại trên spot dưới tên `PEPE-USDT`, VÀ giá lệch
+1.000 lần vì hợp đồng perp tính theo đơn vị 1.000 PEPE.
+
+=> ĐỪNG dùng file này làm bộ nạp. Nếu chủ dự án chọn spot thì viết lại vòng phân
+trang (neo endTime ở mốc 380 ngày, lùi 1.000 nến/khối) và xử lý ánh xạ tên.
+Chi tiết: docs/superpowers/research/2026-09-04-dot-3-m-p-l-report.md, phụ lục.
 """
 
 import argparse
