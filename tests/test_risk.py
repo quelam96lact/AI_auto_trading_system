@@ -260,3 +260,55 @@ def test_each_reject_sets_reason_and_success_clears():
     assert r.last_reject_reason is not None
     sized = r.approve_sized(Signal("ENGT", "BUY", 100), 100, 1.0, {}, 0.0, TODAY)
     assert sized is not None and r.last_reject_reason is None
+
+
+# ==== goi C-a (04/09): RiskManager nhan don vi lo — mac dinh 100 bat bien ====
+
+
+def test_lot_size_1_cho_crypto_khong_bi_tu_choi():
+    """C-a tieu chi 1: lot=1 => qty tinh ra 33 (khong phai boi 100) duoc chap
+    nhan. Hom nay (luon boi 100 + tu choi qty<100) 33 -> None — tai hien loi
+    crypto gia cao bien mat khoi bang do.
+
+    LUU Y so lieu: brief ghi 'von 100.000' — bat kha thi ve so hoc (qty_atr =
+    100.000*1%/(1.500*2) = 0.33, lot 1 cung ra 0). Dung von 10.000.000 de co
+    qty_atr = 33: < 100 nen hom nay bi tu choi, lot=1 thi chap nhan."""
+    r = RiskManager(capital=10_000_000, lot_size=1, max_positions=10)
+    sized = r.approve_sized(
+        Signal("X", "BUY", 1), ref_price=60_000.0, atr=1_500.0,
+        positions={}, daily_pnl=0.0, today=TODAY,
+    )
+    assert sized is not None
+    assert sized.qty == 33
+
+
+def test_mac_dinh_van_boi_100_va_tu_choi_qty_duoi_100():
+    """C-a tieu chi 2: RiskManager(capital=...) khong truyen lot_size van lam
+    tron xuong boi 100 VA tu choi qty < 100 — ranh gioi voi phien thu Hai."""
+    r = RiskManager(capital=100_000_000)
+    sized = r.approve_sized(
+        Signal("VCB", "BUY", 100), ref_price=50_000.0, atr=2_000.0,
+        positions={}, daily_pnl=0.0, today=TODAY,
+    )
+    assert sized is not None
+    assert sized.qty % 100 == 0
+
+    # von nho x vao mat: qty_atr < 100 => None (khong phai qty 1)
+    r_small = RiskManager(capital=100_000)
+    assert (
+        r_small.approve_sized(
+            Signal("X", "BUY", 1), ref_price=60_000.0, atr=1_500.0,
+            positions={}, daily_pnl=0.0, today=TODAY,
+        )
+        is None
+    )
+
+
+def test_lot_size_10_lam_tron_xuong_boi_10():
+    """lot_size la tham so duy nhat: ca phep tron lan nguong tu choi doc tu no."""
+    r = RiskManager(capital=10_000_000, lot_size=10, max_positions=10)
+    sized = r.approve_sized(
+        Signal("X", "BUY", 1), ref_price=60_000.0, atr=2_000.0,
+        positions={}, daily_pnl=0.0, today=TODAY,
+    )
+    assert sized is not None and sized.qty % 10 == 0

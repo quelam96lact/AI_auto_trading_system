@@ -13,6 +13,10 @@ class RiskManager:
     max_daily_loss_pct: float = 0.03
     risk_pct: float = 0.01
     atr_multiplier: float = 2.0
+    # C-a (04/09): don vi lo — 100 = lo san HOSE (mac dinh bat bien), 1 = crypto
+    # (khong co lo). Ca phep lam tron xuong lan nguong tu choi qty < lot_size
+    # doc tu tham so nay — mot cong thuc mot noi.
+    lot_size: int = 100
     halted_date: date | None = field(default=None, init=False, repr=False)
     # SIZE-1 Viec 2: ly do tu choi gan nhat (None = lan duyet truoc thanh cong
     # hoac chua duyet) — caller (logic.py / real_orders.py) ghi log INFO. Giua
@@ -97,13 +101,15 @@ class RiskManager:
             self.last_reject_reason = "ATR không hợp lệ (atr=None hoặc <=0)"
             return None
         qty_atr = int(
-            (self.capital * self.risk_pct / (atr * self.atr_multiplier)) // 100
-        ) * 100
+            (self.capital * self.risk_pct / (atr * self.atr_multiplier))
+            // self.lot_size
+        ) * self.lot_size
         qty_cap = int(
-            (self.capital * self.max_order_value_pct / ref_price) // 100
-        ) * 100
+            (self.capital * self.max_order_value_pct / ref_price)
+            // self.lot_size
+        ) * self.lot_size
         qty = min(qty_atr, qty_cap)
-        if qty < 100:
+        if qty < self.lot_size:
             self.last_reject_reason = (
                 f"qty sau cap < 1 lô (qty_atr={qty_atr}, qty_cap={qty_cap})"
             )
