@@ -16,7 +16,7 @@ from trading.engine.logic import bar_from_payload, process_bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
-from trading.strategies.sma_cross import SmaCrossStrategy
+from trading.strategies.octopus_pullback import OctopusPullbackStrategy
 from trading.trailing_stop import TrailingStopManager
 
 CAPITAL = 100_000_000.0
@@ -68,7 +68,15 @@ async def run(
             positions={s: p.qty for s, p in positions.items()},
         )
 
-    strategy = SmaCrossStrategy()
+    # 04/09: doi tu SmaCrossStrategy sang octopus theo quyet dinh chu du an.
+    # Lan dau octopus chay that — truoc goi B1 no chet ngay bar dau vi thieu
+    # last_crossover (logic.py:44 goi KHONG dieu kien).
+    # warmup_bars nhay 21 -> 201 bar 5 phut (EMA trend 200): ~4 phien. Da do
+    # 04/09 truoc khi doi: HII 3.211 / IJC 4.719 / AAA 4.597 bar trong bang
+    # bars, du xa. Neu sau nay them ma moi vao cfg.symbols thi ma do se bao
+    # "VAN DANG MU" o main.py:83 cho den khi du 201 bar — day la canh bao that,
+    # khong phai nhieu.
+    strategy = OctopusPullbackStrategy()
     # WARM-UP (rui ro 5 GO_LIVE_AUDIT, WARM-1): nap lich su SMA/ATR tu bang
     # bars luc khoi dong. Consumer engine la DURABLE: sau lan chay dau no tiep
     # tuc tu vi tri cu chu khong phat lai tu dau — khong nap thi engine mu

@@ -7,14 +7,14 @@ from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
-from trading.strategies.sma_cross import Crossover, SmaCrossStrategy
+from trading.strategy import Crossover, Strategy
 from trading.trailing_stop import TrailingStopManager
 
 
 def process_bar(
     bar: Bar,
     broker: PaperBroker,
-    strategy: SmaCrossStrategy,
+    strategy: Strategy,
     risk: RiskManager,
     trailing_stop: TrailingStopManager,
     marks: dict[str, float],
