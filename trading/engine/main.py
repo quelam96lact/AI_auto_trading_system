@@ -17,6 +17,7 @@ from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+from trading.strategy import Strategy
 from trading.trailing_stop import TrailingStopManager
 
 CAPITAL = 100_000_000.0
@@ -40,11 +41,36 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
             signal.signal(sig, _on_signal)
 
 
+def _default_strategy() -> Strategy:
+    """Chien luoc engine chay THAT.
+
+    04/09: doi tu SmaCrossStrategy sang octopus theo quyet dinh chu du an. Lan
+    dau octopus chay that — truoc goi B1 no chet ngay bar dau vi thieu
+    last_crossover, ma logic.py:44 goi KHONG dieu kien.
+
+    warmup_bars nhay 21 -> 201 bar 5 phut (EMA trend 200 + 1). Da do 04/09
+    truoc khi doi: HII 3.211 / IJC 4.719 / AAA 4.597 bar trong bang bars — du
+    xa. Them ma moi vao cfg.symbols thi ma do bao "VAN DANG MU" o main.py cho
+    den khi du 201 bar — canh bao that, khong phai nhieu.
+    """
+    return OctopusPullbackStrategy()
+
+
 async def run(
     cfg: Config,
     max_messages: int | None = None,
     stop_event: asyncio.Event | None = None,
+    strategy: Strategy | None = None,
 ) -> None:
+    """`strategy=None` (mac dinh) = chien luoc chay THAT, xem _default_strategy().
+
+    Khe nay co tu 04/09 khi doi sang octopus: cac test duong ong engine
+    (test_engine_main.py) kiem warm-up / khoi phuc trang thai / noi lenh that,
+    khong kiem chien luoc — nhung chung ngam phu thuoc warmup_bars = 21 cua
+    sma_cross, nen doi chien luoc lam sau test do voi ly do khong lien quan gi
+    den thu chung kiem. Chung ghim sma_cross qua tham so nay; con lua chon chay
+    that duoc ghim rieng boi test_default_strategy_la_octopus.
+    """
     if stop_event is None:
         stop_event = asyncio.Event()
         _install_stop_handlers(stop_event)
@@ -68,15 +94,7 @@ async def run(
             positions={s: p.qty for s, p in positions.items()},
         )
 
-    # 04/09: doi tu SmaCrossStrategy sang octopus theo quyet dinh chu du an.
-    # Lan dau octopus chay that — truoc goi B1 no chet ngay bar dau vi thieu
-    # last_crossover (logic.py:44 goi KHONG dieu kien).
-    # warmup_bars nhay 21 -> 201 bar 5 phut (EMA trend 200): ~4 phien. Da do
-    # 04/09 truoc khi doi: HII 3.211 / IJC 4.719 / AAA 4.597 bar trong bang
-    # bars, du xa. Neu sau nay them ma moi vao cfg.symbols thi ma do se bao
-    # "VAN DANG MU" o main.py:83 cho den khi du 201 bar — day la canh bao that,
-    # khong phai nhieu.
-    strategy = OctopusPullbackStrategy()
+    strategy = _default_strategy() if strategy is None else strategy
     # WARM-UP (rui ro 5 GO_LIVE_AUDIT, WARM-1): nap lich su SMA/ATR tu bang
     # bars luc khoi dong. Consumer engine la DURABLE: sau lan chay dau no tiep
     # tuc tu vi tri cu chu khong phat lai tu dau — khong nap thi engine mu

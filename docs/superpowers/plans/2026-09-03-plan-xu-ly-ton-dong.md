@@ -44,6 +44,26 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **D1** | Diễn tập dead-man's switch | không sửa code | phiên KHÔNG phải 04/09 |
 | **E** | Vốn engine lấy từ 0434221 trong khi tiền ở 0434226 | `config.yaml` | chờ chủ dự án |
 | **I** | `real_orders.py:100` là bản sao thứ hai của phép làm tròn lô (100 cứng) | `trading/real_orders.py` — **đường đặt lệnh thật** | trước khi C-b dùng `lot_size != 100` |
+| **J** | Octopus không bao giờ phát `"bear"` ⇒ đường lệnh thật **chỉ MUA, không BÁN** | `trading/real_orders.py` + `engine/logic.py` | **CHẶN** trước khi bật `real_trading_enabled` |
+
+### Mục J — chặn cứng, phát hiện 04/09 sau khi đổi sang octopus
+
+`logic.py:45` chỉ gọi `on_crossover` khi `last_crossover()` khác `None`, và
+`real_orders.handle_crossover` rẽ nhánh theo `"bull"` / `"bear"` (`real_orders.py:46,75`).
+
+Sma_cross phát cả hai chiều nên đường lệnh thật đối xứng. **Octopus thì không:**
+`compute_crossover` chỉ trả `None` hoặc `"bull"` — nó thoát vị thế bằng
+take-profit và trailing stop bên trong `on_bar`/`process_bar`, không qua crossover.
+
+Hệ quả: nếu bật `real_trading_enabled` trong khi engine chạy octopus, hệ thống
+**đặt lệnh MUA thật và không bao giờ đặt lệnh BÁN thật**. Vị thế thật dồn một
+chiều trong khi PaperBroker vẫn thoát lệnh bình thường — hai bên trôi xa nhau
+một cách âm thầm.
+
+Hôm nay chưa cháy vì `real_trading_enabled: false`. Nhưng đây là điều kiện chặn:
+**không bật giao dịch thật khi engine còn chạy octopus**, cho tới khi đường thoát
+lệnh thật được nối vào tín hiệu SELL của `on_bar` chứ không chỉ vào crossover.
+
 
 **Cập nhật 04/09 tối:** A, B, B1, B2 và C-a đã xong và đã push. H (mã trong cửa
 sổ thanh toán T+2 phải được nạp giá) cũng xong — `fafd531`. Nền test mới:

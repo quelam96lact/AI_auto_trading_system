@@ -92,3 +92,20 @@ def test_duong_phai_sinh_khong_bi_ep():
     conformance se bat ngay."""
     assert "momentum_breakout" not in STRATEGIES
     assert "momentum_rsi" not in STRATEGIES
+
+
+def test_default_strategy_la_octopus():
+    """Ghim LUA CHON CHAY THAT, khong chi ghim hop dong.
+
+    run() nhan tham so strategy de test duong ong engine ghim sma_cross (chung
+    kiem warm-up/khoi phuc trang thai, khong kiem chien luoc). Khe do khien
+    lua chon chay that khong con lo ra trong bat ky test nao — test nay bit
+    lai: doi chien luoc that phai doi ca day, khong troi am tham.
+    """
+    from trading.engine.main import _default_strategy
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    s = _default_strategy()
+    assert isinstance(s, OctopusPullbackStrategy)
+    assert isinstance(s, Strategy)
+    assert s.warmup_bars == 201
