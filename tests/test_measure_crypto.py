@@ -73,7 +73,9 @@ def test_khong_mat_nen_chuyen_doi_tz():
 
 def test_so_sanh_lot_size_100_vs_1():
     """3. test_so_sanh_lot_size_100_vs_1 (Tiêu chí 4):
-    Với tài sản giá cao (BTC giá 60.000, vốn 100.000 USDT):
+    Với tài sản giá cao (BTC giá 60.000, vốn 1.000.000 USDT — xem `capital` bên
+    dưới; vốn phải đủ lớn để lô 1 vào được lệnh, nếu không thì cả hai vế đều 0
+    và test mất ý nghĩa):
     - lot_size = 100: 1 lô = 6.000.000 USDT > 20% vốn -> sizing trả về 0 -> 0 lệnh.
     - lot_size = 1: sizing tính được 1-2 BTC -> thực hiện giao dịch (>0 lệnh).
     Chứng minh thiên lệch loại trừ tài sản giá cao được triệt tiêu hoàn toàn.
