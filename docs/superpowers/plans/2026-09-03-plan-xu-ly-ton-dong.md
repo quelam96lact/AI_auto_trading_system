@@ -47,6 +47,32 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **J** | Octopus không bao giờ phát `"bear"` ⇒ đường lệnh thật **chỉ MUA, không BÁN** | `trading/real_orders.py` + `engine/logic.py` | **CHẶN** trước khi bật `real_trading_enabled` |
 | **K** | `octopus_pullback.min_avg_value_20 = 2e9` là ngưỡng **VND**, chặn gần hết rổ crypto USDT | `trading/strategies/octopus_pullback.py:76` | trước khi tin bất kỳ phép đo octopus nào trên crypto |
 
+### Số liệu cho K và F đã có — đợt 3 (04/09 tối)
+
+**K — bảng độ nhạy đã đo xong** (`scripts/liquidity_sensitivity.py`). Khúc giữa
+giữa hai đầu mút, khung 1d: ngưỡng `1e6` giữ nguyên 46 lệnh; `1e7` còn 41 lệnh;
+`1e8` còn 14 lệnh (14/20 mã lọt); `5e8` còn 4 lệnh (4/20 mã). Khung 1h rơi nhanh
+hơn hẳn: `1e6` còn 294 lệnh, `1e7` còn 94, `1e8` còn 4, từ `5e8` trở lên là 0.
+
+Chủ dự án chọn con số. Lưu ý: mọi ngưỡng đều cho PnL âm và thua xa mua-và-giữ,
+nên câu hỏi thật không phải "ngưỡng nào lãi" mà "ngưỡng nào cho cỡ mẫu đủ để kết
+luận có ý nghĩa".
+
+**F — dữ liệu thăm dò đã có, KÈM ĐÍNH CHÍNH.** Perpetual vẫn sâu hơn spot, hướng
+quyết định không đổi. Nhưng hai con số trong báo cáo đợt 3 sai và đã được sửa
+trong phụ lục của `docs/superpowers/research/2026-09-04-dot-3-m-p-l-report.md`:
+
+- Spot khung 1d lùi được tới **≈2022-12** (~3,8 năm), không phải 2023-12 (2,7 năm).
+  Con số cũ là hiện vật của vòng lùi tự đâm vào mốc `endTime` 380 ngày của BingX
+  rồi dừng sau đúng một khối.
+- **20/20** mã có spot, không phải 19/20: `1000PEPE-USDT` tồn tại trên spot dưới
+  tên `PEPE-USDT`.
+
+**Cái bẫy mới sinh ra từ đó — đáng nhớ hơn cả hai con số:** `1000PEPE` là hợp đồng
+tính theo đơn vị 1.000 PEPE, giá lệch **1.000 lần** so với spot. Ánh xạ perp ↔ spot
+**không phải 1:1 theo tên**. Đây sẽ là lỗi đơn vị thứ ba của dự án nếu ai đó ghép
+hai rổ mà không kiểm.
+
 ### Mục K — lỗi đơn vị tiền trong chính chiến lược, phát hiện 04/09 khi audit C-b
 
 `octopus_pullback.py:76` đặt `min_avg_value_20 = 2_000_000_000.0` — 2 tỷ **đồng**

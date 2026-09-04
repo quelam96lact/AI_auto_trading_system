@@ -211,26 +211,10 @@ class Storage:
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
-    def read_account_balance(self, account_no: str) -> tuple[float, datetime] | None:
-        """So du THAT (withdrawable) moi nhat cua tai khoan — dung lam CAPITAL
-        cho RiskManager luong lenh that (CAP-1: chu du an BO real_order_capital
-        khoi config, engine doc so du that tu account_balance_snapshot). Dung
-        withdrawable (tien that su dung duoc), khong dung account_balance (co
-        the bao phan dang bi giu — vd 0434226 holdSubscription 2.5tr). Tra
-        (withdrawable, ts) hoac None neu chua co dong nao — main.py alert
-        CRITICAL + capital=0 (fail-safe), KHONG duoc im lang."""
-        with self.conn() as c:
-            row = c.execute(
-                "SELECT withdrawable, ts FROM account_balance_snapshot "
-                "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
-                (account_no,),
-            ).fetchone()
-        return (row[0], row[1]) if row else None
-
     def read_account_balance_with_debt(self, account_no: str) -> tuple[float, float, datetime] | None:
         """(withdrawable, total_debt, ts) moi nhat — MARGIN-1 tinh NAV can CA no
-        (debt), read_account_balance chi tra withdrawable. Dung chung bang
-        account_balance_snapshot; total_debt la so SSI tra ve, khong tu tinh."""
+        (debt). Dung chung bang account_balance_snapshot; total_debt la so SSI
+        tra ve, khong tu tinh."""
         with self.conn() as c:
             row = c.execute(
                 "SELECT withdrawable, total_debt, ts FROM account_balance_snapshot "
@@ -248,7 +232,7 @@ class Storage:
         duoc bo unpriced: main.py can no de WARN ma nao bi tinh 0 (NAV tinh
         hut la an toan nhung khong duoc im lang). Tra None neu chua co dong
         nao — main.py alert CRITICAL + capital=0 (fail-safe), KHONG duoc roi
-        ve read_account_balance cho \"do gat\"."""
+        ve so du kha dung cho \"do gat\"."""
         with self.conn() as c:
             row = c.execute(
                 "SELECT nav, ts, unpriced_symbols FROM account_nav_snapshot "

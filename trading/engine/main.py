@@ -146,7 +146,7 @@ async def run(
     # mình vay được. NAV do collector ghi (account_sync._sync_nav), engine chỉ
     # đọc. Ba nhánh fail-safe của CAP-1 giữ nguyên, KHÔNG nhánh nào im lặng:
     # không có dòng nào -> capital=0 + CRITICAL (fail-safe: approve() từ chối
-    # MỌI lệnh, KHÔNG rơi về read_account_balance cho "đỡ gắt"); cũ >24h -> vẫn
+    # MỌI lệnh, KHÔNG rơi về số dư khả dụng cho "đỡ gắt"); cũ >24h -> vẫn
     # dùng + WARN kèm tuổi; bình thường -> INFO nêu số tiền + mốc thời gian
     # (người vận hành phải nhìn được hệ thống đang tính rủi ro trên con số
     # nào). Nhánh thứ tư: unpriced_symbols không rỗng -> WARN nêu rõ mã nào

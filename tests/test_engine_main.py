@@ -696,7 +696,7 @@ async def test_engine_informs_real_nav_at_startup(storage, monkeypatch):
 async def test_engine_critical_and_blocks_buy_when_no_nav(storage, monkeypatch):
     """NAV-CI fail-safe: khong co dong account_nav_snapshot nao -> CRITICAL +
     real capital = 0 -> MOI lenh that bi approve() tu choi (khong tao pending).
-    KHONG duoc roi ve read_account_balance cho 'do gat'. RED bat buoc: doi
+    KHONG duoc roi ve so du kha dung cho 'do gat'. RED bat buoc: doi
     fallback thanh so de dai -> test phai FAIL."""
     import trading.engine.main as engine_main
 
@@ -705,7 +705,7 @@ async def test_engine_critical_and_blocks_buy_when_no_nav(storage, monkeypatch):
         engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
     )
     # KHONG seed nav — bang rong. NHUNG seed balance LON: neu ai do cai
-    # fallback ve read_account_balance thi capital se to va sinh lenh —
+    # fallback ve so du kha dung thi capital se to va sinh lenh —
     # day la cai bay bat dung hanh vi bi cam.
     _seed_balance(storage, 500_000_000.0)
 
