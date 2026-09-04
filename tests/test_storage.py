@@ -713,17 +713,98 @@ def test_read_must_price_symbols_deduplicates(storage):
 
 
 def test_read_must_price_symbols_excludes_zero_qty(storage):
-    """B1 (c): ma quantity=0 KHONG xuat hien (read_real_positions chi tra qty>0)."""
+    """B1 (c): ma DA BAN HET (quantity=0 VA cost_price=0) KHONG xuat hien.
+
+    DOI Y NGHIA ngay 04/09 (goi H). Ban truoc cua test nay seed VCB
+    `quantity=0, cost_price=10.0` roi khang dinh phai loai — tuc la no khang
+    dinh dung cai loi H sinh ra: ma vua mua, dang trong cua so thanh toan T+2,
+    bi loai khoi danh sach bat buoc co gia dung nhung ngay no can nhat (FOX,
+    5 phien). Dieu kien loai bay gio la `cost_price = 0` chu khong phai
+    `quantity = 0`. Truong hop cost_price > 0 do test ..._includes_unsettled
+    ngay duoi phu trach.
+    """
     ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
     storage.record_position_sync("ACC_TEST", ts)
     storage.save_account_positions(
         "ACC_TEST", ts, [
-            {"symbol": "VCB", "quantity": 0, "cost_price": 10.0, "sellable_quantity": 0},
+            {"symbol": "VCB", "quantity": 0, "cost_price": 0.0, "sellable_quantity": 0},
             {"symbol": "CAP", "quantity": 50, "cost_price": 5.0, "sellable_quantity": 50},
         ],
     )
     got = storage.read_must_price_symbols(["ACC_TEST"], [])
-    assert got == ["CAP"], f"qty=0 phai bi loai, thuc te: {got}"
+    assert got == ["CAP"], f"ma da ban het phai bi loai, thuc te: {got}"
+
+
+# ============ goi H (04/09): ma trong cua so thanh toan phai co gia ============
+
+
+def test_read_must_price_symbols_includes_unsettled_buy(storage):
+    """H tieu chi 1+2: tai hien dung canh FOX — mua 28/08, T+2 chua ve nen
+    `quantity = 0` nhung `cost_price = 65000`. Ma nay PHAI nam trong danh sach
+    bat buoc co gia, neu khong backfill dem bo qua no va NAV dung gia cu."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [
+            {"symbol": "FOX", "quantity": 0, "cost_price": 65000.0, "sellable_quantity": 0},
+            {"symbol": "CAP", "quantity": 0, "cost_price": 0.0, "sellable_quantity": 0},
+            {"symbol": "VCB", "quantity": 1500, "cost_price": 60706.0, "sellable_quantity": 1500},
+        ],
+    )
+    got = storage.read_must_price_symbols(["ACC_TEST"], [])
+    assert got == ["FOX", "VCB"], (
+        f"FOX (chua ve, cost_price>0) phai co; CAP (da ban, cost_price=0) khong "
+        f"duoc co. Thuc te: {got}"
+    )
+
+
+def test_read_real_positions_mac_dinh_van_loai_ma_chua_ve(storage):
+    """H tieu chi 3 — QUAN TRONG NGANG tieu chi 2.
+
+    `read_real_positions` MAC DINH phai giu nguyen hanh vi cu: loai het
+    `quantity = 0`, KE CA khi cost_price > 0. Bay chỗ gọi con lai dua vao dieu
+    nay, trong do real_orders.py:42,174 la duong dat lenh THAT — neu ma chua ve
+    lot vao day thi nhanh SELL sinh lenh ban co phieu chua co trong tai khoan.
+    """
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [
+            {"symbol": "FOX", "quantity": 0, "cost_price": 65000.0, "sellable_quantity": 0},
+            {"symbol": "VCB", "quantity": 1500, "cost_price": 60706.0, "sellable_quantity": 1500},
+        ],
+    )
+    mac_dinh = storage.read_real_positions("ACC_TEST")
+    assert "FOX" not in mac_dinh, (
+        "ma chua ve KHONG duoc hien ra o hanh vi mac dinh — duong SELL that doc "
+        f"ham nay. Thuc te: {sorted(mac_dinh)}"
+    )
+    assert "VCB" in mac_dinh
+
+    # chi khi bat co moi thay — va qty van la 0, khong bia so
+    co_bat = storage.read_real_positions("ACC_TEST", include_unsettled=True)
+    assert "FOX" in co_bat
+    assert co_bat["FOX"].qty == 0
+    assert co_bat["FOX"].sellable_qty == 0
+
+
+def test_read_real_positions_unsettled_khong_keo_ma_da_ban_ve(storage):
+    """Ranh gioi song con: bat include_unsettled KHONG duoc lam ma da ban het
+    (cost_price = 0) song lai. Doi chung am do duoc tren du lieu that 04/09:
+    CAP va MIRHCM261 deu quantity=0, cost_price=0."""
+    ts = datetime(2026, 9, 1, 9, 0, tzinfo=TZ)
+    storage.record_position_sync("ACC_TEST", ts)
+    storage.save_account_positions(
+        "ACC_TEST", ts, [
+            {"symbol": "CAP", "quantity": 0, "cost_price": 0.0, "sellable_quantity": 0},
+            {"symbol": "MIRHCM261", "quantity": 0, "cost_price": 0.0, "sellable_quantity": 0},
+            {"symbol": "FOX", "quantity": 0, "cost_price": 65000.0, "sellable_quantity": 0},
+        ],
+    )
+    co_bat = storage.read_real_positions("ACC_TEST", include_unsettled=True)
+    assert sorted(co_bat) == ["FOX"], (
+        f"chi ma co gia von moi duoc keo ve, thuc te: {sorted(co_bat)}"
+    )
 
 
 def test_read_must_price_symbols_unsynced_account_no_crash(storage):

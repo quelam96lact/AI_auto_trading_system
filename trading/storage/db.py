@@ -625,7 +625,9 @@ class Storage:
             )
         return cur.rowcount
 
-    def read_real_positions(self, account_no: str) -> dict[str, RealPosition]:
+    def read_real_positions(
+        self, account_no: str, include_unsettled: bool = False
+    ) -> dict[str, RealPosition]:
         """Đọc account_position_snapshot, lấy ts mới nhất theo account_no.
 
         SYNC-LOG-1: neu co ban ghi account_sync_log, doc dung ts cua LAN DONG
@@ -643,7 +645,28 @@ class Storage:
         chỉ gồm các symbol có quantity > 0. `sellable_qty` (khác `qty` — tổng nắm giữ)
         là số cổ phiếu THẬT SỰ khả dụng để bán (SSI đã tự trừ phần chưa settle T+2,5) —
         dùng để cap số lượng SELL ở real_orders.handle_crossover(), KHÔNG được bỏ qua.
+
+        `include_unsettled` (goi H, 04/09) — MAC DINH False, tuc la hanh vi cu
+        y nguyen cho ca 7 cho goi con lai, TRONG DO CO DUONG DAT LENH THAT
+        (real_orders.py:42,174). Chi read_must_price_symbols bat co nay len.
+
+        Bat len = them ma dang trong CUA SO THANH TOAN T+2: `quantity = 0` (SSI
+        chua ghi co) nhung `cost_price > 0` (da co gia von => da khop mua).
+        Ma da ban het co `cost_price = 0` nen VAN bi loai — day la ranh gioi
+        song con: neu ma da ban het lot vao day thi nhanh SELL sinh lenh ban
+        co phieu KHONG TON TAI (chinh cai bay doan tren cua docstring nay).
+
+        Do that 04/09 tren toan bo lich su bang: dung mot ma tung co
+        `quantity = 0 AND cost_price > 0` — FOX, dung cua so 29/08 -> 03/09.
+        Hai doi chung am cung `quantity = 0` nhung `cost_price = 0`: CAP (da
+        ban) va MIRHCM261. n = 1 phia duong — day la dau hieu tot nhat hien co,
+        khong phai chung minh.
         """
+        qty_filter = (
+            "(quantity > 0 OR (quantity = 0 AND cost_price > 0))"
+            if include_unsettled
+            else "quantity > 0"
+        )
         sync_ts = self.read_position_sync_ts(account_no)
         if sync_ts is None:
             # Chua co ban ghi sync — hanh vi cu (max ts)
@@ -651,7 +674,7 @@ class Storage:
                 rows = c.execute(
                     "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
                     "WHERE account_no = %s AND ts = (SELECT max(ts) FROM account_position_snapshot WHERE account_no = %s) "
-                    "AND quantity > 0",
+                    f"AND {qty_filter}",
                     (account_no, account_no),
                 ).fetchall()
         else:
@@ -659,7 +682,7 @@ class Storage:
             with self.conn() as c:
                 rows = c.execute(
                     "SELECT symbol, quantity, cost_price, sellable_quantity FROM account_position_snapshot "
-                    "WHERE account_no = %s AND ts = %s AND quantity > 0",
+                    f"WHERE account_no = %s AND ts = %s AND {qty_filter}",
                     (account_no, sync_ts),
                 ).fetchall()
         return {r[0]: RealPosition(r[0], r[1], r[2], r[3]) for r in rows}
@@ -902,13 +925,21 @@ class Storage:
         BAT BUOC dung lai self.read_real_positions(account) de lay ma dang nam —
         khong viet truy van account_position_snapshot moi (bai hoc 4ea4c8d: mot
         cong thuc hai ban). Ham do da xu ly: bam moc account_sync_log (phan biet
-        "chua dong bo" voi "da dong bo va rong") va chi tra ma quantity > 0.
+        "chua dong bo" voi "da dong bo va rong").
+
+        goi H (04/09): goi voi include_unsettled=True — DAY LA CHO DUY NHAT
+        trong ca ma san pham lam vay. Ly do: ma vua mua co `quantity = 0` suot
+        cua so thanh toan T+2, dung nhung ngay no CAN duoc nap gia nhat. FOX
+        (33% danh muc) vi the bi dinh gia bang gia 28/08 suot 5 phien, va IM
+        LANG vi kiem tra tuoi gia dem theo ngay giao dich nen 28/08 -> 04/09
+        chi la 2 ngay <= nguong 5. "Bat buoc co gia" phai bao gom ca ma chua
+        ve — no van la tien cua tai khoan.
 
         Tra ve danh sach sap xep, khong trung.
         """
         must: set[str] = set(extra)
         for account in accounts:
-            positions = self.read_real_positions(account)
+            positions = self.read_real_positions(account, include_unsettled=True)
             must.update(positions.keys())
         return sorted(must)
 
