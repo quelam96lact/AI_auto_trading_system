@@ -43,7 +43,7 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **C** | BingX giai đoạn 2 — đo chiến lược trên crypto | ~~chỉ `scripts/`~~ **SAI — xem mục 5** | cuối tuần |
 | **D1** | Diễn tập dead-man's switch | không sửa code | phiên KHÔNG phải 04/09 |
 | **E** | Vốn engine lấy từ 0434221 trong khi tiền ở 0434226 | `config.yaml` | chờ chủ dự án |
-| **I** | `real_orders.py:100` là bản sao thứ hai của phép làm tròn lô (100 cứng) | `trading/real_orders.py` — **đường đặt lệnh thật** | trước khi C-b dùng `lot_size != 100` |
+| **I** | `real_orders.py:100` là bản sao thứ hai của phép làm tròn lô (100 cứng) | `trading/real_orders.py` — **đường đặt lệnh thật** | ~~trước C-b~~ **ĐÍNH CHÍNH: không chặn C-b** — xem ghi chú dưới bảng |
 | **J** | Octopus không bao giờ phát `"bear"` ⇒ đường lệnh thật **chỉ MUA, không BÁN** | `trading/real_orders.py` + `engine/logic.py` | **CHẶN** trước khi bật `real_trading_enabled` |
 
 ### Mục J — chặn cứng, phát hiện 04/09 sau khi đổi sang octopus
@@ -69,6 +69,25 @@ lệnh thật được nối vào tín hiệu SELL của `on_bar` chứ không c
 sổ thanh toán T+2 phải được nạp giá) cũng xong — `fafd531`. Nền test mới:
 **403 unit + 100 integration**. Xem `2026-09-04-brief-giao-viec-dot-toi-04-09.md`
 mục 8 để biết kết quả audit và hai phát hiện mới.
+
+**Đính chính 04/09 ~17:30 về mục I.** Tôi ghi "trước khi C-b dùng
+`lot_size != 100`", hàm ý C-b sẽ đụng phải nó. **Sai.** `backtest.py:225` chỉ gọi
+`risk.approve_sized`; đường backtest không đi qua `real_orders.py` chút nào. I và
+C-b độc lập, chạy song song được. I là điều kiện cho **giao dịch thật với lô khác
+100**, không phải cho phép đo.
+
+**Đính chính về gói C-b.** Tôi từng mô tả nó là "thu thập + đo". Dữ liệu đã nạp
+xong từ trước: `bars_crypto` có 20 mã / 412.487 nến / khung 1d + 1h /
+2021-05-14 → 2026-09-02, và `scripts/bingx_klines.py` đã có kèm test. Việc còn
+lại thuần tuý là **đo**. Chỗ trống thật sự là: không mã nào **đọc** `bars_crypto`
+(`_TF_SPEC` chỉ biết `bars` và `bars_daily`).
+
+**Dữ kiện mới cho câu hỏi F.** Dữ liệu đã nạp lấy từ endpoint
+`/openApi/swap/v3/quote/klines` — **perpetual swap**, không phải spot. Nếu chủ dự
+án chọn "spot, không đòn bẩy" thì tập dữ liệu hiện có không khớp và C-b phải đo
+lại trên dữ liệu khác. Nên trả lời F trước khi giao C-b.
+
+**Brief thi hành cho I và C-b:** `2026-09-04-brief-giao-viec-ton-dong.md`.
 
 **Mục I sinh ra từ đợt này.** C-a làm `lot_size` thành tham số của
 `RiskManager`, nhưng `real_orders.py:100` vẫn `// 100 * 100` cứng và áp SAU
