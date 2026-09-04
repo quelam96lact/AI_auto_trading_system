@@ -99,6 +99,7 @@ class OctopusPullbackStrategy:
         self._reds: dict[str, deque] = {}
         self._values: dict[str, deque] = {}
         self._tp: dict[str, float] = {}
+        self._last_crossover: dict[str, Crossover | None] = {}
 
     def _track_windows(self, bar: Bar) -> None:
         """Cập nhật cửa sổ nến đỏ và giá trị giao dịch với bar hiện tại.
@@ -142,6 +143,10 @@ class OctopusPullbackStrategy:
         hist = self._macd.update(bar)
         self._atr.update(bar)
         self._track_windows(bar)
+        # Mac dinh: khong co crossover moi o bar nay. Ghi state O MOI bar (ke ca
+        # return None giua chung) de last_crossover khong tra ket qua cu cua bar
+        # truoc — khuon giong sma_cross.compute_crossover (line 51, 61, 75).
+        self._last_crossover[bar.symbol] = None
 
         if (
             ema_fast is None
@@ -171,7 +176,14 @@ class OctopusPullbackStrategy:
         if not self._liquidity_ok(bar.symbol):
             return None
 
+        self._last_crossover[bar.symbol] = "bull"
         return "bull"
+
+    def last_crossover(self, symbol: str) -> Crossover | None:
+        """Crossover vừa tính ở lần compute_crossover() gần nhất cho symbol này.
+        logic.py:44 gọi KHÔNG điều kiện sau on_bar — thiếu method này là
+        AttributeError ngay bar đầu (đã xảy ra ở octopus trước 04/09)."""
+        return self._last_crossover.get(symbol)
 
     def last_atr(self, symbol: str) -> float | None:
         """ATR vừa tính ở lần compute_crossover() gần nhất cho symbol này."""
