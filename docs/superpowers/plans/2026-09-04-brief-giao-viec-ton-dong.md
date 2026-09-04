@@ -81,8 +81,9 @@ nó làm lời hứa của C-a thành nửa vời: đặt `lot_size = 1` thì `r
 còn dòng này lặng lẽ áp lại 100. Đúng dạng "con số sai mà nhìn vẫn hợp lý" mà cả
 đợt này sinh ra để diệt.
 
-**Tin tốt:** `handle_crossover` đã nhận sẵn `risk: RiskManager` làm tham số thứ ba
-(`real_orders.py:20`). Không cần đổi chữ ký hàm, không cần kéo thêm gì vào.
+**Tin tốt:** `handle_crossover` (`real_orders.py:21`) đã nhận sẵn
+`risk: RiskManager` làm tham số thứ ba (`real_orders.py:24`). Không cần đổi chữ ký
+hàm, không cần kéo thêm gì vào.
 
 ### 1.2 Việc
 
@@ -188,9 +189,18 @@ về 2021 trên tập chọn theo tiêu chí của 2026 là thiên lệch sống
 đồng đã chết không có mặt. **Phải ghi câu này trong báo cáo**, không được để người
 đọc tự suy ra.
 
-Thêm: `run_backtest` dùng `calendar_vn` **chỉ để lấy `TZ`** (đã kiểm: dòng 273,
-324, 325) — nó sẽ **không** âm thầm vứt nến 24/7 của crypto. Nhưng lệch múi giờ
-có thể đẩy nến lệch một nhịp; kiểm bằng cách đếm số nến vào ra phải bằng nhau.
+**Thêm một tin tốt, đã kiểm chính xác hơn lần trước.** Trong cả
+`trading/backtest.py` chỉ có ba chỗ nhắc tới múi giờ VN: dòng 273 (`from
+trading.calendar_vn import TZ`) và dòng 324-325 — mà **cả hai chỗ dùng đều nằm
+trong `main()` (dòng 311)**, tức đường CLI phân giải tham số `--from/--to`.
+Thân `run_backtest` (dòng 159 trở đi) **không hề chạm TZ**.
+
+Nghĩa là: `run_backtest` trung lập múi giờ, sẽ không âm thầm vứt nến 24/7 của
+crypto. Và vì bạn viết hàm đọc riêng trong `scripts/`, bạn đi vòng qua `main()`
+hoàn toàn — không có nhiễm giờ VN ở đâu cả.
+
+Rủi ro lệch nhịp còn lại nằm trong **chính hàm đọc của bạn**: cách bạn đổi
+`bars_crypto.ts` (timestamptz) thành `Bar.ts`. Đó là lý do tiêu chí 2 tồn tại.
 
 ### 2.5 Tiêu chí
 
