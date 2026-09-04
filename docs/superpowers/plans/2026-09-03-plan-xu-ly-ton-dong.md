@@ -45,6 +45,30 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **E** | Vốn engine lấy từ 0434221 trong khi tiền ở 0434226 | `config.yaml` | chờ chủ dự án |
 | **I** | `real_orders.py:100` là bản sao thứ hai của phép làm tròn lô (100 cứng) | `trading/real_orders.py` — **đường đặt lệnh thật** | ~~trước C-b~~ **ĐÍNH CHÍNH: không chặn C-b** — xem ghi chú dưới bảng |
 | **J** | Octopus không bao giờ phát `"bear"` ⇒ đường lệnh thật **chỉ MUA, không BÁN** | `trading/real_orders.py` + `engine/logic.py` | **CHẶN** trước khi bật `real_trading_enabled` |
+| **K** | `octopus_pullback.min_avg_value_20 = 2e9` là ngưỡng **VND**, chặn gần hết rổ crypto USDT | `trading/strategies/octopus_pullback.py:76` | trước khi tin bất kỳ phép đo octopus nào trên crypto |
+
+### Mục K — lỗi đơn vị tiền trong chính chiến lược, phát hiện 04/09 khi audit C-b
+
+`octopus_pullback.py:76` đặt `min_avg_value_20 = 2_000_000_000.0` — 2 tỷ **đồng**
+giá trị giao dịch bình quân. Hợp lý cho HOSE. Nhưng phép đo crypto áp nguyên
+ngưỡng đó lên giá trị tính bằng **USDT**, nên chặn gần hết rổ: khung 1d chỉ lác
+đác lọt, khung 1h **không mã nào** lọt.
+
+Đo lại với cổng mở, cùng dữ liệu và cùng tham số: **1 → 46 lệnh** (1d) và
+**0 → 545 lệnh** (1h). Nên câu "octopus không kích hoạt trên crypto" trong báo
+cáo C-b là **sai** — xem phụ lục của
+`docs/superpowers/research/2026-09-04-crypto-strategies-report.md`.
+
+Kết luận đầu bài không đổi (octopus vẫn thua xa mua-và-giữ), nhưng nó đến từ một
+sự thật trung gian sai.
+
+**Không ảnh hưởng sản xuất:** engine chạy octopus trên cổ phiếu VN, nơi 2 tỷ đồng
+là ngưỡng đúng nghĩa.
+
+**Vì sao là quyết định chứ không phải bản vá:** ngưỡng thanh khoản là câu hỏi kinh
+tế ("bao nhiêu thì đủ sâu để vào lệnh"), không suy ra được bằng quy đổi tỷ giá.
+Chủ dự án quyết con số cho USDT — hoặc quyết rằng chiến lược này cần một tham số
+theo thị trường thay vì một hằng số.
 
 ### Mục J — chặn cứng, phát hiện 04/09 sau khi đổi sang octopus
 

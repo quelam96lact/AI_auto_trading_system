@@ -96,15 +96,15 @@ def handle_crossover(
                 reason=risk.last_reject_reason,
             )
             return
-        # Tran CUNG suc mua SSI, ap SAU approve_sized — lam tron xuong boi 100
-        qty = min(sized.qty, max_buy_qty) // 100 * 100
-        if qty < 100:
+        # Tran CUNG suc mua SSI, ap SAU approve_sized — lam tron xuong boi risk.lot_size
+        qty = min(sized.qty, max_buy_qty) // risk.lot_size * risk.lot_size
+        if qty < risk.lot_size:
             alert(
                 "INFO",
                 "lenh that bi tu choi",
                 symbol=signal.symbol,
                 side=signal.side,
-                reason=f"suc mua {max_buy_qty} khong du 1 lo 100 cp",
+                reason=f"suc mua {max_buy_qty} khong du 1 lo {risk.lot_size} cp",
             )
             return
         signal = Signal(signal.symbol, "BUY", qty)

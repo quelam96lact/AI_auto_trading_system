@@ -333,3 +333,57 @@ def test_buy_real_numbers_nav_200tr_sized_well_above_one_lot(cfg, monkeypatch):
     qty = storage.create_pending_order.call_args.kwargs["quantity"]
     assert qty >= 100, f"NAV 200tr phai mua duoc it nhat 1 lo, thuc te {qty}"
     assert qty == 5_600, f"min(qty_atr 10.000, qty_cap 5.600) = 5.600, thuc te {qty}"
+
+
+def test_buy_respects_custom_lot_size_one(cfg, monkeypatch):
+    """GÓI I: handle_crossover với lot_size=1 và max_buy_qty không chia hết cho 100.
+    Code cũ sẽ áp cứng // 100 * 100 -> qty = 0 < 100 -> từ chối.
+    Code mới phải dùng risk.lot_size -> qty = 33 -> tạo pending order."""
+    fixed_now = _patch_now(monkeypatch, fixed=datetime(2026, 9, 1, 9, 10, tzinfo=TZ))
+    storage = _make_sized_storage(
+        buying_power=(33, 33, 50.0, fixed_now - timedelta(minutes=5)),
+    )
+    # capital 10tr, giá 50k, atr 1500, lot_size=1:
+    # qty_atr = 10tr*1%/(1500*2) = 33; qty_cap = 10tr*20%/50k = 40; min = 33; trần 33 -> 33
+    risk = RiskManager(capital=10_000_000.0, lot_size=1)
+
+    bar_btc = Bar(
+        "BTC",
+        datetime(2026, 9, 1, 9, 0, tzinfo=TZ),
+        50_000, 50_000, 50_000, 50_000, 100,
+    )
+    with patch("trading.real_orders.alert"):
+        handle_crossover(cfg, storage, risk, "bull", bar_btc, atr=1500.0)
+
+    storage.create_pending_order.assert_called_once()
+    qty = storage.create_pending_order.call_args.kwargs["quantity"]
+    assert qty == 33, f"lot_size=1 phai ra qty=33, thuc te: {qty}"
+
+
+def test_buy_default_lot_size_hundred_invariant(cfg, monkeypatch):
+    """GÓI I: Mặc định lot_size=100 phải bất biến:
+    - max_buy_qty = 33 < 100 -> từ chối (không gọi create_pending_order).
+    - max_buy_qty = 250 -> làm tròn xuống bội 100 là 200."""
+    fixed_now = _patch_now(monkeypatch, fixed=datetime(2026, 9, 1, 9, 10, tzinfo=TZ))
+
+    # Trường hợp 1: max_buy_qty = 33 < 100
+    storage1 = _make_sized_storage(
+        buying_power=(33, 33, 50.0, fixed_now - timedelta(minutes=5)),
+    )
+    risk_default = RiskManager(capital=100_000_000.0)  # lot_size mặc định 100
+    bar_test = Bar("VCB", datetime(2026, 9, 1, 9, 0, tzinfo=TZ), 50_000, 50_000, 50_000, 50_000, 100)
+    with patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage1, risk_default, "bull", bar_test, atr=500.0)
+    storage1.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert "khong du 1 lo 100 cp" in mock_alert.call_args.kwargs["reason"]
+
+    # Trường hợp 2: max_buy_qty = 250 -> làm tròn xuống 200
+    storage2 = _make_sized_storage(
+        buying_power=(250, 250, 50.0, fixed_now - timedelta(minutes=5)),
+    )
+    with patch("trading.real_orders.alert"):
+        handle_crossover(cfg, storage2, risk_default, "bull", bar_test, atr=500.0)
+    storage2.create_pending_order.assert_called_once()
+    assert storage2.create_pending_order.call_args.kwargs["quantity"] == 200
+
