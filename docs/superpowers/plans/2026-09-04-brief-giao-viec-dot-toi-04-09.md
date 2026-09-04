@@ -398,3 +398,75 @@ lễ — đoán sai một ngày là chuông câm đúng ngày cần kêu, hoặc
 | Xoá `read_account_balance` | báo cáo, không tự dọn dead code |
 | Ép chiến lược phái sinh vào khuôn cổ phiếu | phá `derivative_backtest.py` |
 | Chạm file của gói khác | bốn gói chạy song song |
+
+---
+
+## 8. Kết quả thi hành — audit 04/09 16:30
+
+Bốn gói đã xong và đã push: `76952e6` (B1), `eb7433e` (B2), `01c47c8` (C-a),
+`fafd531` (H). Bộ test **403 unit + 100 integration = 503** (nền 490 + 13), ruff
+sạch, `grep -rn SABOTAGE trading scripts tests` rỗng.
+
+### 8.1 Lỗi tìm được khi audit — đã sửa
+
+**B1 khai sai kiểu `warmup_bars`.** Bản agent nộp khai `def warmup_bars(self) -> int`
+tức method, nhưng `main.py:81,82,86` đọc `strategy.warmup_bars` **không ngoặc** và
+cả ba strategy thật đều `@property`. Một strategy viết đúng theo chữ của hợp đồng
+sẽ chết ở `main.py:82` với `'<' not supported between instances of 'int' and 'method'`,
+và `isinstance()` **không bắt được** vì Protocol chỉ kiểm `hasattr`. Đã khai lại
+thành `@property` và thêm `assert isinstance(warmup, int)` vào conformance test —
+đó mới là chỗ bắt thật.
+
+Bài học cho brief sau: một hợp đồng khai sai kiểu truy cập còn nguy hơn không có
+hợp đồng, vì nó biến giả định sai thành văn bản chính thức.
+
+### 8.2 Phép phá hoại lộ ra một lỗ hổng trong chính brief này
+
+§4.2 nêu đích danh hai test canh cửa và cấm làm chúng đỏ. Nhưng khi đảo mặc định
+`include_unsettled` thành `True`, **cả hai vẫn xanh** — không test nào trong chúng
+seed hàng `quantity = 0, cost_price > 0`. Chúng không hề canh được tiêu chí 3.
+Test mới `test_read_real_positions_mac_dinh_van_loai_ma_chua_ve` là chỗ duy nhất
+bắt được.
+
+### 8.3 Test phải ĐỔI Ý NGHĨA
+
+`test_read_must_price_symbols_excludes_zero_qty` seed `quantity=0, cost_price=10.0`
+rồi khẳng định phải loại — tức nó khẳng định đúng cái lỗi H sinh ra. Điều kiện loại
+giờ là `cost_price = 0`. Cùng dạng với `sma_cross` hôm 03/09: khi test mã hóa một
+quyết định đã bị đảo, sửa test cho khớp quyết định mới, không sửa code cho khớp test.
+
+### 8.4 Dấu hiệu cửa sổ thanh toán — thêm một đối chứng âm
+
+Đo lại 04/09 trên toàn bộ bảng: vẫn **đúng một mã** phía dương (FOX). Nhưng có
+**hai** đối chứng âm chứ không phải một: CAP (đã bán) và `MIRHCM261` — cùng
+`quantity = 0` đúng cửa sổ 29/08 đến 03/09 nhưng `cost_price = 0`. Vẫn là n = 1.
+
+Kiểm lại trên ảnh chụp 03/09 22:00 giờ VN: FOX `cũ thấy = f` thành `mới thấy = t`,
+`MIRHCM261` vẫn `f`. Lưu ý bẫy: `ts::date` quy đổi theo UTC, nên ảnh chụp gắn
+nhãn "03/09" thực ra đã là 04/09 giờ VN và FOX đã về — phải lọc bằng
+`ts AT TIME ZONE 'Asia/Ho_Chi_Minh'`.
+
+### 8.5 Phát hiện NGOÀI PHẠM VI — báo, chưa sửa
+
+**`trading/real_orders.py:100-101` là bản sao thứ hai của phép làm tròn lô**, số
+100 cứng, áp SAU `approve_sized`:
+
+```python
+qty = min(sized.qty, max_buy_qty) // 100 * 100
+if qty < 100:
+```
+
+Hôm nay không sai (đường này chỉ chạy cổ phiếu VN). Nhưng nó làm `lot_size` của
+C-a **không** phải tham số duy nhất trên toàn hệ: đặt `lot_size=1` thì `risk.py`
+tôn trọng còn dòng này lặng lẽ áp lại 100. Nằm trên đường đặt lệnh thật nên không
+sửa kèm. **Việc tồn đọng mới — mục I.**
+
+### 8.6 Còn treo
+
+- **Chưa dựng lại image.** Cả bốn gói đều chạm `trading/`, engine đang chạy vẫn là
+  mã cũ (chưa có `last_crossover` của octopus). Dựng lại = khởi động lại engine,
+  chủ dự án quyết.
+- Chỉ số GitNexus lại cũ sau đợt commit này — chạy `npx gitnexus analyze`.
+- `detect-changes` báo **risk level: high** vì `read_real_positions` nằm trên luồng
+  `Handle_crossover` và `_sync_nav`. Hành vi hai luồng đó không đổi theo cấu trúc
+  (mặc định `False`) và đã có test canh.

@@ -43,6 +43,19 @@ trấn an: nếu mai stream lại đứt, nguyên nhân **không thể** là hai
 | **C** | BingX giai đoạn 2 — đo chiến lược trên crypto | ~~chỉ `scripts/`~~ **SAI — xem mục 5** | cuối tuần |
 | **D1** | Diễn tập dead-man's switch | không sửa code | phiên KHÔNG phải 04/09 |
 | **E** | Vốn engine lấy từ 0434221 trong khi tiền ở 0434226 | `config.yaml` | chờ chủ dự án |
+| **I** | `real_orders.py:100` là bản sao thứ hai của phép làm tròn lô (100 cứng) | `trading/real_orders.py` — **đường đặt lệnh thật** | trước khi C-b dùng `lot_size != 100` |
+
+**Cập nhật 04/09 tối:** A, B, B1, B2 và C-a đã xong và đã push. H (mã trong cửa
+sổ thanh toán T+2 phải được nạp giá) cũng xong — `fafd531`. Nền test mới:
+**403 unit + 100 integration**. Xem `2026-09-04-brief-giao-viec-dot-toi-04-09.md`
+mục 8 để biết kết quả audit và hai phát hiện mới.
+
+**Mục I sinh ra từ đợt này.** C-a làm `lot_size` thành tham số của
+`RiskManager`, nhưng `real_orders.py:100` vẫn `// 100 * 100` cứng và áp SAU
+`approve_sized`. Hôm nay không sai (đường này chỉ chạy cổ phiếu VN), nhưng ai
+đặt `lot_size=1` sẽ thấy `risk.py` tôn trọng còn dòng kia lặng lẽ áp lại 100 —
+đúng kiểu con số sai mà nhìn vẫn hợp lý. Phải xử trước khi gói C-b dựa vào
+`lot_size`.
 
 ---
 
