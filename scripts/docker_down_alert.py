@@ -18,12 +18,14 @@ from datetime import date, datetime, time
 
 import yaml
 
+from scripts.heartbeat_check import in_bar_check_window
+
 # Dung LAI logic ngay le cua heartbeat_check (4ea4c8d: mot cong thuc hai noi
 # thi som muon lech — lech o day nghia la hai chuong bat dong y ve "hom nay co
 # phai ngay giao dich khong"). Da kiem: heartbeat_check an toan khi import
 # (module-level chi import + dinh nghia, khong chay gi — 0.66s, khong side
 # effect). KHONG sua heartbeat_check.py — chi import.
-from scripts.heartbeat_check import in_bar_check_window
+from trading.alerts import _print_safe
 from trading.calendar_vn import TZ
 from trading.telegram import send_telegram
 
@@ -112,27 +114,6 @@ def _message(now: datetime) -> str:
         "Collector/engine deu dung. Khong co bar moi, khong co lenh.\n"
         "Cac job giam sat dang bi bo qua — day la tin nhan DUY NHAT ban se nhan."
     )
-
-
-def _print_safe(text: str) -> None:
-    """In ly do canh bao ma KHONG BAO GIO nem (khuon heartbeat_check.py:164).
-
-    2026-09-01: print() da lam CHET chuong bao tren Windows — stdout chuyen
-    huong ra file, Python chon cp1252, ky tu tieng Viet khong ma hoa duoc ->
-    UnicodeEncodeError nem ra truoc send_telegram.
-    """
-    try:
-        print(text)
-        return
-    except Exception:
-        pass
-    # Ha cap: mat dau tieng Viet con hon mat ca canh bao.
-    try:
-        print(text.encode("ascii", "replace").decode("ascii"))
-    except Exception:
-        pass
-
-
 def run_alert(
     now: datetime,
     holidays: frozenset,

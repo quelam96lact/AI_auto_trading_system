@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from _db_common import resolve_dsn
 
+from trading.alerts import _print_safe
 from trading.calendar_vn import TZ
 from trading.config import load_config
 from trading.storage.db import Storage
@@ -99,14 +100,14 @@ def main() -> None:
         dsn = resolve_dsn(args.dsn)
         storage = Storage(dsn)
     except Exception as e:
-        print(f"LỖI CẤU HÌNH / KẾT NỐI DB: {e}", file=sys.stderr)
+        _print_safe(f"LỖI CẤU HÌNH / KẾT NỐI DB: {e}")
         sys.exit(2)
 
     if args.date:
         try:
             target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
         except ValueError as e:
-            print(f"LỖI ĐỊNH DẠNG NGÀY (--date YYYY-MM-DD): {e}", file=sys.stderr)
+            _print_safe(f"LỖI ĐỊNH DẠNG NGÀY (--date YYYY-MM-DD): {e}")
             sys.exit(2)
     else:
         target_date = datetime.now(TZ).date()
@@ -124,19 +125,19 @@ def main() -> None:
         active_symbols = sorted(set(active) | set(must_price))
         present_symbols = storage.read_symbols_with_bar_on_date(target_date)
     except Exception as e:
-        print(f"LỖI TRUY VẤN DB: {e}", file=sys.stderr)
+        _print_safe(f"LỖI TRUY VẤN DB: {e}")
         sys.exit(2)
 
     code, _missing, msg = evaluate_daily_completeness(active_symbols, present_symbols)
 
-    print(f"[{target_date}] {msg}")
+    _print_safe(f"[{target_date}] {msg}")
 
     if code == 1:
         try:
             send_telegram(f"[{target_date}] {msg}")
-            print("-> Đã gửi cảnh báo qua Telegram.")
+            _print_safe("-> Đã gửi cảnh báo qua Telegram.")
         except Exception as e:
-            print(f"Lỗi khi gửi Telegram: {e}", file=sys.stderr)
+            _print_safe(f"Lỗi khi gửi Telegram: {e}")
         sys.exit(1)
 
     sys.exit(0)

@@ -20,6 +20,7 @@ from datetime import date, datetime, time, timedelta
 import psycopg
 import yaml
 
+from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, is_trading_time, market_minutes_between
 
 # LEDGER-1: import hang so tu trading/ —
@@ -167,29 +168,6 @@ def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, c
     → hai sổ lệch (hai lỗi 6664cd9 / 2982900 đều là cash đúng, realized sai).
     """
     return (cash + positions_value - capital) - realized_pnl
-
-
-def _print_safe(text: str) -> None:
-    """In ly do canh bao ma KHONG BAO GIO nem.
-
-    2026-09-01: print() da lam CHET chuong bao tren Windows. Scheduled task
-    chuyen huong stdout ra file, Python chon cp1252, ky tu "dữ" khong ma hoa
-    duoc -> UnicodeEncodeError nem ra TRUOC send_telegram. Nam lan chay
-    13:00-13:17 ngay 01/09 khong gui duoc tin nhan nao, dung luc feed dang
-    chet. Nguyen tac FEE-ALARM-2: dead-man's switch tuyet doi khong duoc nem.
-    """
-    try:
-        print(text)
-        return
-    except Exception:
-        pass
-    # Ha cap: mat dau tieng Viet con hon mat ca canh bao.
-    try:
-        print(text.encode("ascii", "replace").decode("ascii"))
-    except Exception:
-        pass
-
-
 def main() -> int:
     # Ep utf-8 de ly do canh bao con dau tieng Viet; that bai cung khong sao,
     # _print_safe da co duong lui.

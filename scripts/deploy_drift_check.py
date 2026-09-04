@@ -23,6 +23,7 @@ import subprocess
 import sys
 from datetime import datetime
 
+from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
 SERVICES = ("collector", "engine")
@@ -121,28 +122,6 @@ def _image_created_epoch(container: str) -> int | None:
         return int(dt.timestamp())
     except Exception:
         return None
-
-
-def _print_safe(text: str) -> None:
-    """In lý do cảnh báo mà KHÔNG BAO GIỜ ném.
-
-    Khuôn này lấy từ scripts/heartbeat_check.py:153. 2026-09-01: print() đã làm
-    CHẾT chuông báo trên Windows — stdout chuyển hướng ra file, Python chọn
-    cp1252, ký tự tiếng Việt không mã hoá được -> UnicodeEncodeError ném ra
-    trước send_telegram. In không được phép làm chết script.
-    """
-    try:
-        print(text)
-        return
-    except Exception:
-        pass
-    # Hạ cấp: mất dấu tiếng Việt còn hơn mất cả cảnh báo.
-    try:
-        print(text.encode("ascii", "replace").decode("ascii"))
-    except Exception:
-        pass
-
-
 def _alert(messages: list[str]) -> int:
     """In ly do ra stdout TRUOC roi moi gui — neu send_telegram nem thi van
     con ban ghi o log (khuon heartbeat_check). Gui hong khong duoc lam chet
