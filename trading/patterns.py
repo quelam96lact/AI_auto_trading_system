@@ -21,6 +21,8 @@ def is_doji(
     prev_bars: list[Bar] | None = None,
     doji_ratio: float = 0.1,
     max_prior_doji: int = 2,
+    max_prior_small_body: int = 3,
+    small_body_ratio: float = 0.25,
     lookback_prior: int = 5,
     require_range: bool = True,
 ) -> bool:
@@ -29,37 +31,24 @@ def is_doji(
     Quy tắc:
     - Giá đóng cửa rất gần giá mở cửa: |close - open| <= doji_ratio * (high - low).
     - Doji hoàn hảo khi close == open.
-    - Luật Near Doji: Nếu trước đó trong `lookback_prior` phiên có > `max_prior_doji` nến Doji,
-      mẫu hình Doji hiện tại bị coi là KHÔNG hiệu quả (trả về False).
+    - Luật Near Doji (2 vế tách bạch theo slide tr.12):
+      1. Nếu trước đó trong `lookback_prior` phiên có > `max_prior_doji` nến Doji (mặc định 2).
+      2. HOẶC xuất hiện nhiều nến thân nhỏ (> `max_prior_small_body`, mặc định 3 nến có thân <= `small_body_ratio` * range).
+      Thì mẫu hình Doji hiện tại bị coi là KHÔNG hiệu quả (trả về False).
 
     Args:
         bar: Bar hiện tại cần kiểm tra.
         prev_bars: Danh sách các bar trước đó (sắp xếp tăng dần theo thời gian).
         doji_ratio: Tỷ lệ thân nến tối đa so với toàn bộ chiều dài nến (mặc định 0.1 = 10%).
         max_prior_doji: Số lượng Doji tối đa cho phép xuất hiện trước đó (mặc định 2).
-        lookback_prior: Số nến nhìn lại phía trước để đếm Doji (mặc định 5 nến).
+        max_prior_small_body: Số lượng nến thân nhỏ tối đa cho phép trước đó (mặc định 3).
+        small_body_ratio: Tỷ lệ thân nến tối đa để xem là nến thân nhỏ (mặc định 0.25 = 25%).
+        lookback_prior: Số nến nhìn lại phía trước để đếm (mặc định 5 nến).
         require_range: Nến PHẲNG (high == low) có được tính là doji không.
-
-    VỀ `require_range` — đây là điểm mơ hồ THỨ TÁM của slide, phát hiện khi
-    audit 06/09, không có trong danh sách 7 điểm ở brief:
-
-    Theo chữ của slide (tr.12) thì "doji hoàn hảo là close == open", và một nến
-    phẳng thoả điều đó. Nhưng nến phẳng không có biên độ: nó không phải thế
-    giằng co giữa mua và bán — nó là KHÔNG CÓ THỊ TRƯỜNG. Trên `bars_daily`
-    của dự án này, 36,6% số bar là phẳng và 25,2% có volume = 0 (mã thanh
-    khoản kém, nhiều phiên không khớp lệnh nào).
-
-    Đo khi audit: để `require_range=False` (hành vi bản đầu) thì 43,1% số doji
-    tìm được là nến phẳng — con số tổng bị thổi lên khoảng 1,8 lần so với số
-    doji trên nến có giao dịch thật.
-
-    Mặc định `True` (nến phẳng KHÔNG phải doji) vì phép đếm này tồn tại để trả
-    lời "có đủ tín hiệu giao dịch được không". Đặt `False` để tái hiện đúng chữ
-    của slide.
     """
     candle_range = bar.high - bar.low
     if candle_range <= 0.0:
-        # Nến phẳng (high == low). Xem khối giải thích `require_range` ở trên.
+        # Nến phẳng (high == low). Xem khối giải thích `require_range`.
         is_cur_doji = (not require_range) and bar.close == bar.open
     else:
         body = abs(bar.close - bar.open)
@@ -68,7 +57,7 @@ def is_doji(
     if not is_cur_doji:
         return False
 
-    # Kiểm tra luật Near Doji nếu có lịch sử bar trước đó
+    # Kiểm tra luật Near Doji (2 vế) nếu có lịch sử bar trước đó
     if prev_bars:
         window = (
             prev_bars[-lookback_prior:]
@@ -76,18 +65,27 @@ def is_doji(
             else prev_bars
         )
         prior_doji_count = 0
+        prior_small_body_count = 0
+
         for b in window:
             b_range = b.high - b.low
             if b_range <= 0.0:
-                # Cùng luật với nến hiện tại — nếu nến phẳng không phải doji
-                # thì nó cũng không được tính vào hạn ngạch Near Doji.
                 if (not require_range) and b.close == b.open:
                     prior_doji_count += 1
+                    prior_small_body_count += 1
             else:
-                if abs(b.close - b.open) <= doji_ratio * b_range:
+                b_body = abs(b.close - b.open)
+                if b_body <= doji_ratio * b_range:
                     prior_doji_count += 1
+                if b_body <= small_body_ratio * b_range:
+                    prior_small_body_count += 1
 
+        # Vế 1: Quá nhiều Doji trước đó
         if prior_doji_count > max_prior_doji:
+            return False
+
+        # Vế 2: Quá nhiều nến thân nhỏ trước đó
+        if prior_small_body_count > max_prior_small_body:
             return False
 
     return True
@@ -100,6 +98,7 @@ def is_hammer(
     body_ratio: float = 0.35,
     lower_shadow_multiplier: float = 2.0,
     upper_shadow_ratio: float = 0.1,
+    require_history: bool = True,
 ) -> bool:
     """Nhận dạng nến Búa (Hammer / Bullish Pin bar) thoả mãn 4 điều kiện slide (tr.19).
 
@@ -109,6 +108,10 @@ def is_hammer(
     3. Bóng nến DƯỚI dài gấp ít nhất `lower_shadow_multiplier` lần thân nến (>= 2x thân).
     4. Bóng nến TRÊN rất ngắn (<= `upper_shadow_ratio` * chiều dài nến).
 
+    HỎNG ĐÓNG (Fail-closed): Nếu `require_history=True` và thiếu dữ liệu lịch sử
+    (prev_bars is None hoặc len(prev_bars) < trend_lookback), hàm trả về False
+    vì không thể kiểm chứng ĐK1 bắt buộc.
+
     Args:
         bar: Bar hiện tại cần kiểm tra.
         prev_bars: Danh sách các bar trước đó (sắp xếp tăng dần theo thời gian).
@@ -116,6 +119,7 @@ def is_hammer(
         body_ratio: Tỷ lệ thân nến tối đa so với toàn bộ chiều dài nến (mặc định 0.35).
         lower_shadow_multiplier: Hệ số tối thiểu của bóng dưới so với thân nến (mặc định 2.0).
         upper_shadow_ratio: Tỷ lệ bóng trên tối đa so với toàn bộ chiều dài nến (mặc định 0.1).
+        require_history: Bắt buộc phải có đủ lịch sử để kiểm chứng xu hướng giảm (mặc định True).
     """
     candle_range = bar.high - bar.low
     if candle_range <= 0.0:
@@ -143,11 +147,13 @@ def is_hammer(
     if upper_shadow > upper_shadow_ratio * candle_range:
         return False
 
-    # ĐK1: Xuất hiện sau một xu hướng GIẢM GIÁ
-    if prev_bars is not None and len(prev_bars) >= trend_lookback:
+    # ĐK1: Xuất hiện sau một xu hướng GIẢM GIÁ (Hỏng đóng nếu thiếu lịch sử)
+    if prev_bars is None or len(prev_bars) < trend_lookback:
+        if require_history:
+            return False
+    else:
         window = prev_bars[-trend_lookback:]
         # Xu hướng giảm: giá bar trước thấp hơn bar đầu cửa sổ
-        # và bar hiện tại tạo đáy thấp mới hoặc duy trì đà giảm
         is_downtrend = window[-1].close < window[0].close
         if not is_downtrend:
             return False

@@ -1,6 +1,28 @@
 from trading.models import Bar
 
 
+def fill_price_on_touch(bar: Bar, level: float, side: str = "sell") -> float | None:
+    """Quy ước khớp lệnh khi chạm mức giá (stop/entry/tp) có tính gap (brief §2.3).
+
+    - Side "buy": Kích hoạt khi bar.high >= level. Giá khớp = max(bar.open, level).
+      (Nếu nến mở cửa gap-up trên level thì khớp tại bar.open).
+    - Side "sell": Kích hoạt khi bar.low <= level. Giá khớp = min(bar.open, level).
+      (Nếu nến mở cửa gap-down dưới level thì khớp tại bar.open).
+    - Không chạm: Trả về None.
+
+    Quy ước gap: Gap luôn có lợi cho thị trường, bất lợi cho vị thế (không khớp ở mức danh nghĩa).
+    """
+    if side == "buy":
+        if bar.high >= level:
+            return max(bar.open, level)
+        return None
+    elif side == "sell":
+        if bar.low <= level:
+            return min(bar.open, level)
+        return None
+    raise ValueError(f"Unknown side: {side}")
+
+
 class TrailingStopManager:
     """Trailing stop-loss theo ATR, state theo tung symbol (cung pattern
     voi AtrCalculator/SmaCrossStrategy). KHONG co take-profit - chi trailing
@@ -40,6 +62,4 @@ class TrailingStopManager:
         if atr is None:
             return None
         stop_level = highest - atr * self.sl_multiplier
-        if bar.low <= stop_level:
-            return min(bar.open, stop_level)
-        return None
+        return fill_price_on_touch(bar, stop_level, side="sell")

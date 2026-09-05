@@ -84,7 +84,7 @@ def test_flat_candle_doji():
 
 
 def test_near_doji_rule_rejects_third_doji():
-    """Luật Near Doji: Nếu đã có > 2 doji (tức 3 doji) trong 5 phiên trước -> Doji hiện tại bị loại."""
+    """Luật Near Doji (vế 1): Nếu đã có > 2 doji (tức 3 doji) trong 5 phiên trước -> Doji hiện tại bị loại."""
     prior_dojis = [
         _make_bar(idx=0, open=100.0, high=110.0, low=90.0, close=100.0),
         _make_bar(idx=1, open=101.0, high=111.0, low=91.0, close=101.0),
@@ -96,8 +96,23 @@ def test_near_doji_rule_rejects_third_doji():
     assert is_doji(cur_doji, prev_bars=prior_dojis, max_prior_doji=2) is False
 
 
+def test_near_doji_rule_rejects_too_many_small_bodies():
+    """Luật Near Doji (vế 2): Chuỗi có 4 nến thân nhỏ (thân 20% range > 10% doji) -> Doji hiện tại vẫn bị chặn."""
+    # Thân = 4.0 trên range = 20.0 (20% <= 25% small_body_ratio, nhưng > 10% doji_ratio) -> không phải doji nhưng là nến thân nhỏ
+    prior_small_bodies = [
+        _make_bar(idx=0, open=100.0, high=110.0, low=90.0, close=104.0),
+        _make_bar(idx=1, open=100.0, high=110.0, low=90.0, close=104.0),
+        _make_bar(idx=2, open=100.0, high=110.0, low=90.0, close=104.0),
+        _make_bar(idx=3, open=100.0, high=110.0, low=90.0, close=104.0),
+    ]
+    cur_doji = _make_bar(idx=4, open=100.0, high=110.0, low=90.0, close=100.0)
+
+    # 4 nến thân nhỏ > max_prior_small_body (3) -> False
+    assert is_doji(cur_doji, prev_bars=prior_small_bodies, max_prior_small_body=3) is False
+
+
 def test_doji_allowed_when_within_max_prior_doji():
-    """Nếu chỉ có 2 Doji trước đó (<= max_prior_doji 2) -> Doji hiện tại vẫn hợp lệ."""
+    """Nếu chỉ có 2 Doji trước đó (<= max_prior_doji 2) và ít nến thân nhỏ -> Doji hiện tại vẫn hợp lệ."""
     prior_bars = [
         _make_bar(idx=0, open=90.0, high=110.0, low=90.0, close=105.0),  # nến lớn
         _make_bar(idx=1, open=101.0, high=111.0, low=91.0, close=101.0),  # doji 1
@@ -120,6 +135,22 @@ def _make_downtrend_bars() -> list[Bar]:
         _make_bar(idx=1, open=140.0, high=142.0, low=128.0, close=130.0),
         _make_bar(idx=2, open=130.0, high=132.0, low=118.0, close=120.0),
     ]
+
+
+def test_hammer_fail_closed_without_history():
+    """HỎNG ĐÓNG: is_hammer không truyền lịch sử (hoặc lịch sử ngắn hơn trend_lookback) -> False."""
+    hammer = _make_bar(idx=0, open=118.0, high=120.0, low=100.0, close=120.0)
+    assert is_hammer(hammer, prev_bars=None, require_history=True) is False
+    assert is_hammer(hammer, prev_bars=[], require_history=True) is False
+    # Thiếu số lượng bar (< 3)
+    short_history = [_make_bar(idx=0, open=130.0, close=120.0)]
+    assert is_hammer(hammer, prev_bars=short_history, require_history=True) is False
+
+
+def test_hammer_allowed_without_history_if_flag_false():
+    """Nếu cố ý tắt require_history=False, nến búa vẫn kiểm hình thái mà không cần xu hướng."""
+    hammer = _make_bar(idx=0, open=118.0, high=120.0, low=100.0, close=120.0)
+    assert is_hammer(hammer, prev_bars=None, require_history=False) is True
 
 
 def test_perfect_hammer_after_downtrend():
