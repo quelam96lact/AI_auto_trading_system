@@ -63,9 +63,9 @@ def run_pattern_backtest(
     x_atr_ratio: float = 0.1,
     k_tp: float = 1.5,
     sl_first: bool = True,
-    fee_rate: float = 0.0,
+    fee_rate: float | None = None,
     sell_tax_rate: float = 0.0,
-    slippage_bps: float = 0.0,
+    slippage_bps: float | None = None,
     settle_days: int = 0,
     lot_size: int = 1,
     allow_short: bool = True,
@@ -89,9 +89,9 @@ def run_pattern_backtest(
         x_atr_ratio: Hệ số của ATR(5) cho tham số điều chỉnh x (x = x_atr_ratio * ATR).
         k_tp: Hệ số khoảng cách Take Profit theo ATR(5) (TP = Entry +/- k_tp * ATR).
         sl_first: Thứ tự khi nến chạm cả SL và TP (True = SL trước, False = TP trước).
-        fee_rate: Tỷ lệ phí giao dịch mỗi chiều.
+        fee_rate: Tỷ lệ phí giao dịch mỗi chiều (BẮT BUỘC, cấm để mặc định 0.0).
         sell_tax_rate: Tỷ lệ thuế bán (cổ phiếu VN: 0.001).
-        slippage_bps: Trượt giá (basis points).
+        slippage_bps: Trượt giá theo basis points (BẮT BUỘC, cấm để mặc định 0.0).
         settle_days: Số ngày thanh toán T+N (cổ phiếu VN: 3 ngày).
         lot_size: Kích thước lô (Crypto: 1, VN stock: 100).
         allow_short: Cho phép mở vị thế Short (Crypto: True, VN stock: False).
@@ -103,7 +103,15 @@ def run_pattern_backtest(
         ema_trend_period: Chu kỳ EMA xu hướng.
         use_trailing_sl: Bật Trailing Stop theo ATR.
         trailing_atr_mult: Hệ số Trailing Stop theo ATR.
+        use_breakeven: Bật Breakeven SL.
+        breakeven_atr_mult: Hệ số dời SL về Breakeven theo ATR.
     """
+    if fee_rate is None or slippage_bps is None:
+        raise ValueError(
+            "fee_rate và slippage_bps là tham số bắt buộc phải khai báo tường minh. "
+            "Nếu muốn đo không chi phí, hãy truyền rõ fee_rate=0.0, slippage_bps=0.0."
+        )
+
     sym = bars[0].symbol if bars else "UNKNOWN"
     report = PatternBacktestReport(symbol=sym)
 
@@ -216,9 +224,15 @@ def run_pattern_backtest(
         if pos_side is not None:
             # Cập nhật Breakeven SL nếu được bật (khi giá đi đúng hướng >= breakeven_atr_mult * ATR)
             if use_breakeven and atr is not None and atr > 0:
-                if pos_side == "BUY" and (b.high - pos_entry_price) >= breakeven_atr_mult * atr:
+                if (
+                    pos_side == "BUY"
+                    and (b.high - pos_entry_price) >= breakeven_atr_mult * atr
+                ):
                     pos_sl = max(pos_sl, pos_entry_price)
-                elif pos_side == "SELL" and (pos_entry_price - b.low) >= breakeven_atr_mult * atr:
+                elif (
+                    pos_side == "SELL"
+                    and (pos_entry_price - b.low) >= breakeven_atr_mult * atr
+                ):
                     pos_sl = min(pos_sl, pos_entry_price)
 
             # Cập nhật trailing SL nếu được bật

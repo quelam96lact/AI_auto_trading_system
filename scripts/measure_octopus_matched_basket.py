@@ -25,6 +25,14 @@ except ImportError:
 
 from trading.backtest import STRATEGIES, ever_liquid, run_backtest
 from trading.calendar_vn import TZ
+from trading.metrics import (
+    expectancy,
+    max_drawdown,
+    portfolio_equity_curve,
+    profit_factor,
+    sharpe,
+)
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.trailing_stop import TrailingStopManager
@@ -46,6 +54,9 @@ def measure_symbol(
     capital: float,
     strategy_cls,
     liq_spec: tuple[float, int] | None,
+    fee_rate: float = FEE_RATE,
+    sell_tax_rate: float = SELL_TAX_RATE,
+    slippage_bps: float = SLIPPAGE_BPS,
 ) -> dict:
     """Đo 1 mã với chiến lược và trả về kết quả chi tiết."""
     bars = storage.read_daily_bars(symbol, frm, to)
@@ -53,8 +64,29 @@ def measure_symbol(
     risk = RiskManager(capital=capital)
     ts_mgr = TrailingStopManager()
 
-    rep = run_backtest(bars, strat, risk, ts_mgr, capital)
+    rep = run_backtest(
+        bars,
+        strat,
+        risk,
+        ts_mgr,
+        capital,
+        fee_rate=fee_rate,
+        sell_tax_rate=sell_tax_rate,
+        slippage_bps=slippage_bps,
+    )
     strat_pnl = rep.realized_pnl + rep.unrealized_pnl
+
+    trade_pnls = [f.pnl for f in rep.fills if f.side == "SELL" and f.pnl is not None]
+
+    daily_dict = {}
+    if rep.equity_curve:
+        prev_eq = capital
+        for ts, eq in rep.equity_curve:
+            if ts is not None:
+                d = ts.date()
+                delta = eq - prev_eq
+                daily_dict[d] = daily_dict.get(d, 0.0) + delta
+                prev_eq = eq
 
     return {
         "symbol": symbol,
@@ -66,10 +98,16 @@ def measure_symbol(
         "diff": strat_pnl - rep.buy_and_hold_pnl,
         "filtered": sum(rep.filtered_bars.values()),
         "liquid": ever_liquid(bars, *liq_spec) if liq_spec else False,
+        "trade_pnls": trade_pnls,
+        "daily_pnl": daily_dict,
     }
 
 
-def analyze_basket(results: list[dict], name: str) -> dict:
+def analyze_basket(
+    results: list[dict],
+    name: str,
+    capital_per_symbol: float = DEFAULT_CAPITAL,
+) -> dict:
     """Tổng hợp thống kê cho một tập rổ mã."""
     n = len(results)
     if n == 0:
@@ -85,6 +123,10 @@ def analyze_basket(results: list[dict], name: str) -> dict:
             "median_diff": 0.0,
             "median_strat": 0.0,
             "median_bh": 0.0,
+            "profit_factor": None,
+            "expectancy": 0.0,
+            "max_drawdown": 0.0,
+            "sharpe": None,
         }
 
     tot_strat = sum(r["strat_pnl"] for r in results)
@@ -93,6 +135,24 @@ def analyze_basket(results: list[dict], name: str) -> dict:
     diffs = [r["diff"] for r in results]
     win_bh_count = sum(1 for d in diffs if d > 0)
     win_bh_pct = (win_bh_count / n) * 100.0
+
+    all_pnls = [p for r in results for p in r.get("trade_pnls", [])]
+    pf = profit_factor(all_pnls)
+    exp = expectancy(all_pnls)
+
+    pnl_by_symbol_by_date = {r["symbol"]: r.get("daily_pnl", {}) for r in results}
+    curve = portfolio_equity_curve(
+        pnl_by_symbol_by_date, capital_per_symbol=capital_per_symbol
+    )
+    mdd = max_drawdown(curve)
+
+    daily_returns = []
+    if len(curve) >= 2:
+        for i in range(1, len(curve)):
+            prev = curve[i - 1]
+            if prev > 0:
+                daily_returns.append((curve[i] - prev) / prev)
+    sh = sharpe(daily_returns, periods_per_year=252.0)
 
     return {
         "name": name,
@@ -110,6 +170,10 @@ def analyze_basket(results: list[dict], name: str) -> dict:
         "median_bh": (
             statistics.median([r["bh_pnl"] for r in results]) if results else 0.0
         ),
+        "profit_factor": pf,
+        "expectancy": exp,
+        "max_drawdown": mdd,
+        "sharpe": sh,
     }
 
 
@@ -120,6 +184,7 @@ def run_matched_measurement(
     to_str: str = DEFAULT_TO,
     exclude_file: str = "exclusions.txt",
     limit: int = 0,
+    cost_multiplier: float = 1.0,
 ) -> tuple[dict, dict, dict, list[dict]]:
     """Chạy đo lường toàn diện và phân rổ cho Octopus Pullback."""
     frm = datetime.strptime(frm_str, "%Y-%m-%d").replace(tzinfo=TZ)
@@ -150,9 +215,24 @@ def run_matched_measurement(
     # khoản" mà báo cáo 01/09 đếm, nên hai bên không được phép lệch định nghĩa.
     liq_spec = liquidity_spec(strategy_cls())
 
+    fee_rate = FEE_RATE * cost_multiplier
+    sell_tax_rate = SELL_TAX_RATE * cost_multiplier
+    slippage_bps = SLIPPAGE_BPS * cost_multiplier
+
     all_results: list[dict] = []
     for i, sym in enumerate(symbols, 1):
-        res = measure_symbol(storage, sym, frm, to, capital, strategy_cls, liq_spec)
+        res = measure_symbol(
+            storage,
+            sym,
+            frm,
+            to,
+            capital,
+            strategy_cls,
+            liq_spec,
+            fee_rate=fee_rate,
+            sell_tax_rate=sell_tax_rate,
+            slippage_bps=slippage_bps,
+        )
         all_results.append(res)
         if i % 200 == 0 or i == len(symbols):
             print(f"  ...đã đo {i}/{len(symbols)} mã", file=sys.stderr)
@@ -162,11 +242,13 @@ def run_matched_measurement(
     res_liquid = [r for r in all_results if r["liquid"]]
     res_traded = [r for r in all_results if r["trades"] > 0]
 
-    stats_all = analyze_basket(res_all, "Rổ 1: Toàn bộ rổ đã lọc")
+    stats_all = analyze_basket(res_all, "Rổ 1: Toàn bộ rổ đã lọc", capital)
     stats_liquid = analyze_basket(
-        res_liquid, "Rổ 2: Các mã từng đủ thanh khoản (>= 2 tỷ)"
+        res_liquid, "Rổ 2: Các mã từng đủ thanh khoản (>= 2 tỷ)", capital
     )
-    stats_traded = analyze_basket(res_traded, "Rổ 3: Các mã THỰC SỰ SINH LỆNH")
+    stats_traded = analyze_basket(
+        res_traded, "Rổ 3: Các mã THỰC SỰ SINH LỆNH", capital
+    )
 
     return stats_all, stats_liquid, stats_traded, all_results
 
@@ -215,6 +297,21 @@ def print_comparison_report(
     print(
         f"{'Trung vị chênh lệch/mã':<32} | {stats_all['median_diff']:>20,.0f} | {stats_liquid['median_diff']:>21,.0f} | {stats_traded['median_diff']:>22,.0f}"
     )
+
+    pf_str = lambda s: f"{s['profit_factor']:.2f}" if s.get('profit_factor') is not None else "N/A"
+    sh_str = lambda s: f"{s['sharpe']:.2f}" if s.get('sharpe') is not None else "N/A"
+    print(
+        f"{'Profit Factor':<32} | {pf_str(stats_all):>20} | {pf_str(stats_liquid):>21} | {pf_str(stats_traded):>22}"
+    )
+    print(
+        f"{'Expectancy (PnL TB/lệnh VND)':<32} | {stats_all['expectancy']:>20,.0f} | {stats_liquid['expectancy']:>21,.0f} | {stats_traded['expectancy']:>22,.0f}"
+    )
+    print(
+        f"{'Max Drawdown Danh mục':<32} | {stats_all['max_drawdown']*100:>19.1f}% | {stats_liquid['max_drawdown']*100:>20.1f}% | {stats_traded['max_drawdown']*100:>21.1f}%"
+    )
+    print(
+        f"{'Sharpe Danh mục (252 kỳ)':<32} | {sh_str(stats_all):>20} | {sh_str(stats_liquid):>21} | {sh_str(stats_traded):>22}"
+    )
     print("=" * 105)
 
 
@@ -228,9 +325,10 @@ def main() -> None:
     ap.add_argument("--to", dest="to", default=DEFAULT_TO)
     ap.add_argument("--exclude-file", default="exclusions.txt")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
     args = ap.parse_args()
 
-    print("Bắt đầu đo lường phân rổ cho Octopus Pullback...")
+    print(f"Bắt đầu đo lường phân rổ cho Octopus Pullback (Chi phí: {args.cost_multiplier:.1f}x)...")
     stats_all, stats_liquid, stats_traded, _ = run_matched_measurement(
         dsn=args.dsn,
         capital=args.capital,
@@ -238,6 +336,7 @@ def main() -> None:
         to_str=args.to,
         exclude_file=args.exclude_file,
         limit=args.limit,
+        cost_multiplier=args.cost_multiplier,
     )
 
     print_comparison_report(stats_all, stats_liquid, stats_traded)

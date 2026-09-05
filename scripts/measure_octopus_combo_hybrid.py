@@ -22,6 +22,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
+from trading.metrics import (
+    expectancy,
+    max_drawdown,
+    portfolio_equity_curve,
+    profit_factor,
+    sharpe,
+)
 from trading.models import Bar
 from trading.pattern_backtest import PatternBacktestReport, run_pattern_backtest
 from trading.storage.db import Storage
@@ -48,11 +55,13 @@ def evaluate_config(
     min_avg_value_20: float = 0.0,
     use_trailing_sl: bool = False,
     trailing_atr_mult: float = 2.0,
+    periods_per_year: float = 252.0,
 ) -> dict:
     total_symbols = len(bars_by_symbol)
     reports: list[PatternBacktestReport] = []
+    pnl_by_symbol_by_date = {}
 
-    for bars in bars_by_symbol.values():
+    for sym, bars in bars_by_symbol.items():
         rep = run_pattern_backtest(
             bars=bars,
             strategy_name=strategy_name,
@@ -72,6 +81,14 @@ def evaluate_config(
         )
         reports.append(rep)
 
+        # Thu thập daily PnL theo ngày đóng lệnh
+        daily_d = {}
+        for t in rep.trades:
+            if t.exit_ts:
+                d = t.exit_ts.date()
+                daily_d[d] = daily_d.get(d, 0.0) + t.pnl
+        pnl_by_symbol_by_date[sym] = daily_d
+
     traded_reports = [r for r in reports if r.total_trades > 0]
     n_traded = len(traded_reports)
     total_trades = sum(r.total_trades for r in reports)
@@ -84,6 +101,21 @@ def evaluate_config(
     win_bh_traded_count = sum(1 for r in traded_reports if r.realized_pnl > r.buy_and_hold_pnl)
     win_bh_pct = (win_bh_traded_count / n_traded * 100.0) if n_traded > 0 else 0.0
     win_rate = (total_winning / total_trades * 100.0) if total_trades > 0 else 0.0
+
+    all_trade_pnls = [t.pnl for r in reports for t in r.trades]
+    pf = profit_factor(all_trade_pnls)
+    exp = expectancy(all_trade_pnls)
+
+    curve = portfolio_equity_curve(pnl_by_symbol_by_date, capital_per_symbol=capital)
+    mdd = max_drawdown(curve)
+
+    daily_returns = []
+    if len(curve) >= 2:
+        for i in range(1, len(curve)):
+            prev = curve[i - 1]
+            if prev > 0:
+                daily_returns.append((curve[i] - prev) / prev)
+    sh = sharpe(daily_returns, periods_per_year=periods_per_year)
 
     return {
         "name": name,
@@ -101,42 +133,51 @@ def evaluate_config(
         "win_bh_traded": f"{win_bh_traded_count}/{n_traded} ({win_bh_pct:.1f}%)",
         "both_touched": both_touched,
         "premature_touches": premature_touches,
+        "profit_factor": pf,
+        "expectancy": exp,
+        "max_drawdown": mdd,
+        "sharpe": sh,
     }
 
 
 def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title: str, currency: str) -> None:
-    print("\n" + "=" * 145, flush=True)
+    print("\n" + "=" * 165, flush=True)
     print(f"BÁO CÁO ĐO LƯỜNG SO SÁNH: {title.upper()}", flush=True)
-    print("=" * 145, flush=True)
+    print("=" * 165, flush=True)
     header = (
         f"{'Mô hình / Cấu hình':<35} | {'Mã có lệnh':<10} | {'Tổng lệnh':<10} | {'Win Rate':<9} | "
-        f"{'PnL (SL-trước)':<20} | {'PnL (TP-trước)':<20} | {'PnL B&H (Rổ lệnh)'}"
+        f"{'PnL (SL-trước)':<20} | {'PnL (TP-trước)':<20} | {'PF (SL)':>7} | {'Exp (SL)':>12} | {'Max DD':>8} | {'Sharpe':>7} | {'PnL B&H'}"
     )
     print(header, flush=True)
-    print("-" * 145, flush=True)
+    print("-" * 165, flush=True)
 
     for r_sl, r_tp in zip(results_sl, results_tp):
         pnl_sl_str = f"{r_sl['strat_pnl']:+,.2f} {currency}"
         pnl_tp_str = f"{r_tp['strat_pnl']:+,.2f} {currency}"
         bh_str = f"{r_sl['bh_pnl_traded']:+,.2f} {currency}"
         wr_str = f"{r_sl['win_rate']:.1f}%"
+        pf_str = f"{r_sl['profit_factor']:.2f}" if r_sl['profit_factor'] is not None else "N/A"
+        sh_str = f"{r_sl['sharpe']:.2f}" if r_sl['sharpe'] is not None else "N/A"
+        exp_str = f"{r_sl['expectancy']:+12,.2f}"
+        mdd_str = f"{r_sl['max_drawdown']*100:>7.1f}%"
 
         print(
             f"{r_sl['name']:<35} | {r_sl['traded_symbols']:<10} | {r_sl['total_trades']:<10} | {wr_str:<9} | "
-            f"{pnl_sl_str:<20} | {pnl_tp_str:<20} | {bh_str}",
+            f"{pnl_sl_str:<20} | {pnl_tp_str:<20} | {pf_str:>7} | {exp_str} | {mdd_str} | {sh_str:>7} | {bh_str}",
             flush=True,
         )
 
         if r_sl["premature_touches"] > 0:
             print(f"   └─ [CẢNH BÁO T+2.5]: Có {r_sl['premature_touches']} lần chạm SL/TP trước ngày settle.", flush=True)
 
-    print("=" * 145, flush=True)
+    print("=" * 165, flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Đo lường và so sánh chiến lược lai Octopus Combo Hybrid")
     parser.add_argument("--market", default="all", choices=["all", "crypto", "vn"])
     parser.add_argument("--capital", type=float, default=100_000_000.0)
+    parser.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
     parser.add_argument("--dsn", default=None)
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
@@ -148,7 +189,7 @@ def main() -> int:
     # 1. THỊ TRƯỜNG CHỨNG KHOÁN VIỆT NAM (bars_daily)
     # -----------------------------------------------------------------------
     if args.market in ("all", "vn"):
-        print("Đang nạp dữ liệu Chứng khoán VN (bars_daily)...", flush=True)
+        print(f"Đang nạp dữ liệu Chứng khoán VN (bars_daily | Chi phí: {args.cost_multiplier:.1f}x)...", flush=True)
         exclude_file = Path("exclusions.txt")
         excluded: set[str] = set()
         if exclude_file.exists():
@@ -184,6 +225,10 @@ def main() -> int:
 
         print(f"Đã nạp {len(vn_daily)} mã cổ phiếu VN ({sum(len(v) for v in vn_daily.values()):,} bars).", flush=True)
 
+        fee_vn = 0.0015 * args.cost_multiplier
+        tax_vn = 0.001 * args.cost_multiplier
+        slip_vn = 5.0 * args.cost_multiplier
+
         configs_vn = [
             # Name, strategy, x_atr, k_tp, min_liq, use_trailing, trailing_mult
             ("1. Combo Gốc (kTP=2.0)", "combo", 0.1, 2.0, 0.0, False, 2.0),
@@ -208,15 +253,16 @@ def main() -> int:
                 x_atr_ratio=x_r,
                 k_tp=ktp,
                 sl_first=True,
-                fee_rate=0.0015,
-                sell_tax_rate=0.001,
-                slippage_bps=5.0,
+                fee_rate=fee_vn,
+                sell_tax_rate=tax_vn,
+                slippage_bps=slip_vn,
                 settle_days=3,
                 lot_size=100,
                 allow_short=False,
                 min_avg_value_20=min_liq,
                 use_trailing_sl=use_trail,
                 trailing_atr_mult=trail_mult,
+                periods_per_year=252.0,
             )
             r_tp = evaluate_config(
                 bars_by_symbol=vn_daily,
@@ -226,15 +272,16 @@ def main() -> int:
                 x_atr_ratio=x_r,
                 k_tp=ktp,
                 sl_first=False,
-                fee_rate=0.0015,
-                sell_tax_rate=0.001,
-                slippage_bps=5.0,
+                fee_rate=fee_vn,
+                sell_tax_rate=tax_vn,
+                slippage_bps=slip_vn,
                 settle_days=3,
                 lot_size=100,
                 allow_short=False,
                 min_avg_value_20=min_liq,
                 use_trailing_sl=use_trail,
                 trailing_atr_mult=trail_mult,
+                periods_per_year=252.0,
             )
             res_vn_sl.append(r_sl)
             res_vn_tp.append(r_tp)
@@ -242,7 +289,7 @@ def main() -> int:
         print_comparison_table(
             res_vn_sl,
             res_vn_tp,
-            f"Cổ Phiếu VN — Khung 1D ({len(vn_daily)} mã, Long-Only, T+2.5, Vốn {args.capital:,.0f} VND/mã)",
+            f"Cổ Phiếu VN — Khung 1D ({len(vn_daily)} mã, Long-Only, T+2.5, Vốn {args.capital:,.0f} VND/mã | Chi phí {args.cost_multiplier:.1f}x)",
             "VND",
         )
 
@@ -250,7 +297,7 @@ def main() -> int:
     # 2. THỊ TRƯỜNG CRYPTO PERPETUAL (bars_crypto 1D & 1H)
     # -----------------------------------------------------------------------
     if args.market in ("all", "crypto"):
-        print("\nĐang nạp dữ liệu Crypto (bars_crypto)...")
+        print(f"\nĐang nạp dữ liệu Crypto (bars_crypto | Chi phí: {args.cost_multiplier:.1f}x)...", flush=True)
         crypto_1d = {}
         with storage.conn() as c:
             rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1d\' ORDER BY symbol, ts').fetchall()
@@ -262,6 +309,9 @@ def main() -> int:
             rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1h\' ORDER BY symbol, ts').fetchall()
             for r in rows:
                 crypto_1h.setdefault(r[0], []).append(Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx"))
+
+        fee_crypto = 0.0005 * args.cost_multiplier
+        slip_crypto = 0.0 * args.cost_multiplier
 
         configs_crypto = [
             ("1. Combo Gốc (Long+Short, kTP=2.0)", "combo", 0.1, 2.0, 0.0, False, 2.0, True),
@@ -278,21 +328,21 @@ def main() -> int:
         res_c1d_sl = []
         res_c1d_tp = []
         for name, strat, x_r, ktp, min_liq, use_trail, trail_mult, allow_s in configs_crypto:
-            r_sl = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, True, 0.0, 0.0, 0.0, 0, 1, allow_s, min_liq, use_trail, trail_mult)
-            r_tp = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, False, 0.0, 0.0, 0.0, 0, 1, allow_s, min_liq, use_trail, trail_mult)
+            r_sl = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, True, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=365.0)
+            r_tp = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, False, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=365.0)
             res_c1d_sl.append(r_sl)
             res_c1d_tp.append(r_tp)
-        print_comparison_table(res_c1d_sl, res_c1d_tp, "Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã)", "USDT")
+        print_comparison_table(res_c1d_sl, res_c1d_tp, f"Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)", "USDT")
 
         # Crypto 1H
         res_c1h_sl = []
         res_c1h_tp = []
         for name, strat, x_r, ktp, min_liq, use_trail, trail_mult, allow_s in configs_crypto:
-            r_sl = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, True, 0.0, 0.0, 0.0, 0, 1, allow_s, min_liq, use_trail, trail_mult)
-            r_tp = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, False, 0.0, 0.0, 0.0, 0, 1, allow_s, min_liq, use_trail, trail_mult)
+            r_sl = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, True, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=8760.0)
+            r_tp = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, False, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=8760.0)
             res_c1h_sl.append(r_sl)
             res_c1h_tp.append(r_tp)
-        print_comparison_table(res_c1h_sl, res_c1h_tp, "Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã)", "USDT")
+        print_comparison_table(res_c1h_sl, res_c1h_tp, f"Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)", "USDT")
 
     return 0
 

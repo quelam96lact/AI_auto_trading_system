@@ -77,15 +77,27 @@ def read_crypto_bars(
     return bars_by_symbol
 
 
+from trading.metrics import (
+    expectancy,
+    max_drawdown,
+    portfolio_equity_curve,
+    profit_factor,
+    sharpe,
+)
+
+
 def run_strategy_on_crypto(
     bars_by_symbol: dict[str, list[Bar]],
     strategy_name: str,
     capital_per_symbol: float = 100_000.0,
     lot_size: int = 1,
     sl_multiplier: float = 2.0,
+    fee_rate: float = 0.0005,
+    slippage_bps: float = 0.0,
+    periods_per_year: float = 365.0,
 ) -> dict:
     """Chạy 1 chiến lược trên danh mục các mã crypto.
-    Áp dụng mô hình phí crypto: fee=0, tax=0, slippage=0, settle_days=0.
+    Áp dụng mô hình phí crypto: fee_rate=0.0005 (BingX VIP0 taker 0.05%), tax=0, slippage_bps, settle_days=0.
     """
     if strategy_name not in STRATEGIES:
         raise ValueError(f"Chiến lược không hợp lệ: {strategy_name}. Hỗ trợ: {list(STRATEGIES.keys())}")
@@ -96,6 +108,8 @@ def run_strategy_on_crypto(
     total_trades = 0
     total_winning_trades = 0
     total_capital = capital_per_symbol * len(bars_by_symbol)
+    all_trade_pnls: list[float] = []
+    pnl_by_symbol_by_date: dict[str, dict[date, float]] = {}
 
     for sym, bars in bars_by_symbol.items():
         if not bars:
@@ -111,20 +125,36 @@ def run_strategy_on_crypto(
             risk,
             ts_mgr,
             capital=capital_per_symbol,
-            fee_rate=0.0,
+            fee_rate=fee_rate,
             sell_tax_rate=0.0,
-            slippage_bps=0.0,
+            slippage_bps=slippage_bps,
             settle_days=0,
         )
 
         pnl = rep.realized_pnl + rep.unrealized_pnl
-        bh_pnl = _buy_and_hold(bars, capital_per_symbol, fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0)
+        bh_pnl = _buy_and_hold(bars, capital_per_symbol, fee_rate=fee_rate, sell_tax_rate=0.0, slippage_bps=slippage_bps)
 
         winning_trades = sum(1 for f in rep.fills if f.side == "SELL" and f.pnl is not None and f.pnl > 0)
         total_strat_pnl += pnl
         total_bh_pnl += bh_pnl
         total_trades += rep.trades
         total_winning_trades += winning_trades
+
+        # Thu thập PnL từng lệnh
+        for f in rep.fills:
+            if f.side == "SELL" and f.pnl is not None:
+                all_trade_pnls.append(f.pnl)
+
+        daily_dict: dict[date, float] = {}
+        if rep.equity_curve:
+            prev_eq = capital_per_symbol
+            for ts, eq in rep.equity_curve:
+                if ts is not None:
+                    d = ts.date()
+                    delta = eq - prev_eq
+                    daily_dict[d] = daily_dict.get(d, 0.0) + delta
+                    prev_eq = eq
+        pnl_by_symbol_by_date[sym] = daily_dict
 
         results_by_symbol[sym] = {
             "bars": len(bars),
@@ -138,6 +168,20 @@ def run_strategy_on_crypto(
         }
 
     overall_win_rate = (total_winning_trades / total_trades) if total_trades > 0 else 0.0
+    pf = profit_factor(all_trade_pnls)
+    exp = expectancy(all_trade_pnls)
+
+    # Portfolio curve & Max DD & Sharpe
+    curve = portfolio_equity_curve(pnl_by_symbol_by_date, capital_per_symbol=capital_per_symbol)
+    mdd = max_drawdown(curve)
+
+    daily_returns = []
+    if len(curve) >= 2:
+        for i in range(1, len(curve)):
+            prev = curve[i - 1]
+            if prev > 0:
+                daily_returns.append((curve[i] - prev) / prev)
+    sh = sharpe(daily_returns, periods_per_year=periods_per_year)
 
     return {
         "strategy": strategy_name,
@@ -148,6 +192,10 @@ def run_strategy_on_crypto(
         "total_bh_pnl": total_bh_pnl,
         "total_trades": total_trades,
         "win_rate": overall_win_rate,
+        "profit_factor": pf,
+        "expectancy": exp,
+        "max_drawdown": mdd,
+        "sharpe": sh,
         "by_symbol": results_by_symbol,
     }
 
@@ -156,30 +204,42 @@ def print_crypto_report(
     results: list[dict],
     interval: str,
     capital_per_symbol: float,
+    fee_rate: float,
+    cost_multiplier: float,
 ) -> None:
-    """In báo cáo định dạng chuẩn kèm 4 cảnh báo bắt buộc."""
-    print("\n" + "=" * 95)
-    print(f"BÁO CÁO ĐO LƯỜNG CHIẾN LƯỢC TRÊN DỮ LIỆU CRYPTO BINGX (Khung: {interval.upper()})")
-    print("=" * 95)
+    """In báo cáo định dạng chuẩn kèm 3 cảnh báo bắt buộc."""
+    print("\n" + "=" * 125)
+    print(f"BÁO CÁO ĐO LƯỜNG CHIẾN LƯỢC TRÊN DỮ LIỆU CRYPTO BINGX (Khung: {interval.upper()} | Chi phí: {cost_multiplier:.1f}x)")
+    print("=" * 125)
 
-    print("\n" + "-" * 95)
-    print("BỐN CẢNH BÁO BẮT BUỘC VỀ PHÉP ĐO (THEO BRIEF):")
-    print(f"  1. [ĐƠN VỊ TIỀN] Vốn tính bằng USDT ({capital_per_symbol:,.0f} USDT/mã).")
-    print("  2. [LÔ GIẢ ĐỊNH] Dùng lot_size = 1 để tránh thiên lệch loại trừ tài sản giá cao.")
-    print("  3. [CHƯA TRỪ PHÍ] Phí giao dịch, thuế và trượt giá = 0 (kết quả là LẠC QUAN).")
-    print("  4. [THIÊN LỆCH SỐNG SÓT] 20 mã được chọn theo top thanh khoản năm 2026 đo lùi về quá khứ.")
-    print("-" * 95)
+    print("\n" + "-" * 125)
+    print("BA ĐIỀU BẮT BUỘC PHẢI GHI RÕ VỀ PHÉP ĐO CRYPTO (BRIEF ĐỢT 9):")
+    print(f"  1. [VIP0 TAKER 0.05% THẬN TRỌNG]: fee_rate={fee_rate:.6f} cho cả hai chiều. Giả định VIP0 là thận trọng nhất.")
+    print("  2. [CHƯA MÔ HÌNH HÓA FUNDING]: Phí funding chưa được tính (hạn chế đã biết, thường bất lợi cho phía Long trong uptrend).")
+    print(f"  3. [PHÍ TRÊN NOTIONAL]: Phí tính trên giá trị danh nghĩa (~{capital_per_symbol:,.0f} USDT/lệnh), tốn ~{capital_per_symbol*fee_rate*2:,.1f} USDT/vòng mua-bán.")
+    print("-" * 125)
 
-    print("\n" + "=" * 95)
-    print("BẢNG TỔNG HỢP SO SÁNH CÁC CHIẾN LƯỢC (TỔNG 20 CẶP):")
-    print(f"{'Chiến lược':<20} | {'Vốn tổng (USDT)':>16} | {'PnL Chiến lược':>16} | {'PnL Mua-và-Giữ':>16} | {'Lệnh':>6} | {'Win Rate':>8}")
-    print("-" * 95)
+    print("\n" + "=" * 135)
+    print("BẢNG TỔNG HỢP SO SÁNH CÁC CHIẾN LƯỢC (TỔNG 20 CẶP BINGX):")
+    header = (
+        f"{'Chiến lược':<18} | {'PnL Chiến lược':>16} | {'PnL Mua-và-Giữ':>16} | "
+        f"{'Lệnh':>6} | {'Win Rate':>8} | {'Profit Factor':>13} | {'Expectancy':>12} | {'Max DD':>8} | {'Sharpe':>8}"
+    )
+    print(header)
+    print("-" * 135)
 
     for r in results:
         strat_pnl_str = f"{r['total_strat_pnl']:+16,.2f}"
         bh_pnl_str = f"{r['total_bh_pnl']:+16,.2f}"
-        print(f"{r['strategy']:<20} | {r['total_capital']:>16,.0f} | {strat_pnl_str} | {bh_pnl_str} | {r['total_trades']:>6} | {r['win_rate']*100:>7.1f}%")
-    print("=" * 95)
+        pf_str = f"{r['profit_factor']:.2f}" if r['profit_factor'] is not None else "N/A"
+        sh_str = f"{r['sharpe']:.2f}" if r['sharpe'] is not None else "N/A"
+        exp_str = f"{r['expectancy']:+12,.2f}"
+        mdd_str = f"{r['max_drawdown']*100:>7.1f}%"
+        print(
+            f"{r['strategy']:<18} | {strat_pnl_str} | {bh_pnl_str} | "
+            f"{r['total_trades']:>6} | {r['win_rate']*100:>7.1f}% | {pf_str:>13} | {exp_str} | {mdd_str} | {sh_str:>8}"
+        )
+    print("=" * 135)
 
     # Chi tiết từng mã cho từng chiến lược
     for r in results:
@@ -192,13 +252,14 @@ def print_crypto_report(
             bh_s = f"{d['bh_pnl']:+18,.2f}"
             print(f"{i:<3} {sym:<15} {d['bars']:>6} {date_range:<23} {pnl_s} {bh_s} {d['trades']:>5} {d['win_rate']*100:>6.1f}%")
         print("-" * 115)
-
-
 def compare_lot_size_effect(
     bars_by_symbol: dict[str, list[Bar]],
     symbols: list[str],
     strategy_name: str = "daily_breakout",
     capital: float = 100_000.0,
+    fee_rate: float = 0.0005,
+    slippage_bps: float = 0.0,
+    periods_per_year: float = 365.0,
 ) -> None:
     """So sánh tác động của lot_size = 100 vs lot_size = 1 trên các tài sản giá cao."""
     print("\n" + "=" * 90)
@@ -214,9 +275,25 @@ def compare_lot_size_effect(
         last_price = bars[-1].close
 
         # Run lot_size=100
-        res100 = run_strategy_on_crypto({sym: bars}, strategy_name, capital_per_symbol=capital, lot_size=100)
+        res100 = run_strategy_on_crypto(
+            {sym: bars},
+            strategy_name,
+            capital_per_symbol=capital,
+            lot_size=100,
+            fee_rate=fee_rate,
+            slippage_bps=slippage_bps,
+            periods_per_year=periods_per_year,
+        )
         # Run lot_size=1
-        res1 = run_strategy_on_crypto({sym: bars}, strategy_name, capital_per_symbol=capital, lot_size=1)
+        res1 = run_strategy_on_crypto(
+            {sym: bars},
+            strategy_name,
+            capital_per_symbol=capital,
+            lot_size=1,
+            fee_rate=fee_rate,
+            slippage_bps=slippage_bps,
+            periods_per_year=periods_per_year,
+        )
 
         t100 = res100["total_trades"]
         t1 = res1["total_trades"]
@@ -234,6 +311,7 @@ def main() -> None:
     ap.add_argument("--lot-size", type=int, default=1, help="Kích thước lô (mặc định 1)")
     ap.add_argument("--symbols", default=None, help="Danh sách mã phân cách dấu phẩy")
     ap.add_argument("--compare-lot-size", action="store_true", help="In bảng so sánh lot_size=100 vs lot_size=1")
+    ap.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
     ap.add_argument("--dsn", default=None)
     args = ap.parse_args()
 
@@ -249,9 +327,20 @@ def main() -> None:
 
     print(f"Đã nạp {len(bars_by_symbol)} mã từ bars_crypto (khung {args.interval}).")
 
+    base_fee = 0.0005 * args.cost_multiplier
+    base_slippage = 0.0 * args.cost_multiplier
+    periods = 365.0 if args.interval == "1d" else 8760.0
+
     if args.compare_lot_size:
         high_val_symbols = [s for s in ["BTC-USDT", "ETH-USDT", "SOL-USDT", "AAVE-USDT", "TAO-USDT"] if s in bars_by_symbol]
-        compare_lot_size_effect(bars_by_symbol, high_val_symbols, capital=args.capital)
+        compare_lot_size_effect(
+            bars_by_symbol,
+            high_val_symbols,
+            capital=args.capital,
+            fee_rate=base_fee,
+            slippage_bps=base_slippage,
+            periods_per_year=periods,
+        )
 
     strategies_to_run = list(STRATEGIES.keys()) if args.strategy == "all" else [args.strategy]
 
@@ -262,10 +351,13 @@ def main() -> None:
             sname,
             capital_per_symbol=args.capital,
             lot_size=args.lot_size,
+            fee_rate=base_fee,
+            slippage_bps=base_slippage,
+            periods_per_year=periods,
         )
         results.append(res)
 
-    print_crypto_report(results, args.interval, args.capital)
+    print_crypto_report(results, args.interval, args.capital, fee_rate=base_fee, cost_multiplier=args.cost_multiplier)
 
 
 if __name__ == "__main__":

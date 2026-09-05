@@ -100,14 +100,26 @@ def test_sl_tp_both_touched_order_assumption():
     bars.append(_make_bar(idx=37, open=133.0, high=200.0, low=50.0, close=130.0))
 
     # Chạy với sl_first = True
-    rep_sl = run_pattern_backtest(bars, strategy_name="hammer", sl_first=True)
+    rep_sl = run_pattern_backtest(
+        bars,
+        strategy_name="hammer",
+        sl_first=True,
+        fee_rate=0.0,
+        slippage_bps=0.0,
+    )
     assert rep_sl.total_trades == 1
     assert rep_sl.both_touched_count >= 1
     assert rep_sl.trades[0].reason == "SL"
     assert rep_sl.trades[0].pnl < 0  # Lỗ vì dính SL
 
     # Chạy với sl_first = False
-    rep_tp = run_pattern_backtest(bars, strategy_name="hammer", sl_first=False)
+    rep_tp = run_pattern_backtest(
+        bars,
+        strategy_name="hammer",
+        sl_first=False,
+        fee_rate=0.0,
+        slippage_bps=0.0,
+    )
     assert rep_tp.total_trades == 1
     assert rep_tp.both_touched_count >= 1
     assert rep_tp.trades[0].reason == "TP"
@@ -142,7 +154,12 @@ def test_t25_settlement_prevents_premature_exit():
     bars.append(_make_bar(idx=37, open=125.0, high=126.0, low=80.0, close=85.0))
 
     rep = run_pattern_backtest(
-        bars, strategy_name="hammer", settle_days=3, sl_first=True
+        bars,
+        strategy_name="hammer",
+        settle_days=3,
+        sl_first=True,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     # Tại ngày D+1 (Bar 37) không được thoát lệnh
     assert rep.premature_touch_count >= 1
@@ -187,7 +204,13 @@ def test_bar_rac_bi_loai_hoan_toan_khoi_phep_do():
                 _make_bar(idx=i, open=0.0, high=0.0, low=0.0, close=0.0, volume=0)
             )
 
-    kw = {"strategy_name": "combo", "capital": 100_000_000.0, "settle_days": 0}
+    kw = {
+        "strategy_name": "combo",
+        "capital": 100_000_000.0,
+        "settle_days": 0,
+        "fee_rate": 0.0,
+        "slippage_bps": 0.0,
+    }
     rep_sach = run_pattern_backtest(sach, **kw)
     rep_rac = run_pattern_backtest(co_rac, **kw)
 
@@ -269,6 +292,8 @@ def test_octopus_combo_requires_trend_pullback_and_buy_stop():
         bars_no_break,
         strategy_name="octopus_combo",
         min_avg_value_20=2_000_000_000.0,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     assert rep_no_break.total_trades == 0
 
@@ -299,6 +324,8 @@ def test_octopus_combo_requires_trend_pullback_and_buy_stop():
         bars_break,
         strategy_name="octopus_combo",
         min_avg_value_20=2_000_000_000.0,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     assert rep_break.total_trades == 1
     assert rep_break.winning_trades == 1
@@ -359,6 +386,8 @@ def test_octopus_combo_blocks_insufficient_liquidity():
         bars,
         strategy_name="octopus_combo",
         min_avg_value_20=2_000_000_000.0,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     assert rep.total_trades == 0  # Bị chặn bởi thanh khoản
 
@@ -442,6 +471,8 @@ def test_octopus_combo_with_trailing_stop():
         k_tp=50.0,  # TP rất xa để thoát bằng trailing SL
         use_trailing_sl=True,
         trailing_atr_mult=2.0,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     assert rep.total_trades == 1
     assert rep.trades[0].reason == "SL"
@@ -521,9 +552,39 @@ def test_octopus_combo_short_trigger():
         strategy_name="octopus_combo",
         k_tp=1.5,
         allow_short=True,
+        fee_rate=0.0,
+        slippage_bps=0.0,
     )
     assert rep.total_trades >= 1
     assert all(t.side == "SELL" for t in rep.trades)
     assert rep.trades[-1].reason == "TP"
     assert rep.trades[-1].pnl > 0
+
+
+# ---------------------------------------------------------------------------
+# 6. Test bắt buộc khai báo chi phí (Tiêu chí 7 - Brief đợt 9)
+# ---------------------------------------------------------------------------
+
+
+def test_run_pattern_backtest_requires_explicit_fees():
+    """Gọi run_pattern_backtest thiếu fee_rate hoặc slippage_bps phải raise ValueError."""
+    import pytest
+
+    bars = [_make_bar(idx=i) for i in range(40)]
+
+    # Thiếu fee_rate
+    with pytest.raises(ValueError) as excinfo1:
+        run_pattern_backtest(bars, strategy_name="hammer", slippage_bps=0.0)
+    assert "fee_rate" in str(excinfo1.value)
+
+    # Thiếu slippage_bps
+    with pytest.raises(ValueError) as excinfo2:
+        run_pattern_backtest(bars, strategy_name="hammer", fee_rate=0.0)
+    assert "slippage_bps" in str(excinfo2.value)
+
+    # Thiếu cả hai
+    with pytest.raises(ValueError) as excinfo3:
+        run_pattern_backtest(bars, strategy_name="hammer")
+    assert "fee_rate" in str(excinfo3.value)
+
 

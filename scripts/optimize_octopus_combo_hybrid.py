@@ -12,6 +12,7 @@ CLI:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from _db_common import resolve_dsn
 
 from trading.models import Bar
 from trading.pattern_backtest import run_pattern_backtest
+from trading.sampling import filter_bars_by_split
 from trading.storage.db import Storage
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -127,6 +129,24 @@ def main() -> int:
     parser.add_argument("--interval", default="1h", choices=["1h", "1d"])
     parser.add_argument("--capital", type=float, default=100_000.0)
     parser.add_argument("--dsn", default=None)
+    parser.add_argument(
+        "--split",
+        choices=["train", "validation", "holdout", "all"],
+        default="train",
+        help="Tập mẫu dữ liệu theo thời gian (train: 2016-2022, validation: 2022-2023, holdout: 2024-2026, all: toàn bộ)",
+    )
+    parser.add_argument(
+        "--unlock-holdout",
+        action="store_true",
+        default=False,
+        help="Cờ bắt buộc để mở khóa truy cập tập holdout hoặc tập all",
+    )
+    parser.add_argument(
+        "--unlock-reason",
+        type=str,
+        default="",
+        help="Lý do mở khóa tập holdout (bắt buộc ghi vào nhật ký docs/holdout-unlock-log.md)",
+    )
     args = parser.parse_args()
 
     dsn = resolve_dsn(args.dsn)
@@ -164,7 +184,7 @@ def main() -> int:
         currency = "USDT"
     else:
         capital = 100_000_000.0
-        print("Đang tải dữ liệu Cổ phiếu VN (bars_daily)...", flush=True)
+        print(f"Đang tải dữ liệu Cổ phiếu VN (bars_daily | split: {args.split})...", flush=True)
         exclude_file = Path("exclusions.txt")
         excluded: set[str] = set()
         if exclude_file.exists():
@@ -192,6 +212,23 @@ def main() -> int:
                         volume=int(r[6]),
                     )
                 )
+        # Áp dụng cơ chế khóa mẫu Holdout
+        filtered_data: dict[str, list[Bar]] = {}
+        for i, (sym, bars) in enumerate(data.items()):
+            target_log = "docs/holdout-unlock-log.md" if i == 0 else os.devnull
+            fb = filter_bars_by_split(
+                bars,
+                split=args.split,
+                unlock_holdout=args.unlock_holdout,
+                strategy_name="OctopusComboHybrid",
+                config_info=f"Grid Optimization ({args.split})",
+                unlock_reason=args.unlock_reason,
+                log_file=target_log,
+            )
+            if fb:
+                filtered_data[sym] = fb
+        data = filtered_data
+
         allow_short = False
         fee_rate = 0.0015
         sell_tax_rate = 0.001
@@ -287,6 +324,7 @@ def main() -> int:
             flush=True,
         )
     print("=" * 130, flush=True)
+    print(f"Tổng số tổ hợp tham số đã đánh giá: {len(results)}", flush=True)
     return 0
 
 

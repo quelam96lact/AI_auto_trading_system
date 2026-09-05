@@ -25,6 +25,14 @@ except ImportError:
 
 from trading.backtest import STRATEGIES, ever_liquid, run_backtest
 from trading.calendar_vn import TZ
+from trading.metrics import (
+    expectancy,
+    max_drawdown,
+    portfolio_equity_curve,
+    profit_factor,
+    sharpe,
+)
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.trailing_stop import TrailingStopManager
@@ -39,19 +47,45 @@ DEFAULT_TO = "2026-08-13"
 
 
 def measure_symbol_for_strat(
+    symbol: str,
     bars,
     capital: float,
     strategy_cls,
     liq_spec: tuple[float, int] | None,
+    fee_rate: float = FEE_RATE,
+    sell_tax_rate: float = SELL_TAX_RATE,
+    slippage_bps: float = SLIPPAGE_BPS,
 ) -> dict:
     strat = strategy_cls()
     risk = RiskManager(capital=capital)
     ts_mgr = TrailingStopManager()
 
-    rep = run_backtest(bars, strat, risk, ts_mgr, capital)
+    rep = run_backtest(
+        bars,
+        strat,
+        risk,
+        ts_mgr,
+        capital,
+        fee_rate=fee_rate,
+        sell_tax_rate=sell_tax_rate,
+        slippage_bps=slippage_bps,
+    )
     strat_pnl = rep.realized_pnl + rep.unrealized_pnl
 
+    trade_pnls = [f.pnl for f in rep.fills if f.side == "SELL" and f.pnl is not None]
+
+    daily_dict = {}
+    if rep.equity_curve:
+        prev_eq = capital
+        for ts, eq in rep.equity_curve:
+            if ts is not None:
+                d = ts.date()
+                delta = eq - prev_eq
+                daily_dict[d] = daily_dict.get(d, 0.0) + delta
+                prev_eq = eq
+
     return {
+        "symbol": symbol,
         "n_bars": len(bars),
         "trades": rep.trades,
         "win_rate": rep.win_rate,
@@ -59,10 +93,16 @@ def measure_symbol_for_strat(
         "bh_pnl": rep.buy_and_hold_pnl,
         "diff": strat_pnl - rep.buy_and_hold_pnl,
         "liquid": ever_liquid(bars, *liq_spec) if liq_spec else False,
+        "trade_pnls": trade_pnls,
+        "daily_pnl": daily_dict,
     }
 
 
-def analyze_basket(results: list[dict], name: str) -> dict:
+def analyze_basket(
+    results: list[dict],
+    name: str,
+    capital_per_symbol: float = DEFAULT_CAPITAL,
+) -> dict:
     n = len(results)
     if n == 0:
         return {
@@ -77,6 +117,10 @@ def analyze_basket(results: list[dict], name: str) -> dict:
             "median_diff": 0.0,
             "median_strat": 0.0,
             "median_bh": 0.0,
+            "profit_factor": None,
+            "expectancy": 0.0,
+            "max_drawdown": 0.0,
+            "sharpe": None,
         }
 
     tot_strat = sum(r["strat_pnl"] for r in results)
@@ -85,6 +129,24 @@ def analyze_basket(results: list[dict], name: str) -> dict:
     diffs = [r["diff"] for r in results]
     win_bh_count = sum(1 for d in diffs if d > 0)
     win_bh_pct = (win_bh_count / n) * 100.0
+
+    all_pnls = [p for r in results for p in r.get("trade_pnls", [])]
+    pf = profit_factor(all_pnls)
+    exp = expectancy(all_pnls)
+
+    pnl_by_symbol_by_date = {r["symbol"]: r.get("daily_pnl", {}) for r in results}
+    curve = portfolio_equity_curve(
+        pnl_by_symbol_by_date, capital_per_symbol=capital_per_symbol
+    )
+    mdd = max_drawdown(curve)
+
+    daily_returns = []
+    if len(curve) >= 2:
+        for i in range(1, len(curve)):
+            prev = curve[i - 1]
+            if prev > 0:
+                daily_returns.append((curve[i] - prev) / prev)
+    sh = sharpe(daily_returns, periods_per_year=252.0)
 
     return {
         "name": name,
@@ -102,6 +164,10 @@ def analyze_basket(results: list[dict], name: str) -> dict:
         "median_bh": (
             statistics.median([r["bh_pnl"] for r in results]) if results else 0.0
         ),
+        "profit_factor": pf,
+        "expectancy": exp,
+        "max_drawdown": mdd,
+        "sharpe": sh,
     }
 
 
@@ -113,6 +179,7 @@ def main() -> int:
     ap.add_argument("--to", dest="to", default=DEFAULT_TO)
     ap.add_argument("--exclude-file", default="exclusions.txt")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
     args = ap.parse_args()
 
     frm = datetime.strptime(args.frm, "%Y-%m-%d").replace(tzinfo=TZ)
@@ -137,7 +204,7 @@ def main() -> int:
     if args.limit > 0:
         symbols = symbols[:args.limit]
 
-    print(f"Đang nạp dữ liệu cho {len(symbols)} mã...", flush=True)
+    print(f"Đang nạp dữ liệu cho {len(symbols)} mã (Chi phí: {args.cost_multiplier:.1f}x)...", flush=True)
 
     oct_cls = STRATEGIES["octopus_pullback"]
     combo_cls = STRATEGIES["octopus_combo"]
@@ -145,13 +212,35 @@ def main() -> int:
     oct_liq_spec = liquidity_spec(oct_cls())
     combo_liq_spec = liquidity_spec(combo_cls())
 
+    fee_rate = FEE_RATE * args.cost_multiplier
+    sell_tax_rate = SELL_TAX_RATE * args.cost_multiplier
+    slippage_bps = SLIPPAGE_BPS * args.cost_multiplier
+
     res_oct_all = []
     res_combo_all = []
 
     for i, sym in enumerate(symbols, 1):
         bars = storage.read_daily_bars(sym, frm, to)
-        r_oct = measure_symbol_for_strat(bars, args.capital, oct_cls, oct_liq_spec)
-        r_combo = measure_symbol_for_strat(bars, args.capital, combo_cls, combo_liq_spec)
+        r_oct = measure_symbol_for_strat(
+            sym,
+            bars,
+            args.capital,
+            oct_cls,
+            oct_liq_spec,
+            fee_rate=fee_rate,
+            sell_tax_rate=sell_tax_rate,
+            slippage_bps=slippage_bps,
+        )
+        r_combo = measure_symbol_for_strat(
+            sym,
+            bars,
+            args.capital,
+            combo_cls,
+            combo_liq_spec,
+            fee_rate=fee_rate,
+            sell_tax_rate=sell_tax_rate,
+            slippage_bps=slippage_bps,
+        )
         res_oct_all.append(r_oct)
         res_combo_all.append(r_combo)
         if i % 200 == 0 or i == len(symbols):
@@ -161,15 +250,15 @@ def main() -> int:
     oct_traded = [r for r in res_oct_all if r["trades"] > 0]
     combo_traded = [r for r in res_combo_all if r["trades"] > 0]
 
-    st_oct_all = analyze_basket(res_oct_all, "Toàn bộ rổ")
-    st_oct_traded = analyze_basket(oct_traded, "Rổ sinh lệnh")
+    st_oct_all = analyze_basket(res_oct_all, "Toàn bộ rổ", args.capital)
+    st_oct_traded = analyze_basket(oct_traded, "Rổ sinh lệnh", args.capital)
 
-    st_combo_all = analyze_basket(res_combo_all, "Toàn bộ rổ")
-    st_combo_traded = analyze_basket(combo_traded, "Rổ sinh lệnh")
+    st_combo_all = analyze_basket(res_combo_all, "Toàn bộ rổ", args.capital)
+    st_combo_traded = analyze_basket(combo_traded, "Rổ sinh lệnh", args.capital)
 
-    print("\n" + "=" * 125, flush=True)
+    print("\n" + "=" * 145, flush=True)
     print("BÁO CÁO ĐO LƯỜNG ĐỐI CHIẾU TRUNG THỰC QUA ĐƯỜNG ỐNG run_backtest (BRIEF ĐỢT 8)", flush=True)
-    print("=" * 125, flush=True)
+    print("=" * 145, flush=True)
 
     header = f"{'Tiêu chí':<35} | {'Octopus Baseline (Toàn bộ)':<26} | {'Octopus Baseline (Sinh lệnh)':<28} | {'Octopus Combo (Toàn bộ)':<24} | {'Octopus Combo (Sinh lệnh)'}"
     print(header, flush=True)
@@ -184,6 +273,13 @@ def main() -> int:
     print(f"{'Trung vị PnL Chiến lược/mã':<35} | {st_oct_all['median_strat']:>26,.0f} | {st_oct_traded['median_strat']:>28,.0f} | {st_combo_all['median_strat']:>24,.0f} | {st_combo_traded['median_strat']:>26,.0f}", flush=True)
     print(f"{'Trung vị PnL Mua-và-Giữ/mã':<35} | {st_oct_all['median_bh']:>26,.0f} | {st_oct_traded['median_bh']:>28,.0f} | {st_combo_all['median_bh']:>24,.0f} | {st_combo_traded['median_bh']:>26,.0f}", flush=True)
     print(f"{'Trung vị chênh lệch/mã':<35} | {st_oct_all['median_diff']:>26,.0f} | {st_oct_traded['median_diff']:>28,.0f} | {st_combo_all['median_diff']:>24,.0f} | {st_combo_traded['median_diff']:>26,.0f}", flush=True)
+
+    pf_str = lambda s: f"{s['profit_factor']:.2f}" if s.get('profit_factor') is not None else "N/A"
+    sh_str = lambda s: f"{s['sharpe']:.2f}" if s.get('sharpe') is not None else "N/A"
+    print(f"{'Profit Factor':<35} | {pf_str(st_oct_all):>26} | {pf_str(st_oct_traded):>28} | {pf_str(st_combo_all):>24} | {pf_str(st_combo_traded):>26}", flush=True)
+    print(f"{'Expectancy (PnL TB/lệnh VND)':<35} | {st_oct_all['expectancy']:>26,.0f} | {st_oct_traded['expectancy']:>28,.0f} | {st_combo_all['expectancy']:>24,.0f} | {st_combo_traded['expectancy']:>26,.0f}", flush=True)
+    print(f"{'Max Drawdown Danh mục':<35} | {st_oct_all['max_drawdown']*100:>25.1f}% | {st_oct_traded['max_drawdown']*100:>27.1f}% | {st_combo_all['max_drawdown']*100:>23.1f}% | {st_combo_traded['max_drawdown']*100:>25.1f}%", flush=True)
+    print(f"{'Sharpe Danh mục (252 kỳ)':<35} | {sh_str(st_oct_all):>26} | {sh_str(st_oct_traded):>28} | {sh_str(st_combo_all):>24} | {sh_str(st_combo_traded):>26}", flush=True)
     print("=" * 145, flush=True)
 
     return 0
@@ -191,3 +287,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
