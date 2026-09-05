@@ -397,7 +397,7 @@ chắn. Thứ tự đúng: A lên → 04/09 xác nhận A đúng → tuần sau 
 | **E** | Vốn engine: 0434221 (5tr) hay 0434226 (tiền thật) | vô hại khi `real_trading_enabled=false`, **phải xong trước khi bật thật** |
 | ~~**F**~~ | ~~Phạm vi BingX: spot hay perpetual?~~ | **QUYẾT ĐỊNH 06/09: perpetual.** Đã thoả sẵn — `bars_crypto` đang nạp đúng perpetual (20 mã, min ts 2021-05-14). Không cần nạp lại gì |
 | ~~**G**~~ | ~~Giữ octopus, sma_cross, hay không chiến lược?~~ | **QUYẾT ĐỊNH 06/09: giữ octopus.** Kèm theo K — xem dưới |
-| ~~**N**~~ | ~~Engine câm vì ngưỡng thanh khoản sai đơn vị thời gian~~ | **Đang sửa — gói K, `2026-09-06-brief-goi-K-thanh-khoan-theo-ngay.md`** |
+| ~~**N**~~ | ~~Engine câm vì ngưỡng thanh khoản sai đơn vị thời gian~~ | **ĐÃ SỬA phần lớn 06/09 (gói K).** IJC/AAA hết câm (0→6 bull mỗi mã). HII vẫn câm — không còn là lỗi đơn vị, là điều kiện tín hiệu chưa khớp trong lịch sử. Xem `2026-09-06-master-audit-report-dot-6.md` |
 
 ### F, G, N đã có quyết định — 06/09
 

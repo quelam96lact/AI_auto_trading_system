@@ -26,13 +26,21 @@ HEAD tại thời điểm audit: `2b6fd06`, nhánh `feature/data-layer`.
 | Rổ mã giao dịch | `[VCB, HPG, TCB]` | **Đổi sang `[HII, IJC, AAA]`** `63e6028` — VCB/HPG/TCB đều vượt trần 1 lô với số dư ~5 triệu |
 | Test ghi vào bảng thật | nêu ở mục "Dữ liệu hiện tại" | **Đã tách hạ tầng** `51eb353` |
 
-> **ĐÍNH CHÍNH 2026-09-05.** Câu ngay dưới đây — "mọi rào cản kỹ thuật đã gỡ" —
-> đúng với *bản audit này*, nhưng từ 04/09 có một rào cản kỹ thuật MỚI: engine
-> đổi sang `octopus_pullback`, và ngưỡng thanh khoản 2 tỷ của chiến lược đó là
-> ngưỡng cho bar NGÀY trong khi engine ăn bar 5 PHÚT. Đo trên chính bảng `bars`:
-> HII 0/3.211 bar mở cổng, AAA 0/4.597, IJC 24/4.719 — **0 tín hiệu `bull`**.
-> Engine hiện **không thể sinh lệnh MUA nào**. Chi tiết và plan:
-> `docs/superpowers/plans/2026-09-05-danh-gia-go-live-va-plan-ton-dong.md`.
+> **ĐÍNH CHÍNH 2026-09-05, cập nhật 2026-09-06.** Câu ngay dưới đây — "mọi rào
+> cản kỹ thuật đã gỡ" — đúng với *bản audit này*, nhưng từ 04/09 có một rào cản
+> kỹ thuật MỚI: engine đổi sang `octopus_pullback`, và ngưỡng thanh khoản 2 tỷ
+> của chiến lược đó bị tính bình quân trên N BAR thay vì N NGÀY, nên trên bar
+> 5 PHÚT nó thành ngưỡng cao gấp ~78 lần ý định. Đo 05/09: HII 0/3.211 bar mở
+> cổng, AAA 0/4.597, IJC 24/4.719 — 0 tín hiệu `bull`.
+>
+> **06/09 (gói K): đã sửa phần lớn, chưa hết.** `DailyLiquidityTracker` gộp
+> giá trị giao dịch theo ngày trước khi lấy bình quân — đã kiểm chứng tái hiện
+> đúng bit-for-bit bảng khung ngày cũ. Đo lại trên `bars` thật: **IJC và AAA
+> hết câm** (0→6 tín hiệu bull mỗi mã), **HII vẫn câm** — không còn vì lỗi đơn
+> vị, mà vì điều kiện EMA/MACD/pullback của chính HII chưa khớp trong lịch sử
+> có (cổng thanh khoản đã mở 41,8%). Chạy `scripts/check_silent_engine.py` để
+> xem trạng thái hiện tại — vẫn trả CRITICAL vì HII. Chi tiết:
+> `docs/superpowers/research/2026-09-06-master-audit-report-dot-6.md`.
 
 **Mọi rào cản KỸ THUẬT trong bản audit này đã gỡ.** Thứ còn chặn go-live không
 còn là code — là **vốn**. Xem "Chặn số 1" bên dưới.

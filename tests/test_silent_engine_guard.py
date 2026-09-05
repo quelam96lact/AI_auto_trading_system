@@ -37,7 +37,7 @@ def _make_bars(
         bars.append(
             Bar(
                 symbol=symbol,
-                ts=base_time + timedelta(minutes=5 * i),
+                ts=base_time + timedelta(days=i),
                 open=price,
                 high=price + 100,
                 low=price - 100,

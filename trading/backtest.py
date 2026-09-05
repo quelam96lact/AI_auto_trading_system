@@ -1,4 +1,3 @@
-from collections import deque
 from dataclasses import dataclass, field
 
 from trading.broker import Fill
@@ -13,8 +12,8 @@ from trading.paper_broker import (
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
 from trading.strategies.octopus_pullback import (
+    DailyLiquidityTracker,
     OctopusPullbackStrategy,
-    liquidity_avg_before,
 )
 from trading.strategies.sma_cross import SmaCrossStrategy
 from trading.strategy import Strategy
@@ -54,21 +53,17 @@ def _is_dirty(bar: Bar) -> bool:
 
 
 def ever_liquid(bars: list[Bar], threshold: float, window: int) -> bool:
-    """Mã có từng đủ thanh khoản chưa: >= 1 bar mà rolling-`window` (KHÔNG tính
-    bar hiện tại) của close*volume >= threshold.
+    """Mã có từng đủ thanh khoản chưa: >= 1 bar mà rolling-`window` NGÀY đã đóng
+    (KHÔNG tính ngày của bar hiện tại) có bình quân giá trị GD >= threshold.
 
-    MỘT NGUỒN SỰ THẬT với OctopusPullbackStrategy._liquidity_ok (2026-08-16):
-    bar rác (OHLC<=0) bị loại HẲN khỏi cửa sổ, không bao giờ được append — đúng
-    hành vi strategy, nơi run_backtest đã lọc bar rác TRƯỚC khi strategy nhìn
-    thấy. Bản cũ của hàm này (trong scripts/measure_strategy.py) append cả bar
-    rác vào deque rồi mới continue, nên bình quân cửa sổ bị kéo lệch. Cửa sổ
-    tính qua liquidity_avg_before — cùng hàm lõi strategy dùng."""
-    vals: deque = deque(maxlen=window + 1)
+    MỘT NGUỒN SỰ THẬT với OctopusPullbackStrategy._liquidity_ok:
+    bar rác (OHLC<=0) bị loại HẲN khỏi cửa sổ, không bao giờ được đưa vào tracker.
+    Dùng chung DailyLiquidityTracker từ octopus_pullback."""
+    tracker = DailyLiquidityTracker(window=window)
     for b in bars:
         if _is_dirty(b):
             continue  # bar rác KHÔNG vào cửa sổ — bar rác không phải phiên thật
-        vals.append(b.close * b.volume)
-        avg = liquidity_avg_before(list(vals), window)
+        avg = tracker.update(b)
         if avg is not None and avg >= threshold:
             return True
     return False

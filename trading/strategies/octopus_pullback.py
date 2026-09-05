@@ -37,6 +37,7 @@ Interface duck-typed giống DailyBreakoutStrategy: compute_crossover(bar) ->
 """
 
 from collections import deque
+from datetime import date
 from typing import Literal
 
 from trading.indicators import AtrCalculator, EmaCalculator, MacdCalculator
@@ -46,17 +47,43 @@ from trading.strategy import Context, Signal
 Crossover = Literal["bull", "bear"]
 
 
-def liquidity_avg_before(values: list[float], window: int) -> float | None:
-    """Bình quân `window` phiên TRƯỚC phần tử cuối (phần tử cuối = bar hiện tại
-    vừa append — bị loại). None nếu chưa đủ window+1 phần tử (không đoán).
+class DailyLiquidityTracker:
+    """Theo dõi và tính bình quân thanh khoản gộp theo NGÀY giao dịch (Gói K).
 
-    MỘT NGUỒN SỰ THẬT cho công thức cửa sổ thanh khoản: strategy
-    (_liquidity_ok) và phép đo diện rộng (ever_liquid) cùng gọi hàm này, để
-    không bao giờ lệch nhau về hình dạng cửa sổ nữa (task 2026-08-16: bản cũ
-    của ever_liquid để bar rác lọt vào cửa sổ, kéo bình quân lệch đi)."""
-    if len(values) < window + 1:
-        return None
-    return sum(values[:window]) / window
+    Lưu tổng giá trị giao dịch (close * volume) của `window` ngày ĐÃ ĐÓNG
+    trước ngày của bar hiện tại. Khi bar thuộc ngày mới đến (bar.ts.date() != _cur_day),
+    ngày trước đó được coi là đã đóng và đẩy vào cửa sổ trượt `_closed_days` (maxlen=window).
+    """
+
+    def __init__(self, window: int = 20):
+        self.window = window
+        self._closed_days: deque[float] = deque(maxlen=window)
+        self._cur_day: date | None = None
+        self._cur_day_val: float = 0.0
+
+    def update(self, bar: Bar) -> float | None:
+        """Cập nhật bar. Trả về bình quân thanh khoản `window` ngày đã đóng
+        TRƯỚC ngày của bar hiện tại, hoặc None nếu chưa đủ `window` ngày đã đóng."""
+        d = bar.ts.date()
+        if self._cur_day is None:
+            self._cur_day = d
+            self._cur_day_val = bar.close * bar.volume
+        elif d != self._cur_day:
+            self._closed_days.append(self._cur_day_val)
+            self._cur_day = d
+            self._cur_day_val = bar.close * bar.volume
+        else:
+            self._cur_day_val += bar.close * bar.volume
+
+        if len(self._closed_days) < self.window:
+            return None
+        return sum(self._closed_days) / self.window
+
+    def current_avg(self) -> float | None:
+        """Bình quân của `window` ngày đã đóng gần nhất TRƯỚC ngày hiện tại."""
+        if len(self._closed_days) < self.window:
+            return None
+        return sum(self._closed_days) / self.window
 
 
 class OctopusPullbackStrategy:
@@ -94,24 +121,23 @@ class OctopusPullbackStrategy:
         self._macd = MacdCalculator(fast=macd_fast, slow=macd_slow, signal=macd_signal)
         self._atr = AtrCalculator(period=atr_period)
 
-        # Cửa sổ nến đỏ và giá trị giao dịch — track MỌI bar (kể cả khi indicator
-        # chưa đủ warmup) để cửa sổ không bị lệch.
+        # Cửa sổ nến đỏ (theo bar) và bộ theo dõi thanh khoản (theo NGÀY)
         self._reds: dict[str, deque] = {}
-        self._values: dict[str, deque] = {}
+        self._liquidity_trackers: dict[str, DailyLiquidityTracker] = {}
         self._tp: dict[str, float] = {}
         self._last_crossover: dict[str, Crossover | None] = {}
 
     def _track_windows(self, bar: Bar) -> None:
-        """Cập nhật cửa sổ nến đỏ và giá trị giao dịch với bar hiện tại.
-        Chạy cho MỌI bar (kể cả bar chưa đủ warmup / trả None) để cửa sổ không
-        bị lệch. maxlen = window + 1 để sau khi append vẫn giữ đủ `window`
-        phiên TRƯỚC bar hiện tại (xem _reds_before/_liquidity_ok)."""
+        """Cập nhật cửa sổ nến đỏ và bộ theo dõi thanh khoản theo ngày với bar hiện tại.
+        Chạy cho MỌI bar (kể cả bar chưa đủ warmup / trả None) để cửa sổ không bị lệch.
+        """
         self._reds.setdefault(
             bar.symbol, deque(maxlen=self.pullback_window + 1)
         ).append(1 if bar.close < bar.open else 0)
-        self._values.setdefault(
-            bar.symbol, deque(maxlen=self.liquidity_window + 1)
-        ).append(bar.close * bar.volume)
+        tracker = self._liquidity_trackers.setdefault(
+            bar.symbol, DailyLiquidityTracker(window=self.liquidity_window)
+        )
+        tracker.update(bar)
 
     def _reds_before(self, symbol: str) -> int | None:
         """Số nến đỏ trong `pullback_window` phiên TRƯỚC bar hiện tại
@@ -123,13 +149,11 @@ class OctopusPullbackStrategy:
         return sum(list(reds)[: self.pullback_window])
 
     def _liquidity_ok(self, symbol: str) -> bool:
-        """Bình quân gia_tri_gd `liquidity_window` phiên TRƯỚC bar hiện tại
-        (phần tử cuối deque là bar hiện tại vừa append — bị loại). Gọi
-        liquidity_avg_before — một nguồn chung với ever_liquid (đo diện rộng)."""
-        vals = self._values.get(symbol)
-        if not vals:
+        """Bình quân giá trị giao dịch `liquidity_window` NGÀY ĐÃ ĐÓNG trước ngày hiện tại >= min_avg_value_20."""
+        tracker = self._liquidity_trackers.get(symbol)
+        if not tracker:
             return False
-        avg = liquidity_avg_before(list(vals), self.liquidity_window)
+        avg = tracker.current_avg()
         return avg is not None and avg >= self.min_avg_value_20
 
     def compute_crossover(self, bar: Bar) -> Crossover | None:
@@ -148,12 +172,7 @@ class OctopusPullbackStrategy:
         # truoc — khuon giong sma_cross.compute_crossover (line 51, 61, 75).
         self._last_crossover[bar.symbol] = None
 
-        if (
-            ema_fast is None
-            or ema_slow is None
-            or ema_trend is None
-            or hist is None
-        ):
+        if ema_fast is None or ema_slow is None or ema_trend is None or hist is None:
             return None  # chưa đủ warmup — không đoán
         if prev_fast is None or prev_slow is None:
             return None  # chưa có EMA của phiên trước

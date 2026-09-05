@@ -53,7 +53,7 @@ docker compose logs -f engine
 **Data flow: SSI stream → Collector → DB/NATS → Engine → PaperBroker**
 
 - `trading/collector/`: SSI feed (real-time stream), parser (B/MI messages), backfill (REST API), aggregator (1m→5m bars)
-- `trading/engine/`: Main loop, bar processing, strategy (octopus_pullback từ 04/09, trước đó SMA cross — xem `_default_strategy()`; **chiến lược này đang CÂM trên bar 5 phút, 0 tín hiệu — đọc `2026-09-05-danh-gia-go-live-va-plan-ton-dong.md` trước khi tin engine đang giao dịch**), risk management
+- `trading/engine/`: Main loop, bar processing, strategy (octopus_pullback từ 04/09, trước đó SMA cross — xem `_default_strategy()`; ngưỡng thanh khoản từng bị tính sai theo N bar thay vì N ngày khiến engine gần như câm trên bar 5 phút — **gói K (06/09) đã sửa phần lớn: IJC/AAA hết câm, HII vẫn câm vì lý do khác (điều kiện tín hiệu), không phải lỗi đơn vị nữa**, xem `2026-09-06-master-audit-report-dot-6.md`), risk management
 - `trading/broker`: PaperBroker (simulates order fills with VN fees + slippage)
 - `trading/storage/`: PostgreSQL + TimescaleDB (bars, orders, positions, PnL)
 - `trading/bus/`: NATS JetStream publisher (bars → engine subscription)

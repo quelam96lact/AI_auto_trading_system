@@ -75,7 +75,7 @@ def _generate_deterministic_bars(
         bars.append(
             Bar(
                 symbol=symbol,
-                ts=base_time + timedelta(minutes=5 * len(bars)),
+                ts=base_time + timedelta(days=len(bars)),
                 open=price - 2.0,
                 high=price + 5.0,
                 low=price - 5.0,
@@ -90,7 +90,7 @@ def _generate_deterministic_bars(
         bars.append(
             Bar(
                 symbol=symbol,
-                ts=base_time + timedelta(minutes=5 * len(bars)),
+                ts=base_time + timedelta(days=len(bars)),
                 open=price + 2.0,
                 high=price + 5.0,
                 low=price - 5.0,
@@ -123,7 +123,7 @@ def _generate_pullback_bars(symbol: str = "GUARD") -> list[Bar]:
         bars.append(
             Bar(
                 symbol=symbol,
-                ts=base_time + timedelta(minutes=5 * len(bars)),
+                ts=base_time + timedelta(days=len(bars)),
                 open=open_,
                 high=max(open_, close_) + 1.0,
                 low=min(open_, close_) - 1.0,

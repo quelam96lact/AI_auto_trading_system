@@ -64,18 +64,26 @@ def _default_strategy() -> Strategy:
     real_trading_enabled: doc them muc J (octopus khong bao gio phat "bear" nen
     duong lenh that chi MUA, khong bao gio BAN).
 
-    05/09: NGHIEM TRONG HON — CHIEN LUOC NAY DANG CAM O DAY.
-    min_avg_value_20 = 2 ty la nguong cho bar NGAY ("binh quan 20 phien"), nhung
-    engine subscribe "bars.>" tuc bar 5 PHUT, nen no thanh "binh quan 100 phut
-    >= 2 ty" — cao gap ~78 lan y dinh. Do tren chinh bang `bars` ma warm-up doc:
-    HII 0/3.211 bar mo cong, AAA 0/4.597, IJC 24/4.719 => 0 tin hieu "bull".
-    Octopus van THOAT duoc vi the thua ke (on_bar dat TP khi thay held > 0),
-    nhung khong bao giờ MO duoc vi the moi.
+    05/09: phat hien "engine dang CAM" — min_avg_value_20 = 2 ty bi tinh binh
+    quan tren N BAR thay vi N NGAY, nen tren bar 5 phut no thanh nguong cao gap
+    ~78 lan y dinh. HII 0/3.211 bar mo cong, AAA 0/4.597, IJC 24/4.719 => 0 tin
+    hieu "bull".
 
-    Rong hon: MOI phep do chien luoc trong repo chay tren bars_daily, con engine
-    chay bar 5 phut — ema_trend=200 thanh ~4 phien thay vi 10 thang. Con so
-    -1.615.319.902 o tren mo ta khung NGAY, khong mo ta cai dang chay o day.
-    Xem docs/superpowers/plans/2026-09-05-danh-gia-go-live-va-plan-ton-dong.md.
+    06/09 (goi K): DA SUA — DailyLiquidityTracker gop gia tri giao dich theo
+    ngay giao dich truoc khi lay binh quan (xem octopus_pullback.py). Tai hien
+    dung bit-for-bit bang khung ngay cu (-1.615.319.902 / 1.514 lenh / 439 ma)
+    sau khi sua — chi don vi thoi gian cua cua so sai, khong phai cong thuc.
+
+    Do lai tren bang `bars` that sau khi sua (05/09→06/09):
+    IJC 0→6 tin hieu bull, AAA 0→6, nhung HII VAN 0 bull (cong thanh khoan da
+    mo 41,8% — khong con la loi don vi, la vi dieu kien EMA/MACD/pullback cua
+    chinh HII chua khop trong lich su co). Chay lai
+    `scripts/check_silent_engine.py` de xem trang thai hien tai — DUNG doc
+    dong nay nhu "da het cam hoan toan", HII van bi chuong CRITICAL flag.
+
+    Con so -1.615.319.902 van mo ta khung NGAY (10 nam), khac voi so do duoc
+    tren khung 5 phut ma engine that su chay (xem
+    docs/superpowers/research/2026-09-06-master-audit-report-dot-6.md).
     """
     return OctopusPullbackStrategy()
 
