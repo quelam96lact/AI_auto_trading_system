@@ -66,10 +66,18 @@ lặng lẽ trả `False` cho mọi chiến lược, chốt an toàn thành đ�
 vẫn xanh. Đây là kịch bản hỏng nguy hiểm nhất của cả gói — **(c) là tiêu chí
 quan trọng hơn (a)**.
 
-**(d) Chốt thật.** Đọc `config/config.yaml` bằng `load_config`, lấy
-`real_trading_enabled`, dò `_default_strategy()`, rồi khẳng định không vi phạm.
-Thông điệp khi hỏng phải nói ra mục J và hậu quả ("chỉ MUA thật, không BÁN
-thật"), đừng chỉ `assert False`.
+**(d) Chốt thật.** Lấy `real_trading_enabled` từ `config/config.yaml`, dò
+`_default_strategy()`, rồi khẳng định không vi phạm. Thông điệp khi hỏng phải
+nói ra mục J và hậu quả ("chỉ MUA thật, không BÁN thật"), đừng chỉ `assert False`.
+
+**Đọc bằng `yaml.safe_load` trực tiếp, KHÔNG dùng `load_config`.** Đã thử:
+`load_config('config/config.yaml')` không có biến môi trường thì ném
+`KeyError: 'DB_DSN'` — nó còn đòi `SSI_CONSUMER_ID`, `SSI_CONSUMER_SECRET`,
+`SSI_API_KEY`, `SSI_API_SECRET`, `SSI_PRIVATE_KEY` (`trading/config.py:40-48`).
+`tests/test_config.py` lách bằng `monkeypatch`, nhưng gói S **không được đi
+đường đó**: kéo cả một rổ tên biến bí mật vào một test chỉ cần đúng một giá trị
+bool là thừa và tạo tiền lệ xấu. Khoá cần canh nằm ở **file config**, đọc thẳng
+đúng khoá đó là đúng độ hạt.
 
 ### 1.3 Ràng buộc cứng
 
@@ -81,8 +89,9 @@ thật"), đừng chỉ `assert False`.
 - Đường dẫn tới `config/config.yaml` phải suy từ vị trí file test
   (`Path(__file__).parent.parent`), **không** từ thư mục đang đứng — nếu không
   test chỉ xanh khi chạy từ gốc repo.
-- Test phải chạy được **không cần Docker/DB/NATS**: nó nằm trong lượt
-  `-m "not integration"`.
+- Test phải chạy được **không cần Docker/DB/NATS và không cần biến môi trường
+  nào**: nó nằm trong lượt `-m "not integration"`. Không `monkeypatch` biến bí
+  mật — xem (d).
 
 ### 1.4 Tiêu chí
 
