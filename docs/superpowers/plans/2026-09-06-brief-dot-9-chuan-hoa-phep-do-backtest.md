@@ -105,6 +105,31 @@ Thêm vào bảng đầu ra của `measure_octopus_matched_basket.py` và
 `−1.615.319.902 / 1.514 lệnh / 439 mã / 748 mã đủ TK` và
 `−9.826.136.733 / 11.316 lệnh / 653 mã`. Lệch một đồng là hỏng.
 
+### GIAI ĐOẠN 1b — Áp thước đo lên CẢ HAI thị trường
+
+**Quyết định của chủ dự án (06/09):** không tạo chiến lược mới; dùng thước đo
+mới **đo lại toàn bộ những gì đã có, trên cả VN lẫn crypto, với PHÍ THẬT.**
+
+Vì vậy các số đo ở §2.2 phải được đưa vào **cả** nhóm script crypto
+(`measure_crypto_strategies.py`, `measure_octopus_combo_hybrid.py`), không chỉ
+hai script VN.
+
+#### 2.2b. Phí BingX — ĐẦU VÀO BẮT BUỘC, CẤM ĐOÁN
+
+Ràng buộc thường trực của dự án: **không đoán phí BingX, bước khối lượng,
+endpoint, hay ngày nghỉ lễ.** Toàn bộ số crypto hiện có tính `fee_rate=0.0`, và
+với 13.612–27.571 lệnh thì phí quyết định dấu của kết quả — đây không phải chi
+tiết phụ, nó là toàn bộ câu trả lời.
+
+Do đó:
+
+- Biểu phí BingX phải được **chủ dự án cung cấp**, hoặc lấy từ nguồn chính thức
+  mà chủ dự án chỉ định. Agent **không được tự điền một con số nào.**
+- Trong khi chưa có: vẫn chạy được, nhưng **bắt buộc** in ở đầu mọi bảng crypto
+  dòng `PHÍ = 0 — SỐ DANH NGHĨA, KHÔNG PHẢI LỢI NHUẬN`, và không được rút bất
+  kỳ kết luận nào từ các bảng đó.
+- Chuẩn bị sẵn để khi có số thật thì chỉ cần truyền tham số, không phải sửa code.
+
 ### GIAI ĐOẠN 2 — Kỷ luật ngoài mẫu (`trading/sampling.py` + `scripts/`)
 
 #### 2.3. Tách mẫu theo THỜI GIAN
@@ -207,7 +232,9 @@ biên lợi thế của nó (nếu có) mỏng hơn sai số của chính giả 
 - `tests/test_metrics.py`, `tests/test_sampling.py` (mới)
 - `scripts/param_sensitivity.py` (mới)
 - `scripts/measure_octopus_matched_basket.py`,
-  `scripts/measure_octopus_combo_matched_basket.py` — **chỉ thêm cột**
+  `scripts/measure_octopus_combo_matched_basket.py`,
+  `scripts/measure_crypto_strategies.py`,
+  `scripts/measure_octopus_combo_hybrid.py` — **chỉ thêm cột**, không đổi logic đo
 - `trading/pattern_backtest.py` — **chỉ** chữ ký chi phí ở §2.7
 - Các nơi gọi bị ảnh hưởng bởi §2.7
 - `docs/holdout-unlock-log.md` (mới)
