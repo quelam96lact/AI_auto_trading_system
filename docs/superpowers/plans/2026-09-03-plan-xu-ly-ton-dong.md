@@ -392,7 +392,7 @@ chắn. Thứ tự đúng: A lên → 04/09 xác nhận A đúng → tuần sau 
 | Mã | Việc | Vì sao gấp dần |
 |---|---|---|
 | **C2** | Docker Desktop tự khởi động | 02/09 và 03/09 đều phải bật tay; chuông Docker của đợt 8 hôm nay **kêu thật lần đầu** lúc 08:00 — nó đang làm đúng việc che cho một quy trình thủ công |
-| **C3** | Lịch nghỉ lễ 2026 | ngày lễ chưa khai làm chuông 2A báo láo cả ngày |
+| **C3** | Lịch nghỉ lễ 2026 | ngày lễ chưa khai làm chuông 2A báo láo cả ngày — **đã gỡ phần lớn, xem ghi chú dưới bảng** |
 | **C1** | VPS Ubuntu | `sched.sh` và `DEPLOYMENT.md §1–§10` đã sẵn |
 | **E** | Vốn engine: 0434221 (5tr) hay 0434226 (tiền thật) | vô hại khi `real_trading_enabled=false`, **phải xong trước khi bật thật** |
 | **F** | Phạm vi BingX: spot hay perpetual? có đòn bẩy không? | quyết định này định hình gói C và mọi thứ sau nó |
@@ -400,6 +400,20 @@ chắn. Thứ tự đúng: A lên → 04/09 xác nhận A đúng → tuần sau 
 
 Câu hỏi F đáng trả lời sớm nhất: **"không dùng đòn bẩy"** làm toàn bộ đường
 crypto nhỏ đi rất nhiều (không thanh lý, không margin, gần với cổ phiếu).
+
+### C3 — trạng thái sau gói R (05/09)
+
+**2026 coi như xong, và không gấp.** Đối chiếu ngược `bars_daily` cho thấy đúng
+**13 ngày làm việc** trong 2026 có 0 mã (tính tới 04/09), trùng khít danh sách
+gói R khai — vừa đúng vừa không sót. Ba ngày đã có trong `config.yaml` nằm trong
+số đó. Mười ngày còn lại đều **đã qua**, nên khai hay không khai không còn ảnh
+hưởng chuông báo. Và từ 03/09 tới hết năm, theo Điều 112 BLLĐ, **không còn ngày
+lễ nào** — nên C3 không chặn go-live 2026.
+
+**2027 thì chưa có gì dùng được.** Gói R nộp danh sách 2027 **không kèm nguồn**
+(chi tiết ở phụ lục audit của `2026-09-05-dot-4-q-r-report.md`). Không khai
+những ngày đó vào `config.yaml` cho tới khi tra lại được văn bản thật. Tết 2027
+rơi vào tháng 2 nên còn dư thời gian.
 
 ---
 
