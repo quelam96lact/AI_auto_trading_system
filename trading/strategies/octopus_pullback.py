@@ -75,12 +75,13 @@ class DailyLiquidityTracker:
         else:
             self._cur_day_val += bar.close * bar.volume
 
-        if len(self._closed_days) < self.window:
-            return None
-        return sum(self._closed_days) / self.window
+        return self.current_avg()
 
     def current_avg(self) -> float | None:
-        """Bình quân của `window` ngày đã đóng gần nhất TRƯỚC ngày hiện tại."""
+        """Bình quân của `window` ngày đã đóng gần nhất TRƯỚC ngày hiện tại.
+        MỘT NGUỒN SỰ THẬT: `update()` gọi lại hàm này thay vì tính lại — hai
+        chỗ tính cùng một công thức đã lệch nhau một lần trong session này
+        (`4ea4c8d`), không lặp lại kiểu lỗi đó trong cùng một class."""
         if len(self._closed_days) < self.window:
             return None
         return sum(self._closed_days) / self.window
