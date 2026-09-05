@@ -95,16 +95,62 @@ def _generate_deterministic_bars(
     return bars
 
 
+def _generate_pullback_bars(symbol: str = "GUARD") -> list[Bar]:
+    """Chuỗi HÌNH CHỮ V: tăng dài → chỉnh 8 nến đỏ → bật lại dốc.
+
+    Khác chuỗi ở trên, chuỗi này đưa octopus đi HẾT đường vào lệnh, thoả cả năm
+    điều kiện của `compute_crossover`: EMA9 cắt lên EMA21 (cần một nhịp chỉnh đủ
+    sâu để EMA9 tụt xuống dưới trước đã), MACD hist > 0, close > EMA200,
+    >= 2 nến đỏ trong 5 phiên trước, và cổng thanh khoản mở.
+
+    Ba tham số dưới đây không tuỳ tiện: nhịp chỉnh phải đủ sâu (8 nến, −6,0) để
+    EMA9 cắt xuống, và nhịp bật phải đủ dốc (+30,0) để EMA9 cắt lên lại TRONG
+    vòng 5 bar — nếu bật chậm thì lúc cắt lên, cửa sổ 5 phiên trước đã sạch nến
+    đỏ và điều kiện pullback trượt.
+    """
+    base_time = datetime(2026, 1, 1, 9, 0, tzinfo=TZ)
+    bars: list[Bar] = []
+    price = 100.0
+
+    def add(open_: float, close_: float) -> None:
+        bars.append(
+            Bar(
+                symbol=symbol,
+                ts=base_time + timedelta(minutes=5 * len(bars)),
+                open=open_,
+                high=max(open_, close_) + 1.0,
+                low=min(open_, close_) - 1.0,
+                close=close_,
+                volume=_VOLUME,
+            )
+        )
+
+    for _ in range(300):  # nền tăng, đủ dài cho EMA200
+        o = price
+        price += 2.0
+        add(o, price)
+    for _ in range(8):  # nhịp chỉnh — nến đỏ
+        o = price
+        price -= 6.0
+        add(o, price)
+    for _ in range(40):  # bật lại
+        o = price
+        price += 30.0
+        add(o, price)
+
+    return bars
+
+
+def _signals(strategy: Strategy, bars: list[Bar]) -> set[str | None]:
+    """Tập tín hiệu chiến lược phát ra trên một chuỗi bar."""
+    return {strategy.compute_crossover(bar) for bar in bars}
+
+
 def _can_emit_bear(strategy: Strategy) -> bool:
     """Phép dò: cho chiến lược ăn chuỗi bar tất định và gọi compute_crossover
     từng bar, ghi lại xem có bất kỳ bar nào trả về tín hiệu 'bear' hay không.
     """
-    bars = _generate_deterministic_bars()
-    for bar in bars:
-        sig = strategy.compute_crossover(bar)
-        if sig == "bear":
-            return True
-    return False
+    return "bear" in _signals(strategy, _generate_deterministic_bars())
 
 
 # ---------------------------------------------------------------------------
@@ -150,45 +196,45 @@ def test_anti_rot_sma_cross_must_emit_bear():
     )
 
 
-def test_phep_do_vuot_qua_duoc_cong_thanh_khoan_cua_octopus():
+def test_anti_rot_phep_do_cham_duoc_duong_vao_lenh_cua_octopus():
     """Chốt chống mục ruỗng cho CHÍNH phép dò, phía octopus.
 
-    `_can_emit_bear(octopus)` trả False vì HAI lý do rất khác nhau có thể xảy
-    ra: (1) octopus một chiều thật, hoặc (2) bar mẫu quá nhỏ nên cổng thanh
-    khoản `min_avg_value_20 = 2 tỷ` chặn hết, chiến lược chưa từng chạy tới
-    logic tín hiệu. Bản đầu của file này rơi đúng vào (2): volume 100.000 cho
-    giá trị 35 triệu/phiên, cổng ĐÓNG ở 300/300 bar — khẳng định đúng nhưng
-    bằng chứng rỗng.
+    "Octopus không phát bear" có thể đúng vì HAI lý do rất khác nhau:
+    (1) chiến lược một chiều thật, hoặc (2) bar mẫu không bao giờ đưa nó tới
+    chỗ ra quyết định, nên nó im lặng vì lý do chẳng liên quan gì. Bản đầu của
+    file này rơi đúng vào (2) theo cách tệ nhất: volume 100.000 cho giá trị 35
+    triệu/phiên, cổng thanh khoản 2 tỷ ĐÓNG ở cả 300/300 bar.
 
-    Test này bắt phép dò phải đi qua được cổng, để lời khẳng định ở
-    test_anti_rot_octopus_cannot_emit_bear nói về chiến lược chứ không nói về
-    độ nhỏ của dữ liệu giả.
+    Test này đòi bằng chứng dương: trên chuỗi chữ V, octopus PHẢI phát "bull"
+    ít nhất một lần. Phát được "bull" nghĩa là cả năm điều kiện đã chạy qua
+    (kể cả cổng thanh khoản) — tức phép dò thật sự chạm vào logic tín hiệu.
+    Chỉ khi đó câu "cũng chuỗi ấy mà không có 'bear' nào" mới nói về chiến
+    lược, chứ không nói về độ nhỏ của dữ liệu giả.
     """
-    strategy = OctopusPullbackStrategy()
-    mo = 0
-    for bar in _generate_deterministic_bars():
-        strategy.compute_crossover(bar)
-        if strategy._liquidity_ok("GUARD"):
-            mo += 1
-    assert mo > 0, (
-        f"Phép dò KHÔNG chạm tới logic tín hiệu của octopus: cổng thanh khoản "
-        f"đóng ở toàn bộ bar (min_avg_value_20 = "
-        f"{strategy.min_avg_value_20:,.0f}, giá trị bar mẫu quá nhỏ). "
-        f"Tăng _VOLUME cho tới khi cổng mở."
+    tin_hieu = _signals(OctopusPullbackStrategy(), _generate_pullback_bars())
+    assert "bull" in tin_hieu, (
+        f"Phép dò KHÔNG chạm tới đường vào lệnh của octopus — chuỗi mẫu không "
+        f"kích hoạt nổi một tín hiệu nào (thấy: {sorted(map(str, tin_hieu))}). "
+        f"Mọi khẳng định 'octopus không phát bear' dựa trên chuỗi này đều rỗng "
+        f"nghĩa cho tới khi test này xanh trở lại."
     )
 
 
 def test_anti_rot_octopus_cannot_emit_bear():
     """BẮT BUỘC: OctopusPullbackStrategy KHÔNG BAO GIỜ phát ra 'bear'.
 
-    Đọc kèm test_phep_do_vuot_qua_duoc_cong_thanh_khoan_cua_octopus — không có
-    test đó thì khẳng định này rỗng nghĩa.
+    Kiểm trên CẢ HAI chuỗi — chuỗi giảm sâu (nơi sma_cross phát bear) và chuỗi
+    chữ V (nơi octopus thật sự vào lệnh). Đọc kèm
+    test_anti_rot_phep_do_cham_duoc_duong_vao_lenh_cua_octopus: không có test
+    đó thì khẳng định này rỗng nghĩa.
     """
-    strategy = OctopusPullbackStrategy()
-    assert _can_emit_bear(strategy) is False, (
+    assert _can_emit_bear(OctopusPullbackStrategy()) is False, (
         "OctopusPullbackStrategy bất ngờ phát tín hiệu 'bear'. Nếu octopus đã được nâng cấp "
         "phát bear, hãy cập nhật lại tài liệu và chốt kiểm thử."
     )
+    assert "bear" not in _signals(
+        OctopusPullbackStrategy(), _generate_pullback_bars()
+    ), "OctopusPullbackStrategy phát 'bear' trên chuỗi chữ V — mục J đã đổi bản chất."
 
 
 def test_anti_rot_default_strategy_is_octopus_and_cannot_emit_bear():

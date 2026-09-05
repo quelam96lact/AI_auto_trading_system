@@ -180,7 +180,10 @@ Hai ghi chú không làm sai kết quả:
 
 1. `liq_spec` được dựng lại tại chỗ thay vì gọi `liquidity_spec()` của
    `measure_strategy.py`. Với octopus hai đường cho cùng một giá trị, nhưng đây
-   là một bản sao công thức thứ hai — đúng thứ mà `4ea4c8d` đã dọn.
+   là một bản sao công thức thứ hai — đúng thứ mà `4ea4c8d` đã dọn. **Đã sửa
+   khi audit** (import dùng chung); chạy lại cả 1.308 mã sau khi sửa vẫn khớp
+   từng chữ số. Tiêu đề bảng ghi cứng "1.308/748/439" cũng đã cho đọc từ số đo
+   thật — chạy `--limit` thì ba con số đó sai.
 2. **Lập luận "thua vì timing" đúng, nhưng báo cáo bỏ qua mắt xích mạnh nhất
    của chính nó.** Một chiến lược chỉ nằm trong thị trường một phần thời gian
    *đương nhiên* thua mua-và-giữ toàn kỳ — riêng điều đó chưa nói được gì về

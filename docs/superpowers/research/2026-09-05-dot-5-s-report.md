@@ -207,30 +207,48 @@ hằng số này** đã gây ra lần thứ hai.
 
 - `_VOLUME = 20_000_000` (giá trị 2–7 tỷ/phiên, trên ngưỡng), kèm chú thích nói
   rõ vì sao con số không tuỳ tiện.
-- Thêm `test_phep_do_vuot_qua_duoc_cong_thanh_khoan_cua_octopus`: bắt phép dò
-  phải mở được cổng, để lời khẳng định kia nói về **chiến lược** chứ không nói
-  về độ nhỏ của dữ liệu giả.
-- Phá hoại có kiểm soát cho chính test mới (hạ `_VOLUME` về 100.000):
+- Thêm `test_anti_rot_phep_do_cham_duoc_duong_vao_lenh_cua_octopus` cùng chuỗi
+  bar hình chữ V `_generate_pullback_bars()`. Test này đòi **bằng chứng dương**:
+  octopus phải phát `"bull"` ít nhất một lần. Phát được `"bull"` nghĩa là cả năm
+  điều kiện của `compute_crossover` đã chạy qua — EMA9 cắt lên EMA21, MACD hist
+  dương, close trên EMA200, đủ nến đỏ trong cửa sổ pullback, **và** cổng thanh
+  khoản mở. Chỉ khi đó câu "cũng chuỗi ấy mà không có `bear` nào" mới nói về
+  chiến lược.
+- `test_anti_rot_octopus_cannot_emit_bear` giờ kiểm trên **cả hai** chuỗi.
+
+Dựng được chuỗi chữ V không hiển nhiên: nhịp chỉnh phải đủ sâu (8 nến, −6,0) để
+EMA9 tụt xuống dưới EMA21, và nhịp bật phải đủ dốc (+30,0) để cắt lên lại
+**trong vòng 5 bar** — bật chậm thì tới lúc cắt lên, cửa sổ 5 phiên trước đã sạch
+nến đỏ và điều kiện pullback trượt. Lần dò đầu tiên thất bại đúng vì lý do này
+(`reds_before = 0` tại bar cắt lên).
+
+**Hai lần phá hoại có kiểm soát, cả hai đều bị bắt:**
 
 ```
-E       AssertionError: Phep do KHONG cham toi logic tin hieu cua octopus: cong
-        thanh khoan dong o toan bo bar (min_avg_value_20 = 2,000,000,000, gia tri
-        bar mau qua nho). Tang _VOLUME cho toi khi cong mo.
-E       assert 0 > 0
+# 1) bat nhip bat cham lai (+30,0 -> +3,0): EMA9 cat len qua muon
+>       assert "bull" in tin_hieu, (
+E       assert 'bull' in {None}
+1 failed, 8 passed
+
+# 2) ha _VOLUME ve 100.000: cong thanh khoan dong lai
+>       assert "bull" in tin_hieu, (
+E       assert 'bull' in {None}
 1 failed, 8 passed
 ```
 
-Khôi phục, `grep -rn "SABOTAGE" tests/ scripts/ trading/` rỗng.
+Phá hoại (2) đáng chú ý: nó tái hiện **đúng** khuyết tật gốc của gói S, và chốt
+mới bắt được. Khôi phục xong, `grep -rn "SABOTAGE" tests/ scripts/ trading/` rỗng.
 
-### Điều còn chưa chắc, ghi lại thay vì giấu
+### Ghi chú về gói Q, phát hiện cùng lượt tự soát
 
-Kể cả với volume mới, octopus **không phát tín hiệu nào** trên chuỗi bar này —
-không `"bear"` mà cũng không `"bull"`. Chuỗi tăng đều toàn nến xanh nên điều
-kiện "≥2 nến đỏ trong 5 phiên trước" không bao giờ thoả. Vậy phép dò mới chứng
-minh được là *cổng đã mở*, chưa chứng minh được *đường vào lệnh đã chạy*. Muốn
-mạnh hơn nữa thì phải dựng một chuỗi pullback thật (xanh dài, hai nến đỏ, MACD
-histogram còn dương) và bắt octopus phát `"bull"` ít nhất một lần. Chưa làm —
-ghi vào đây để không ai tưởng chốt này mạnh hơn thực tế.
+`measure_octopus_matched_basket.py` dựng lại `(min_avg_value_20, liquidity_window)`
+tại chỗ thay vì gọi `liquidity_spec()` của `measure_strategy.py` — một bản sao
+công thức thứ hai, đúng thứ `4ea4c8d` đã dọn. Đã đổi sang import dùng chung.
+Chạy lại toàn bộ 1.308 mã sau khi sửa: **khớp từng chữ số** với bảng cũ.
+
+Cùng lúc, tiêu đề bảng ghi cứng "1.308 mã / 748 mã / 439 mã" trong khi dữ liệu
+bên dưới lấy từ số đo thật — chạy với `--limit` thì tiêu đề nói dối. Đã cho nhãn
+đọc từ chính kết quả.
 
 ### Nền test sau audit
 
