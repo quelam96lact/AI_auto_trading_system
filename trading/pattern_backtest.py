@@ -77,6 +77,8 @@ def run_pattern_backtest(
     ema_trend_period: int = 200,
     use_trailing_sl: bool = False,
     trailing_atr_mult: float = 2.0,
+    use_breakeven: bool = False,
+    breakeven_atr_mult: float = 1.0,
 ) -> PatternBacktestReport:
     """Chạy mô phỏng lệnh STOP + SL/TP cho chiến lược nến trên chuỗi bar của 1 mã.
 
@@ -121,6 +123,7 @@ def run_pattern_backtest(
     ema_trend_calc = EmaCalculator(period=ema_trend_period)
     liquidity_tracker = DailyLiquidityTracker(window=20)
     reds_deque: deque[int] = deque(maxlen=pullback_window + 1)
+    greens_deque: deque[int] = deque(maxlen=pullback_window + 1)
     ma_closes: list[float] = []
 
     # Trạng thái vị thế đang mở
@@ -132,6 +135,7 @@ def run_pattern_backtest(
     pos_sl: float = 0.0
     pos_tp: float = 0.0
     pos_highest: float = 0.0
+    pos_lowest: float = 0.0
 
     # Lệnh STOP đang chờ kích hoạt (chỉ có hiệu lực trong 1 bar kế tiếp)
     pending_stop: dict | None = None
@@ -168,6 +172,7 @@ def run_pattern_backtest(
             if min_avg_value_20 > 0:
                 liquidity_tracker.update(b)
             reds_deque.append(1 if b.close < b.open else 0)
+            greens_deque.append(1 if b.close > b.open else 0)
 
         # -------------------------------------------------------------------
         # 1. Kiểm tra khớp lệnh STOP đang chờ từ bar trước
@@ -203,16 +208,28 @@ def run_pattern_backtest(
                     pos_sl = p_sl
                     pos_tp = p_tp
                     pos_highest = executed_price
+                    pos_lowest = executed_price
 
         # -------------------------------------------------------------------
         # 2. Quản lý vị thế đang mở (Kiểm tra SL / TP / Trailing Stop)
         # -------------------------------------------------------------------
         if pos_side is not None:
+            # Cập nhật Breakeven SL nếu được bật (khi giá đi đúng hướng >= breakeven_atr_mult * ATR)
+            if use_breakeven and atr is not None and atr > 0:
+                if pos_side == "BUY" and (b.high - pos_entry_price) >= breakeven_atr_mult * atr:
+                    pos_sl = max(pos_sl, pos_entry_price)
+                elif pos_side == "SELL" and (pos_entry_price - b.low) >= breakeven_atr_mult * atr:
+                    pos_sl = min(pos_sl, pos_entry_price)
+
             # Cập nhật trailing SL nếu được bật
             if pos_side == "BUY" and use_trailing_sl and atr is not None and atr > 0:
                 pos_highest = max(pos_highest, b.high)
                 trailing_level = pos_highest - trailing_atr_mult * atr
                 pos_sl = max(pos_sl, trailing_level)
+            elif pos_side == "SELL" and use_trailing_sl and atr is not None and atr > 0:
+                pos_lowest = min(pos_lowest, b.low)
+                trailing_level = pos_lowest + trailing_atr_mult * atr
+                pos_sl = min(pos_sl, trailing_level)
 
             is_settled = (day_idx - pos_entry_day_idx) >= settle_days
             sl_touch = False
@@ -371,30 +388,51 @@ def run_pattern_backtest(
                 and prev_fast is not None
                 and prev_slow is not None
             ):
-                # 1. Xu hướng tăng: Close > EMA200 và Close > MA20
-                trend_ok = b.close > ema_trend and (ma20 is None or b.close > ma20)
-                # 2. Nến xanh đảo chiều: Close > Open, EMA9 > EMA21, MACD hist > 0
-                bull_trigger = (
-                    b.close > b.open and ema_fast > ema_slow and macd_hist > 0
-                )
-                # 3. Pullback: >= pullback_red nến đỏ trong window phiên trước
-                reds_ok = False
-                if len(reds_deque) >= pullback_window + 1:
-                    reds_count = sum(list(reds_deque)[:pullback_window])
-                    reds_ok = reds_count >= pullback_red
                 # 4. Thanh khoản:
                 liq_ok = True
                 if min_avg_value_20 > 0:
                     cur_liq = liquidity_tracker.current_avg()
                     liq_ok = cur_liq is not None and cur_liq >= min_avg_value_20
 
-                if trend_ok and bull_trigger and reds_ok and liq_ok:
-                    pending_stop = {
-                        "side": "BUY",
-                        "entry_level": b.high + x_val,
-                        "sl_level": b.low - x_val,
-                        "tp_level": (b.high + x_val) + k_tp * atr,
-                    }
+                if liq_ok:
+                    # A. Chiều MUA (LONG / Bullish Pullback)
+                    trend_up = b.close > ema_trend and (ma20 is None or b.close > ma20)
+                    bull_trigger = (
+                        b.close > b.open and ema_fast > ema_slow and macd_hist > 0
+                    )
+                    reds_ok = False
+                    if len(reds_deque) >= pullback_window + 1:
+                        reds_count = sum(list(reds_deque)[:pullback_window])
+                        reds_ok = reds_count >= pullback_red
+
+                    if trend_up and bull_trigger and reds_ok:
+                        pending_stop = {
+                            "side": "BUY",
+                            "entry_level": b.high + x_val,
+                            "sl_level": b.low - x_val,
+                            "tp_level": (b.high + x_val) + k_tp * atr,
+                        }
+
+                    # B. Chiều BÁN KHỐNG (SHORT / Bearish Rally - chỉ khi allow_short)
+                    elif allow_short:
+                        trend_down = b.close < ema_trend and (
+                            ma20 is None or b.close < ma20
+                        )
+                        bear_trigger = (
+                            b.close < b.open and ema_fast < ema_slow and macd_hist < 0
+                        )
+                        greens_ok = False
+                        if len(greens_deque) >= pullback_window + 1:
+                            greens_count = sum(list(greens_deque)[:pullback_window])
+                            greens_ok = greens_count >= pullback_red
+
+                        if trend_down and bear_trigger and greens_ok:
+                            pending_stop = {
+                                "side": "SELL",
+                                "entry_level": b.low - x_val,
+                                "sl_level": b.high + x_val,
+                                "tp_level": (b.low - x_val) - k_tp * atr,
+                            }
 
         recent_bars.append(b)
         if len(recent_bars) > 10:

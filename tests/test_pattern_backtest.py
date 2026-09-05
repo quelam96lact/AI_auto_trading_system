@@ -447,3 +447,83 @@ def test_octopus_combo_with_trailing_stop():
     assert rep.trades[0].reason == "SL"
     # Nhờ trailing SL kéo lên theo đỉnh p+15, thoát lệnh vẫn có lãi
     assert rep.trades[0].pnl > 0
+
+
+def test_octopus_combo_short_trigger():
+    """Kiểm tra octopus_combo phát hiện tín hiệu SHORT (Bearish Octopus Pullback):
+    Downtrend (Close < EMA200 & MA20) + >=2 nến xanh hồi + nến đỏ đảo chiều -> SELL STOP.
+    """
+    bars = []
+    p = 300.0
+    # 210 nến downtrend
+    for i in range(210):
+        p -= 0.5
+        bars.append(
+            _make_bar(
+                idx=i,
+                open=p + 0.6,
+                high=p + 0.8,
+                low=p - 0.6,
+                close=p,
+                volume=100_000,
+            )
+        )
+    # 3 nến xanh hồi phục
+    for i in range(3):
+        p += 0.5
+        bars.append(
+            _make_bar(
+                idx=210 + i,
+                open=p - 0.4,
+                high=p + 0.6,
+                low=p - 0.6,
+                close=p,
+                volume=100_000,
+            )
+        )
+    # 1 nến đỏ đảo chiều mạnh
+    p -= 3.0
+    bars.append(
+        _make_bar(
+            idx=213,
+            open=p + 2.5,
+            high=p + 2.7,
+            low=p - 0.5,
+            close=p,
+            volume=100_000,
+        )
+    )
+    # Nến 214: Sập gãy đáy nến đỏ trước -> Khớp lệnh SELL STOP
+    bars.append(
+        _make_bar(
+            idx=214,
+            open=p,
+            high=p + 0.2,
+            low=p - 4.0,
+            close=p - 3.5,
+            volume=100_000,
+        )
+    )
+    # Nến 215: Tiếp tục sập mạnh -> Chạm TP của vị thế Short
+    bars.append(
+        _make_bar(
+            idx=215,
+            open=p - 3.5,
+            high=p - 3.0,
+            low=p - 20.0,
+            close=p - 18.0,
+            volume=100_000,
+        )
+    )
+
+    rep = run_pattern_backtest(
+        bars,
+        strategy_name="octopus_combo",
+        k_tp=1.5,
+        allow_short=True,
+    )
+    assert rep.total_trades >= 1
+    assert all(t.side == "SELL" for t in rep.trades)
+    assert rep.trades[-1].reason == "TP"
+    assert rep.trades[-1].pnl > 0
+
