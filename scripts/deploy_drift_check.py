@@ -23,6 +23,16 @@ import subprocess
 import sys
 from datetime import datetime
 
+# Hai loi goi: `uv run python scripts/x.py` (scripts/ o sys.path[0]) va
+# `from scripts import deploy_drift_check` (test). Khuon nay lay tu
+# measure_octopus_matched_basket.py — thieu no thi test chay RIENG file nay se
+# ModuleNotFoundError, con chay ca suite lai qua vi module khac da chen
+# scripts/ vao sys.path truoc. Da gap that 05/09 khi tach _alert_common.
+try:
+    from _alert_common import alert_and_fail
+except ImportError:
+    from scripts._alert_common import alert_and_fail
+
 from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
@@ -122,17 +132,13 @@ def _image_created_epoch(container: str) -> int | None:
         return int(dt.timestamp())
     except Exception:
         return None
+
+
 def _alert(messages: list[str]) -> int:
-    """In ly do ra stdout TRUOC roi moi gui — neu send_telegram nem thi van
-    con ban ghi o log (khuon heartbeat_check). Gui hong khong duoc lam chet
-    script, nhung PHAI de lai dau vet."""
-    text = "\n".join(messages)
-    _print_safe(text)
-    try:
-        send_telegram(text)
-    except Exception as e:
-        _print_safe(f"[deploy-drift] GUI TELEGRAM HONG: {type(e).__name__}: {e}")
-    return 1
+    """In ly do ra stdout TRUOC roi moi gui. Cong thuc o `_alert_common` —
+    `send_telegram` truyen vao de no van la bien toan cuc cua MODULE NAY, vi
+    test monkeypatch theo day."""
+    return alert_and_fail("[deploy-drift]", messages, send_telegram)
 
 
 def main() -> int:
@@ -157,12 +163,16 @@ def main() -> int:
             ]
         )
 
-    images = {svc: _image_created_epoch(f"ai_auto_trading_system-{svc}-1") for svc in SERVICES}
+    images = {
+        svc: _image_created_epoch(f"ai_auto_trading_system-{svc}-1") for svc in SERVICES
+    }
     messages = drift_report(commit_epoch, images)
 
     if messages:
         return _alert(messages)
-    _print_safe("OK: không lệch triển khai — image của collector và engine mới hơn commit gần nhất chạm trading/")
+    _print_safe(
+        "OK: không lệch triển khai — image của collector và engine mới hơn commit gần nhất chạm trading/"
+    )
     return 0
 
 

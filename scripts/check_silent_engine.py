@@ -20,9 +20,9 @@ import yaml
 
 # Thêm scripts/ vào sys.path để import _db_common
 sys.path.insert(0, str(Path(__file__).parent))
+from _alert_common import alert_and_fail
 from _db_common import resolve_dsn
 
-from trading.alerts import _print_safe
 from trading.engine.main import _default_strategy
 from trading.models import Bar
 from trading.storage.db import Storage
@@ -131,19 +131,14 @@ def check_engine_symbols(
 
 
 def _alert(messages: list[str]) -> int:
-    """In lý do ra stdout TRƯỚC rồi mới gửi — gửi hỏng không được làm chết
-    script, nhưng PHẢI để lại dấu vết (khuôn `deploy_drift_check._alert`).
+    """Cong thuc o `_alert_common` (khuon deploy_drift_check). `send_telegram`
+    truyen vao de no van la bien toan cuc cua MODULE NAY — test monkeypatch
+    theo day.
 
-    Không có hàm này thì gói X chỉ là một script phải nhớ chạy bằng tay — mà
-    chính lỗi nó phát hiện đã sống bốn tháng vì không ai nhớ nhìn.
+    Khong co ham nay thi goi X chi la mot script phai nho chay bang tay, ma
+    chinh loi no phat hien da song bon thang vi khong ai nho nhin.
     """
-    text = "\n".join(messages)
-    _print_safe(text)
-    try:
-        send_telegram(text)
-    except Exception as e:
-        _print_safe(f"[engine-cam] GUI TELEGRAM HONG: {type(e).__name__}: {e}")
-    return 1
+    return alert_and_fail("[engine-cam]", messages, send_telegram)
 
 
 def main() -> int:
