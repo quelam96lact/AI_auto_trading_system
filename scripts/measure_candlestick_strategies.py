@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
 from trading.models import Bar
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import PatternBacktestReport, run_pattern_backtest
 from trading.storage.db import Storage
 
@@ -73,8 +74,12 @@ def evaluate_strategy_on_dataset(
     premature_touches = sum(r.premature_touch_count for r in reports)
 
     # Buy & Hold tính trên ĐÚNG rổ mã sinh lệnh
-    bh_pnl_traded = sum(r.buy_and_hold_pnl for r in traded_reports) if traded_reports else 0.0
-    win_bh_traded_count = sum(1 for r in traded_reports if r.realized_pnl > r.buy_and_hold_pnl)
+    bh_pnl_traded = (
+        sum(r.buy_and_hold_pnl for r in traded_reports) if traded_reports else 0.0
+    )
+    win_bh_traded_count = sum(
+        1 for r in traded_reports if r.realized_pnl > r.buy_and_hold_pnl
+    )
     win_bh_pct = (win_bh_traded_count / n_traded * 100.0) if n_traded > 0 else 0.0
     win_rate = (total_winning / total_trades * 100.0) if total_trades > 0 else 0.0
 
@@ -95,7 +100,9 @@ def evaluate_strategy_on_dataset(
     }
 
 
-def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title: str, currency: str) -> None:
+def print_comparison_table(
+    results_sl: list[dict], results_tp: list[dict], title: str, currency: str
+) -> None:
     """In bảng so sánh song song hai giả định SL-trước và TP-trước."""
     print("\n" + "=" * 135)
     print(f"BÁO CÁO ĐO HIỆU SUẤT CHIẾN LƯỢC NẾN: {title.upper()}")
@@ -121,7 +128,9 @@ def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title
         )
 
         if r_sl["premature_touches"] > 0:
-            print(f"   └─ [CẢNH BÁO T+2.5]: Có {r_sl['premature_touches']} lần chạm SL/TP trước khi đủ ngày settle.")
+            print(
+                f"   └─ [CẢNH BÁO T+2.5]: Có {r_sl['premature_touches']} lần chạm SL/TP trước khi đủ ngày settle."
+            )
 
     print("=" * 135)
 
@@ -142,7 +151,13 @@ def verify_5m_order_on_both_touched(
         if len(dbars) < 30:
             continue
         # Chạy backtest daily để tìm các ngày both_touched
-        rep = run_pattern_backtest(dbars, strategy_name=strategy_name, x_atr_ratio=x_atr, k_tp=k_tp, sl_first=True)
+        rep = run_pattern_backtest(
+            dbars,
+            strategy_name=strategy_name,
+            x_atr_ratio=x_atr,
+            k_tp=k_tp,
+            sl_first=True,
+        )
         both_trades = [t for t in rep.trades if t.both_touched]
 
         for t in both_trades:
@@ -192,15 +207,41 @@ def main() -> int:
         print("Đang nạp dữ liệu Crypto (bars_crypto)...")
         crypto_1d = {}
         with storage.conn() as c:
-            rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1d\' ORDER BY symbol, ts').fetchall()
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1d' ORDER BY symbol, ts"
+            ).fetchall()
             for r in rows:
-                crypto_1d.setdefault(r[0], []).append(Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx"))
+                crypto_1d.setdefault(r[0], []).append(
+                    Bar(
+                        symbol=r[0],
+                        ts=r[1],
+                        open=float(r[2]),
+                        high=float(r[3]),
+                        low=float(r[4]),
+                        close=float(r[5]),
+                        volume=int(r[6]),
+                        source="bingx",
+                    )
+                )
 
         crypto_1h = {}
         with storage.conn() as c:
-            rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1h\' ORDER BY symbol, ts').fetchall()
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1h' ORDER BY symbol, ts"
+            ).fetchall()
             for r in rows:
-                crypto_1h.setdefault(r[0], []).append(Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx"))
+                crypto_1h.setdefault(r[0], []).append(
+                    Bar(
+                        symbol=r[0],
+                        ts=r[1],
+                        open=float(r[2]),
+                        high=float(r[3]),
+                        low=float(r[4]),
+                        close=float(r[5]),
+                        volume=int(r[6]),
+                        source="bingx",
+                    )
+                )
 
         configs_crypto = [
             # Strategy, x_atr, k_tp
@@ -218,21 +259,83 @@ def main() -> int:
         res_c1d_sl = []
         res_c1d_tp = []
         for strat, x_r, ktp in configs_crypto:
-            r_sl = evaluate_strategy_on_dataset(crypto_1d, strat, 100_000.0, x_r, ktp, sl_first=True, fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0, settle_days=0, lot_size=1, allow_short=True)
-            r_tp = evaluate_strategy_on_dataset(crypto_1d, strat, 100_000.0, x_r, ktp, sl_first=False, fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0, settle_days=0, lot_size=1, allow_short=True)
+            r_sl = evaluate_strategy_on_dataset(
+                crypto_1d,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                sl_first=True,
+                fee_rate=0.0,
+                sell_tax_rate=0.0,
+                slippage_bps=0.0,
+                settle_days=0,
+                lot_size=1,
+                allow_short=True,
+            )
+            r_tp = evaluate_strategy_on_dataset(
+                crypto_1d,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                sl_first=False,
+                fee_rate=0.0,
+                sell_tax_rate=0.0,
+                slippage_bps=0.0,
+                settle_days=0,
+                lot_size=1,
+                allow_short=True,
+            )
             res_c1d_sl.append(r_sl)
             res_c1d_tp.append(r_tp)
-        print_comparison_table(res_c1d_sl, res_c1d_tp, "Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã)", "USDT")
+        print_comparison_table(
+            res_c1d_sl,
+            res_c1d_tp,
+            "Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã)",
+            "USDT",
+        )
 
         # Đo Crypto 1H
         res_c1h_sl = []
         res_c1h_tp = []
         for strat, x_r, ktp in configs_crypto:
-            r_sl = evaluate_strategy_on_dataset(crypto_1h, strat, 100_000.0, x_r, ktp, sl_first=True, fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0, settle_days=0, lot_size=1, allow_short=True)
-            r_tp = evaluate_strategy_on_dataset(crypto_1h, strat, 100_000.0, x_r, ktp, sl_first=False, fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0, settle_days=0, lot_size=1, allow_short=True)
+            r_sl = evaluate_strategy_on_dataset(
+                crypto_1h,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                sl_first=True,
+                fee_rate=0.0,
+                sell_tax_rate=0.0,
+                slippage_bps=0.0,
+                settle_days=0,
+                lot_size=1,
+                allow_short=True,
+            )
+            r_tp = evaluate_strategy_on_dataset(
+                crypto_1h,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                sl_first=False,
+                fee_rate=0.0,
+                sell_tax_rate=0.0,
+                slippage_bps=0.0,
+                settle_days=0,
+                lot_size=1,
+                allow_short=True,
+            )
             res_c1h_sl.append(r_sl)
             res_c1h_tp.append(r_tp)
-        print_comparison_table(res_c1h_sl, res_c1h_tp, "Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã)", "USDT")
+        print_comparison_table(
+            res_c1h_sl,
+            res_c1h_tp,
+            "Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã)",
+            "USDT",
+        )
 
     # -----------------------------------------------------------------------
     # 2. CHỨNG KHOÁN VN (Khung 1D bars_daily, Long-only, T+2.5, Biểu phí VN)
@@ -240,14 +343,18 @@ def main() -> int:
     if args.market in ("all", "vn"):
         print("Đang nạp dữ liệu Chứng khoán VN (bars_daily)...")
         with storage.conn() as c:
-            rows = c.execute("SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol").fetchall()
+            rows = c.execute(
+                "SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol"
+            ).fetchall()
         vn_symbols = [r[0] for r in rows]
         if args.limit > 0:
             vn_symbols = vn_symbols[: args.limit]
 
         vn_daily = {}
         for sym in vn_symbols:
-            b_list = storage.read_daily_bars(sym, datetime(2016, 1, 1), datetime(2027, 1, 1))
+            b_list = storage.read_daily_bars(
+                sym, datetime(2016, 1, 1), datetime(2027, 1, 1)
+            )
             if b_list:
                 vn_daily[sym] = b_list
 
@@ -264,11 +371,42 @@ def main() -> int:
         res_vn_sl = []
         res_vn_tp = []
         for strat, x_r, ktp in configs_vn:
-            r_sl = evaluate_strategy_on_dataset(vn_daily, strat, 100_000_000.0, x_r, ktp, sl_first=True, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0, settle_days=3, lot_size=100, allow_short=False)
-            r_tp = evaluate_strategy_on_dataset(vn_daily, strat, 100_000_000.0, x_r, ktp, sl_first=False, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0, settle_days=3, lot_size=100, allow_short=False)
+            r_sl = evaluate_strategy_on_dataset(
+                vn_daily,
+                strat,
+                100_000_000.0,
+                x_r,
+                ktp,
+                sl_first=True,
+                fee_rate=FEE_RATE,
+                sell_tax_rate=SELL_TAX_RATE,
+                slippage_bps=SLIPPAGE_BPS,
+                settle_days=3,
+                lot_size=100,
+                allow_short=False,
+            )
+            r_tp = evaluate_strategy_on_dataset(
+                vn_daily,
+                strat,
+                100_000_000.0,
+                x_r,
+                ktp,
+                sl_first=False,
+                fee_rate=FEE_RATE,
+                sell_tax_rate=SELL_TAX_RATE,
+                slippage_bps=SLIPPAGE_BPS,
+                settle_days=3,
+                lot_size=100,
+                allow_short=False,
+            )
             res_vn_sl.append(r_sl)
             res_vn_tp.append(r_tp)
-        print_comparison_table(res_vn_sl, res_vn_tp, "Cổ Phiếu VN — Khung 1D (bars_daily, Long-Only, T+2.5, Vốn 100tr/mã)", "VND")
+        print_comparison_table(
+            res_vn_sl,
+            res_vn_tp,
+            "Cổ Phiếu VN — Khung 1D (bars_daily, Long-Only, T+2.5, Vốn 100tr/mã)",
+            "VND",
+        )
 
     return 0
 

@@ -7,7 +7,8 @@ So sánh trực tiếp:
 4. Octopus + Combo Hybrid (Trailing Stop: 2.0x ATR).
 
 Trên 2 thị trường:
-- Chứng khoán VN: bars_daily (1.308 mã, T+2.5, Phí 0.15%, Thuế 0.1%, Trượt giá 5bps, Lô 100).
+- Chứng khoán VN: bars_daily (1.308 mã, T+2.5, Phí 0,25% (FEE_RATE — biểu phí SSI có nguồn),
+  Thuế 0,1%, Trượt giá 5bps, Lô 100).
 - Crypto Perpetual: bars_crypto (20 cặp, Khung 1D & 1H, T+0, Long & Short).
 
 CLI:
@@ -30,6 +31,7 @@ from trading.metrics import (
     sharpe,
 )
 from trading.models import Bar
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import PatternBacktestReport, run_pattern_backtest
 from trading.storage.db import Storage
 
@@ -97,8 +99,12 @@ def evaluate_config(
     both_touched = sum(r.both_touched_count for r in reports)
     premature_touches = sum(r.premature_touch_count for r in reports)
 
-    bh_pnl_traded = sum(r.buy_and_hold_pnl for r in traded_reports) if traded_reports else 0.0
-    win_bh_traded_count = sum(1 for r in traded_reports if r.realized_pnl > r.buy_and_hold_pnl)
+    bh_pnl_traded = (
+        sum(r.buy_and_hold_pnl for r in traded_reports) if traded_reports else 0.0
+    )
+    win_bh_traded_count = sum(
+        1 for r in traded_reports if r.realized_pnl > r.buy_and_hold_pnl
+    )
     win_bh_pct = (win_bh_traded_count / n_traded * 100.0) if n_traded > 0 else 0.0
     win_rate = (total_winning / total_trades * 100.0) if total_trades > 0 else 0.0
 
@@ -140,7 +146,9 @@ def evaluate_config(
     }
 
 
-def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title: str, currency: str) -> None:
+def print_comparison_table(
+    results_sl: list[dict], results_tp: list[dict], title: str, currency: str
+) -> None:
     print("\n" + "=" * 165, flush=True)
     print(f"BÁO CÁO ĐO LƯỜNG SO SÁNH: {title.upper()}", flush=True)
     print("=" * 165, flush=True)
@@ -156,8 +164,12 @@ def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title
         pnl_tp_str = f"{r_tp['strat_pnl']:+,.2f} {currency}"
         bh_str = f"{r_sl['bh_pnl_traded']:+,.2f} {currency}"
         wr_str = f"{r_sl['win_rate']:.1f}%"
-        pf_str = f"{r_sl['profit_factor']:.2f}" if r_sl['profit_factor'] is not None else "N/A"
-        sh_str = f"{r_sl['sharpe']:.2f}" if r_sl['sharpe'] is not None else "N/A"
+        pf_str = (
+            f"{r_sl['profit_factor']:.2f}"
+            if r_sl["profit_factor"] is not None
+            else "N/A"
+        )
+        sh_str = f"{r_sl['sharpe']:.2f}" if r_sl["sharpe"] is not None else "N/A"
         exp_str = f"{r_sl['expectancy']:+12,.2f}"
         mdd_str = f"{r_sl['max_drawdown']*100:>7.1f}%"
 
@@ -168,16 +180,26 @@ def print_comparison_table(results_sl: list[dict], results_tp: list[dict], title
         )
 
         if r_sl["premature_touches"] > 0:
-            print(f"   └─ [CẢNH BÁO T+2.5]: Có {r_sl['premature_touches']} lần chạm SL/TP trước ngày settle.", flush=True)
+            print(
+                f"   └─ [CẢNH BÁO T+2.5]: Có {r_sl['premature_touches']} lần chạm SL/TP trước ngày settle.",
+                flush=True,
+            )
 
     print("=" * 165, flush=True)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Đo lường và so sánh chiến lược lai Octopus Combo Hybrid")
+    parser = argparse.ArgumentParser(
+        description="Đo lường và so sánh chiến lược lai Octopus Combo Hybrid"
+    )
     parser.add_argument("--market", default="all", choices=["all", "crypto", "vn"])
     parser.add_argument("--capital", type=float, default=100_000_000.0)
-    parser.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
+    parser.add_argument(
+        "--cost-multiplier",
+        type=float,
+        default=1.0,
+        help="Hệ số nhân chi phí (1.0, 1.5, 2.0)",
+    )
     parser.add_argument("--dsn", default=None)
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
@@ -189,7 +211,10 @@ def main() -> int:
     # 1. THỊ TRƯỜNG CHỨNG KHOÁN VIỆT NAM (bars_daily)
     # -----------------------------------------------------------------------
     if args.market in ("all", "vn"):
-        print(f"Đang nạp dữ liệu Chứng khoán VN (bars_daily | Chi phí: {args.cost_multiplier:.1f}x)...", flush=True)
+        print(
+            f"Đang nạp dữ liệu Chứng khoán VN (bars_daily | Chi phí: {args.cost_multiplier:.1f}x)...",
+            flush=True,
+        )
         exclude_file = Path("exclusions.txt")
         excluded: set[str] = set()
         if exclude_file.exists():
@@ -223,22 +248,65 @@ def main() -> int:
         if args.limit > 0:
             vn_daily = {k: vn_daily[k] for k in list(vn_daily.keys())[: args.limit]}
 
-        print(f"Đã nạp {len(vn_daily)} mã cổ phiếu VN ({sum(len(v) for v in vn_daily.values()):,} bars).", flush=True)
+        print(
+            f"Đã nạp {len(vn_daily)} mã cổ phiếu VN ({sum(len(v) for v in vn_daily.values()):,} bars).",
+            flush=True,
+        )
 
-        fee_vn = 0.0015 * args.cost_multiplier
-        tax_vn = 0.001 * args.cost_multiplier
-        slip_vn = 5.0 * args.cost_multiplier
+        fee_vn = FEE_RATE * args.cost_multiplier
+        tax_vn = SELL_TAX_RATE * args.cost_multiplier
+        slip_vn = SLIPPAGE_BPS * args.cost_multiplier
 
         configs_vn = [
             # Name, strategy, x_atr, k_tp, min_liq, use_trailing, trailing_mult
             ("1. Combo Gốc (kTP=2.0)", "combo", 0.1, 2.0, 0.0, False, 2.0),
             ("2. Combo Gốc (kTP=2.3)", "combo", 0.1, 2.3, 0.0, False, 2.0),
             ("3. Combo Gốc (kTP=2.6)", "combo", 0.1, 2.6, 0.0, False, 2.0),
-            ("4. Hybrid: Octopus+Combo (kTP=1.5)", "octopus_combo", 0.1, 1.5, 2_000_000_000.0, False, 2.0),
-            ("5. Hybrid: Octopus+Combo (kTP=2.0)", "octopus_combo", 0.1, 2.0, 2_000_000_000.0, False, 2.0),
-            ("6. Hybrid: Octopus+Combo (kTP=2.3)", "octopus_combo", 0.1, 2.3, 2_000_000_000.0, False, 2.0),
-            ("7. Hybrid: Octopus+Combo (kTP=2.6)", "octopus_combo", 0.1, 2.6, 2_000_000_000.0, False, 2.0),
-            ("8. Hybrid: Octopus+Combo (Trailing 2.0x)", "octopus_combo", 0.1, 50.0, 2_000_000_000.0, True, 2.0),
+            (
+                "4. Hybrid: Octopus+Combo (kTP=1.5)",
+                "octopus_combo",
+                0.1,
+                1.5,
+                2_000_000_000.0,
+                False,
+                2.0,
+            ),
+            (
+                "5. Hybrid: Octopus+Combo (kTP=2.0)",
+                "octopus_combo",
+                0.1,
+                2.0,
+                2_000_000_000.0,
+                False,
+                2.0,
+            ),
+            (
+                "6. Hybrid: Octopus+Combo (kTP=2.3)",
+                "octopus_combo",
+                0.1,
+                2.3,
+                2_000_000_000.0,
+                False,
+                2.0,
+            ),
+            (
+                "7. Hybrid: Octopus+Combo (kTP=2.6)",
+                "octopus_combo",
+                0.1,
+                2.6,
+                2_000_000_000.0,
+                False,
+                2.0,
+            ),
+            (
+                "8. Hybrid: Octopus+Combo (Trailing 2.0x)",
+                "octopus_combo",
+                0.1,
+                50.0,
+                2_000_000_000.0,
+                True,
+                2.0,
+            ),
         ]
 
         res_vn_sl = []
@@ -297,52 +365,253 @@ def main() -> int:
     # 2. THỊ TRƯỜNG CRYPTO PERPETUAL (bars_crypto 1D & 1H)
     # -----------------------------------------------------------------------
     if args.market in ("all", "crypto"):
-        print(f"\nĐang nạp dữ liệu Crypto (bars_crypto | Chi phí: {args.cost_multiplier:.1f}x)...", flush=True)
+        print(
+            f"\nĐang nạp dữ liệu Crypto (bars_crypto | Chi phí: {args.cost_multiplier:.1f}x)...",
+            flush=True,
+        )
         crypto_1d = {}
         with storage.conn() as c:
-            rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1d\' ORDER BY symbol, ts').fetchall()
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1d' ORDER BY symbol, ts"
+            ).fetchall()
             for r in rows:
-                crypto_1d.setdefault(r[0], []).append(Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx"))
+                crypto_1d.setdefault(r[0], []).append(
+                    Bar(
+                        symbol=r[0],
+                        ts=r[1],
+                        open=float(r[2]),
+                        high=float(r[3]),
+                        low=float(r[4]),
+                        close=float(r[5]),
+                        volume=int(r[6]),
+                        source="bingx",
+                    )
+                )
 
         crypto_1h = {}
         with storage.conn() as c:
-            rows = c.execute('SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1h\' ORDER BY symbol, ts').fetchall()
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1h' ORDER BY symbol, ts"
+            ).fetchall()
             for r in rows:
-                crypto_1h.setdefault(r[0], []).append(Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx"))
+                crypto_1h.setdefault(r[0], []).append(
+                    Bar(
+                        symbol=r[0],
+                        ts=r[1],
+                        open=float(r[2]),
+                        high=float(r[3]),
+                        low=float(r[4]),
+                        close=float(r[5]),
+                        volume=int(r[6]),
+                        source="bingx",
+                    )
+                )
 
         fee_crypto = 0.0005 * args.cost_multiplier
         slip_crypto = 0.0 * args.cost_multiplier
 
         configs_crypto = [
-            ("1. Combo Gốc (Long+Short, kTP=2.0)", "combo", 0.1, 2.0, 0.0, False, 2.0, True),
-            ("2. Combo Gốc (Long+Short, kTP=2.3)", "combo", 0.1, 2.3, 0.0, False, 2.0, True),
-            ("3. Hybrid: Long-Only (kTP=2.3)", "octopus_combo", 0.1, 2.3, 0.0, False, 2.0, False),
-            ("4. Hybrid: Long+Short (kTP=1.5)", "octopus_combo", 0.1, 1.5, 0.0, False, 2.0, True),
-            ("5. Hybrid: Long+Short (kTP=2.0)", "octopus_combo", 0.1, 2.0, 0.0, False, 2.0, True),
-            ("6. Hybrid: Long+Short (kTP=2.3)", "octopus_combo", 0.1, 2.3, 0.0, False, 2.0, True),
-            ("7. Hybrid: Long+Short (kTP=2.6)", "octopus_combo", 0.1, 2.6, 0.0, False, 2.0, True),
-            ("8. Hybrid: Long+Short (Trailing 2.0x)", "octopus_combo", 0.1, 50.0, 0.0, True, 2.0, True),
+            (
+                "1. Combo Gốc (Long+Short, kTP=2.0)",
+                "combo",
+                0.1,
+                2.0,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "2. Combo Gốc (Long+Short, kTP=2.3)",
+                "combo",
+                0.1,
+                2.3,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "3. Hybrid: Long-Only (kTP=2.3)",
+                "octopus_combo",
+                0.1,
+                2.3,
+                0.0,
+                False,
+                2.0,
+                False,
+            ),
+            (
+                "4. Hybrid: Long+Short (kTP=1.5)",
+                "octopus_combo",
+                0.1,
+                1.5,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "5. Hybrid: Long+Short (kTP=2.0)",
+                "octopus_combo",
+                0.1,
+                2.0,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "6. Hybrid: Long+Short (kTP=2.3)",
+                "octopus_combo",
+                0.1,
+                2.3,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "7. Hybrid: Long+Short (kTP=2.6)",
+                "octopus_combo",
+                0.1,
+                2.6,
+                0.0,
+                False,
+                2.0,
+                True,
+            ),
+            (
+                "8. Hybrid: Long+Short (Trailing 2.0x)",
+                "octopus_combo",
+                0.1,
+                50.0,
+                0.0,
+                True,
+                2.0,
+                True,
+            ),
         ]
 
         # Crypto 1D
         res_c1d_sl = []
         res_c1d_tp = []
-        for name, strat, x_r, ktp, min_liq, use_trail, trail_mult, allow_s in configs_crypto:
-            r_sl = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, True, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=365.0)
-            r_tp = evaluate_config(crypto_1d, name, strat, 100_000.0, x_r, ktp, False, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=365.0)
+        for (
+            name,
+            strat,
+            x_r,
+            ktp,
+            min_liq,
+            use_trail,
+            trail_mult,
+            allow_s,
+        ) in configs_crypto:
+            r_sl = evaluate_config(
+                crypto_1d,
+                name,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                True,
+                fee_crypto,
+                0.0,
+                slip_crypto,
+                0,
+                1,
+                allow_s,
+                min_liq,
+                use_trail,
+                trail_mult,
+                periods_per_year=365.0,
+            )
+            r_tp = evaluate_config(
+                crypto_1d,
+                name,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                False,
+                fee_crypto,
+                0.0,
+                slip_crypto,
+                0,
+                1,
+                allow_s,
+                min_liq,
+                use_trail,
+                trail_mult,
+                periods_per_year=365.0,
+            )
             res_c1d_sl.append(r_sl)
             res_c1d_tp.append(r_tp)
-        print_comparison_table(res_c1d_sl, res_c1d_tp, f"Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)", "USDT")
+        print_comparison_table(
+            res_c1d_sl,
+            res_c1d_tp,
+            f"Crypto Perpetual — Khung 1D (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)",
+            "USDT",
+        )
 
         # Crypto 1H
         res_c1h_sl = []
         res_c1h_tp = []
-        for name, strat, x_r, ktp, min_liq, use_trail, trail_mult, allow_s in configs_crypto:
-            r_sl = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, True, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=8760.0)
-            r_tp = evaluate_config(crypto_1h, name, strat, 100_000.0, x_r, ktp, False, fee_crypto, 0.0, slip_crypto, 0, 1, allow_s, min_liq, use_trail, trail_mult, periods_per_year=8760.0)
+        for (
+            name,
+            strat,
+            x_r,
+            ktp,
+            min_liq,
+            use_trail,
+            trail_mult,
+            allow_s,
+        ) in configs_crypto:
+            r_sl = evaluate_config(
+                crypto_1h,
+                name,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                True,
+                fee_crypto,
+                0.0,
+                slip_crypto,
+                0,
+                1,
+                allow_s,
+                min_liq,
+                use_trail,
+                trail_mult,
+                periods_per_year=8760.0,
+            )
+            r_tp = evaluate_config(
+                crypto_1h,
+                name,
+                strat,
+                100_000.0,
+                x_r,
+                ktp,
+                False,
+                fee_crypto,
+                0.0,
+                slip_crypto,
+                0,
+                1,
+                allow_s,
+                min_liq,
+                use_trail,
+                trail_mult,
+                periods_per_year=8760.0,
+            )
             res_c1h_sl.append(r_sl)
             res_c1h_tp.append(r_tp)
-        print_comparison_table(res_c1h_sl, res_c1h_tp, f"Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)", "USDT")
+        print_comparison_table(
+            res_c1h_sl,
+            res_c1h_tp,
+            f"Crypto Perpetual — Khung 1H (20 Cặp BingX, Vốn 100k USDT/mã | Chi phí {args.cost_multiplier:.1f}x)",
+            "USDT",
+        )
 
     return 0
 

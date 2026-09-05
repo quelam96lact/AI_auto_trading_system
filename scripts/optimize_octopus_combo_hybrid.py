@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
 from trading.models import Bar
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import run_pattern_backtest
 from trading.sampling import filter_bars_by_split
 from trading.storage.db import Storage
@@ -159,7 +160,7 @@ def main() -> int:
         print(f"Đang tải dữ liệu Crypto perpetual {args.interval}...", flush=True)
         with storage.conn() as c:
             rows = c.execute(
-                f'SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'{args.interval}\' ORDER BY symbol, ts'
+                f"SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '{args.interval}' ORDER BY symbol, ts"
             ).fetchall()
             for r in rows:
                 data.setdefault(r[0], []).append(
@@ -184,7 +185,10 @@ def main() -> int:
         currency = "USDT"
     else:
         capital = 100_000_000.0
-        print(f"Đang tải dữ liệu Cổ phiếu VN (bars_daily | split: {args.split})...", flush=True)
+        print(
+            f"Đang tải dữ liệu Cổ phiếu VN (bars_daily | split: {args.split})...",
+            flush=True,
+        )
         exclude_file = Path("exclusions.txt")
         excluded: set[str] = set()
         if exclude_file.exists():
@@ -230,23 +234,33 @@ def main() -> int:
         data = filtered_data
 
         allow_short = False
-        fee_rate = 0.0015
-        sell_tax_rate = 0.001
-        slippage_bps = 5.0
+        fee_rate = FEE_RATE
+        sell_tax_rate = SELL_TAX_RATE
+        slippage_bps = SLIPPAGE_BPS
         settle_days = 3
         lot_size = 100
         min_liq = 2_000_000_000.0
         currency = "VND"
 
-    print(f"Đã tải {len(data)} mã. Bắt đầu quét lưới tham số (Grid Search)...", flush=True)
+    print(
+        f"Đã tải {len(data)} mã. Bắt đầu quét lưới tham số (Grid Search)...", flush=True
+    )
 
     # 1. Quét k_TP và Breakeven
     results = []
-    k_tp_list = [1.5, 2.0, 2.3, 2.6, 3.0, 3.5, 4.0] if args.market == "vn" else [1.5, 2.0, 2.3, 2.6, 3.0, 3.5, 4.0, 5.0]
+    k_tp_list = (
+        [1.5, 2.0, 2.3, 2.6, 3.0, 3.5, 4.0]
+        if args.market == "vn"
+        else [1.5, 2.0, 2.3, 2.6, 3.0, 3.5, 4.0, 5.0]
+    )
     x_list = [0.05, 0.10, 0.15]
     pullback_configs = [(1, 3), (2, 5), (3, 7)]
     trend_periods = [100, 200]
-    breakeven_configs = [(False, 0.0)] if args.market == "vn" else [(False, 0.0), (True, 1.0), (True, 1.5)]
+    breakeven_configs = (
+        [(False, 0.0)]
+        if args.market == "vn"
+        else [(False, 0.0), (True, 1.0), (True, 1.5)]
+    )
 
     # Bước 1: Khảo sát k_TP và Breakeven trên baseline x=0.1, pullback=(2,5), trend=200
     print("\n--- PHẦN 1: KHẢO SÁT HỆ SỐ CHỐT LỜI (k_TP) ---", flush=True)
@@ -279,7 +293,10 @@ def main() -> int:
             )
 
     # Bước 2: Khảo sát độ nhạy của x_atr_ratio và Pullback depth
-    print("\n--- PHẦN 2: KHẢO SÁT KHOẢNG ĐỆM STOP (x_ATR) & ĐỘ SÂU PULLBACK ---", flush=True)
+    print(
+        "\n--- PHẦN 2: KHẢO SÁT KHOẢNG ĐỆM STOP (x_ATR) & ĐỘ SÂU PULLBACK ---",
+        flush=True,
+    )
     for x in x_list:
         for p_red, p_win in pullback_configs:
             for trend_p in trend_periods:
@@ -311,7 +328,10 @@ def main() -> int:
     # Top 5 cấu hình tốt nhất theo PnL (SL-trước)
     results_sorted = sorted(results, key=lambda r: r["pnl_sl"], reverse=True)
     print("\n" + "=" * 130, flush=True)
-    print(f"TOP 5 CẤU HÌNH TỐI ƯU NHẤT TRÊN {args.market.upper()} ({args.interval}):", flush=True)
+    print(
+        f"TOP 5 CẤU HÌNH TỐI ƯU NHẤT TRÊN {args.market.upper()} ({args.interval}):",
+        flush=True,
+    )
     print("=" * 130, flush=True)
     header = f"{'Rank':<5} | {'k_TP':<5} | {'x_ATR':<6} | {'Pullback':<10} | {'EMA Trend':<10} | {'Breakeven':<10} | {'Tổng lệnh':<10} | {'Win Rate':<9} | {'PnL Net (SL-trước)':<22} | {'PnL Net (TP-trước)'}"
     print(header, flush=True)
