@@ -221,17 +221,9 @@ def test_combo_signal_none_when_conflicting():
 # ---------------------------------------------------------------------------
 
 
-def _flat_bar(price: float = 100.0) -> Bar:
-    """Nến PHẲNG: high == low == open == close, không có giao dịch thật."""
-    return Bar(
-        symbol="FLAT",
-        ts=datetime(2026, 1, 1, 9, 0, tzinfo=TZ),
-        open=price,
-        high=price,
-        low=price,
-        close=price,
-        volume=0,
-    )
+def _flat_bar(idx: int = 0, price: float = 100.0) -> Bar:
+    """Nến PHẲNG: high == low == open == close, volume 0 — không giao dịch."""
+    return _make_bar(idx=idx, open=price, high=price, low=price, close=price, volume=0)
 
 
 def test_flat_bar_khong_phai_doji_theo_mac_dinh():
@@ -249,14 +241,6 @@ def test_flat_bar_la_doji_khi_tat_require_range():
 def test_nen_phang_khong_chiem_han_ngach_near_doji():
     """Nến phẳng bị loại thì cũng không được tính vào hạn ngạch Near Doji —
     nếu không, một chuỗi nến phẳng sẽ âm thầm chặn một doji thật phía sau."""
-    flats = [_flat_bar() for _ in range(5)]
-    doji_that = Bar(
-        symbol="FLAT",
-        ts=datetime(2026, 1, 2, 9, 0, tzinfo=TZ),
-        open=100.0,
-        high=110.0,
-        low=90.0,
-        close=100.5,
-        volume=10_000,
-    )
+    flats = [_flat_bar(idx=i) for i in range(5)]
+    doji_that = _make_bar(idx=5, open=100.0, high=110.0, low=90.0, close=100.5)
     assert is_doji(doji_that, prev_bars=flats) is True
