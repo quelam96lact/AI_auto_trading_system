@@ -7,12 +7,11 @@ Engine goi NAM thuoc tinh tren strategy — khong phai ba:
   engine/logic.py:44    -> strategy.last_crossover(symbol)   (goi KHONG dieu kien)
   engine/logic.py:50    -> strategy.last_atr(symbol)
 
-Moi muc trong STRATEGIES (so dang ky DE DO, trading/backtest.py:290) phai thoả
+Moi muc trong STRATEGIES (so dang ky DE DO, trading/backtest.py:285) phai thoả
 du hop dong nay — neu khong, nap vao engine se AttributeError ngay bar dau.
 
 KHONG sua trading/backtest.py — chi IMPORT STRATEGIES de quet.
 """
-
 
 from trading.backtest import STRATEGIES
 from trading.calendar_vn import TZ
@@ -27,7 +26,11 @@ def _bar(sym="HII", i=0, close=10_000.0):
     return Bar(
         sym,
         datetime(2026, 9, 1, 9, 0, tzinfo=TZ) + timedelta(minutes=5 * i),
-        close, close + 100, close - 100, close, 1_000_000,
+        close,
+        close + 100,
+        close - 100,
+        close,
+        1_000_000,
     )
 
 
@@ -62,15 +65,15 @@ def test_moi_strategy_engine_path_khong_attributerror():
         # khai warmup_bars la method (dung theo chu Protocol cu) thi doc ra
         # bound method va main.py chet TypeError. isinstance() KHONG bat duoc
         # vi Protocol chi kiem tra hasattr.
-        assert isinstance(warmup, int), (
-            f"[{name}] warmup_bars phai la property tra int, thuc te: {warmup!r}"
-        )
+        assert isinstance(
+            warmup, int
+        ), f"[{name}] warmup_bars phai la property tra int, thuc te: {warmup!r}"
         for i in range(warmup + 2):
             s.compute_crossover(_bar("HII", i))
         # bar dau sau warm-up: duong logic.py:43-50
         s.on_bar(_bar("HII", warmup + 3), ctx)
         s.last_crossover("HII")  # logic.py:44 — goi khong dieu kien
-        s.last_atr("HII")        # logic.py:50
+        s.last_atr("HII")  # logic.py:50
 
 
 def test_octopus_pullback_nap_engine_duoc():
@@ -82,7 +85,10 @@ def test_octopus_pullback_nap_engine_duoc():
     for i in range(warmup + 2):
         s.compute_crossover(_bar("HII", i))
     got = s.last_crossover("HII")
-    assert got in (None, "bull"), f"last_crossover phai tra None|'bull', thuc te: {got!r}"
+    assert got in (
+        None,
+        "bull",
+    ), f"last_crossover phai tra None|'bull', thuc te: {got!r}"
 
 
 def test_duong_phai_sinh_khong_bi_ep():

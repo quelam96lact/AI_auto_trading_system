@@ -143,7 +143,7 @@ con số trần vào code.
 Cả ba chiến lược đều vào bằng **BUY/STOP** hoặc **SELL/STOP** — lệnh chờ, chỉ
 khớp khi giá chạm mức kích hoạt. Engine hiện tại **không có khái niệm đó**:
 
-- `paper_broker.py:132-142` — `on_bar` lấy lệnh treo ra và khớp tại
+- `paper_broker.py:146-147` — `on_bar` lấy lệnh treo ra và khớp tại
   **`bar.open`** của bar kế tiếp cộng trượt giá. Không có mức kích hoạt.
 - `derivative_backtest.py:120-140` — khớp tại **`bar.close`** ngay bar tín hiệu.
 
@@ -210,7 +210,7 @@ nhất một lần, phân bố theo năm.
 
 - **Không chạm `trading/broker.py`, `paper_broker.py`, `derivative_*.py`,
   `engine/`.** Gói này không đặt một lệnh nào.
-- **Không thêm strategy vào `STRATEGIES`** (`backtest.py:290`) — chưa đến lúc.
+- **Không thêm strategy vào `STRATEGIES`** (`backtest.py:285`) — chưa đến lúc.
 - **Không sửa `config/config.yaml`.**
 - Đặt hàm nhận dạng ở đâu: `trading/patterns.py` (file mới) — thuần OHLC, dễ
   test, không phụ thuộc broker. **Không nhét vào `strategies/`** vì chúng chưa
