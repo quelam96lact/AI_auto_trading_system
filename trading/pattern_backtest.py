@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
-from trading.backtest import _is_dirty
+from trading.data_quality import is_dirty_bar
 from trading.indicators import AtrCalculator, EmaCalculator, MacdCalculator
 from trading.models import Bar
 from trading.patterns import combo_signal, is_doji, is_hammer
@@ -106,7 +106,7 @@ def run_pattern_backtest(
     report = PatternBacktestReport(symbol=sym)
 
     # Loại bỏ bar rác trước khi tính toán
-    clean_bars = [b for b in bars if not _is_dirty(b)]
+    clean_bars = [b for b in bars if not is_dirty_bar(b)]
     if len(clean_bars) < 30:
         return report
 
@@ -143,12 +143,7 @@ def run_pattern_backtest(
     day_idx = 0
     prev_date = None
 
-    # BAR RÁC phải loại TRƯỚC khi vào vòng, theo đúng khuôn run_backtest:173-179.
-    # Không có bước này thì `raw_qty = int(capital / executed_price)` chia cho 0
-    # và sập — đã xảy ra thật khi audit 06/09, chạy trên đủ 1.554 mã bars_daily
-    # (bảng đó có 71.439 bar OHLC <= 0). `_is_dirty` là quy ước đã dùng ở bốn
-    # nơi khác trong repo; đừng định nghĩa lại luật ở đây.
-    bars = [b for b in bars if not _is_dirty(b)]
+    # BAR RÁC đã được loại tại clean_bars ở đầu hàm.
 
     for i, b in enumerate(clean_bars):
         cur_date = b.ts.date()
@@ -164,13 +159,15 @@ def run_pattern_backtest(
         ma20 = (sum(ma_closes) / 20.0) if len(ma_closes) == 20 else None
 
         # Cập nhật EMA, Thanh khoản và Chuỗi nến cho Octopus Combo
-        prev_fast = ema_fast_calc.last(b.symbol)
-        prev_slow = ema_slow_calc.last(b.symbol)
-        ema_fast = ema_fast_calc.update(b)
-        ema_slow = ema_slow_calc.update(b)
-        ema_trend = ema_trend_calc.update(b)
-        liquidity_tracker.update(b)
-        reds_deque.append(1 if b.close < b.open else 0)
+        if strategy_name == "octopus_combo":
+            prev_fast = ema_fast_calc.last(b.symbol)
+            prev_slow = ema_slow_calc.last(b.symbol)
+            ema_fast = ema_fast_calc.update(b)
+            ema_slow = ema_slow_calc.update(b)
+            ema_trend = ema_trend_calc.update(b)
+            if min_avg_value_20 > 0:
+                liquidity_tracker.update(b)
+            reds_deque.append(1 if b.close < b.open else 0)
 
         # -------------------------------------------------------------------
         # 1. Kiểm tra khớp lệnh STOP đang chờ từ bar trước

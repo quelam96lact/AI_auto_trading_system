@@ -19,15 +19,29 @@ class SymbolCompleteness:
     missing_middle_collection_error: int = 0
 
 
-def is_dirty_bar_dict(bar: Mapping[str, Any]) -> bool:
+def _dirty_ohlc(open_: float, high: float, low: float, close: float) -> bool:
     """SPEC-1c: bar rác = có open/high/low/close <= 0.
-    Khớp 100% định nghĩa của trading.backtest::_is_dirty.
+
+    MỘT NGUỒN SỰ THẬT cho luật này. Trước 06/09 luật được chép ra năm chỗ
+    (`backtest._is_dirty`, `is_dirty_bar_dict` ngay dưới, và ba script), và
+    hai bản trong `trading/` chỉ được ràng với nhau bằng một câu docstring
+    "khớp 100% định nghĩa của..." — tức bằng lời hứa, không bằng code.
     """
-    return (
-        bar.get("open", 0) <= 0
-        or bar.get("high", 0) <= 0
-        or bar.get("low", 0) <= 0
-        or bar.get("close", 0) <= 0
+    return open_ <= 0 or high <= 0 or low <= 0 or close <= 0
+
+
+def is_dirty_bar(bar: Any) -> bool:
+    """SPEC-1c cho đối tượng Bar (có thuộc tính open/high/low/close)."""
+    return _dirty_ohlc(bar.open, bar.high, bar.low, bar.close)
+
+
+def is_dirty_bar_dict(bar: Mapping[str, Any]) -> bool:
+    """SPEC-1c cho bar dạng dict (đường backfill/kiểm dữ liệu)."""
+    return _dirty_ohlc(
+        bar.get("open", 0),
+        bar.get("high", 0),
+        bar.get("low", 0),
+        bar.get("close", 0),
     )
 
 
@@ -89,8 +103,6 @@ def classify_missing_dates(
     return no_trading, collection_error
 
 
-
-
 def evaluate_symbol_completeness(
     symbol: str,
     first_date: date | None,
@@ -111,7 +123,12 @@ def evaluate_symbol_completeness(
     - `missing_tail`: số phiên thiếu sau last_date đến as_of_date.
     - `dirty_bars`: số bar rác (OHLC <= 0).
     """
-    if not trading_sessions or first_date is None or last_date is None or total_bars <= 0:
+    if (
+        not trading_sessions
+        or first_date is None
+        or last_date is None
+        or total_bars <= 0
+    ):
         if trading_sessions:
             ref_date = as_of_date or trading_sessions[-1]
             idx_as_of = bisect_right(trading_sessions, ref_date)
@@ -207,9 +224,13 @@ def find_missing_dates(
 
     ref_date = as_of_date or trading_sessions[-1]
     middle_missing = [
-        d for d in trading_sessions if first_date <= d <= last_date and d not in present_set
+        d
+        for d in trading_sessions
+        if first_date <= d <= last_date and d not in present_set
     ]
     tail_missing = [
-        d for d in trading_sessions if last_date < d <= ref_date and d not in present_set
+        d
+        for d in trading_sessions
+        if last_date < d <= ref_date and d not in present_set
     ]
     return middle_missing, tail_missing

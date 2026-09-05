@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from trading.broker import Fill
+from trading.data_quality import is_dirty_bar
 from trading.models import Bar
 from trading.paper_broker import (
     FEE_RATE,
@@ -48,8 +49,12 @@ class BacktestReport:
 
 
 def _is_dirty(bar: Bar) -> bool:
-    """SPEC-1c: bar rac = co open/high/low/close <= 0."""
-    return bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0
+    """SPEC-1c: bar rac = co open/high/low/close <= 0.
+
+    Giu ten cu cho cac caller san co; luat that nam o
+    trading.data_quality.is_dirty_bar (mot nguon su that).
+    """
+    return is_dirty_bar(bar)
 
 
 def ever_liquid(bars: list[Bar], threshold: float, window: int) -> bool:
