@@ -29,3 +29,7 @@ scripts/.probe_*.py
 # Log chay tu scheduled task Windows (2026-09-01) — ghi moi 5 phut, khong
 # phai code, khong bao gio commit
 logs/
+
+# Tai lieu khoa hoc ben thu ba — khong commit (2 MB, ban quyen cua cole.vn).
+# Noi dung can dung da trich vao docs/superpowers/plans/2026-09-06-brief-ba-chien-luoc-nen-tu-slide.md
+Buổi*.pdf
