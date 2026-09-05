@@ -7,7 +7,13 @@ hệ thống sẽ ĐẶT LỆNH MUA THẬT VÀ KHÔNG BAO GIỜ ĐẶT LỆNH B�
 Test này ghim chốt an toàn ở mức cấu hình:
 1. Hàm thuần _vi_pham_J kiểm chứng 4 tổ hợp.
 2. Phép dò _can_emit_bear đưa chuỗi bar tất định qua compute_crossover.
-3. Chốt chống mục ruỗng: bắt buộc sma_cross ra "bear", octopus không ra "bear".
+3. Chốt chống mục ruỗng — HAI phía, và phía octopus phải là bằng chứng DƯƠNG:
+   - sma_cross PHẢI ra "bear" trên chuỗi giảm sâu;
+   - octopus PHẢI ra "bull" trên chuỗi chữ V (chứng minh phép dò chạm được vào
+     đường vào lệnh), và KHÔNG ra "bear" trên cả hai chuỗi.
+   Vì sao cần vế "bull": xem test_anti_rot_phep_do_cham_duoc_duong_vao_lenh_cua_octopus.
+   Một khẳng định "không thấy bear" tự nó không phân biệt được "chiến lược một
+   chiều" với "bar mẫu chưa bao giờ đưa chiến lược tới chỗ ra quyết định".
 4. Chốt thật: đọc trực tiếp config/config.yaml qua yaml.safe_load (không dùng load_config).
 """
 
@@ -37,8 +43,9 @@ def _vi_pham_J(real_trading_enabled: bool, phat_duoc_bear: bool) -> bool:
 
 # 20 triệu cp/phiên × giá 100-350 => giá trị giao dịch 2-7 tỷ, TRÊN ngưỡng
 # min_avg_value_20 = 2 tỷ của octopus. Con số này KHÔNG tuỳ tiện — xem
-# test_anti_rot_octopus_cannot_emit_bear: với volume nhỏ (bản đầu dùng 100.000
-# => 35 triệu/phiên) cổng thanh khoản của octopus ĐÓNG ở cả 300/300 bar, nên
+# test_anti_rot_phep_do_cham_duoc_duong_vao_lenh_cua_octopus, nơi nó được kiểm
+# thật: với volume nhỏ (bản đầu dùng 100.000 => 35 triệu/phiên) cổng thanh
+# khoản của octopus ĐÓNG ở cả 300/300 bar, nên
 # phép dò không bao giờ chạm tới logic tín hiệu và khẳng định "octopus không
 # phát bear" trở thành rỗng nghĩa: nó đúng vì bar quá nhỏ, không phải vì
 # chiến lược một chiều. Đây là lần thứ tư dự án vấp cùng một hình dạng lỗi —
