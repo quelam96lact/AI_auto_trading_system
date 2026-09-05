@@ -12,6 +12,7 @@ from trading.paper_broker import (
 )
 from trading.risk import RiskManager
 from trading.strategies.daily_breakout import DailyBreakoutStrategy
+from trading.strategies.octopus_combo import OctopusComboStrategy
 from trading.strategies.octopus_pullback import (
     DailyLiquidityTracker,
     OctopusPullbackStrategy,
@@ -289,6 +290,7 @@ from trading.storage.db import Storage
 # da loc). Giu nguyen comment lich su o tren (boi canh quyet dinh 15/08).
 STRATEGIES = {
     "daily_breakout": lambda: DailyBreakoutStrategy(),
+    "octopus_combo": lambda: OctopusComboStrategy(),
     "octopus_pullback": lambda: OctopusPullbackStrategy(),
     "sma_cross": lambda: SmaCrossStrategy(),
 }
