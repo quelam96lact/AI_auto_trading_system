@@ -63,6 +63,19 @@ def _default_strategy() -> Strategy:
     Engine dang chay PAPER nen chi phi bang 0. Nhung neu ai do dinh bat
     real_trading_enabled: doc them muc J (octopus khong bao gio phat "bear" nen
     duong lenh that chi MUA, khong bao gio BAN).
+
+    05/09: NGHIEM TRONG HON — CHIEN LUOC NAY DANG CAM O DAY.
+    min_avg_value_20 = 2 ty la nguong cho bar NGAY ("binh quan 20 phien"), nhung
+    engine subscribe "bars.>" tuc bar 5 PHUT, nen no thanh "binh quan 100 phut
+    >= 2 ty" — cao gap ~78 lan y dinh. Do tren chinh bang `bars` ma warm-up doc:
+    HII 0/3.211 bar mo cong, AAA 0/4.597, IJC 24/4.719 => 0 tin hieu "bull".
+    Octopus van THOAT duoc vi the thua ke (on_bar dat TP khi thay held > 0),
+    nhung khong bao giờ MO duoc vi the moi.
+
+    Rong hon: MOI phep do chien luoc trong repo chay tren bars_daily, con engine
+    chay bar 5 phut — ema_trend=200 thanh ~4 phien thay vi 10 thang. Con so
+    -1.615.319.902 o tren mo ta khung NGAY, khong mo ta cai dang chay o day.
+    Xem docs/superpowers/plans/2026-09-05-danh-gia-go-live-va-plan-ton-dong.md.
     """
     return OctopusPullbackStrategy()
 
@@ -261,7 +274,8 @@ async def run(
         ]
         if overlap:
             detail = ", ".join(
-                f"{sym} {qty} cp (sellable {sellable})" for sym, qty, sellable in overlap
+                f"{sym} {qty} cp (sellable {sellable})"
+                for sym, qty, sellable in overlap
             )
             alert(
                 "WARN",

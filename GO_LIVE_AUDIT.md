@@ -26,6 +26,14 @@ HEAD tại thời điểm audit: `2b6fd06`, nhánh `feature/data-layer`.
 | Rổ mã giao dịch | `[VCB, HPG, TCB]` | **Đổi sang `[HII, IJC, AAA]`** `63e6028` — VCB/HPG/TCB đều vượt trần 1 lô với số dư ~5 triệu |
 | Test ghi vào bảng thật | nêu ở mục "Dữ liệu hiện tại" | **Đã tách hạ tầng** `51eb353` |
 
+> **ĐÍNH CHÍNH 2026-09-05.** Câu ngay dưới đây — "mọi rào cản kỹ thuật đã gỡ" —
+> đúng với *bản audit này*, nhưng từ 04/09 có một rào cản kỹ thuật MỚI: engine
+> đổi sang `octopus_pullback`, và ngưỡng thanh khoản 2 tỷ của chiến lược đó là
+> ngưỡng cho bar NGÀY trong khi engine ăn bar 5 PHÚT. Đo trên chính bảng `bars`:
+> HII 0/3.211 bar mở cổng, AAA 0/4.597, IJC 24/4.719 — **0 tín hiệu `bull`**.
+> Engine hiện **không thể sinh lệnh MUA nào**. Chi tiết và plan:
+> `docs/superpowers/plans/2026-09-05-danh-gia-go-live-va-plan-ton-dong.md`.
+
 **Mọi rào cản KỸ THUẬT trong bản audit này đã gỡ.** Thứ còn chặn go-live không
 còn là code — là **vốn**. Xem "Chặn số 1" bên dưới.
 

@@ -49,6 +49,14 @@ trên **đúng ba mã**: VCB, HPG, TCB. Khi cỡ mẫu lên 1.514 lệnh / 439 m
 
 ### 1.4 Việc của chủ dự án
 
+> **ĐỌC THÊM TRƯỚC KHI TRẢ LỜI (thêm 05/09 chiều).** Ba lựa chọn dưới đây được
+> viết khi tôi tưởng octopus đang chạy và thua. Rà soát go-live sau đó cho thấy
+> nó **không chạy gì cả**: ngưỡng thanh khoản 2 tỷ là ngưỡng bar NGÀY, engine ăn
+> bar 5 PHÚT, nên cổng đóng ở gần như mọi bar và engine phát **0 tín hiệu**.
+> Lựa chọn 1 ("giữ octopus") vì thế hiện nghĩa là "giữ một engine câm", trừ khi
+> kèm theo một ngưỡng mới — mà ngưỡng mới thì chưa ai đo (gói Y).
+> Xem `2026-09-05-danh-gia-go-live-va-plan-ton-dong.md`.
+
 Ba lựa chọn, tôi không tự chọn:
 
 1. **Giữ octopus** — chấp nhận rằng lựa chọn này chưa có phép đo ủng hộ, và
