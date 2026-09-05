@@ -114,21 +114,44 @@ Vì vậy các số đo ở §2.2 phải được đưa vào **cả** nhóm scri
 (`measure_crypto_strategies.py`, `measure_octopus_combo_hybrid.py`), không chỉ
 hai script VN.
 
-#### 2.2b. Phí BingX — ĐẦU VÀO BẮT BUỘC, CẤM ĐOÁN
+#### 2.2b. Phí BingX — ĐÃ CÓ SỐ CHÍNH THỨC, DÙNG ĐÚNG SỐ NÀY
 
-Ràng buộc thường trực của dự án: **không đoán phí BingX, bước khối lượng,
-endpoint, hay ngày nghỉ lễ.** Toàn bộ số crypto hiện có tính `fee_rate=0.0`, và
-với 13.612–27.571 lệnh thì phí quyết định dấu của kết quả — đây không phải chi
-tiết phụ, nó là toàn bộ câu trả lời.
+Chủ dự án cung cấp nguồn 06/09:
+`https://bingx.com/vi/learn/article/crypto-trading-bingx-fees`
 
-Do đó:
+| | Maker | Taker |
+|---|---:|---:|
+| **Perpetual futures (VIP0)** | **0,02%** | **0,05%** |
+| Spot (VIP0) | từ 0,1% | từ 0,1% |
 
-- Biểu phí BingX phải được **chủ dự án cung cấp**, hoặc lấy từ nguồn chính thức
-  mà chủ dự án chỉ định. Agent **không được tự điền một con số nào.**
-- Trong khi chưa có: vẫn chạy được, nhưng **bắt buộc** in ở đầu mọi bảng crypto
-  dòng `PHÍ = 0 — SỐ DANH NGHĨA, KHÔNG PHẢI LỢI NHUẬN`, và không được rút bất
-  kỳ kết luận nào từ các bảng đó.
-- Chuẩn bị sẵn để khi có số thật thì chỉ cần truyền tham số, không phải sửa code.
+Chủ dự án đã chốt dùng **perpetual** (quyết định F), nên chỉ dùng hàng perpetual.
+
+**DÙNG TAKER 0,05% CHO CẢ HAI CHIỀU → `fee_rate=0.0005`.** Lý do phải hiểu, đừng
+đổi:
+
+- Vào lệnh bằng **BUY STOP / SELL STOP** — lệnh dừng khi kích hoạt sẽ ăn vào sổ
+  lệnh, là **taker**.
+- Thoát bằng **SL** cũng là lệnh dừng → **taker**.
+- Chỉ nhánh thoát bằng **TP** mới có thể là maker (0,02%) nếu đặt dạng lệnh giới
+  hạn chờ sẵn. `run_pattern_backtest` dùng **một** `fee_rate` chung cho cả hai
+  chiều, nên lấy taker là **hơi thận trọng** ở nhánh TP — chấp nhận, và ghi rõ
+  trong báo cáo. Không tự chẻ thành hai mức.
+
+**Ba điều phải ghi rõ trong mọi bảng crypto:**
+
+1. **VIP0 là giả định thận trọng nhất.** Trang nguồn nói phí giảm dần từ VIP0
+   đến VIP5 nhưng **không công bố mức của từng bậc**. Nếu chủ dự án ở bậc cao
+   hơn thì phí thật thấp hơn — lệch về phía an toàn.
+2. **Phí funding CHƯA được mô hình hoá.** Trang nguồn **không nêu** mức funding.
+   Vị thế perpetual giữ qua chu kỳ funding sẽ phải trả (hoặc nhận) khoản này, và
+   trên khung 1H thì nhiều lệnh sống qua vài chu kỳ. **Cấm đoán con số.** Ghi
+   thành hạn chế đã biết của phép đo, kèm nhận định rằng khoản thiếu này thường
+   bất lợi cho phía LONG trong thị trường tăng.
+3. Phí tính trên **giá trị danh nghĩa** (notional), không phải trên ký quỹ. Với
+   `capital=100.000 USDT/mã` không đòn bẩy thì notional ≈ 100.000 USDT/lệnh, nên
+   một vòng mua-bán tốn ≈ **100 USDT**. Với 13.612–27.571 lệnh thì tổng phí rơi
+   vào khoảng **1,36–2,76 triệu USDT** — cùng bậc độ lớn với chính con số "lợi
+   nhuận" đang được báo cáo. Đây là lý do phép đo lại này tồn tại.
 
 ### GIAI ĐOẠN 2 — Kỷ luật ngoài mẫu (`trading/sampling.py` + `scripts/`)
 
