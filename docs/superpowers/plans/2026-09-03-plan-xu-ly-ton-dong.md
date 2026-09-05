@@ -395,12 +395,23 @@ chắn. Thứ tự đúng: A lên → 04/09 xác nhận A đúng → tuần sau 
 | **C3** | Lịch nghỉ lễ 2026 | ngày lễ chưa khai làm chuông 2A báo láo cả ngày — **đã gỡ phần lớn, xem ghi chú dưới bảng** |
 | **C1** | VPS Ubuntu | `sched.sh` và `DEPLOYMENT.md §1–§10` đã sẵn |
 | **E** | Vốn engine: 0434221 (5tr) hay 0434226 (tiền thật) | vô hại khi `real_trading_enabled=false`, **phải xong trước khi bật thật** |
-| **F** | Phạm vi BingX: spot hay perpetual? có đòn bẩy không? | quyết định này định hình gói C và mọi thứ sau nó |
-| **G** | Giữ octopus làm chiến lược engine, hay quay lại sma_cross, hay không chạy chiến lược nào? | **câu hỏi đã đổi bản chất 05/09: "giữ octopus" hiện nghĩa là "giữ một engine CÂM"** — xem `2026-09-05-danh-gia-go-live-va-plan-ton-dong.md` §1 |
-| **N** | Engine không thể sinh tín hiệu mua nào: ngưỡng thanh khoản 2 tỷ là ngưỡng bar NGÀY, engine ăn bar 5 PHÚT | đo 05/09 trên chính bảng `bars`: HII 0/3.211, AAA 0/4.597, IJC 24/4.719 bar mở cổng, **0 tín hiệu `bull`**. Lần thứ NĂM của cùng một lỗi đơn vị, lần đầu ở sản xuất |
+| ~~**F**~~ | ~~Phạm vi BingX: spot hay perpetual?~~ | **QUYẾT ĐỊNH 06/09: perpetual.** Đã thoả sẵn — `bars_crypto` đang nạp đúng perpetual (20 mã, min ts 2021-05-14). Không cần nạp lại gì |
+| ~~**G**~~ | ~~Giữ octopus, sma_cross, hay không chiến lược?~~ | **QUYẾT ĐỊNH 06/09: giữ octopus.** Kèm theo K — xem dưới |
+| ~~**N**~~ | ~~Engine câm vì ngưỡng thanh khoản sai đơn vị thời gian~~ | **Đang sửa — gói K, `2026-09-06-brief-goi-K-thanh-khoan-theo-ngay.md`** |
 
-Câu hỏi F đáng trả lời sớm nhất: **"không dùng đòn bẩy"** làm toàn bộ đường
-crypto nhỏ đi rất nhiều (không thanh lý, không margin, gần với cổ phiếu).
+### F, G, N đã có quyết định — 06/09
+
+Chủ dự án chốt: **G = giữ octopus**, **F = perpetual**, **K = ngưỡng là giá trị
+giao dịch bình quân 20 NGÀY gần nhất ≥ 2 tỷ VND** (xác nhận đúng giả thuyết ở
+mục N: ý định gốc luôn là 20 phiên/ngày, code hiện tại tính sai theo N *bar*).
+
+K không còn là câu hỏi kinh tế (chọn ngưỡng bao nhiêu) — nó là một **lỗi triển
+khai cần sửa**: cửa sổ thanh khoản phải gộp giá trị giao dịch theo ngày trước
+khi lấy bình quân, thay vì lấy bình quân trực tiếp trên N bar bất kỳ. Việc này
+đã viết thành brief riêng, giao được cho agent ngay:
+**`2026-09-06-brief-goi-K-thanh-khoan-theo-ngay.md`.**
+
+F không sinh việc gì thêm: dữ liệu perpetual đã có sẵn trong `bars_crypto`.
 
 ### C3 — trạng thái sau gói R (05/09)
 
