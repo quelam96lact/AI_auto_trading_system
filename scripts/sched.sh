@@ -58,8 +58,11 @@ case "${1:-}" in
     exec "$RUN" deploy-drift.log deploy-drift \
       uv run python scripts/deploy_drift_check.py
     ;;
+  engine-cam)
+    exec "$RUN" engine-cam.log engine-cam       uv run python scripts/check_silent_engine.py
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam}" >&2
     exit 2
     ;;
 esac

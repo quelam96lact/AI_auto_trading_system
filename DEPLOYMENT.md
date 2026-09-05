@@ -436,6 +436,34 @@ tuý — không cần Docker). Kiểm chứng task đã cài: `schtasks /run /tn
 trading-deploy-drift` rồi xem `logs/deploy-drift.log` có dòng mới — "đã tạo
 task" không tính (bài học 31/08: chuông có sẵn nhưng chưa từng được cài lịch).
 
+### Job tự kêu: `scripts/check_silent_engine.py` (gói X, 05/09)
+
+Chuông cho một dạng hỏng mà mọi chuông cũ đều bỏ lọt: **engine chạy đủ, log
+sạch, heartbeat tươi — và không thể sinh lệnh nào**. Xảy ra thật 04/09 khi engine
+đổi sang `octopus_pullback`: ngưỡng `min_avg_value_20 = 2 tỷ` là ngưỡng cho bar
+NGÀY, còn engine ăn bar 5 PHÚT, nên cổng thanh khoản đóng ở gần như mọi bar.
+Heartbeat vẫn tươi vì engine vẫn nhận bar và vẫn ghi nhịp — nó chỉ không bao giờ
+quyết định mua.
+
+Script chạy chiến lược `_default_strategy()` trên chính bảng `bars` mà engine
+warm-up từ đó, cho từng mã trong `config.symbols`, rồi kêu nếu:
+
+- cổng thanh khoản đóng 100% (`CRITICAL_SILENT`), hoặc
+- không có tín hiệu `bull` nào trong toàn bộ lịch sử (`WARN_NO_BULL`).
+
+- Windows (máy dev): scheduled task `trading-engine-cam`, **08:15 T2–T6**, qua
+  `scripts/run_hidden.vbs` (sau `trading-deploy-drift` 08:00 — dựng lại image
+  xong mới hỏi chiến lược có câm không).
+- Ubuntu: `15 8 * * 1-5 /opt/trading/scripts/sched.sh engine-cam`
+  (job `engine-cam` trong `scripts/sched.sh`, log ra `logs/engine-cam.log`).
+
+Có mã câm ⇒ in bảng ra log, gửi Telegram, exit 1; ổn ⇒ in `[OK]` và exit 0.
+Test: `tests/test_silent_engine_guard.py` (dùng MockStorage — không cần DB).
+
+**Kiểm chứng task đã cài** (không phải "đã tạo task"): `schtasks /run /tn
+trading-engine-cam` rồi xem `logs/engine-cam.log` có dòng mới. Hôm nay job này
+**phải kêu** — HII và AAA đang câm 100%, đó là đối chứng dương sẵn có.
+
 ## Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.
