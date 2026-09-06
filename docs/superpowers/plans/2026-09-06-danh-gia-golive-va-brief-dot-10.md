@@ -177,6 +177,66 @@ tự chạy.**
 
 ---
 
+## Task 4 (thay thế) — Cảnh báo khi lịch nghỉ lễ đã cạn
+
+### Bối cảnh — vì sao KHÔNG bỏ `holidays` khỏi config
+
+Chủ dự án hỏi 06/09: lịch 2027 phải crawl từ báo, nếu không được thì bỏ khỏi
+config? **Trả lời: không bỏ.** Lý do đã kiểm chứng:
+
+1. **Lịch 2027 chưa công bố chính thức.** Thủ tướng quyết hằng năm, Bộ Nội vụ
+   thường thông báo tháng 10–12 năm trước. Mọi bài báo hiện tại đều ghi "dự
+   kiến". Crawl bây giờ = lấy phương án đề xuất làm lịch chặn giao dịch, đúng
+   loại đoán bị cấm.
+2. **Config hiện tại KHÔNG sai.** Việt Nam hết ngày lễ luật định sau 02/09/2026;
+   ngày kế tiếp là 01/01/2027. Ba dòng còn lại là đúng-và-đã-dùng-hết.
+3. **Bỏ đi sẽ gây nhiễu chuông báo.** `holidays` chảy vào
+   `calendar_vn.is_trading_time()` → `aggregator.py:29`,
+   `collector/main.py:247`, `heartbeat_check.py`, `docker_down_alert.py`, và
+   `trading_days_between()` (`account_sync.py:154`). Không có lịch thì ngày lễ
+   bị coi là phiên giao dịch, chờ tick không tới, chuông kêu oan.
+   **Đây không phải giả thuyết:** `heartbeat_check.py:95` ghi lại chính sự cố
+   đó — *"ngày 01/09 (nghỉ Quốc khánh) 2A nổ mỗi 5 phút suốt"*.
+
+Chế độ hỏng thật ở đây là **con người quên cập nhật**, không phải code sai. Nên
+việc cần làm là biến "quên" thành "hệ thống tự nhắc".
+
+### Việc
+
+Thêm vào `scripts/heartbeat_check.py` một kiểm tra: **lịch nghỉ lễ đã cạn.**
+
+- Hàm **thuần** (nhận `holidays`, `now`, trả về bool hoặc thông điệp) để test
+  được không cần DB — khuôn giống `in_bar_check_window` / `bar_stale` sẵn có
+  trong cùng file.
+- Luật: **cảnh báo WARN khi không còn ngày lễ nào `>= hôm nay` trong config
+  VÀ hôm nay đã qua 01/10.**
+- Vì sao có mốc 01/10, không cảnh báo quanh năm: trước tháng 10 thì lịch năm sau
+  chưa công bố, cảnh báo lúc đó là nhiễu vô ích vì **không ai hành động được**.
+  Từ 01/10 trở đi thì thông báo chính thức bắt đầu ra, cảnh báo mới có chỗ để
+  hành động. Ghi lý do này vào docstring.
+- Thông điệp phải nói rõ **phải làm gì**: lịch nghỉ giao dịch của HOSE/HNX là
+  nguồn đúng (cần ngày *sàn đóng cửa*, không phải ngày nghỉ công — hai thứ này
+  lệch nhau ở ngày nghỉ bù và ngày liền kề Quốc khánh).
+- Mức **WARN**, không phải CRITICAL: lịch thiếu không làm đặt sai lệnh, nó chỉ
+  gây báo động giả.
+
+**Cấm** sửa `config/config.yaml` (kể cả thêm khoá mới) — nếu thấy cần đổi cấu
+trúc config thì **báo lại**, đừng tự làm.
+
+**Kiểm chứng:**
+
+| Trường hợp | Kỳ vọng |
+|---|---|
+| `now` = 15/09/2026, lịch chỉ có ngày đã qua | **không** cảnh báo (chưa tới 01/10) |
+| `now` = 02/10/2026, lịch chỉ có ngày đã qua | **có** cảnh báo |
+| `now` = 02/10/2026, lịch có 01/01/2027 | **không** cảnh báo |
+| `now` = 02/10/2026, lịch rỗng hoàn toàn | **có** cảnh báo |
+
+Kèm phá hoại: bỏ điều kiện mốc 01/10 ⇒ trường hợp 1 phải đỏ. Dán output thô,
+khôi phục, `grep -rn "SABOTAGE"` rỗng.
+
+---
+
 ## VIỆC KHÔNG GIAO CHO AGENT — cần chủ dự án
 
 | Mã | Vì sao không giao được |
@@ -184,7 +244,7 @@ tự chạy.**
 | **§1 chiến lược** | Không phải lỗi code. Cần quyết định: đo lại toàn bộ (đang làm), đổi họ chiến lược, hay dừng săn |
 | **J** | Nối đường SELL là thay đổi hành vi tiền thật — cần chủ dự án chọn hướng trước |
 | **E** | Chuyển sang 0434226 = nhân lệnh ~40 lần. Quyết định tiền, không phải kỹ thuật |
-| **C3** | Lịch lễ 2027 **phải có nguồn chính thức**. Cấm đoán ngày lễ (ràng buộc thường trực). Chưa gấp — ràng buộc từ 01/01/2027 |
+| **C3** | ~~Chờ quyết~~ — **đã có hướng 06/09**: chưa công bố chính thức (Bộ Nội vụ ra tháng 10–12), nên **chờ**, không crawl báo. Task 4 thêm chuông nhắc từ 01/10. Nguồn đúng khi có: thông báo lịch nghỉ **giao dịch** của HOSE/HNX |
 | **C1** | Chuyển sang VPS Ubuntu — quyết định hạ tầng + chi phí |
 | **D1** | Diễn tập dead-man's switch cần một phiên giao dịch thật, chủ dự án hẹn lịch |
 
