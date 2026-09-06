@@ -98,9 +98,21 @@ thật mà chưa qua §1 — **dừng và báo cáo**.
 Đây là lỗ hổng lớn nhất còn lại: chiến lược chạy thật ở khung 5m, mọi con số
 đều là bar ngày.
 
-- Dùng `run_backtest` với `--tf 5m` (`_TF_SPEC` đã hỗ trợ, đọc từ bảng `bars`).
-- Rổ mã: đúng ba mã engine đang chạy (`config.symbols`), vì `bars` 5m chỉ có
-  các mã đó.
+- **Viết script mới trong `scripts/`, ĐỪNG dùng CLI `python -m trading.backtest`.**
+  CLI đó gọi `load_config` (`backtest.py:322`) mà `trading/config.py` đọc
+  `os.environ["DB_DSN"]` cùng 5 biến SSI — thiếu là `KeyError`, không liên quan
+  gì tới phép đo. Script mới:
+  - gọi thẳng `run_backtest(...)` như `measure_octopus_matched_basket.py` làm;
+  - lấy DSN bằng `resolve_dsn` từ `scripts/_db_common.py`;
+  - đọc bar 5m bằng `storage.read_bars(symbol, frm, to)` (bảng `bars` — đúng
+    nguồn mà `_TF_SPEC["5m"]` trỏ tới);
+  - lấy danh sách mã bằng `yaml.safe_load` trên `config/config.yaml`, **không**
+    qua `load_config`.
+- Rổ mã: đúng ba mã engine đang chạy (khoá `symbols` trong config), vì bảng
+  `bars` 5m chỉ có các mã đó.
+- Chi phí: dùng `FEE_RATE`/`SELL_TAX_RATE`/`SLIPPAGE_BPS` import từ
+  `trading.paper_broker` — **không gõ lại số**. Đây là cùng lỗi đã làm trôi cổng
+  cứng ở đợt 9.
 - **Bắt buộc dùng `trading/metrics.py`** — báo cáo đủ PnL, Profit Factor,
   expectancy, max drawdown danh mục, Sharpe. `periods_per_year` cho bar 5m:
   tự tính từ số bar/phiên × số phiên/năm, **ghi rõ cách tính**, không đoán.
@@ -144,17 +156,27 @@ dữ liệu" ⇒ từ chối + CRITICAL, **không** coi là "mới tinh".
 CRITICAL). Kèm phá hoại: bỏ kiểm tra ⇒ test phải đỏ, dán output thô, khôi phục,
 `grep -rn "SABOTAGE"` rỗng.
 
-## Task 3 — Dựng lại image (lệch 1 ngày 14 giờ)
+## Task 3 — Dựng lại image
+
+Image đang cũ hơn code (đo 06/09: lệch 1 ngày 14 giờ — con số này sẽ khác khi
+bạn chạy, **đọc lại bằng lệnh dưới** thay vì tin số trong brief).
 
 ```
+uv run python scripts/deploy_drift_check.py     # ghi lại con số TRƯỚC khi dựng
 docker compose build collector engine
 docker compose up -d --no-deps collector engine
 ```
 
-**Kiểm chứng:** `uv run python scripts/deploy_drift_check.py` không còn cảnh báo;
-`docker ps` cả 6 container Up; `scripts/heartbeat_check.py` xanh sau khi dựng lại.
+**Kiểm chứng:** `deploy_drift_check.py` **không còn cảnh báo** sau khi dựng;
+`docker ps` cả 6 container Up; `scripts/heartbeat_check.py` xanh.
 
 **Cấm** đụng `config/config.yaml` trong lúc dựng lại.
+
+> **Lưu ý phối hợp:** chủ dự án đã hẹn diễn tập dead-man's switch **sáng T2
+> 07/09** (`2026-09-07-kich-ban-dien-tap-dead-man-switch.md`). Nếu task này chạy
+> trùng buổi đó thì dựng lại image sẽ làm container khởi động lại giữa chừng và
+> **làm hỏng kết quả diễn tập**. Làm Task 3 **trước 08:00 hoặc sau 15:00** ngày
+> 07/09, hoặc vào ngày khác.
 
 ## ~~Task 4 — Docker tự khởi động (C2)~~ — ĐÃ CÓ SẴN, KHÔNG LÀM
 
@@ -314,20 +336,37 @@ output thô, khôi phục, `grep -rn "SABOTAGE"` rỗng.
 
 ## PHẠM VI PHẪU THUẬT
 
-**Được sửa:** `trading/real_orders.py` (chỉ Task 2), test tương ứng,
-`docker-compose.yml` (chỉ `restart:`), script đo mới cho Task 1.
+**Được sửa, theo từng task:**
 
-**Cấm đụng:** `config/config.yaml`, `.env`, `real_trading_enabled` (giữ `false`
-— **không bật dù chỉ để thử**), `_default_strategy()`, `run_backtest`,
-`PaperBroker`, `trading/strategies/*`, `trading/metrics.py`, `trading/sampling.py`.
-Không gọi API đặt/huỷ lệnh SSI. Không `TRUNCATE`/`DROP`/xoá dòng.
+| Task | File được đụng |
+|---|---|
+| 1 | script đo mới trong `scripts/` |
+| 2 | `trading/real_orders.py` + test |
+| 3 | không sửa file nào — chỉ chạy lệnh dựng lại image |
+| 4 | `scripts/heartbeat_check.py` + test |
+| 5 | `trading/real_orders.py` + test |
+
+**Lưu ý:** Task 2 và Task 5 **cùng sửa `trading/real_orders.py`**. Làm tuần tự,
+đừng để hai thay đổi giẫm lên nhau. Cả hai đều thêm hằng số cạnh
+`BUYING_POWER_MAX_AGE_MINUTES` (`:15`).
+
+**Cấm đụng:** `config/config.yaml` (kể cả thêm khoá mới), `.env`,
+`real_trading_enabled` (giữ `false` — **không bật dù chỉ để thử**),
+`real_order_account` (đa tài khoản đã HOÃN — xem Task 5),
+`_default_strategy()`, `run_backtest`, `PaperBroker`, `trading/strategies/*`,
+`trading/metrics.py`, `trading/sampling.py`, `trading/crypto_fees.py`,
+`trading/paper_broker.py`. Không gọi API đặt/huỷ lệnh SSI.
+Không `TRUNCATE`/`DROP`/xoá dòng.
 
 **Không commit, không push.** Claude audit rồi mới commit.
 
 ## BÁO CÁO NỘP LẠI
 
-- Bảng Task 1 đặt cạnh số bar ngày, kèm kết luận trung thực về cỡ mẫu.
-- Output thô Task 3 (`deploy_drift_check`, `docker ps`, `heartbeat_check`).
-- Output đỏ phá hoại Task 2 + xác nhận `grep` rỗng.
-- `uv run pytest -m "not integration" -q` (hiện 482) và `ruff check`.
-- Bất cứ chỗ nào brief này sai hoặc mâu thuẫn: **báo lại, đừng tự quyết**.
+- **Task 1:** bảng số đặt cạnh số bar ngày (`−1.615.319.902` / PF 0,74 /
+  Sharpe −0,96), kèm kết luận trung thực về cỡ mẫu.
+- **Task 3:** output thô `deploy_drift_check`, `docker ps`, `heartbeat_check`.
+- **Task 2, 4, 5:** output đỏ thô của **từng** lần phá hoại (mỗi task một lần),
+  kèm xác nhận `grep -rn "SABOTAGE" trading tests scripts` rỗng sau khi khôi phục.
+- `uv run pytest -m "not integration" -q` (hiện **482**) và
+  `uv run ruff check trading tests scripts`.
+- Bất cứ chỗ nào brief này sai hoặc mâu thuẫn: **báo lại, đừng tự quyết.**
