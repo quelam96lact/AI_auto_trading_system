@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
+from trading.crypto_fees import BINGX_PERP_TAKER
 from trading.models import Bar
 from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import PatternBacktestReport, run_pattern_backtest
@@ -266,7 +267,7 @@ def main() -> int:
                 x_r,
                 ktp,
                 sl_first=True,
-                fee_rate=0.0,
+                fee_rate=BINGX_PERP_TAKER,
                 sell_tax_rate=0.0,
                 slippage_bps=0.0,
                 settle_days=0,
@@ -280,7 +281,7 @@ def main() -> int:
                 x_r,
                 ktp,
                 sl_first=False,
-                fee_rate=0.0,
+                fee_rate=BINGX_PERP_TAKER,
                 sell_tax_rate=0.0,
                 slippage_bps=0.0,
                 settle_days=0,
@@ -307,7 +308,7 @@ def main() -> int:
                 x_r,
                 ktp,
                 sl_first=True,
-                fee_rate=0.0,
+                fee_rate=BINGX_PERP_TAKER,
                 sell_tax_rate=0.0,
                 slippage_bps=0.0,
                 settle_days=0,
@@ -321,7 +322,7 @@ def main() -> int:
                 x_r,
                 ktp,
                 sl_first=False,
-                fee_rate=0.0,
+                fee_rate=BINGX_PERP_TAKER,
                 sell_tax_rate=0.0,
                 slippage_bps=0.0,
                 settle_days=0,
