@@ -114,28 +114,62 @@ trong `bars`.
 - **TẠO MỚI:** `scripts/measure_octopus_5m_universe.py`
 - **TẠO MỚI:** `tests/test_measure_octopus_5m_universe.py`
 - **KHÔNG ĐỤNG:** `scripts/measure_octopus_5m.py` (là mốc đối chiếu của Task 1 —
-  sửa nó là mất mốc), `trading/backtest.py`, `trading/paper_broker.py`,
+  sửa nó là mất mốc; **ngoại lệ duy nhất** là phá hoại tạm ở tiêu chí kiểm chứng
+  số 4, phải trả lại nguyên trạng), `trading/backtest.py`, `trading/paper_broker.py`,
   `trading/metrics.py`, `trading/sampling.py`, `trading/strategies/octopus_pullback.py`,
   `config/config.yaml`.
+
+### MỘT CÔNG THỨC, MỘT CHỖ — bắt buộc, đọc trước khi gõ dòng nào
+
+`scripts/measure_octopus_5m.py:52` đã có sẵn `measure_symbol_5m(storage, symbol,
+frm, to, capital, ...)` làm **đúng** phần đo một mã mà task này cần.
+
+**Script mới PHẢI import và dùng lại hàm đó, TUYỆT ĐỐI không chép lại logic đo:**
+
+```python
+try:
+    from measure_octopus_5m import measure_symbol_5m
+except ImportError:
+    from scripts.measure_octopus_5m import measure_symbol_5m
+```
+
+(Import module này an toàn: mọi thứ nặng đều nằm trong `main()` sau
+`if __name__ == "__main__"`.)
+
+Phần code MỚI của script chỉ gồm: liệt kê mã từ `bars`, vòng lặp qua các mã, và
+**tầng tổng hợp danh mục** (gộp PnL, pool trade PnL, `portfolio_equity_curve`,
+PF/expectancy/MDD/Sharpe, phân tán top/bottom). Nếu agent thấy mình đang gõ lại
+`run_backtest(...)` với `fee_rate=...` thì **đã đi sai hướng** — dừng lại và
+import.
+
+Lý do không thương lượng: dự án này đã một lần trả giá vì gõ lại hằng số phí thay
+vì import (`0.0015` của đợt 9 làm vỡ cả hai bất biến cứng), và
+`DailyLiquidityTracker.current_avg()` có nguyên một đoạn docstring giải thích tại
+sao hai chỗ tính cùng một công thức là lỗi. Đừng lặp lại lần thứ ba.
 
 ### Cách viết — bắt buộc, tránh bẫy đã sập nhiều lần
 - **CẤM dùng `trading.config.load_config` và CẤM gọi CLI `python -m trading.backtest`.**
   `load_config` đòi `DB_DSN` + 5 biến môi trường SSI, thiếu là `KeyError` ngay.
-  Đây là bẫy đã làm hỏng brief của chính tôi ba lần. Làm y hệt
-  `scripts/measure_octopus_5m.py`: `resolve_dsn` từ `scripts/_db_common.py`,
-  `Storage(...)`, `storage.read_bars(...)`.
+  Đây là bẫy đã làm hỏng brief của chính tôi ba lần. Lấy DSN y hệt
+  `scripts/measure_octopus_5m.py`: `resolve_dsn` từ `scripts/_db_common.py`, rồi
+  `Storage(...)`. (Việc đọc bar là của `measure_symbol_5m` — script mới **không**
+  gọi `storage.read_bars` trực tiếp.)
 - Lấy danh sách mã bằng `SELECT DISTINCT symbol FROM bars ORDER BY symbol`
   (không đọc `config.yaml` — đây là toàn rổ, không phải rổ engine).
-- Tham số chiến lược: `OctopusPullbackStrategy()` **mặc định, không truyền gì**.
-  Không nới, không tinh chỉnh, không quét. Bất kỳ tham số nào bị đổi là sai task.
-- Thước đo lấy từ `trading.metrics`: `profit_factor`, `expectancy`, `max_drawdown`,
-  `sharpe`, `portfolio_equity_curve`. **Không tự viết lại công thức.**
+- **Không truyền override nào** vào `measure_symbol_5m` ngoài `capital`: để nguyên
+  `fee_rate` / `sell_tax_rate` / `slippage_bps` mặc định (chúng đã trỏ sẵn vào
+  `FEE_RATE` / `SELL_TAX_RATE` / `SLIPPAGE_BPS`). Tham số chiến lược cũng để
+  nguyên mặc định — không nới, không tinh chỉnh, không quét.
+- Thước đo tầng danh mục lấy từ `trading.metrics`: `profit_factor`, `expectancy`,
+  `max_drawdown`, `sharpe`, `portfolio_equity_curve`. **Không tự viết lại công thức.**
 - `sharpe` không có giá trị mặc định cho `periods_per_year` — cố ý. Gộp PnL theo
   NGÀY rồi truyền `periods_per_year=252.0`, giống `measure_octopus_5m.py:189`.
 - Có cờ `--symbols HII,IJC,AAA` để giới hạn rổ (phục vụ tiêu chí kiểm chứng dưới đây).
 
 ### Phải in ra
-1. Số mã có dữ liệu / số mã **sinh ít nhất 1 lệnh** / số mã bị chặn bởi cổng thanh khoản.
+1. Số mã có dữ liệu / số mã **sinh ít nhất 1 lệnh**. (Không đòi "số mã bị chặn bởi
+   cổng thanh khoản" — `measure_symbol_5m` không trả về thông tin đó, và sửa nó để
+   lấy được là vi phạm "KHÔNG ĐỤNG" ở trên.)
 2. Tổng số lệnh, win rate, PnL chiến lược, PnL mua-và-giữ.
 3. Profit factor, expectancy, max drawdown danh mục, Sharpe(252).
 4. **Phân tán theo mã**: PnL của 5 mã lãi nhất và 5 mã lỗ nhất. (Một tổng số dương
@@ -150,12 +184,20 @@ trong `bars`.
    phải ra **đúng 12 lệnh và PnL +787.149 VND**, khớp `measure_octopus_5m.py`.
    Lệch một đồng nghĩa là script mới sai ở đâu đó — **phải tìm ra và sửa, không
    được giải thích cho qua**. Dán output thô của CẢ HAI script cạnh nhau.
+   *Mốc này kiểm cái gì:* vì phần đo một mã dùng chung hàm, nó **không** kiểm lại
+   phép đo — nó kiểm **tầng mới**: liệt kê mã, vòng lặp, gộp PnL, pool trade PnL,
+   `portfolio_equity_curve`, và PF/expectancy/MDD/Sharpe ở mức danh mục. Đó đúng
+   là chỗ dễ sai nhất của task này.
 2. Chạy toàn rổ, dán output thô đầy đủ.
 3. Test: viết test chứng minh script **không** áp `exclusions.txt` và **không** đọc
    `config.yaml` để lấy rổ mã (đây đúng là hai lỗi dễ mắc nhất của task này).
-4. Tự phá hoại: đổi `fee_rate=FEE_RATE` thành `fee_rate=0.0`, chứng minh tổng PnL
-   đổi số → chứng tỏ phí thật sự chảy vào phép đo. Dán số trước/sau, rồi khôi phục.
-   `grep -rn "SABOTAGE"` phải rỗng khi nộp.
+4. Tự phá hoại để chứng minh phí thật sự chảy vào phép đo: **tạm thời** đổi mặc
+   định `fee_rate: float = FEE_RATE` thành `0.0` tại `measure_octopus_5m.py:58`,
+   chạy lại toàn rổ, chứng minh tổng PnL đổi số, rồi **khôi phục nguyên trạng**.
+   Đây là **ngoại lệ duy nhất** của lệnh "KHÔNG ĐỤNG `measure_octopus_5m.py`" —
+   "không đụng" nghĩa là không để lại thay đổi nào, phá hoại tạm rồi trả lại thì
+   được. Dán số trước/sau. Khi nộp: `git diff scripts/measure_octopus_5m.py` phải
+   **rỗng**, và `grep -rn "SABOTAGE"` phải rỗng.
 5. `uv run ruff check trading tests scripts` sạch. `uv run pytest -m "not integration" -q` xanh.
 
 ---
@@ -228,7 +270,8 @@ uv run python -m scripts.spike_ssi_history_depth
 |---|---|
 | Task 1 — mốc đối chiếu | Output thô của `--symbols HII,IJC,AAA` **và** của `measure_octopus_5m.py`, đặt cạnh nhau, chỉ rõ 12 lệnh / +787.149 VND khớp |
 | Task 1 — toàn rổ | Output thô đầy đủ: số mã, số mã sinh lệnh, tổng lệnh, PF, expectancy, MDD, Sharpe, top/bottom 5 mã |
-| Task 1 — phá hoại phí | Số PnL khi `fee_rate=0.0` vs `FEE_RATE`, + xác nhận `grep -rn "SABOTAGE"` rỗng |
+| Task 1 — phá hoại phí | Số PnL khi `fee_rate=0.0` vs `FEE_RATE`, + `git diff scripts/measure_octopus_5m.py` **rỗng**, + `grep -rn "SABOTAGE"` rỗng |
+| Task 1 — dùng lại hàm | `git diff` cho thấy script mới **import** `measure_symbol_5m` chứ không chép lại `run_backtest(...)` |
 | Task 1 — test | Tên **thật** của từng test mới (`grep -n "^def test_"`), số test trước/sau |
 | Task 2 | Output thô phần độ sâu 5m + kết luận mốc biên + đối chiếu với 03/04/2026 |
 | Chung | `ruff` sạch, `pytest -m "not integration"` xanh, kèm số test |
