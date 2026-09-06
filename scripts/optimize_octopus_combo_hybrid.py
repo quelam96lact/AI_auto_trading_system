@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
+from trading.crypto_fees import BINGX_PERP_TAKER
 from trading.models import Bar
 from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import run_pattern_backtest
@@ -176,7 +177,9 @@ def main() -> int:
                     )
                 )
         allow_short = True
-        fee_rate = 0.0
+        # BingX perpetual VIP0 taker — xem trading/crypto_fees.py. Truoc 06/09
+        # cho nay la 0.0, tuc quet luoi toi uu tren gia dinh MIEN PHI.
+        fee_rate = BINGX_PERP_TAKER
         sell_tax_rate = 0.0
         slippage_bps = 0.0
         settle_days = 0

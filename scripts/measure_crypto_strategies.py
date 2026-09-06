@@ -21,6 +21,7 @@ except ImportError:
     from scripts._db_common import resolve_dsn
 
 from trading.backtest import STRATEGIES, _buy_and_hold, run_backtest
+from trading.crypto_fees import BINGX_PERP_TAKER
 from trading.models import Bar
 from trading.risk import RiskManager
 from trading.trailing_stop import TrailingStopManager
@@ -92,12 +93,13 @@ def run_strategy_on_crypto(
     capital_per_symbol: float = 100_000.0,
     lot_size: int = 1,
     sl_multiplier: float = 2.0,
-    fee_rate: float = 0.0005,
+    fee_rate: float = BINGX_PERP_TAKER,
     slippage_bps: float = 0.0,
     periods_per_year: float = 365.0,
 ) -> dict:
     """Chạy 1 chiến lược trên danh mục các mã crypto.
-    Áp dụng mô hình phí crypto: fee_rate=0.0005 (BingX VIP0 taker 0.05%), tax=0, slippage_bps, settle_days=0.
+    Ap dung mo hinh phi crypto: fee_rate = BINGX_PERP_TAKER (BingX perpetual VIP0
+    taker 0,05%), tax=0, slippage_bps, settle_days=0. Xem trading/crypto_fees.py.
     """
     if strategy_name not in STRATEGIES:
         raise ValueError(f"Chiến lược không hợp lệ: {strategy_name}. Hỗ trợ: {list(STRATEGIES.keys())}")
@@ -257,7 +259,7 @@ def compare_lot_size_effect(
     symbols: list[str],
     strategy_name: str = "daily_breakout",
     capital: float = 100_000.0,
-    fee_rate: float = 0.0005,
+    fee_rate: float = BINGX_PERP_TAKER,
     slippage_bps: float = 0.0,
     periods_per_year: float = 365.0,
 ) -> None:
@@ -327,7 +329,7 @@ def main() -> None:
 
     print(f"Đã nạp {len(bars_by_symbol)} mã từ bars_crypto (khung {args.interval}).")
 
-    base_fee = 0.0005 * args.cost_multiplier
+    base_fee = BINGX_PERP_TAKER * args.cost_multiplier
     base_slippage = 0.0 * args.cost_multiplier
     periods = 365.0 if args.interval == "1d" else 8760.0
 

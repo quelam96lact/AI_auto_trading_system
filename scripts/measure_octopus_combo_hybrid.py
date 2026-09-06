@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _db_common import resolve_dsn
 
+from trading.crypto_fees import BINGX_PERP_TAKER
 from trading.metrics import (
     expectancy,
     max_drawdown,
@@ -407,7 +408,7 @@ def main() -> int:
                     )
                 )
 
-        fee_crypto = 0.0005 * args.cost_multiplier
+        fee_crypto = BINGX_PERP_TAKER * args.cost_multiplier
         slip_crypto = 0.0 * args.cost_multiplier
 
         configs_crypto = [
