@@ -79,19 +79,22 @@ logic aggregator trong task này.
   (nếu tồn tại — tự tìm bằng `gitnexus_query` hoặc `grep`, đừng đoán tên file),
   `trading/collector/backfill.py`.
 
-### Phải trả lời — bốn câu hỏi cụ thể
-1. **Bar đầu ngày:** trên toàn bộ 310 mã, bar đầu tiên mỗi ngày là mấy giờ (VN)?
+### Phải trả lời — ba câu hỏi cụ thể
+
+1. **Phân bố số bar/ngày trên TOÀN RỔ 310 mã** (không chỉ IJC): một bảng tần suất
+   duy nhất (số bar/ngày → số lượt symbol-ngày rơi vào đó), tính một lần cho toàn
+   rổ. Từ đúng bảng này suy ra hai việc, không viết truy vấn riêng cho từng việc:
+   - Có phổ biến lệch khỏi 51 hay chỉ IJC là ca lẻ?
+   - Với các lượt **> 51 bar** (vượt lý thuyết): liệt kê, rồi kiểm có bản ghi
+     trùng `(symbol, ts)` không (`SELECT symbol, ts, count(*) FROM bars GROUP BY
+     symbol, ts HAVING count(*) > 1`).
+2. **Bar đầu ngày:** trên toàn bộ 310 mã, bar đầu tiên mỗi ngày là mấy giờ (VN)?
    Phân bố ra sao — luôn là 09:15, hay dao động? Nếu luôn trễ đúng 15 phút, đó là
    dấu hiệu hệ thống (ví dụ: warmup của collector, hoặc quy ước "bar 5m gắn nhãn
    theo giờ đóng nên bar 09:00-09:05 mang nhãn 09:05" — **kiểm tra giả thuyết này
    trước khi kết luận là bug**, đối chiếu với cách `trading/collector/aggregator.py`
    gắn nhãn timestamp).
-2. **Ngày có > 51 bar (vượt lý thuyết):** liệt kê toàn bộ, kiểm có bản ghi trùng
-   `(symbol, ts)` hay không (`SELECT symbol, ts, count(*) FROM bars GROUP BY
-   symbol, ts HAVING count(*) > 1`).
-3. **Phân bố số bar/ngày toàn rổ 310 mã** (không chỉ IJC) — bảng tần suất giống
-   mục 1 ở trên nhưng cho toàn bộ, để biết đây là vấn đề của một mã hay hệ thống.
-4. **Nếu tìm ra nguyên nhân cụ thể** (vd: lỗi timezone, lệch nhãn bar, khoảng dừng
+3. **Nếu tìm ra nguyên nhân cụ thể** (vd: lỗi timezone, lệch nhãn bar, khoảng dừng
    backfill), nêu rõ; **nếu không tìm ra**, nói thẳng là không tìm ra — không suy
    diễn cho có kết luận.
 
@@ -106,7 +109,7 @@ logic aggregator trong task này.
 - Không commit, không push. Không đụng `config/config.yaml`.
 
 ### Tiêu chí kiểm chứng
-1. Dán output thô đầy đủ của script cho cả 4 câu hỏi.
+1. Dán output thô đầy đủ của script cho cả 3 câu hỏi.
 2. Nếu giả thuyết "nhãn bar theo giờ đóng" đúng, chứng minh bằng cách trích dẫn
    đúng dòng code trong aggregator gắn nhãn timestamp, không chỉ suy luận bằng lời.
 3. Nếu tìm thấy bản ghi trùng `(symbol, ts)`, dán ví dụ cụ thể (symbol, ts, giá trị
