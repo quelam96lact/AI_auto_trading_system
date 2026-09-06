@@ -237,13 +237,75 @@ khôi phục, `grep -rn "SABOTAGE"` rỗng.
 
 ---
 
+## Task 5 — Trần 100 cổ phiếu cho lệnh MUA thật (nửa an toàn của E)
+
+### Quyết định của chủ dự án 06/09 và cách tôi tách nó
+
+Chủ dự án chốt: *"dùng tất cả tài khoản có khả năng giao dịch, tạm thời ở mức
+100 cổ phiếu"*. Việc này có **hai nửa** với mức rủi ro rất khác nhau:
+
+1. **Trần 100 cổ phiếu** — thuần an toàn, rẻ, hữu ích bất kể sau này dùng tài
+   khoản nào. **Làm ở đợt này.**
+2. **Đa tài khoản** — `real_order_account` hiện là **một chuỗi duy nhất**, dùng
+   ở **32 chỗ**. Đổi thành nhiều tài khoản là thay đổi kiến trúc đúng đường code
+   nhạy cảm nhất repo. **HOÃN** tới khi J có lời giải — chủ dự án đã đồng ý
+   06/09. Lý do: J đang hoãn nghĩa là đường lệnh thật **chỉ MUA, không bao giờ
+   BÁN**; dựng năng lực mua-không-bán trên *nhiều* tài khoản là nhân rộng đúng
+   cái nửa nguy hiểm.
+
+**Task này chỉ làm nửa 1. Cấm đụng vào `real_order_account`.**
+
+### Việc
+
+Trong `trading/real_orders.py`, nhánh BUY:
+
+- Thêm hằng số đặt tên (ví dụ `MAX_REAL_BUY_QTY = 100`) cạnh
+  `BUYING_POWER_MAX_AGE_MINUTES` (`:15`), kèm bình luận nói rõ đây là **trần
+  tạm thời do chủ dự án đặt 06/09 cho giai đoạn thử**, không phải giới hạn kỹ
+  thuật.
+- Áp vào **chuỗi kẹp trần đã có**, đặt cùng chỗ với trần sức mua hiện tại:
+  ```python
+  qty = min(sized.qty, max_buy_qty) // risk.lot_size * risk.lot_size
+  ```
+  ⇒ thêm `MAX_REAL_BUY_QTY` vào `min(...)`. **Không** viết một nhánh kẹp riêng
+  ở chỗ khác — một trần một chỗ.
+- Lưu ý: `risk.lot_size` = 100 trên HOSE, nên trần này thực tế nghĩa là **đúng
+  một lô mỗi lệnh mua**.
+
+### CHỈ áp cho MUA — không áp cho BÁN
+
+Đây là điểm dễ làm sai nhất, ghi rõ trong bình luận code:
+
+Kẹp trần lệnh BÁN là **nguy hiểm**. Nếu tài khoản đang giữ 500 cổ phiếu và cần
+thoát, trần 100 sẽ nhốt 400 cổ phiếu còn lại trong vị thế. Trần này là để giới
+hạn *mức độ phơi nhiễm mới*, không phải để giới hạn đường thoát. Nhánh SELL
+(`:75`) và `handle_stop_touch` (`:146`) **giữ nguyên**, tiếp tục dùng
+`sellable_qty`.
+
+### Kiểm chứng
+
+| Trường hợp | Kỳ vọng |
+|---|---|
+| `approve_sized` trả 500, `max_buy_qty` = 5.000 | lệnh BUY ra **100** |
+| `approve_sized` trả 50 | ra **0** (làm tròn xuống bội 100) — không phải 50 |
+| `max_buy_qty` = 0 | ra **0**, trần mới không làm hỏng fail-safe sức mua sẵn có |
+| Nhánh SELL với `sellable_qty` = 500 | ra **500**, **không** bị kẹp |
+
+Phá hoại: bỏ `MAX_REAL_BUY_QTY` khỏi `min(...)` ⇒ trường hợp 1 phải đỏ. Dán
+output thô, khôi phục, `grep -rn "SABOTAGE"` rỗng.
+
+---
+
 ## VIỆC KHÔNG GIAO CHO AGENT — cần chủ dự án
 
 | Mã | Vì sao không giao được |
 |---|---|
 | **§1 chiến lược** | Không phải lỗi code. Cần quyết định: đo lại toàn bộ (đang làm), đổi họ chiến lược, hay dừng săn |
-| **J** | Nối đường SELL là thay đổi hành vi tiền thật — cần chủ dự án chọn hướng trước |
-| **E** | Chuyển sang 0434226 = nhân lệnh ~40 lần. Quyết định tiền, không phải kỹ thuật |
+| **J** | ~~Chờ quyết~~ — **chủ dự án HOÃN (06/09)** |
+| **E** | ~~Chờ quyết~~ — **đã quyết 06/09**, tách hai nửa: trần 100 cp làm ngay (Task 5), đa tài khoản hoãn tới khi J xong |
+| **C1** | ~~Chờ quyết~~ — **đã quyết 06/09**: chuyển VPS Ubuntu khi hệ thống đủ sẵn sàng giao dịch, chưa phải bây giờ |
+| **C2** | ~~Chờ quyết~~ — **đã quyết 06/09**: chủ dự án **tự khởi động Docker** khi cần. Không cần autostart, không cần scheduled task cho việc này |
+| **D1** | ~~Chờ quyết~~ — **đã hẹn: Thứ Hai 07/09**. Kịch bản ở `2026-09-07-kich-ban-dien-tap-dead-man-switch.md` |
 | **C3** | ~~Chờ quyết~~ — **đã có hướng 06/09**: chưa công bố chính thức (Bộ Nội vụ ra tháng 10–12), nên **chờ**, không crawl báo. Task 4 thêm chuông nhắc từ 01/10. Nguồn đúng khi có: thông báo lịch nghỉ **giao dịch** của HOSE/HNX |
 | **C1** | Chuyển sang VPS Ubuntu — quyết định hạ tầng + chi phí |
 | **D1** | Diễn tập dead-man's switch cần một phiên giao dịch thật, chủ dự án hẹn lịch |
