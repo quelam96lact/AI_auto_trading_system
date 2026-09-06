@@ -161,6 +161,30 @@ def token_expiry_status(refresh_expires_at, now,
     return None
 
 
+def check_holiday_exhaustion(holidays: frozenset[date] | set[date], now: datetime) -> str | None:
+    """Kiểm tra lịch nghỉ lễ trong config đã cạn hay chưa.
+
+    Luật: Cảnh báo WARN khi không còn ngày lễ nào >= hôm nay trong config VÀ
+    hôm nay đã qua 01/10 ((now.month, now.day) >= (10, 1)).
+
+    Vì sao có mốc 01/10: trước tháng 10 thì lịch năm sau chưa công bố chính thức,
+    cảnh báo lúc đó là nhiễu vô ích vì không ai hành động được. Từ 01/10 trở đi,
+    thông báo chính thức bắt đầu ra, cảnh báo mới có chỗ để hành động.
+    """
+    today = now.astimezone(TZ).date()
+    if (today.month, today.day) < (10, 1):
+        return None
+
+    future_holidays = [h for h in holidays if h >= today]
+    if not future_holidays:
+        return (
+            "[WARN] lịch nghỉ lễ trong config/config.yaml đã cạn (không còn ngày lễ >= hôm nay) — "
+            "cần cập nhật lịch nghỉ giao dịch năm mới của HOSE/HNX (lấy ngày sàn đóng cửa, "
+            "lưu ý ngày nghỉ bù/liền kề) vào config.yaml"
+        )
+    return None
+
+
 def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, capital: float = CAPITAL) -> float:
     """2C: độ lệch hai sổ sách. Bất biến (đúng LUÔN, không chỉ khi phẳng):
         cash + Σ(avg_price × qty) − capital == realized_pnl
@@ -308,6 +332,11 @@ def main() -> int:
                 f"lần cuối {sync_ts} "
                 f"({(now - sync_ts).total_seconds() / 60:.0f} phút trước)"
             )
+
+    # Brief dot 10 Task 4: Cảnh báo cạn lịch nghỉ lễ từ 01/10
+    holiday_warn = check_holiday_exhaustion(holidays, now)
+    if holiday_warn:
+        messages.append(holiday_warn)
 
     if messages:
         # Brief 2026-09-01 (dot 3) Task B: in ly do ra stdout TRUOC khi gui —

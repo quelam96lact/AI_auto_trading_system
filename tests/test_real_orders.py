@@ -50,9 +50,21 @@ def bar():
     )
 
 
+@pytest.fixture(autouse=True)
+def _default_patch_now(monkeypatch):
+    """Mặc định đồng bộ _now với bar fixture (2026-07-15 09:05) cho mọi test."""
+    from trading import real_orders as ro_mod
+
+    fixed = datetime(2026, 7, 15, 9, 5, tzinfo=TZ)
+    monkeypatch.setattr(ro_mod, "_now", lambda tz=None: fixed)
+
+
 def _make_storage():
+    from trading import real_orders as ro_mod
+
     storage = MagicMock()
     storage.read_real_positions.return_value = {}
+    storage.read_position_sync_ts.side_effect = lambda account=None: ro_mod._now(TZ) - timedelta(minutes=5)
     storage.read_real_daily_pnl.return_value = 0.0
     storage.create_pending_order.return_value = 42
     # T1-B2: suc mua TUOI mac dinh (du lon, khong chan qty sizing trong test cu)
@@ -73,7 +85,7 @@ def _patch_now(monkeypatch, fixed=None):
 
     if fixed is None:
         fixed = datetime(2026, 7, 15, 9, 5, tzinfo=TZ)
-    monkeypatch.setattr(ro_mod, "_now", lambda tz: fixed)
+    monkeypatch.setattr(ro_mod, "_now", lambda tz=None: fixed)
     return fixed
 
 
@@ -89,12 +101,8 @@ def test_handle_crossover_buy_when_not_held(cfg, bar, monkeypatch):
     args = storage.create_pending_order.call_args.kwargs
     assert args["account_no"] == "ACC_REAL"
     assert args["symbol"] == "VCB"
-    assert args["side"] == "BUY"
-    # T1-B3: qty qua approve_sized (ATR sizing) roi kep tran suc mua — khong
-    # con la hang so BUY_QTY=100. capital 1ty, atr 500, gia 50k:
-    # qty_atr = 1ty*1%/(500*2) = 10.000; qty_cap = 1ty*20%/50k = 4.000
-    # -> min = 4.000; tran suc mua 10.000 -> 4.000
-    assert args["quantity"] == 4_000, f"qty sizing, thuc te: {args['quantity']}"
+    # Task 5: min(qty_atr 10k, qty_cap 4k, max_buy 10k, MAX_REAL_BUY_QTY 100) = 100
+    assert args["quantity"] == 100, f"qty sizing kep tran 100 cp, thuc te: {args['quantity']}"
     assert args["price"] == 50_000
     expires_at = args["expires_at"]
     assert expires_at.tzinfo is not None
@@ -183,8 +191,7 @@ def test_handle_crossover_skips_buy_when_position_qty_is_zero(cfg, bar, monkeypa
     storage.create_pending_order.assert_called_once()
     args = storage.create_pending_order.call_args.kwargs
     assert args["side"] == "BUY"
-    # T1-B3: qty qua approve_sized — 4.000 (xem test_handle_crossover_buy_when_not_held)
-    assert args["quantity"] == 4_000
+    assert args["quantity"] == 100
 
 
 # ============ Plan 2026-09-01 T1-B2/B3: dinh co BUY that theo NAV + suc mua ============
@@ -259,7 +266,7 @@ def test_buy_qty_capped_to_max_buy_qty_and_rounded_down(cfg, bar, monkeypatch):
 
     storage.create_pending_order.assert_called_once()
     qty = storage.create_pending_order.call_args.kwargs["quantity"]
-    assert qty == 500, f"min(800, 550) tron xuong lo = 500, thuc te: {qty}"
+    assert qty == 100, f"min(800, 550, MAX_REAL_BUY_QTY 100) = 100, thuc te: {qty}"
     mock_alert.assert_called_once()
 
 
@@ -285,9 +292,7 @@ def test_buy_real_numbers_nav_5tr_can_still_buy_one_lot(cfg, monkeypatch):
     """T1-B5 (bat buoc, khong phai phu): so THAT tu plan muc 0 — NAV 0434221 =
     5.021.459, gia AAA = 7030, suc mua AAA = 666, ATR = 100 (hợp lý voi gia
     7030: 1.4%). qty_cap = 5.021.459*20%/7030 = 142 cp -> 1 lo; qty_atr =
-    5.021.459*1%/(100*2) = 251 cp -> 2 lo; min = 100; tran 666 -> 100.
-    DUONG BUY THAT KHONG CHET VE MAT SO HOC (bai hoc SIZE-1: 4 thang khong
-    mua noi). Neu khong ra noi 1 lo: PHAI HIEN, khong noi luat cho test xanh."""
+    5.021.459*1%/(100*2) = 251 cp -> 2 lo; min = 100; tran 666 -> 100."""
     fixed_now = _patch_now(monkeypatch, fixed=datetime(2026, 9, 1, 9, 10, tzinfo=TZ))
     storage = _make_sized_storage(
         buying_power=(666, 666, 0.0, fixed_now - timedelta(minutes=5)),
@@ -304,17 +309,11 @@ def test_buy_real_numbers_nav_5tr_can_still_buy_one_lot(cfg, monkeypatch):
 
     storage.create_pending_order.assert_called_once()
     qty = storage.create_pending_order.call_args.kwargs["quantity"]
-    assert qty >= 100, (
-        f"NAV 5tr phai mua duoc 1 lo AAA (qty_cap=100), thuc te {qty} — "
-        f"day la PHAI HIEN, khong noi luat"
-    )
+    assert qty == 100, f"NAV 5tr phai mua duoc 1 lo AAA (100 cp), thuc te {qty}"
 
 
 def test_buy_real_numbers_nav_200tr_sized_well_above_one_lot(cfg, monkeypatch):
-    """T1-B5: so THAT 0434226 — NAV 200.188.000, AAA 7030, suc mua 10.807.
-    qty_cap = 200.188.000*20%/7030 = 5.695 -> 56 lo; qty_atr =
-    200.188.000*1%/(100*2) = 10.009 -> 100 lo; min = 5.600; tran 10.807
-    -> 5.600 (>= 100, khong bi ngheo doi)."""
+    """T1-B5 & Task 5: NAV 200tr tinh ra 5.600 cp nhung bi tran tam thoi 100 cp (Task 5)."""
     fixed_now = _patch_now(monkeypatch, fixed=datetime(2026, 9, 1, 9, 10, tzinfo=TZ))
     storage = _make_sized_storage(
         buying_power=(10_807, 10_807, 40.0, fixed_now - timedelta(minutes=5)),
@@ -331,8 +330,7 @@ def test_buy_real_numbers_nav_200tr_sized_well_above_one_lot(cfg, monkeypatch):
 
     storage.create_pending_order.assert_called_once()
     qty = storage.create_pending_order.call_args.kwargs["quantity"]
-    assert qty >= 100, f"NAV 200tr phai mua duoc it nhat 1 lo, thuc te {qty}"
-    assert qty == 5_600, f"min(qty_atr 10.000, qty_cap 5.600) = 5.600, thuc te {qty}"
+    assert qty == 100, f"NAV 200tr kep tran MAX_REAL_BUY_QTY 100 cp, thuc te {qty}"
 
 
 def test_buy_respects_custom_lot_size_one(cfg, monkeypatch):
@@ -363,7 +361,7 @@ def test_buy_respects_custom_lot_size_one(cfg, monkeypatch):
 def test_buy_default_lot_size_hundred_invariant(cfg, monkeypatch):
     """GÓI I: Mặc định lot_size=100 phải bất biến:
     - max_buy_qty = 33 < 100 -> từ chối (không gọi create_pending_order).
-    - max_buy_qty = 250 -> làm tròn xuống bội 100 là 200."""
+    - max_buy_qty = 250 -> làm tròn xuống 100 do trần MAX_REAL_BUY_QTY."""
     fixed_now = _patch_now(monkeypatch, fixed=datetime(2026, 9, 1, 9, 10, tzinfo=TZ))
 
     # Trường hợp 1: max_buy_qty = 33 < 100
@@ -378,12 +376,198 @@ def test_buy_default_lot_size_hundred_invariant(cfg, monkeypatch):
     mock_alert.assert_called_once()
     assert "khong du 1 lo 100 cp" in mock_alert.call_args.kwargs["reason"]
 
-    # Trường hợp 2: max_buy_qty = 250 -> làm tròn xuống 200
+    # Trường hợp 2: max_buy_qty = 250 -> kẹp trần 100
     storage2 = _make_sized_storage(
         buying_power=(250, 250, 50.0, fixed_now - timedelta(minutes=5)),
     )
     with patch("trading.real_orders.alert"):
         handle_crossover(cfg, storage2, risk_default, "bull", bar_test, atr=500.0)
     storage2.create_pending_order.assert_called_once()
-    assert storage2.create_pending_order.call_args.kwargs["quantity"] == 200
+    assert storage2.create_pending_order.call_args.kwargs["quantity"] == 100
+
+
+# ===========================================================================
+# Brief Đợt 10 — Task 2: Fail-safe độ cũ vị thế (P1)
+# ===========================================================================
+
+
+def test_crossover_position_sync_fresh_passes(cfg, bar, monkeypatch):
+    """Vị thế đồng bộ 5 phút trước (< 15 phút) -> Cho qua và xử lý bình thường."""
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    sync_ts = now - timedelta(minutes=5)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = sync_ts
+    storage.read_buying_power.return_value = (1000, 1000, 50.0, sync_ts)
+    risk = RiskManager(capital=100_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert"):
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_called_once()
+
+
+def test_crossover_position_sync_stale_rejected_critical(cfg, bar, monkeypatch):
+    """Vị thế đồng bộ 20 phút trước (> 15 phút) -> Từ chối + alert CRITICAL."""
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    stale_ts = now - timedelta(minutes=20)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = stale_ts
+    risk = RiskManager(capital=100_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+    assert "vị thế" in mock_alert.call_args.args[1] or "vi the" in mock_alert.call_args.args[1]
+
+
+def test_crossover_position_sync_none_rejected_critical(cfg, bar, monkeypatch):
+    """Chưa từng đồng bộ vị thế (sync_ts is None) -> Từ chối + alert CRITICAL."""
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = None
+    risk = RiskManager(capital=100_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+    assert "chua tung dong bo" in mock_alert.call_args.args[1]
+
+
+def test_stop_touch_position_sync_fresh_passes(cfg, bar, monkeypatch):
+    """Stop touch với vị thế tươi (< 15m) -> Cho qua và tạo pending order SELL."""
+    from trading.real_orders import handle_stop_touch
+
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    sync_ts = now - timedelta(minutes=5)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = sync_ts
+    storage.read_real_positions.return_value = {"VCB": RealPosition("VCB", 200, 50_000.0, 200)}
+    storage.has_active_pending_sell.return_value = False
+
+    trailing = MagicMock()
+    trailing.is_tracking.return_value = True
+    trailing.check.return_value = 49_000.0
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert"):
+        handle_stop_touch(cfg, storage, bar, atr=500.0, real_trailing_stop=trailing)
+
+    storage.create_pending_order.assert_called_once()
+    assert storage.create_pending_order.call_args.kwargs["side"] == "SELL"
+    assert storage.create_pending_order.call_args.kwargs["quantity"] == 200
+
+
+def test_stop_touch_position_sync_stale_rejected_critical(cfg, bar, monkeypatch):
+    """Stop touch với vị thế cũ (> 15m) -> Từ chối + alert CRITICAL."""
+    from trading.real_orders import handle_stop_touch
+
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    stale_ts = now - timedelta(minutes=20)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = stale_ts
+    storage.read_real_positions.return_value = {"VCB": RealPosition("VCB", 200, 50_000.0, 200)}
+
+    trailing = MagicMock()
+    trailing.is_tracking.return_value = True
+    trailing.check.return_value = 49_000.0
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_stop_touch(cfg, storage, bar, atr=500.0, real_trailing_stop=trailing)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+    assert "cu" in mock_alert.call_args.args[1] or "cũ" in mock_alert.call_args.args[1]
+
+
+def test_stop_touch_position_sync_none_rejected_critical(cfg, bar, monkeypatch):
+    """Stop touch khi chưa từng đồng bộ vị thế (sync_ts is None) -> Từ chối + alert CRITICAL."""
+    from trading.real_orders import handle_stop_touch
+
+    now = datetime(2026, 9, 1, 9, 20, tzinfo=TZ)
+    storage = _make_storage()
+    storage.read_position_sync_ts.side_effect = None
+    storage.read_position_sync_ts.return_value = None
+
+    trailing = MagicMock()
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_stop_touch(cfg, storage, bar, atr=500.0, real_trailing_stop=trailing)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+
+
+# ===========================================================================
+# Brief Đợt 10 — Task 5: Trần 100 cổ phiếu cho lệnh MUA thật
+# ===========================================================================
+
+
+def test_task5_buy_capped_at_100_when_sized_500(cfg, bar, monkeypatch):
+    """Trường hợp 1: approve_sized trả 500, max_buy_qty = 5000 -> Lệnh BUY ra 100."""
+    now = datetime(2026, 9, 1, 9, 10, tzinfo=TZ)
+    storage = _make_sized_storage(buying_power=(5000, 5000, 50.0, now - timedelta(minutes=5)))
+    risk = RiskManager(capital=500_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert"):
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_called_once()
+    assert storage.create_pending_order.call_args.kwargs["quantity"] == 100
+
+
+def test_task5_buy_rounds_down_to_0_when_sized_50(cfg, bar, monkeypatch):
+    """Trường hợp 2: approve_sized trả 50 -> ra 0 (làm tròn xuống bội 100) -> từ chối."""
+    now = datetime(2026, 9, 1, 9, 10, tzinfo=TZ)
+    storage = _make_sized_storage(buying_power=(5000, 5000, 50.0, now - timedelta(minutes=5)))
+    # Capital 2.5tr, giá 50k, ATR 500 -> qty_cap = 2.5tr*20%/50k = 10, qty_atr = 25 -> sized.qty = 25 < 100
+    risk = RiskManager(capital=2_500_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "INFO"
+
+
+def test_task5_buy_failsafe_when_max_buy_qty_zero(cfg, bar, monkeypatch):
+    """Trường hợp 3: max_buy_qty = 0 -> ra 0, không đặt lệnh mua."""
+    now = datetime(2026, 9, 1, 9, 10, tzinfo=TZ)
+    storage = _make_sized_storage(buying_power=(0, 0, 0.0, now - timedelta(minutes=5)))
+    risk = RiskManager(capital=100_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg, storage, risk, "bull", bar, atr=500.0)
+
+    storage.create_pending_order.assert_not_called()
+    mock_alert.assert_called_once()
+    assert mock_alert.call_args.args[0] == "INFO"
+
+
+def test_task5_sell_not_capped_at_100(cfg, bar, monkeypatch):
+    """Trường hợp 4: Nhánh SELL với sellable_qty = 500 -> ra 500, KHÔNG bị kẹp trần 100."""
+    now = datetime(2026, 9, 1, 9, 10, tzinfo=TZ)
+    storage = _make_sized_storage(
+        positions={"VCB": RealPosition("VCB", 500, 50_000.0, 500)},
+    )
+    risk = RiskManager(capital=100_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert"):
+        handle_crossover(cfg, storage, risk, "bear", bar, atr=None)
+
+    storage.create_pending_order.assert_called_once()
+    assert storage.create_pending_order.call_args.kwargs["quantity"] == 500
+
 

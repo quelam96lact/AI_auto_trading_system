@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 
 from scripts.heartbeat_check import (
     bar_stale,
+    check_holiday_exhaustion,
     position_sync_stale,
     stale_services,
     token_expiry_status,
@@ -524,3 +525,41 @@ def test_ngay_le_khong_bao_lao():
     assert token_expiry_status(None, tien_phien, frozenset({le})) is None, (
         "ngay nghi thi khong duoc nhac token o khung tien-phien"
     )
+
+
+# ============ Brief Đợt 10 Task 4: Cảnh báo cạn lịch nghỉ lễ ============
+
+
+def test_holiday_exhaustion_before_october_no_alarm():
+    """Trường hợp 1: now = 15/09/2026, lịch chỉ có ngày đã qua -> KHÔNG cảnh báo (chưa tới 01/10)."""
+    now = datetime(2026, 9, 15, 10, 0, tzinfo=TZ)
+    past_holidays = frozenset({date(2026, 1, 1), date(2026, 9, 2)})
+    assert check_holiday_exhaustion(past_holidays, now) is None
+
+
+def test_holiday_exhaustion_after_october_past_holidays_alarms():
+    """Trường hợp 2: now = 02/10/2026, lịch chỉ có ngày đã qua -> CÓ cảnh báo [WARN]."""
+    now = datetime(2026, 10, 2, 10, 0, tzinfo=TZ)
+    past_holidays = frozenset({date(2026, 1, 1), date(2026, 9, 2)})
+    result = check_holiday_exhaustion(past_holidays, now)
+    assert result is not None
+    assert "[WARN]" in result
+    assert "lịch nghỉ lễ trong config/config.yaml đã cạn" in result
+    assert "HOSE/HNX" in result
+
+
+def test_holiday_exhaustion_after_october_with_future_holiday_no_alarm():
+    """Trường hợp 3: now = 02/10/2026, lịch có 01/01/2027 -> KHÔNG cảnh báo."""
+    now = datetime(2026, 10, 2, 10, 0, tzinfo=TZ)
+    holidays_with_next_year = frozenset({date(2026, 9, 2), date(2027, 1, 1)})
+    assert check_holiday_exhaustion(holidays_with_next_year, now) is None
+
+
+def test_holiday_exhaustion_after_october_empty_holidays_alarms():
+    """Trường hợp 4: now = 02/10/2026, lịch rỗng hoàn toàn -> CÓ cảnh báo [WARN]."""
+    now = datetime(2026, 10, 2, 10, 0, tzinfo=TZ)
+    empty_holidays = frozenset()
+    result = check_holiday_exhaustion(empty_holidays, now)
+    assert result is not None
+    assert "[WARN]" in result
+

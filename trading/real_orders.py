@@ -13,6 +13,13 @@ PENDING_ORDER_TTL_MINUTES = 15
 # 15 = 3x nhip (cung ly le chuong 2A/2D). Neu do lai thay nhip khac, bao cao
 # truoc khi doi so.
 BUYING_POWER_MAX_AGE_MINUTES = 15
+# Brief dot 10 Task 2 (P1): Fail-safe do cu cho vi the (account_position_snapshot)
+# Nguong 15 phut tuong duong BUYING_POWER_MAX_AGE_MINUTES (3x nhip sync 5m).
+POSITION_MAX_AGE_MINUTES = 15
+# Brief dot 10 Task 5 (E): Tran tam thoi 100 co phieu cho moi lenh MUA that
+# do chu du an dat 06/09 cho giai doan thu nghiem (khong phai gioi han ky thuat).
+# LUU Y: CHI ap dung cho lenh MUA, KHONG ap dung cho lenh BAN (tranh nhot vi the).
+MAX_REAL_BUY_QTY = 100
 # Dong ho module-level de test tiêm duoc (plan: khong goi datetime.now() tran
 # trong ham).
 _now = datetime.now
@@ -37,8 +44,32 @@ def handle_crossover(
     object strategy vao day. SELL van dung sellable_qty, khong qua suc mua.
 
     KHÔNG gọi bất kỳ API đặt lệnh nào — chỉ ghi DB + cảnh báo. Việc đặt lệnh thật
-    là scripts/confirm_real_order.py, chạy thủ công bởi ngườ dùng.
+    là scripts/confirm_real_order.py, chạy thủ công bởi người dùng.
     """
+    # Brief dot 10 Task 2 (P1): Fail-safe do cu vi the — bat buoc dong bo con tuoi
+    pos_sync_ts = storage.read_position_sync_ts(cfg.real_order_account)
+    if pos_sync_ts is None:
+        alert(
+            "CRITICAL",
+            f"khong co dong vi the (account_position_snapshot) cho tai khoan {cfg.real_order_account} "
+            f"— TU CHOI xu ly lenh that cho {bar.symbol} (fail-safe, chua tung dong bo vi the)",
+            account=cfg.real_order_account,
+            symbol=bar.symbol,
+        )
+        return
+    pos_age_min = (_now(bar.ts.tzinfo) - pos_sync_ts).total_seconds() / 60
+    if pos_age_min > POSITION_MAX_AGE_MINUTES:
+        alert(
+            "CRITICAL",
+            f"vi the tai khoan {cfg.real_order_account} cu {pos_age_min:.0f} phut (nguong "
+            f"{POSITION_MAX_AGE_MINUTES}) — TU CHOI xu ly lenh that cho {bar.symbol} "
+            f"(fail-safe, khong dat lenh tren so lieu vi the cu)",
+            account=cfg.real_order_account,
+            symbol=bar.symbol,
+            ts=str(pos_sync_ts),
+        )
+        return
+
     positions = storage.read_real_positions(cfg.real_order_account)
     real_pos = positions.get(bar.symbol)
     max_buy_qty = 0  # chi dung cho nhanh BUY; tranh possibly-unbound
@@ -96,8 +127,8 @@ def handle_crossover(
                 reason=risk.last_reject_reason,
             )
             return
-        # Tran CUNG suc mua SSI, ap SAU approve_sized — lam tron xuong boi risk.lot_size
-        qty = min(sized.qty, max_buy_qty) // risk.lot_size * risk.lot_size
+        # Tran CUNG suc mua SSI + tran 100 cp tam thoi Task 5, ap SAU approve_sized — lam tron xuong boi risk.lot_size
+        qty = min(sized.qty, max_buy_qty, MAX_REAL_BUY_QTY) // risk.lot_size * risk.lot_size
         if qty < risk.lot_size:
             alert(
                 "INFO",
@@ -171,6 +202,30 @@ def handle_stop_touch(
     account_no + symbol thi bo qua (moi bar cham stop se de ra mot lenh cho
     moi neu khong chan).
     """
+    # Brief dot 10 Task 2 (P1): Fail-safe do cu vi the — bat buoc dong bo con tuoi
+    pos_sync_ts = storage.read_position_sync_ts(cfg.real_order_account)
+    if pos_sync_ts is None:
+        alert(
+            "CRITICAL",
+            f"khong co dong vi the (account_position_snapshot) cho tai khoan {cfg.real_order_account} "
+            f"— TU CHOI xu ly stop touch cho {bar.symbol} (fail-safe, chua tung dong bo vi the)",
+            account=cfg.real_order_account,
+            symbol=bar.symbol,
+        )
+        return
+    pos_age_min = (_now(bar.ts.tzinfo) - pos_sync_ts).total_seconds() / 60
+    if pos_age_min > POSITION_MAX_AGE_MINUTES:
+        alert(
+            "CRITICAL",
+            f"vi the tai khoan {cfg.real_order_account} cu {pos_age_min:.0f} phut (nguong "
+            f"{POSITION_MAX_AGE_MINUTES}) — TU CHOI xu ly stop touch cho {bar.symbol} "
+            f"(fail-safe, khong dat lenh tren so lieu vi the cu)",
+            account=cfg.real_order_account,
+            symbol=bar.symbol,
+            ts=str(pos_sync_ts),
+        )
+        return
+
     positions = storage.read_real_positions(cfg.real_order_account)
     real_pos = positions.get(bar.symbol)
     if real_pos is None or real_pos.qty <= 0:
