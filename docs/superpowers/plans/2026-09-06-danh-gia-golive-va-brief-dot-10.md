@@ -156,14 +156,24 @@ docker compose up -d --no-deps collector engine
 
 **Cấm** đụng `config/config.yaml` trong lúc dựng lại.
 
-## Task 4 — Docker tự khởi động (C2)
+## ~~Task 4 — Docker tự khởi động (C2)~~ — ĐÃ CÓ SẴN, KHÔNG LÀM
 
-`restart: unless-stopped` cho các service trong `docker-compose.yml`.
+**Đính chính của người viết brief (06/09, sau khi kiểm lại):** tôi đã định giao
+việc thêm `restart: unless-stopped`. Kiểm tra thì **cả 6 service trong
+`docker-compose.yml` đều đã có sẵn** (dòng 15, 23, 37, 61, 80, 95). Giao việc
+này là bắt agent làm lại thứ đã xong.
 
-**Kiểm chứng:** `docker inspect` từng container cho thấy RestartPolicy đúng.
-Nêu rõ trong báo cáo rằng việc này **không** làm container tự chạy sau khi khởi
-động lại máy nếu Docker Desktop chưa được đặt tự khởi động — đó là thao tác trên
-máy người dùng, **không tự làm**, chỉ ghi hướng dẫn.
+Phần **thật sự** còn thiếu của C2 nằm ngoài repo, trên máy người dùng, và
+**agent không được tự làm**:
+
+- Docker Desktop chưa được đặt tự khởi động cùng Windows — không có
+  `restart:` nào cứu được nếu bản thân Docker không chạy.
+- Scheduled task `trading-engine-cam` **chưa tồn tại** (kiểm bằng
+  `schtasks /query /tn "trading-engine-cam"` → không tìm thấy). Lệnh tạo đã ghi
+  sẵn trong `DEPLOYMENT.md`.
+
+Cả hai là thao tác thay đổi máy của chủ dự án ⇒ **chỉ nhắc trong báo cáo, không
+tự chạy.**
 
 ---
 
