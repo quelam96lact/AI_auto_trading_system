@@ -30,10 +30,31 @@ Hai task độc lập nhau, làm theo thứ tự nào cũng được.
   từ 481 xuống 184 dòng — một file đã commit của đợt 12 — mà không nhắc một chữ trong báo
   cáo. Tôi phải `git checkout` khôi phục. Đừng lặp lại.)
 - **KHÔNG commit, KHÔNG push.** Cứ để thay đổi trong cây làm việc. Tôi audit xong mới commit.
-- Trước khi sửa symbol: `gitnexus_impact`. Sau khi sửa: `gitnexus_detect_changes`.
-  **Phiên của tôi hôm nay MCP gitnexus timeout (CONNECT_TIMEOUT).** Nếu bên bạn cũng vậy
-  thì ghi thẳng vào báo cáo là không chạy được — **đừng im lặng bỏ qua, và tuyệt đối đừng
-  bịa kết quả**.
+### GitNexus — bắt buộc, cả trước lẫn sau
+
+1. **Trước khi gõ dòng code đầu tiên:** chạy `npx gitnexus analyze` để chỉ mục khớp với
+   `0e75377`. Đừng bỏ qua bước này với lý do "chỉ sửa hai file" — `gitnexus_impact` chạy
+   trên chỉ mục cũ thì cho ra blast radius cũ, tức tệ hơn không chạy vì nó trông có vẻ
+   đáng tin.
+2. Trước khi sửa symbol: `gitnexus_impact({target: "...", direction: "upstream"})` cho
+   **từng** symbol bạn định chạm — ít nhất là `read_real_daily_pnl` và
+   `read_real_highest_since_buy` ở Task 2. Báo cáo mức rủi ro; nếu ra HIGH/CRITICAL thì
+   **dừng lại và hỏi**, đừng sửa tiếp.
+3. **Sau khi sửa xong, trước khi báo cáo:** chạy `npx gitnexus analyze` lần nữa, rồi
+   `gitnexus_detect_changes()`. Dán kết quả — tôi cần thấy thay đổi chỉ chạm đúng các
+   symbol dự kiến.
+
+**Biết trước:** `npx gitnexus analyze` **sẽ tự sửa `AGENTS.md` và `CLAUDE.md`** — nó cập
+nhật dòng đếm symbol/relationship/execution flow trong khối `<!-- gitnexus:start -->`.
+Đó là **hành vi bình thường của công cụ, không phải bạn vi phạm phạm vi**. Đừng revert,
+đừng hoảng, và **đừng commit** (đợt này bạn không commit gì cả). Chỉ cần liệt kê hai file
+đó trong `git status` kèm một dòng ghi chú là do `analyze` sinh ra.
+
+**Nếu MCP gitnexus không kết nối được:** phiên của tôi hôm nay nó timeout
+(CONNECT_TIMEOUT). Nếu bên bạn cũng vậy thì vẫn **chạy `npx gitnexus analyze` bằng CLI**
+(CLI không phụ thuộc MCP), và ghi thẳng vào báo cáo là phần `gitnexus_impact` /
+`gitnexus_detect_changes` không chạy được — **đừng im lặng bỏ qua, và tuyệt đối đừng bịa
+kết quả**.
 
 ---
 
@@ -245,16 +266,23 @@ chờ chủ dự án quyết. Nếu bạn thấy chỗ nào khác cũng nên dù
 4. Kết quả `docker ps` trước khi chạy 1.1/1.2.
 5. `SELECT count(*) FROM real_order_fills` trên DB `trading`, đo **trước và sau** khi làm
    Task 2 — cả hai phải là 0.
-6. `git status --short` và `git diff --stat` — để tôi thấy đúng những file được phép sửa,
-   không hơn.
-7. `gitnexus_impact` / `gitnexus_detect_changes`: dán kết quả, hoặc nói thẳng là MCP không
-   kết nối được.
+6. `git status --short` và `git diff --stat`. Danh sách file **được phép** xuất hiện:
+   `scripts/run_if_docker_up.sh`, `trading/storage/db.py`, `tests/test_storage.py`, cộng
+   `AGENTS.md` và `CLAUDE.md` (do `npx gitnexus analyze` sinh ra — xem mục GitNexus ở §0).
+   **Bất cứ file nào khác xuất hiện đều là lỗi**, kể cả khi bạn nghĩ nó vô hại — báo cáo
+   ngay, đừng tự dọn.
+7. GitNexus: dán output của **cả hai** lần `npx gitnexus analyze` (trước và sau), kết quả
+   `gitnexus_impact` cho từng symbol chạm tới, và `gitnexus_detect_changes()`. Nếu MCP
+   không kết nối được thì nói thẳng — nhưng hai lần `analyze` bằng CLI thì vẫn phải có.
 8. Bất cứ thứ gì bạn phát hiện **ngoài phạm vi** — liệt kê, không sửa.
 
 ---
 
 ## 4. Tiêu chí "xong"
 
+- [ ] `npx gitnexus analyze` đã chạy **trước** khi sửa, và `gitnexus_impact` đã chạy cho
+      từng symbol chạm tới.
+- [ ] `npx gitnexus analyze` đã chạy **lại sau** khi sửa, kèm `gitnexus_detect_changes()`.
 - [ ] `run_if_docker_up.sh` truyền đúng mã thoát của job; hai nhánh SKIP vẫn thoát 0.
 - [ ] 4 phép kiểm Task 1 có output thô.
 - [ ] `EFFECTIVE_FILL_STATUSES` là hằng số duy nhất, dùng ở cả hai truy vấn.
