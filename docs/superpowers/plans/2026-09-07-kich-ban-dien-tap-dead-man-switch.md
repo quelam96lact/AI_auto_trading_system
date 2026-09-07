@@ -122,3 +122,82 @@ Giờ bật lại Docker:    HH:MM
 
 Tôi sẽ ghi kết quả vào tài liệu, và nếu đạt thì D1 đóng — lần đầu tiên chuông
 báo của hệ thống này có bằng chứng là kêu thật.
+
+---
+
+# KẾT QUẢ — D1 ĐẠT, ĐÓNG (07/09/2026)
+
+Claude tự đọc lại dấu vết trên hệ thống, không dựa vào báo cáo.
+
+## Bốn mốc
+
+```
+Chặng A: nhận được tin (10:06)
+Giờ tắt Docker:        10:06:37
+Giờ nhận tin Telegram: 10:10:05
+Giờ bật lại Docker:    10:10:27
+Độ trễ phát hiện:      3 phút 28 giây  (thiết kế: ≤ 10 phút)
+```
+
+**Kết quả: "Tin về trong ≤ 10 phút" — Đạt.** Mốc trễ thật **3 phút 28 giây**
+là con số tham chiếu cho lần sau.
+
+## Bằng chứng tự kiểm
+
+`logs/heartbeat.log`:
+
+```
+2026-09-07 10:10:05 heartbeat-check SKIP: docker chua chay
+[CRITICAL] Docker khong chay luc 10:10 ngay giao dich 07/09.
+Collector/engine deu dung. Khong co bar moi, khong co lenh.
+Cac job giam sat dang bi bo qua — day la tin nhan DUY NHAT ban se nhan.
+ALERT_EXIT=0
+2026-09-07 10:15:04 heartbeat-check start
+EXIT=0
+```
+
+- `ALERT_EXIT=0` ⇒ gửi Telegram **thành công**, không phải gửi hụt im lặng.
+- `logs/.docker_down_last_alert` = `1788750607` = **10:10:07 giờ VN** — khớp.
+- 10:15:04 `EXIT=0` ⇒ chu kỳ kế tiếp đã sạch, hệ thống phục hồi.
+
+## Chuông token cũng kêu đúng — phát hiện thêm, ngoài kịch bản
+
+Cùng file log cho thấy một sự kiện thứ hai mà báo cáo diễn tập không nêu:
+
+```
+09:50, 09:55, 10:00  [WARN]     token SSI sắp hết hạn (10:02 07/09)
+10:05                [CRITICAL] token SSI đã hết hạn hoặc không có trong DB
+```
+
+Token hết hạn 10:02, chuông cảnh báo trước 3 nhịp rồi báo CRITICAL. Đối chiếu
+DB: `refresh_token_expires_at` = **18:05:51**, trừ 8 giờ vòng đời ⇒ OTP được
+làm lúc **~10:05:51**, tức ngay sau tiếng chuông. **Chuông kêu → người xử lý →
+hệ thống hồi phục.** Đây là bằng chứng thứ hai, không nằm trong kịch bản, rằng
+lớp cảnh báo hoạt động thật.
+
+## §4 của kịch bản — kiểm lỗ hổng bar: KHÔNG mất bar nào
+
+Bước này kịch bản bắt buộc ("đừng bỏ qua") và báo cáo diễn tập đã bỏ qua.
+Claude tự kiểm. Bar 5 phút của 3 mã trong ngày 07/09:
+
+| Mốc | Số mã có bar | Nhận xét |
+|---|---|---|
+| 09:15 → 09:50 | 3/3 | đủ |
+| **09:55** | 2/3 (thiếu HII) | **trước lúc tắt Docker 10 phút** |
+| 10:00 | 3/3 | đủ |
+| **10:05** | 2/3 (thiếu HII) | trùng khoảng tắt |
+| **10:10** | 3/3 | đủ — dù đây là bucket chứa phần lớn thời gian tắt |
+| 10:15 | 3/3 | đủ |
+| 10:20 | 2/3 | bar đang hình thành lúc đo, không phải lỗ hổng |
+
+**Kết luận: diễn tập không gây mất bar nào phát hiện được.** Lý do tin được
+điều đó: mẫu "thiếu HII" xuất hiện ở **09:55, trước khi tắt Docker**, nên nó
+độc lập với diễn tập. Và đợt 12 (07/09) đã chứng minh bar chỉ tồn tại khi có
+**cú khớp thật** — HII là mã mỏng nhất trong rổ (đợt 10: 0 tín hiệu bull trên
+3.211 bar). Nên hai chỗ thiếu HII là bản chất thanh khoản, không phải mất dữ
+liệu. **Không cần backfill bù.**
+
+## D1 đóng
+
+Lần đầu tiên chuông báo của hệ thống này có bằng chứng là **kêu thật**, đo được
+độ trễ thật, và người nhận đã phản ứng đúng trong cùng phiên.
