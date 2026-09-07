@@ -111,6 +111,12 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="0 = tất cả mã")
     ap.add_argument("--dirty-pct", type=float, default=0.05)
     ap.add_argument(
+        "--symbols",
+        default=None,
+        help="danh sách mã cách nhau bởi dấu phẩy (vd: FOX,HCM,SSI). "
+        "Khi truyền, BỎ QUA --limit và --exclude-file, chỉ đo đúng các mã này.",
+    )
+    ap.add_argument(
         "--exclude-file",
         default=None,
         help="file 1 mã/dòng — loại khỏi phép đo (xem check_price_adjustment.py --emit-exclusions)",
@@ -125,22 +131,25 @@ def main() -> None:
     to = datetime.strptime(args.to, "%Y-%m-%d").replace(tzinfo=TZ) + timedelta(days=1)
 
     storage = Storage(dsn)
-    with storage.conn() as c:
-        symbols = [
-            r[0]
-            for r in c.execute("SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol")
-        ]
-
     excluded: set[str] = set()
-    if args.exclude_file:
-        excluded = {
-            s.strip().upper()
-            for s in Path(args.exclude_file).read_text(encoding="utf-8").splitlines()
-            if s.strip()
-        }
-        symbols = [s for s in symbols if s.upper() not in excluded]
-    if args.limit > 0:
-        symbols = symbols[: args.limit]
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    else:
+        with storage.conn() as c:
+            symbols = [
+                r[0]
+                for r in c.execute("SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol")
+            ]
+
+        if args.exclude_file:
+            excluded = {
+                s.strip().upper()
+                for s in Path(args.exclude_file).read_text(encoding="utf-8").splitlines()
+                if s.strip()
+            }
+            symbols = [s for s in symbols if s.upper() not in excluded]
+        if args.limit > 0:
+            symbols = symbols[: args.limit]
 
     results: list[dict] = []
     for i, sym in enumerate(symbols, 1):
