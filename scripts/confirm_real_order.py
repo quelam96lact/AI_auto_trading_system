@@ -21,9 +21,10 @@ from trading.alerts import alert
 from trading.calendar_vn import TZ
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import Config, load_config
+from trading.paper_broker import FEE_RATE
 from trading.storage.db import Storage
 
-FEE_RATE_ESTIMATE = 0.0025  # 0.25% giá trị lệnh — biểu phí SSI công khai, đặt lệnh
+FEE_RATE_ESTIMATE = FEE_RATE  # 0.25% giá trị lệnh — biểu phí SSI công khai, đặt lệnh
 # Online (không qua môi giới), giá trị GD dưới 100 triệu đồng/ngày/tài khoản.
 # Nguồn: https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan
 # (hiệu lực 10/10/2025). Vẫn là ƯỚC TÍNH cho account cụ thể (bậc GD cao hơn có

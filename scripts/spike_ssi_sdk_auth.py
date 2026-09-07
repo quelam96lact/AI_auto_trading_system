@@ -1,4 +1,11 @@
 """Phase 0 spike: xác nhận OTP flow + đo TTL refresh_token của ssi-sdk mới.
+
+⚠️ LƯU Ý VẬN HÀNH (Brief 17): Script này KHÔNG PHẢI spike vứt đi.
+Đây là công cụ khôi phục OTP của vận hành khi token hết hạn hoặc hỏng.
+Được gọi / tham chiếu từ: trading/collector/ssi_auth.py, scripts/heartbeat_check.py,
+scripts/load_token_to_db.py, tests/test_ssi_auth.py, và RUNBOOK_OTP_AUTH.txt.
+TUYỆT ĐỐI KHÔNG XOÁ.
+
 Chạy: uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py
       uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --no-otp
       uv run --with ssi-sdk python scripts/spike_ssi_sdk_auth.py --request-otp

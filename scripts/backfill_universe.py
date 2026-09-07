@@ -48,7 +48,10 @@ def load_symbols(cfg, storage, exchanges: set[str] | None = None) -> list[str]:
     mới set is_active theo ngưỡng thanh khoản)."""
     path = Path(__file__).parent / ".spike_all_symbols_classified.json"
     if not path.exists():
-        raise SystemExit("Chua co .spike_all_symbols_classified.json - chay Task 4b truoc")
+        raise SystemExit(
+            "Chua co .spike_all_symbols_classified.json - chay 'python scripts/spike_ssi_symbols_classify.py' "
+            "(can xac thuc SSI) de sinh lai file."
+        )
     data = json.loads(path.read_text(encoding="utf-8"))
     rows: list[dict] = []
     for label, entries in data["boards"].items():

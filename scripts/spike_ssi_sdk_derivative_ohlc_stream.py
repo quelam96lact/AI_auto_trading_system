@@ -1,5 +1,10 @@
 """Phase 0 spike: xác nhận OHLC + stream thật cho hợp đồng VN30F1M.
 
+⚠️ LƯU Ý VẬN HÀNH (Brief 17): Script này KHÔNG PHẢI spike vứt đi.
+Script này sinh fixture dữ liệu mẫu (scripts/.spike_derivative_ohlc_5m_2m_sample.json)
+mà tests/test_derivative_backtest.py đọc trực tiếp; được trading/collector/backfill.py nhắc tới.
+TUYỆT ĐỐI KHÔNG XOÁ.
+
 Chạy: uv run --with ssi-sdk python scripts/spike_ssi_sdk_derivative_ohlc_stream.py [--seconds 120]
 
 YÊU CẦU TRƯỚC: chạy scripts/spike_ssi_sdk_derivative_account.py trước để tạo

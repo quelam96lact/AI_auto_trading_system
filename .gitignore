@@ -16,6 +16,8 @@ scripts/.ssi_sdk_token.json
 scripts/.spike_*.json
 scripts/.spike_*.jsonl
 !scripts/.spike_derivative_ohlc_5m_2m_sample.json
+# Dau vao bat buoc cua job hang dem (backfill_universe.py) — co y commit (Brief 17).
+!scripts/.spike_all_symbols_classified.json
 scripts/.spike_*.py
 scripts/.repro_*.py
 scripts/.probe_*.py
@@ -24,6 +26,8 @@ scripts/.probe_*.py
 .agentignore
 
 .gitnexus_rpc.py
+# Cache index cua GitNexus (~253 MB), khong bao gio commit
+.gitnexus/
 .1devtool/
 .claude/worktrees/
 # Log chay tu scheduled task Windows (2026-09-01) — ghi moi 5 phut, khong

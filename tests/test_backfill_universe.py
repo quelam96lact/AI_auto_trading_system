@@ -233,3 +233,32 @@ def test_resolve_use_universe_symbols_holds_must_price_even_if_illiquid():
         f"bat buoc), thuc te n_outside={n_outside}"
     )
     assert symbols == sorted(set(active) | set(must_price) | {"HII"})
+
+
+def test_spike_all_symbols_classified_file_contract():
+    """Kiem tra scripts/.spike_all_symbols_classified.json ton tai, parse duoc json,
+    co boards, va chua du cac truong ma load_symbols() doc (symbol, listed_shares, cw_underlying_symbol)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent / "scripts" / ".spike_all_symbols_classified.json"
+    assert path.exists(), f"Khong tim thay file fixture bat buoc: {path}"
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "boards" in data, "File json phai co key 'boards'"
+    assert isinstance(data["boards"], dict), "'boards' phai la dict cac exchange/board"
+    assert len(data["boards"]) > 0, "'boards' khong duoc rong"
+
+    # Kiem tra it nhat 1 entry co du cac truong ma load_symbols doc
+    found_valid = False
+    for label, entries in data["boards"].items():
+        assert isinstance(entries, list), f"board {label} phai la list"
+        for e in entries:
+            if "symbol" in e and "listed_shares" in e and "cw_underlying_symbol" in e:
+                found_valid = True
+                break
+        if found_valid:
+            break
+
+    assert found_valid, "Phai co it nhat 1 entry chua du 3 truong: symbol, listed_shares, cw_underlying_symbol"
+

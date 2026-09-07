@@ -1,5 +1,10 @@
 """Spike Task 4b: khám phá trường phân loại của get_securities_info_by_board.
 
+⚠️ LƯU Ý VẬN HÀNH (Brief 17): Script này KHÔNG PHẢI spike vứt đi.
+Đây là máy sinh ra scripts/.spike_all_symbols_classified.json — đầu vào
+bắt buộc của job hằng đêm backfill_universe.py để nạp symbol_universe.
+Nếu xoá, hệ thống mất khả năng cập nhật/tạo mới danh mục vũ trụ cổ phiếu.
+
 Mục đích (yêu cầu Claude 2026-08-09):
 1. In TẤT CẢ field của 1 phần tử (tìm trường securityType/type/market...)
 2. Bảng thành phần mỗi sàn: cổ phiếu / index / CW / loại khác

@@ -151,6 +151,12 @@ class Storage:
         return bars
 
     def write_index_values(self, vals: list[IndexValue]) -> None:
+        """Ghi nhận danh sách IndexValue vào DB.
+
+        LƯU Ý: Hàm công khai này hiện chưa có caller trong production do mảng chỉ số
+        (VNINDEX/VN30) đang tạm dừng có chủ đích (xem trading/collector/feed.py:
+        'KHÔNG map IndexValue cho tới khi có nguồn dữ liệu thật khác'). KHÔNG XOÁ.
+        """
         if not vals:
             return
         with self.conn() as c:

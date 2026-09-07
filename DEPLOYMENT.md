@@ -340,9 +340,12 @@ sudo crontab -e
 
 Lưu ý:
 
-- `--use-universe` đọc `symbol_universe` (cổ phiếu thật, `is_active`). Bỏ qua
-  thêm `--sleep-ms` nếu muốn nhanh hơn — mặc định 200ms/mã ~ 5 phút cho toàn
-  bộ.
+- `--use-universe` đọc `symbol_universe` (cổ phiếu thật, `is_active`). Chuỗi
+  nạp: `scripts/spike_ssi_symbols_classify.py` → `scripts/.spike_all_symbols_classified.json`
+  → `scripts/backfill_universe.py --use-universe` → `symbol_universe`. File JSON
+  `scripts/.spike_all_symbols_classified.json` đã nằm trong git nên bản clone mới
+  chạy được ngay. Bỏ qua thêm `--sleep-ms` nếu muốn nhanh hơn — mặc định 200ms/mã
+  ~ 5 phút cho toàn bộ.
 - Progress (`backfill_progress`) tách hai cột từ 2026-08-18: `attempted_until`
   = ngày đã HỎI API tới (kể cả khi mã không giao dịch — chống fetch lại vĩnh
   viễn), `last_done_date` = ngày bar THẬT cuối (chỉ tiến khi có dữ liệu). Skip
