@@ -782,11 +782,12 @@ async def test_engine_warns_when_nav_unpriced(storage, monkeypatch):
 RTS_ACCOUNT = "ACC_RTS"
 
 
-def _seed_real_position(storage, qty=100, sellable=100, account=RTS_ACCOUNT):
-    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+def _seed_real_position(storage, qty=100, sellable=100, account=RTS_ACCOUNT, sync_ts=None):
+    ts = sync_ts or datetime.now(TZ)
     storage.save_account_positions(
         account, ts, [{"symbol": "ENGT", "quantity": qty, "cost_price": 10.0, "sellable_quantity": sellable}]
     )
+    storage.record_position_sync(account, ts)
 
 
 def _make_real_stop_bar(low=5.0):
@@ -797,6 +798,14 @@ def _count_pending_sells(storage, account=RTS_ACCOUNT):
     with storage.conn() as c:
         return c.execute(
             "SELECT count(*) FROM pending_real_orders WHERE account_no = %s AND side = 'SELL'",
+            (account,),
+        ).fetchone()[0]
+
+
+def _count_pending_buys(storage, account=RTS_ACCOUNT):
+    with storage.conn() as c:
+        return c.execute(
+            "SELECT count(*) FROM pending_real_orders WHERE account_no = %s AND side = 'BUY'",
             (account,),
         ).fetchone()[0]
 
@@ -1033,6 +1042,159 @@ async def test_real_stop_touch_falls_back_to_avg_price(storage, monkeypatch):
     assert len(gia_von_warns) == 1, (
         f"phai alert WARN 1 lan noi ro dang dung gia von thay cho dinh that, thuc te: {alerts_seen}"
     )
+
+
+# ============ P1 / REAL BUY: Test cho fail-safe P1 va duong MUA that ============
+
+
+async def test_real_stop_touch_rejects_when_never_synced(storage, monkeypatch):
+    """P1 Fail-safe (Task 2.1): Co vi the snapshot nhung CHUA TUNG dong bo vi the
+    (account_sync_log khong co dong nao) -> TU CHOI xu ly stop touch + alert CRITICAL."""
+    from trading.real_orders import handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM account_sync_log WHERE account_no = %s", (RTS_ACCOUNT,))
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    storage.save_account_positions(
+        RTS_ACCOUNT,
+        datetime.now(TZ),
+        [{"symbol": "ENGT", "quantity": 100, "cost_price": 10.0, "sellable_quantity": 100}],
+    )
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)
+
+    handle_stop_touch(cfg, storage, _make_real_stop_bar(low=5.0), atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 0
+    assert any(
+        level == "CRITICAL" and "chua tung dong bo vi the" in msg
+        for level, msg in alerts_seen
+    ), f"phai CRITICAL bao chua tung dong bo vi the, thuc te: {alerts_seen}"
+
+
+async def test_real_stop_touch_rejects_when_position_sync_stale(storage, monkeypatch):
+    """P1 Fail-safe (Task 2.2): Dong bo vi the da CU hon POSITION_MAX_AGE_MINUTES ->
+    TU CHOI xu ly stop touch + alert CRITICAL."""
+    from trading.real_orders import POSITION_MAX_AGE_MINUTES, handle_stop_touch
+    from trading.trailing_stop import TrailingStopManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    stale_ts = datetime.now(TZ) - timedelta(minutes=POSITION_MAX_AGE_MINUTES + 15)
+    _seed_real_position(storage, sync_ts=stale_ts)
+    ts = TrailingStopManager()
+    ts.on_position_opened("ENGT", 20.0)
+
+    handle_stop_touch(cfg, storage, _make_real_stop_bar(low=5.0), atr=1.0, real_trailing_stop=ts)
+
+    assert _count_pending_sells(storage) == 0
+    assert any(
+        level == "CRITICAL" and "TU CHOI xu ly stop touch" in msg
+        for level, msg in alerts_seen
+    ), f"phai CRITICAL TU CHOI khi vi the qua cu, thuc te: {alerts_seen}"
+
+
+async def test_real_crossover_rejects_when_never_synced(storage, monkeypatch):
+    """P1 Fail-safe (Task 2.3): handle_crossover khi chua tung dong bo vi the ->
+    TU CHOI xu ly lenh that + alert CRITICAL."""
+    from trading.real_orders import handle_crossover
+    from trading.risk import RiskManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM account_sync_log WHERE account_no = %s", (RTS_ACCOUNT,))
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_nav(storage, 100_000_000, ts=datetime.now(TZ))
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", datetime.now(TZ), 1000, 1000, 50.0)
+    risk = RiskManager(capital=100_000_000)
+    bar = Bar("ENGT", datetime.now(TZ), 20.0, 20.0, 20.0, 20.0, 1000)
+
+    handle_crossover(cfg, storage, risk, "bull", bar, atr=1.0)
+
+    assert _count_pending_buys(storage) == 0
+    assert any(
+        level == "CRITICAL" and "chua tung dong bo vi the" in msg
+        for level, msg in alerts_seen
+    ), f"phai CRITICAL bao chua tung dong bo vi the o crossover, thuc te: {alerts_seen}"
+
+
+async def test_real_crossover_rejects_when_position_sync_stale(storage, monkeypatch):
+    """P1 Fail-safe (Task 2.4): handle_crossover khi vi the cu hon POSITION_MAX_AGE_MINUTES ->
+    TU CHOI xu ly lenh that + alert CRITICAL."""
+    from trading.real_orders import POSITION_MAX_AGE_MINUTES, handle_crossover
+    from trading.risk import RiskManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    stale_ts = datetime.now(TZ) - timedelta(minutes=POSITION_MAX_AGE_MINUTES + 15)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=stale_ts)
+    _seed_nav(storage, 100_000_000, ts=datetime.now(TZ))
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", datetime.now(TZ), 1000, 1000, 50.0)
+    risk = RiskManager(capital=100_000_000)
+    bar = Bar("ENGT", datetime.now(TZ), 20.0, 20.0, 20.0, 20.0, 1000)
+
+    handle_crossover(cfg, storage, risk, "bull", bar, atr=1.0)
+
+    assert _count_pending_buys(storage) == 0
+    assert any(
+        level == "CRITICAL" and "vi the tai khoan" in msg and "TU CHOI" in msg
+        for level, msg in alerts_seen
+    ), f"phai CRITICAL TU CHOI khi vi the cu o crossover, thuc te: {alerts_seen}"
+
+
+async def test_real_crossover_creates_pending_buy(storage, monkeypatch):
+    """Task 3: Chung minh duong MUA that (handle_crossover bull) sinh lenh pending BUY
+    khi moi dieu kien tien de duoc thoa man."""
+    from trading.real_orders import MAX_REAL_BUY_QTY, handle_crossover
+    from trading.risk import RiskManager
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        "trading.real_orders.alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    _seed_nav(storage, 100_000_000, ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+    risk = RiskManager(capital=100_000_000)
+    bar = Bar("ENGT", now, 20000.0, 20000.0, 20000.0, 20000.0, 1000)
+
+    handle_crossover(cfg, storage, risk, "bull", bar, atr=1000.0)
+
+    assert _count_pending_buys(storage) == 1, f"phai sinh 1 lenh BUY that, thuc te alerts: {alerts_seen}"
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT quantity, side, price, status FROM pending_real_orders WHERE account_no = %s AND side = 'BUY'",
+            (RTS_ACCOUNT,),
+        ).fetchone()
+    assert row is not None
+    qty, side, price, status = row
+    assert side == "BUY"
+    assert status == "pending"
+    assert price > 0
+    assert 0 < qty <= MAX_REAL_BUY_QTY, f"quantity phai > 0 va <= MAX_REAL_BUY_QTY ({MAX_REAL_BUY_QTY}), thuc te: {qty}"
 
 
 # ============ WARM-1 Viec A: warm-up SMA/ATR luc engine khoi dong ============
