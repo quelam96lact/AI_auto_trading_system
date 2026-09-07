@@ -88,3 +88,27 @@ def test_gui_telegram_hong_van_de_lai_dau_vet(monkeypatch, capsys):
     assert "GUI TELEGRAM HONG" in out, (
         f"gui hong phai de lai dau vet, stdout thuc te: {out!r}"
     )
+
+
+# ============ Brief Đợt 13 Task 2: Suy ra tên container động ============
+
+
+def test_get_container_name_default_repo_basename(monkeypatch):
+    """Khi không set COMPOSE_PROJECT_NAME, tên container lấy theo thư mục repo (chữ thường)."""
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    name = deploy_drift_check.get_container_name("collector")
+    assert name == "ai_auto_trading_system-collector-1"
+
+
+def test_get_container_name_with_env_compose_project_name(monkeypatch):
+    """Khi COMPOSE_PROJECT_NAME được set (vd: 'trading' trên VPS), tên container phải theo project đó."""
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "trading")
+    name = deploy_drift_check.get_container_name("collector")
+    assert name == "trading-collector-1"
+
+
+def test_get_container_name_with_explicit_project_name():
+    """Khi truyền project_name trực tiếp, tên container phải dùng project_name đó."""
+    name = deploy_drift_check.get_container_name("engine", project_name="my_custom_project")
+    assert name == "my_custom_project-engine-1"
+

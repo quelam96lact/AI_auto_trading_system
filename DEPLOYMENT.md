@@ -263,8 +263,9 @@ thật nên lần chạy sau không chồng lên lần trước. VPS Ubuntu khô
 
 Trước 01/09 ba task chạy vô điều kiện. Khi máy bật lên mà Docker Desktop chưa
 khởi động, chúng vẫn chạy, vẫn bật cửa sổ console, vẫn đổ lỗi kết nối DB vào
-log — tiếng ồn che mất cái báo thật. Wrapper kiểm container
-`ai_auto_trading_system-postgres-1` đang chạy hay không:
+log — tiếng ồn che mất cái báo thật. Wrapper kiểm container postgres
+(`${COMPOSE_PROJECT_NAME:-<tên-thư-mục>}-postgres-1`, vd `trading-postgres-1`
+trên VPS hoặc `ai_auto_trading_system-postgres-1` trên máy dev) đang chạy hay không:
 
 - Không chạy ⇒ ghi **một dòng** `SKIP: docker chua chay` vào đúng file log đó
   rồi thoát 0. Bỏ qua thì bỏ qua, nhưng **không bao giờ im lặng**.
@@ -382,11 +383,12 @@ Kiểm chứng code MỚI thật sự nằm trong container — cả ba phải *
 0 thì build không lấy source mới, **dừng lại** và tìm hiểu trước khi restart:
 
 ```bash
-docker exec ai_auto_trading_system-collector-1 sh -c \
+# Dùng docker compose exec để tự động tìm đúng container collector theo project:
+docker compose exec collector sh -c \
   'grep -c _connected $(python -c "import trading.collector.feed as m; print(m.__file__)")'
-docker exec ai_auto_trading_system-collector-1 sh -c \
+docker compose exec collector sh -c \
   'grep -c _restart_feed_and_alert $(python -c "import trading.collector.main as m; print(m.__file__)")'
-docker exec ai_auto_trading_system-collector-1 sh -c \
+docker compose exec collector sh -c \
   'grep -c backoff_cap_429 $(python -c "import trading.collector.feed as m; print(m.__file__)")'
 ```
 
@@ -404,7 +406,7 @@ cho một image cũ ba tháng — đúng lớp lỗi mà chính nó sinh ra đ�
 ```bash
 C=$(git log -1 --format=%ct -- trading/)
 I=$(date -d "$(docker inspect -f '{{.Created}}' \
-     $(docker inspect -f '{{.Image}}' ai_auto_trading_system-collector-1))" +%s)
+     $(docker inspect -f '{{.Image}}' $(docker compose ps -q collector)))" +%s)
 [ "$I" -ge "$C" ] && echo 'OK: da trien khai' || echo 'CANH BAO: image CU hon commit'
 ```
 

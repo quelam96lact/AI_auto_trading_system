@@ -141,6 +141,27 @@ def _alert(messages: list[str]) -> int:
     return alert_and_fail("[deploy-drift]", messages, send_telegram)
 
 
+def get_container_name(service: str, project_name: str | None = None) -> str:
+    """Suy ra tên container cho service theo Docker Compose convention:
+    Ưu tiên project_name tham số -> COMPOSE_PROJECT_NAME từ môi trường -> tên thư mục REPO (chuẩn hoá chữ thường, ký tự lạ -> _).
+
+    CO HAI BAN CUA QUY TAC NAY — ngoai le co chu y cua "mot cong thuc mot noi"
+    (4ea4c8d). Ban kia: run_if_docker_up.sh (bien PROJECT_NAME). Ly do khong
+    gop: cong Docker trong run_if_docker_up.sh phai chay duoc ngay ca khi
+    Python/uv hong — goi Python de hoi ten container se bien mot loi Python
+    thanh "Docker chet". Doi mot ban thi PHAI doi ban kia; da doi chieu
+    07/09, ca hai cung cho ra `ai_auto_trading_system-postgres-1`.
+    """
+    if project_name is None:
+        project_name = os.environ.get("COMPOSE_PROJECT_NAME")
+    if not project_name:
+        import re
+
+        base = os.path.basename(REPO).lower()
+        project_name = re.sub(r"[^a-z0-9_-]", "_", base)
+    return f"{project_name}-{service}-1"
+
+
 def main() -> int:
     # Ép utf-8 để lý do cảnh báo còn dấu tiếng Việt; thất bại cũng không sao,
     # _print_safe đã có đường lui.
@@ -163,9 +184,7 @@ def main() -> int:
             ]
         )
 
-    images = {
-        svc: _image_created_epoch(f"ai_auto_trading_system-{svc}-1") for svc in SERVICES
-    }
+    images = {svc: _image_created_epoch(get_container_name(svc)) for svc in SERVICES}
     messages = drift_report(commit_epoch, images)
 
     if messages:

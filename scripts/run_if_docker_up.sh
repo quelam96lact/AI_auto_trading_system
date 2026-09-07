@@ -72,9 +72,17 @@ export DB_DSN="${DB_DSN//localhost/127.0.0.1}"
 export PYTHONIOENCODING=utf-8
 
 # 4. Moc kiem: postgres — khong co no thi moi script giam sat deu vo nghia.
-# Ten container doc tu DOCKER_GATE_CONTAINER (mac dinh postgres) de kiem chung
-# duoc nhanh Docker-chet ma khong phai tat Docker that (brief dot 8).
-GATE_CONTAINER="${DOCKER_GATE_CONTAINER:-ai_auto_trading_system-postgres-1}"
+# Ten container doc tu DOCKER_GATE_CONTAINER hoac suy ra tu COMPOSE_PROJECT_NAME / ten thu muc repo.
+#
+# CO HAI BAN CUA QUY TAC NAY — day la NGOAI LE CO CHU Y cua "mot cong thuc mot
+# noi" (4ea4c8d). Ban kia: deploy_drift_check.py::get_container_name().
+# Ly do khong gop: cong Docker nay phai chay duoc NGAY CA KHI Python/uv hong —
+# do dung la luc can no nhat. Goi Python de hoi ten container se bien mot loi
+# Python thanh "Docker chet" (bai hoc 51ff6de: mot phu thuoc moi la mot cach
+# moi de chuong chet cam). Doi mot ban thi PHAI doi ban kia.
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$REPO" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+DEFAULT_GATE="${PROJECT_NAME}-postgres-1"
+GATE_CONTAINER="${DOCKER_GATE_CONTAINER:-$DEFAULT_GATE}"
 if ! docker ps -q \
     --filter name="$GATE_CONTAINER" \
     --filter status=running 2>/dev/null | grep -q .; then
