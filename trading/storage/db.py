@@ -19,6 +19,12 @@ class RealPosition:
     sellable_qty: int
 
 
+# Trạng thái fill có hiệu lực cho tính toán PnL ngày và trailing stop đỉnh mua.
+# 'placed' được tính là có hiệu lực vì hiện chưa có vòng đối soát khớp lệnh thật
+# với SSI (lệnh đã đặt được coi là đã có hiệu lực); khi có vòng đối soát thì cần xem lại.
+EFFECTIVE_FILL_STATUSES = ("placed", "filled")
+
+
 _UPSERT_BAR = """
 INSERT INTO {table} (symbol, ts, open, high, low, close, volume, source)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -273,8 +279,8 @@ class Storage:
             row = c.execute(
                 "SELECT max(high) FROM bars WHERE symbol = %s AND ts >= "
                 "(SELECT max(ts) FROM real_order_fills WHERE account_no = %s "
-                "AND symbol = %s AND side = 'BUY' AND status IN ('placed', 'filled'))",
-                (symbol, account_no, symbol),
+                "AND symbol = %s AND side = 'BUY' AND status = ANY(%s))",
+                (symbol, account_no, symbol, list(EFFECTIVE_FILL_STATUSES)),
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
@@ -821,13 +827,15 @@ class Storage:
         hình rõ ràng ở đâu trong dự án), có thể quy sai ngày cho các dòng gần ranh giới
         nửa đêm. `day` truyền vào luôn là ngày lịch Việt Nam (vd `bar.ts.date()` với
         `bar.ts` ở TZ Asia/Ho_Chi_Minh), nên phải quy đổi `ts` về cùng timezone trước khi so.
+        Chỉ tính fill có trạng thái trong EFFECTIVE_FILL_STATUSES (placed/filled), bỏ qua cancelled.
         Trả về 0.0 nếu không có dòng nào.
         """
         with self.conn() as c:
             row = c.execute(
                 "SELECT COALESCE(SUM(pnl), 0.0) FROM real_order_fills "
-                "WHERE account_no = %s AND (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %s",
-                (account_no, day),
+                "WHERE account_no = %s AND (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %s "
+                "AND status = ANY(%s)",
+                (account_no, day, list(EFFECTIVE_FILL_STATUSES)),
             ).fetchone()
         return float(row[0])
 

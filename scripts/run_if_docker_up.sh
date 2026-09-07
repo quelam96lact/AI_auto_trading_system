@@ -101,4 +101,6 @@ fi
 date "+%Y-%m-%d %H:%M:%S $LABEL start" >> "$LOG"
 
 "$@" >> "$LOG" 2>&1
-echo "EXIT=$?" >> "$LOG"
+RC=$?
+echo "EXIT=$RC" >> "$LOG"
+exit "$RC"

@@ -286,6 +286,47 @@ def test_read_real_daily_pnl_uses_vn_calendar_day_not_utc(storage):
     assert storage.read_real_daily_pnl("ACC_TEST", date(2026, 7, 15)) == 0.0
 
 
+def test_read_real_daily_pnl_filters_by_effective_status(storage):
+    day = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+    storage.write_real_order_fill(
+        account_no="ACC_TEST",
+        ts=day,
+        symbol="VCB",
+        side="SELL",
+        qty=100,
+        price=55000.0,
+        fee=10.0,
+        pnl=100.0,
+        ssi_order_id="SSI-P1",
+        status="placed",
+    )
+    storage.write_real_order_fill(
+        account_no="ACC_TEST",
+        ts=day + timedelta(minutes=30),
+        symbol="HPG",
+        side="SELL",
+        qty=50,
+        price=21000.0,
+        fee=5.0,
+        pnl=200.0,
+        ssi_order_id="SSI-F1",
+        status="filled",
+    )
+    storage.write_real_order_fill(
+        account_no="ACC_TEST",
+        ts=day + timedelta(hours=1),
+        symbol="MSN",
+        side="SELL",
+        qty=20,
+        price=70000.0,
+        fee=5.0,
+        pnl=9999.0,
+        ssi_order_id="SSI-C1",
+        status="cancelled",
+    )
+    assert storage.read_real_daily_pnl("ACC_TEST", day.date()) == 300.0
+
+
 def test_update_pending_order_status_raises_on_unknown_id(storage):
     with pytest.raises(ValueError):
         storage.update_pending_order_status(999_999_999, "confirmed")
