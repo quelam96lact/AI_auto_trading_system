@@ -160,6 +160,23 @@ EXIT=0
 - `logs/.docker_down_last_alert` = `1788750607` = **10:10:07 giờ VN** — khớp.
 - 10:15:04 `EXIT=0` ⇒ chu kỳ kế tiếp đã sạch, hệ thống phục hồi.
 
+### Mốc nào đã kiểm độc lập, mốc nào chỉ có lời báo
+
+Ghi rõ để sau này không ai đọc nhầm cả bốn số đều có bằng chứng như nhau:
+
+| Mốc | Nguồn | Đã kiểm độc lập? |
+|---|---|---|
+| 10:10:05 nhận Telegram | `logs/heartbeat.log` | **Có** |
+| 10:10:07 khoá chống spam | `logs/.docker_down_last_alert` | **Có** |
+| 10:10:27 bật lại Docker | `docker inspect .State.StartedAt` | **Có** — postgres `03:10:28Z` = **10:10:28** giờ VN (lệnh phát 10:10:27, container lên sau 1 giây); collector/engine `10:10:34`, đúng thứ tự phụ thuộc |
+| 10:06:37 tắt Docker | báo cáo của chủ dự án | **Không trực tiếp** — `docker compose stop` không để lại mốc nào đọc được sau đó |
+
+Mốc cuối tuy không đọc thẳng được, nhưng **kẹp được từ hai phía**: nhịp 10:05:02
+chạy lọt qua cổng Docker (nó báo được CRITICAL token ⇒ Docker còn sống), nhịp
+10:10:05 thì `SKIP: docker chua chay`. Vậy Docker bị tắt trong khoảng
+**10:05:02 – 10:10:05**, hoàn toàn nhất quán với 10:06:37 đã báo. Không có mâu
+thuẫn nào.
+
 ## Chuông token cũng kêu đúng — phát hiện thêm, ngoài kịch bản
 
 Cùng file log cho thấy một sự kiện thứ hai mà báo cáo diễn tập không nêu:
