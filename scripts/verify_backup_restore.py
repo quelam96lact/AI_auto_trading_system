@@ -196,8 +196,8 @@ def main() -> int:
         FROM timescaledb_information.hypertables
         ORDER BY hypertable_name;
     """
-    _, src_hyper_out, _ = exec_psql("trading", sql_hyper)
-    _, res_hyper_out, _ = exec_psql(SCRATCH_DB, sql_hyper)
+    rc_src_h, src_hyper_out, _ = exec_psql("trading", sql_hyper)
+    rc_res_h, res_hyper_out, _ = exec_psql(SCRATCH_DB, sql_hyper)
 
     print(
         f"TimescaleDB Hypertables trong 'trading' (source):\n{src_hyper_out.strip()}\n",
@@ -207,6 +207,29 @@ def main() -> int:
         f"TimescaleDB Hypertables trong '{SCRATCH_DB}' (restored):\n{res_hyper_out.strip()}\n",
         flush=True,
     )
+
+    # PHAI GATE KET QUA, khong chi in ra roi thoi. Truoc day buoc nay chi in
+    # hai ben cho nguoi doc tu so bang mat: neu ban phuc hoi mat sach chunk —
+    # DUNG kieu hong ma ca task nay sinh ra de bat — script van in "THANH CONG"
+    # va thoat 0. Cung lop loi voi bug -1 == -1 o Buoc 5.
+    if rc_src_h != 0 or rc_res_h != 0:
+        print(
+            "-> KHONG DO DUOC hypertable (query loi) — coi la THAT BAI, "
+            "khong suy dien la giong nhau.",
+            flush=True,
+        )
+        all_matched = False
+    elif src_hyper_out.strip() == res_hyper_out.strip():
+        print(
+            "-> Hypertable/chunk hai ben KHOP tuyet doi (so sanh bang chuoi ket qua).",
+            flush=True,
+        )
+    else:
+        print(
+            "-> LECH hypertable/chunk giua hai ben — ban sao luu KHONG day du.",
+            flush=True,
+        )
+        all_matched = False
 
     # Bước 7: Dọn dẹp scratch database và file dump tạm
     print(f"--- BƯỚC 7: DỌN DẸP SCRATCH DATABASE '{SCRATCH_DB}' ---", flush=True)
