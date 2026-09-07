@@ -49,14 +49,23 @@ Hai chỗ hardcode tên container theo tên thư mục của máy dev:
   `svc: _image_created_epoch(f"ai_auto_trading_system-{svc}-1") for svc in SERVICES`
 
 Docker Compose đặt tên container theo **tên thư mục chứa** `docker-compose.yml`.
-Trên máy dev thư mục là `AI_auto_trading_system` → container
-`ai_auto_trading_system-postgres-1`. Nhưng `DEPLOYMENT.md` §2 hướng dẫn:
+Đây không phải suy luận — tôi đã đọc nhãn của chính container đang chạy:
+
+```
+$ docker inspect ai_auto_trading_system-postgres-1 --format "{{json .Config.Labels}}"
+"com.docker.compose.project"            : "ai_auto_trading_system"
+"com.docker.compose.project.working_dir": "D:\\My_Vault_Obsidian\\Project\\AI_auto_trading_system"
+```
+
+Tên project **đúng bằng tên thư mục viết thường**. Mà `DEPLOYMENT.md` §2 hướng dẫn:
 
 ```bash
 git clone <this-repo-url> /opt/trading
 ```
 
-→ tên project thành `trading` → container thành **`trading-postgres-1`**.
+→ thư mục `trading` → project `trading` → container thành **`trading-postgres-1`**,
+không khớp chuỗi hardcode. Cùng cơ chế đó cũng có nghĩa: **bất kỳ ai clone vào
+thư mục tên khác** (kể cả trên Windows) đều dính lỗi này, không riêng VPS.
 
 **Chuỗi hậu quả (đọc kỹ, đây không phải phiền toái nhỏ):**
 
