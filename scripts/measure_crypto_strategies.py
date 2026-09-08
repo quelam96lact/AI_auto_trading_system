@@ -5,7 +5,7 @@
 - Ràng buộc đo lường crypto:
   1. Đơn vị tiền: USDT (ghi rõ vốn).
   2. Lô: Mặc định lot_size = 1 (giả định, tránh thiên lệch loại trừ tài sản giá cao).
-  3. Phí: fee_rate=0.0, sell_tax_rate=0.0, slippage_bps=0.0, settle_days=0 (chưa trừ phí — kết quả lạc quan).
+  3. Phí: fee_rate = BINGX_PERP_TAKER (BingX perpetual VIP0 taker 0.05%), sell_tax_rate=0.0, settle_days=0 (funding chưa được mô hình hoá).
   4. Thiên lệch sống sót: 20 mã chọn theo khối lượng năm 2026 đo lùi về quá khứ.
 """
 
