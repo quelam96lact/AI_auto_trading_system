@@ -87,15 +87,17 @@ Lưu ý tên mã: repo dùng **`BTC-USDT`/`ETH-USDT` có gạch nối** (quy ư�
 
 ### 2.4. Vì vậy đợt này làm bước 1, không phải bước cuối
 
-Lộ trình tới giao dịch crypto thật, để chủ dự án thấy toàn cảnh:
+Lộ trình tới giao dịch crypto thật, để chủ dự án thấy toàn cảnh. **Chi tiết từng bước ở
+Phần C.**
 
 | Bước | Việc | Trạng thái |
 |---|---|---|
-| **1** | **Đo BTC + ETH riêng, có phí, có kiểm tra độ nhạy chi phí** | **Đợt này** |
-| 2 | Quyết định: có edge trên BTC/ETH không (quyết định của chủ dự án, như Tier 1) | Chờ bước 1 |
-| 3 | Mô hình hoá funding — hạn chế đã biết của mọi phép đo crypto | Chưa làm |
-| 4 | Broker perpetual (paper) + risk cho đòn bẩy/thanh lý | Chưa có dòng code nào |
-| 5 | Đường đặt lệnh BingX thật (ký request, đồng bộ vị thế, đối soát) | Chưa có dòng code nào |
+| **1** | **Đo BTC + ETH riêng, có phí, có kiểm tra độ nhạy chi phí** | **Đợt này (Task 4-5)** |
+| 2 | Cổng quyết định của chủ dự án: có đi tiếp không | Chờ bước 1 |
+| 3 | Ký request HMAC + đường **chỉ đọc** (số dư, vị thế, đặc tả hợp đồng) | Brief riêng |
+| 4 | Mô hình hoá funding + broker perpetual (paper) | Brief riêng |
+| 5 | Cầu dao, rủi ro đòn bẩy, chạy **shadow mode** 24/7 không gửi lệnh | Brief riêng |
+| 6 | Bật lệnh thật, vốn dưới 500 USDT, hạn mức cứng | Brief riêng |
 
 Đợt này **chỉ làm bước 1**, và bước 1 **không cần viết dòng code chiến lược nào** — vì
 `measure_crypto_strategies.py` đã có sẵn `--symbols`, đã mặc định trừ phí taker, và đã có
@@ -353,9 +355,173 @@ Kỳ vọng mục 7: `git diff --stat HEAD` chỉ có `scripts/measure_crypto_st
 
 Để tránh phình phạm vi, ghi rõ những gì **không** làm ở đây:
 
-- **Không** viết broker perpetual, không viết đường đặt lệnh BingX (bước 4-5 lộ trình §2.4).
-- **Không** mô hình hoá funding (bước 3) — đợt này chỉ *nêu* nó như hạn chế.
+- **Không** viết broker perpetual, không viết đường đặt lệnh BingX (bước 3-6, Phần C).
+- **Không** mô hình hoá funding (bước 4) — đợt này chỉ *nêu* nó như hạn chế.
 - **Không** quyết định BTC/ETH có edge hay không — đó là quyết định của chủ dự án sau khi
   có số, giống hệt cách Tier 1 và Q-2 đang chờ.
 - **Không** đụng `symbols`/`real_order_account` trong `config.yaml` (Q-2 vẫn treo).
 - **Không** điền lịch nghỉ lễ (Task 3 chỉ báo cáo).
+- **Không** chạm `.env`, không thêm biến BingX (xem Phần C §C.2).
+
+---
+
+# PHẦN C — LỘ TRÌNH TỚI GIAO DỊCH THẬT TRÊN BINGX
+
+Phần này **không phải việc của đợt 21**. Nó là bản thiết kế đường đi, để mỗi bước sau có một
+brief riêng và một cổng phải qua. Viết ra ở đây để không ai — kể cả tôi — nhảy cóc.
+
+## C.1. Bốn quyết định chủ dự án đã chốt (08/09/2026)
+
+| Quyết định | Chốt | Hệ quả thiết kế |
+|---|---|---|
+| Đòn bẩy | **Trên 3x** | Bắt buộc có module giá thanh lý + ký quỹ duy trì + chuông báo tiệm cận. Đây là tầng rủi ro repo chưa từng có cho crypto |
+| Mô hình xác nhận | **Tự động, có cầu dao** | Không dùng lại `pending_real_orders` (mô hình người xác nhận của SSI). Cần cầu dao thay cho con người |
+| Vốn khởi điểm | **Dưới 500 USDT** | Mọi hạn mức cứng neo theo con số này |
+| API key | **Đã tạo trên sàn** | Nhưng **chưa có trong `.env`** — xem C.2 |
+
+### Nói thẳng một lần, rồi thôi
+
+Vốn dưới 500 USDT, đòn bẩy trên 3x, chạy tự động, trên một chiến lược **chưa có edge nào đo
+được** — kết cục nhiều khả năng nhất là mất phần lớn số vốn đó. Điều này không có nghĩa là
+sai. Nó có nghĩa là **mục tiêu thật của giai đoạn này là kiểm chứng đường lệnh, không phải
+kiếm lời**, và 500 USDT là học phí cho việc đó.
+
+Nhận đúng mục tiêu thì thiết kế mới đúng: mọi thứ dưới đây tối ưu cho **tính đúng đắn của
+đường lệnh và các chốt an toàn**, không tối ưu cho lợi nhuận. Nếu sau vài tháng đường lệnh
+chạy sạch mà PnL âm đúng như dự đoán, **đó vẫn là một đợt thành công** — vì thứ thu được là
+một đường lệnh đã được chứng minh, dùng lại được khi nào có chiến lược thật sự có edge.
+
+## C.2. API key — việc của chủ dự án, agent không được làm thay
+
+`.env` hiện có 10 biến, **không biến nào là BingX**:
+
+```
+SSI_CONSUMER_ID, SSI_CONSUMER_SECRET, SSI_API_KEY, SSI_API_SECRET, SSI_PRIVATE_KEY,
+DB_DSN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD
+```
+
+(`.env` đã được `.gitignore:4` loại trừ — đã kiểm.)
+
+**Chủ dự án tự thêm** hai biến `BINGX_API_KEY` và `BINGX_API_SECRET`. Agent **không được**
+mở, sửa, hay in nội dung `.env` trong bất kỳ bước nào.
+
+**Ba điều kiện của key, chủ dự án tự kiểm trên giao diện BingX trước bước 3:**
+
+1. **KHÔNG bật quyền rút tiền (withdraw).** Đây là điều kiện quan trọng nhất. Key bị lộ mà
+   không có quyền rút thì thiệt hại giới hạn ở giao dịch sai; có quyền rút thì mất sạch.
+2. **Khoá theo IP** nếu BingX cho phép — IP của máy chạy engine.
+3. Chỉ bật quyền **perpetual futures**, không bật spot nếu không dùng.
+
+Agent **không được tự kiểm quyền rút tiền bằng cách gọi thử endpoint rút tiền.** Bước 3 chỉ
+xác nhận gián tiếp: gọi được endpoint đọc số dư là đủ chứng minh key hợp lệ.
+
+## C.3. Bước 2 — Cổng quyết định (chủ dự án, không phải agent)
+
+Sau khi có số của Task 4-5 đợt này, chủ dự án quyết một trong ba:
+
+- **Đi tiếp** với chiến lược đã đo, chấp nhận số liệu như nó là.
+- **Đi tiếp nhưng đổi chiến lược** — khi đó phải đo lại chiến lược mới trước, quay về bước 1.
+- **Dừng** hướng crypto.
+
+Không bước nào của C.4 trở đi được bắt đầu trước khi cổng này có câu trả lời.
+
+## C.4. Bước 3 — Ký request + đường CHỈ ĐỌC
+
+Brief riêng. Nội dung dự kiến:
+
+- Module `trading/crypto/bingx_client.py`: ký HMAC-SHA256 theo đặc tả BingX, đọc key từ biến
+  môi trường (**không** hằng số, **không** đọc file `.env` trực tiếp — dùng `os.environ`).
+- Chỉ ba endpoint đọc: số dư, vị thế đang mở, **đặc tả hợp đồng** (`contracts`).
+- **Cấm tuyệt đối** mọi endpoint đặt/huỷ/sửa lệnh trong bước này. Không có ngoại lệ.
+
+**Cổng phải qua:**
+
+- Gọi được cả ba endpoint, in ra số dư thật (làm tròn, không in key).
+- **Báo cáo đặc tả thật của BTC-USDT và ETH-USDT**: khối lượng tối thiểu, bước khối lượng,
+  giá trị lệnh tối thiểu, đòn bẩy tối đa cho phép. Báo cáo đợt 13 có nhắc "BTC 0,0001 /
+  ETH 0,001" nhưng đó là **số nghe lại, chưa xác minh** — bước này phải lấy từ API và ghi rõ.
+- Test có mock cho phần ký, không gọi mạng trong `pytest`.
+- Xác nhận không có dòng nào gọi endpoint giao dịch: `git grep` các từ khoá `order`, `trade`,
+  `position/close` trong module mới phải chỉ ra endpoint đọc.
+
+## C.5. Bước 4 — Funding + broker perpetual (paper)
+
+Brief riêng. Hai việc, làm đúng thứ tự:
+
+**(a) Mô hình hoá funding.** Hiện `trading/crypto_fees.py` ghi rõ funding là *hạn chế đã
+biết, chưa mô hình hoá*. Với đòn bẩy trên 3x và chạy 24/7, funding không còn là sai số nhỏ.
+Cần: nạp lịch sử funding rate từ BingX vào bảng riêng, và cho `run_backtest` (hoặc một hàm
+bọc ngoài) trừ funding theo số chu kỳ vị thế sống qua.
+
+**(b) `CryptoPaperBroker`.** Mô phỏng khớp lệnh perpetual: không T+, có chiều short, có đòn
+bẩy, có phí taker hai chiều, có funding. **Không sửa `PaperBroker`** hiện có — đó là đường
+chứng khoán VN, nằm trong danh sách cấm sửa của mọi brief.
+
+**Cổng phải qua:** đo lại BTC/ETH **có funding**, đặt cạnh số của đợt 21 (chưa có funding).
+Chênh lệch giữa hai lần đo chính là cái giá của việc trước đây bỏ qua funding — con số đó
+phải được ghi lại.
+
+## C.6. Bước 5 — Cầu dao, rủi ro đòn bẩy, và SHADOW MODE
+
+Đây là bước quan trọng nhất của cả lộ trình, và là bước dễ bị bỏ qua nhất.
+
+**(a) Bảng DB riêng.** Không dùng lại `pending_real_orders` — bảng đó có cột `ssi_order_id`
+và mô hình trạng thái của SSI. Cần `crypto_orders` và `crypto_positions` riêng.
+
+**(b) Cầu dao — khác SSI ở một điểm cốt lõi.** `real_risk_state.halted_date` là kiểu `date`,
+hợp lý cho thị trường có phiên. Crypto chạy 24/7 nên cầu dao phải là **`halted_until`
+timestamptz**, và trần lỗ phải tính trên **cửa sổ trượt 24 giờ**, không theo ngày lịch.
+
+**(c) Năm hạn mức cứng, đặt trong code, không đặt trong config** — để một dòng YAML gõ nhầm
+không thể mở khoá:
+
+| Hạn mức | Vì sao |
+|---|---|
+| Trần giá trị danh nghĩa tổng | Chốt chặn cuối. Một lỗi tính size không được phép mở vị thế 50x |
+| Trần đòn bẩy | Ép ở phía mình, không tin cấu hình trên sàn |
+| Trần lỗ 24 giờ trượt | Kích cầu dao, dừng vào lệnh mới |
+| Trần số lệnh 24 giờ | Bắt vòng lặp lỗi sinh lệnh liên tục |
+| Trần số lệnh liên tiếp thua | Dừng sớm khi chiến lược lệch pha thị trường |
+
+**(d) Giá thanh lý.** Với đòn bẩy trên 3x, phải tính và ghi giá thanh lý cho mọi vị thế mở,
+kèm chuông Telegram khi giá tiệm cận. `trading/derivative_risk.py` có sẵn cho phái sinh VN —
+**đọc để tham khảo cách làm, không tái sử dụng trực tiếp** (VN30F khác perpetual về ký quỹ).
+
+**(e) SHADOW MODE — chạy thật, không gửi lệnh.** Bật engine crypto chạy 24/7 trên dữ liệu
+thật, sinh lệnh thật, ghi đầy đủ vào `crypto_orders` với trạng thái `shadow`, **nhưng không
+gọi endpoint đặt lệnh**. Chạy tối thiểu **hai tuần liên tục**.
+
+**Cổng phải qua trước khi được bật lệnh thật:**
+
+- Shadow mode chạy ≥14 ngày không gián đoạn.
+- Không lệnh shadow nào vi phạm bất kỳ hạn mức nào ở (c).
+- Đối chiếu: PnL shadow tính tay khớp PnL backtest cùng kỳ, sai số giải thích được.
+- Cầu dao đã được **thử kích có chủ đích** trong shadow (ép vượt trần lỗ giả lập) và đã dừng
+  đúng.
+- Chuông thanh lý đã kêu đúng ít nhất một lần trong thử nghiệm.
+
+Bước này bắt gần hết lỗi đường lệnh mà không tốn một đồng nào. Bỏ qua nó để "tiết kiệm hai
+tuần" là đổi hai tuần lấy toàn bộ số vốn.
+
+## C.7. Bước 6 — Bật lệnh thật
+
+Brief riêng, và là brief duy nhất trong lộ trình đụng tiền thật.
+
+- Cờ `crypto_trading_enabled` mặc định **`false`**, mở tay, mô phỏng đúng cách
+  `real_trading_enabled` đang bảo vệ đường SSI.
+- Vốn nạp lên sàn **dưới 500 USDT**, và trần giá trị danh nghĩa ở C.6(c) neo theo con số này.
+- **Mọi lệnh thật gửi một chuông Telegram**, không gộp, không tóm tắt.
+- Tuần đầu: chủ dự án xem log mỗi ngày. Không phải vì không tin hệ thống, mà vì tuần đầu là
+  lúc duy nhất phát hiện được lệch giữa shadow và thật khi thiệt hại còn nhỏ.
+- Có sẵn quy trình **dừng khẩn**: một lệnh, đóng hết vị thế, tắt cờ. Viết ra và **thử trước**
+  ở shadow, không phải viết lúc đang hoảng.
+
+## C.8. Ba việc lộ trình này CỐ Ý không làm
+
+1. **Không tối ưu tham số cho tới khi đường lệnh chạy sạch.** Tối ưu trên một đường lệnh còn
+   lỗi là tối ưu vào nhiễu.
+2. **Không mở rộng quá BTC và ETH** trong toàn bộ lộ trình. Thêm mã là thêm bề mặt lỗi, mà
+   mục tiêu giai đoạn này là chứng minh đường lệnh.
+3. **Không đụng gì tới đường SSI.** Hai hệ thống chạy song song, không dùng chung bảng, không
+   dùng chung cầu dao, không dùng chung broker. Một sự cố bên crypto không được phép làm dừng
+   đường chứng khoán VN, và ngược lại.
