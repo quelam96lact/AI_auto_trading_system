@@ -47,6 +47,8 @@ class BacktestReport:
     # do co drawdown = 0, che mat cu sap that cua benchmark (VCB 2020-02 dang
     # lo 7,5% ma duong ve dang lai) va la mot ban SQL cua cung cong thuc.
     buy_and_hold_curve: list[tuple] = field(default_factory=list)
+    # So su kien thanh ly o vi the co don bay (Task 2 Brief dot 22).
+    liquidations: int = 0
 
 
 def _is_dirty(bar: Bar) -> bool:
@@ -167,12 +169,17 @@ def run_backtest(
     sell_tax_rate: float | None = None,
     slippage_bps: float | None = None,
     settle_days: int | None = None,
+    leverage: float = 1.0,
+    maintenance_margin_rate: float = 0.005,
 ) -> BacktestReport:
     """(goi B 2026-09-03) Nhan tham so phi/thue/settle — crypto khong co thue
     ban / T+3, ep luat VN len crypto la sai am tham (con so dep gia tao). Mac
     dinh None = dung hang so VN (FEE_RATE/SELL_TAX_RATE/SLIPPAGE_BPS/
     SETTLE_DAYS) — hanh vi cu bat bien, engine/main.py:58 PaperBroker(CAPITAL)
-    khong doi."""
+    khong doi.
+
+    (Brief dot 22): leverage (mac dinh 1.0 = khong don bay) va maintenance_margin_rate
+    (mac dinh 0.005 = 0.5%). Mo phong thanh ly kiem tra theo low cua tung bar."""
     # SPEC-1c: loai bar rac TRUOC khi vao vong lap — khong co lenh nao khop o
     # gia 0, va so dong loai duoc bao cao theo tung ma (im lang loc = che giau
     # van de du lieu).
@@ -199,6 +206,7 @@ def run_backtest(
     # nao) -> chi con diem dau, ts=None.
     first_ts = bars[0].ts if bars else None
     equity_curve: list[tuple] = [(first_ts, capital)]
+    liquidations = 0
 
     for bar in bars:
         fills = broker.on_bar(bar)
@@ -212,27 +220,42 @@ def run_backtest(
 
         signal = strategy.on_bar(bar, broker)
 
+        liquidated = False
+        if leverage > 1.0 and broker.position_qty(bar.symbol) > 0:
+            pos = broker.positions[bar.symbol]
+            liq_price = pos.avg_price * max(
+                0.0, 1.0 - (1.0 - maintenance_margin_rate) / leverage
+            )
+            if bar.low <= liq_price:
+                forced = broker.force_exit(bar.symbol, liq_price, bar.ts)
+                if forced.qty > 0:
+                    trailing_stop.on_position_closed(bar.symbol)
+                    all_fills.append(forced)
+                    liquidations += 1
+                    liquidated = True
+
         stop_price = None
-        if broker.position_qty(bar.symbol) > 0:
+        if not liquidated and broker.position_qty(bar.symbol) > 0:
             stop_price = trailing_stop.check(bar, strategy.last_atr(bar.symbol))
 
-        if stop_price is not None:
-            forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
-            if forced.qty > 0:  # SPEC-1a: chua settle -> qty=0, vi the giu nguyen
-                trailing_stop.on_position_closed(bar.symbol)
-                all_fills.append(forced)
-        elif signal is not None:
-            daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
-            sized = risk.approve_sized(
-                signal,
-                bar.close,
-                strategy.last_atr(bar.symbol),
-                broker.positions,
-                daily_pnl,
-                bar.ts.date(),
-            )
-            if sized is not None:
-                broker.submit(sized)
+        if not liquidated:
+            if stop_price is not None:
+                forced = broker.force_exit(bar.symbol, stop_price, bar.ts)
+                if forced.qty > 0:  # SPEC-1a: chua settle -> qty=0, vi the giu nguyen
+                    trailing_stop.on_position_closed(bar.symbol)
+                    all_fills.append(forced)
+            elif signal is not None:
+                daily_pnl = broker.realized_pnl + broker.unrealized_pnl(marks)
+                sized = risk.approve_sized(
+                    signal,
+                    bar.close,
+                    strategy.last_atr(bar.symbol),
+                    broker.positions,
+                    daily_pnl,
+                    bar.ts.date(),
+                )
+                if sized is not None:
+                    broker.submit(sized)
 
         equity = broker.cash + sum(
             p.qty * marks.get(s, p.avg_price) for s, p in broker.positions.items()
@@ -265,6 +288,7 @@ def run_backtest(
         buy_and_hold_curve=_buy_and_hold_curve(
             bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
         ),
+        liquidations=liquidations,
     )
 
 

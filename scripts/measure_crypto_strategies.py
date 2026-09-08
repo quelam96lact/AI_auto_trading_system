@@ -1,11 +1,11 @@
-"""Đo lường hiệu suất các chiến lược trên dữ liệu Crypto (Brief đợt 13 / Gói C-b).
+"""Đo lường hiệu suất các chiến lược trên dữ liệu Crypto (Brief đợt 13 / Gói C-b / Brief đợt 22).
 
 - Đọc từ bảng `bars_crypto` (đã nạp từ BingX).
 - Chạy các chiến lược trong `trading.backtest.STRATEGIES` qua `run_backtest`.
 - Ràng buộc đo lường crypto:
   1. Đơn vị tiền: USDT (ghi rõ vốn).
-  2. Lô: Mặc định lot_size = 1 (giả định, tránh thiên lệch loại trừ tài sản giá cao).
-  3. Phí: fee_rate = BINGX_PERP_TAKER (BingX perpetual VIP0 taker 0.05%), sell_tax_rate=0.0, settle_days=0 (funding chưa được mô hình hoá).
+  2. Lô: Mặc định lot_size = 1.0 (nhận số thực float cho crypto).
+  3. Đòn bẩy & Phí: --leverage (mặc định 1.0), fee_rate = BINGX_PERP_TAKER (BingX perpetual VIP0 taker 0.05%), sell_tax_rate=0.0, settle_days=0. Mô phỏng thanh lý theo low của nến khi leverage > 1.
   4. Thiên lệch sống sót: 20 mã chọn theo khối lượng năm 2026 đo lùi về quá khứ.
 """
 
@@ -91,15 +91,18 @@ def run_strategy_on_crypto(
     bars_by_symbol: dict[str, list[Bar]],
     strategy_name: str,
     capital_per_symbol: float = 100_000.0,
-    lot_size: int = 1,
+    lot_size: float = 1.0,
     sl_multiplier: float = 2.0,
     fee_rate: float = BINGX_PERP_TAKER,
     slippage_bps: float = 0.0,
     periods_per_year: float = 365.0,
+    leverage: float = 1.0,
+    maintenance_margin_rate: float = 0.005,
 ) -> dict:
     """Chạy 1 chiến lược trên danh mục các mã crypto.
     Ap dung mo hinh phi crypto: fee_rate = BINGX_PERP_TAKER (BingX perpetual VIP0
     taker 0,05%), tax=0, slippage_bps, settle_days=0. Xem trading/crypto_fees.py.
+    (Brief đợt 22): hỗ trợ leverage và mô phỏng thanh lý.
     """
     if strategy_name not in STRATEGIES:
         raise ValueError(f"Chiến lược không hợp lệ: {strategy_name}. Hỗ trợ: {list(STRATEGIES.keys())}")
@@ -108,17 +111,21 @@ def run_strategy_on_crypto(
     total_strat_pnl = 0.0
     total_bh_pnl = 0.0
     total_trades = 0
+    total_liquidations = 0
     total_winning_trades = 0
     total_capital = capital_per_symbol * len(bars_by_symbol)
     all_trade_pnls: list[float] = []
     pnl_by_symbol_by_date: dict[str, dict[date, float]] = {}
+
+    total_buy_notional = 0.0
+    total_buy_trades = 0
 
     for sym, bars in bars_by_symbol.items():
         if not bars:
             continue
         strat_cls = STRATEGIES[strategy_name]
         strat = strat_cls()
-        risk = RiskManager(capital=capital_per_symbol, lot_size=lot_size)
+        risk = RiskManager(capital=capital_per_symbol, lot_size=lot_size, leverage=leverage)
         ts_mgr = TrailingStopManager(sl_multiplier=sl_multiplier)
 
         rep = run_backtest(
@@ -131,15 +138,26 @@ def run_strategy_on_crypto(
             sell_tax_rate=0.0,
             slippage_bps=slippage_bps,
             settle_days=0,
+            leverage=leverage,
+            maintenance_margin_rate=maintenance_margin_rate,
         )
 
         pnl = rep.realized_pnl + rep.unrealized_pnl
         bh_pnl = _buy_and_hold(bars, capital_per_symbol, fee_rate=fee_rate, sell_tax_rate=0.0, slippage_bps=slippage_bps)
 
         winning_trades = sum(1 for f in rep.fills if f.side == "SELL" and f.pnl is not None and f.pnl > 0)
+        buy_fills = [f for f in rep.fills if f.side == "BUY"]
+        sym_buy_notional = sum(f.qty * f.price for f in buy_fills)
+        sym_avg_notional = (sym_buy_notional / len(buy_fills)) if buy_fills else 0.0
+        sym_eff_leverage = sym_avg_notional / capital_per_symbol if capital_per_symbol > 0 else 0.0
+
+        total_buy_notional += sym_buy_notional
+        total_buy_trades += len(buy_fills)
+
         total_strat_pnl += pnl
         total_bh_pnl += bh_pnl
         total_trades += rep.trades
+        total_liquidations += rep.liquidations
         total_winning_trades += winning_trades
 
         # Thu thập PnL từng lệnh
@@ -161,15 +179,22 @@ def run_strategy_on_crypto(
         results_by_symbol[sym] = {
             "bars": len(bars),
             "trades": rep.trades,
+            "liquidations": rep.liquidations,
+            "liq_rate": (rep.liquidations / rep.trades) if rep.trades > 0 else 0.0,
             "win_rate": rep.win_rate,
             "strat_pnl": pnl,
+            "strat_pnl_pct": (pnl / capital_per_symbol) * 100 if capital_per_symbol > 0 else 0.0,
             "bh_pnl": bh_pnl,
+            "eff_leverage": sym_eff_leverage,
             "max_drawdown": rep.max_drawdown,
             "earliest": bars[0].ts.strftime("%Y-%m-%d"),
             "latest": bars[-1].ts.strftime("%Y-%m-%d"),
         }
 
     overall_win_rate = (total_winning_trades / total_trades) if total_trades > 0 else 0.0
+    overall_liq_rate = (total_liquidations / total_trades) if total_trades > 0 else 0.0
+    overall_avg_notional = (total_buy_notional / total_buy_trades) if total_buy_trades > 0 else 0.0
+    overall_eff_leverage = overall_avg_notional / capital_per_symbol if capital_per_symbol > 0 else 0.0
     pf = profit_factor(all_trade_pnls)
     exp = expectancy(all_trade_pnls)
 
@@ -188,11 +213,16 @@ def run_strategy_on_crypto(
     return {
         "strategy": strategy_name,
         "lot_size": lot_size,
+        "leverage": leverage,
+        "effective_leverage": overall_eff_leverage,
         "capital_per_symbol": capital_per_symbol,
         "total_capital": total_capital,
         "total_strat_pnl": total_strat_pnl,
+        "total_strat_pnl_pct": (total_strat_pnl / total_capital) * 100 if total_capital > 0 else 0.0,
         "total_bh_pnl": total_bh_pnl,
         "total_trades": total_trades,
+        "total_liquidations": total_liquidations,
+        "liquidation_rate": overall_liq_rate,
         "win_rate": overall_win_rate,
         "profit_factor": pf,
         "expectancy": exp,
@@ -208,52 +238,64 @@ def print_crypto_report(
     capital_per_symbol: float,
     fee_rate: float,
     cost_multiplier: float,
+    leverage: float = 1.0,
 ) -> None:
     """In báo cáo định dạng chuẩn kèm 3 cảnh báo bắt buộc."""
-    print("\n" + "=" * 125)
-    print(f"BÁO CÁO ĐO LƯỜNG CHIẾN LƯỢC TRÊN DỮ LIỆU CRYPTO BINGX (Khung: {interval.upper()} | Chi phí: {cost_multiplier:.1f}x)")
-    print("=" * 125)
+    print("\n" + "=" * 165)
+    print(
+        f"BÁO CÁO ĐO LƯỜNG CHIẾN LƯỢC TRÊN DỮ LIỆU CRYPTO BINGX (Khung: {interval.upper()} | "
+        f"Đòn bẩy: {leverage:.0f}x | Chi phí: {cost_multiplier:.1f}x)"
+    )
+    print("=" * 165)
 
-    print("\n" + "-" * 125)
-    print("BA ĐIỀU BẮT BUỘC PHẢI GHI RÕ VỀ PHÉP ĐO CRYPTO (BRIEF ĐỢT 9):")
+    print("\n" + "-" * 165)
+    print("BA ĐIỀU BẮT BUỘC PHẢI GHI RÕ VỀ PHÉP ĐO CRYPTO (BRIEF ĐỢT 9 / ĐỢT 22 / ĐỢT 23):")
     print(f"  1. [VIP0 TAKER 0.05% THẬN TRỌNG]: fee_rate={fee_rate:.6f} cho cả hai chiều. Giả định VIP0 là thận trọng nhất.")
     print("  2. [CHƯA MÔ HÌNH HÓA FUNDING]: Phí funding chưa được tính (hạn chế đã biết, thường bất lợi cho phía Long trong uptrend).")
     print(f"  3. [PHÍ TRÊN NOTIONAL]: Phí tính trên giá trị danh nghĩa (~{capital_per_symbol:,.0f} USDT/lệnh), tốn ~{capital_per_symbol*fee_rate*2:,.1f} USDT/vòng mua-bán.")
-    print("-" * 125)
+    print("-" * 165)
 
-    print("\n" + "=" * 135)
+    print("\n" + "=" * 175)
     print("BẢNG TỔNG HỢP SO SÁNH CÁC CHIẾN LƯỢC (TỔNG 20 CẶP BINGX):")
     header = (
-        f"{'Chiến lược':<18} | {'PnL Chiến lược':>16} | {'PnL Mua-và-Giữ':>16} | "
-        f"{'Lệnh':>6} | {'Win Rate':>8} | {'Profit Factor':>13} | {'Expectancy':>12} | {'Max DD':>8} | {'Sharpe':>8}"
+        f"{'Chiến lược':<18} | {'PnL Chiến lược':>16} | {'% Vốn':>7} | {'PnL Mua-và-Giữ':>16} | "
+        f"{'Lệnh':>6} | {'Đòn bẩy thực':>12} | {'Thanh lý':>8} | {'Tỷ lệ TL':>8} | {'Win Rate':>8} | "
+        f"{'Profit Factor':>13} | {'Expectancy':>12} | {'Max DD':>8} | {'Sharpe':>8}"
     )
     print(header)
-    print("-" * 135)
+    print("-" * 175)
 
     for r in results:
         strat_pnl_str = f"{r['total_strat_pnl']:+16,.2f}"
+        pnl_pct_str = f"{r['total_strat_pnl_pct']:>6.1f}%"
         bh_pnl_str = f"{r['total_bh_pnl']:+16,.2f}"
         pf_str = f"{r['profit_factor']:.2f}" if r['profit_factor'] is not None else "N/A"
         sh_str = f"{r['sharpe']:.2f}" if r['sharpe'] is not None else "N/A"
         exp_str = f"{r['expectancy']:+12,.2f}"
         mdd_str = f"{r['max_drawdown']*100:>7.1f}%"
+        liq_rate_str = f"{r['liquidation_rate']*100:>7.1f}%"
+        eff_lev_str = f"{r['effective_leverage']:>10.2f}x"
         print(
-            f"{r['strategy']:<18} | {strat_pnl_str} | {bh_pnl_str} | "
-            f"{r['total_trades']:>6} | {r['win_rate']*100:>7.1f}% | {pf_str:>13} | {exp_str} | {mdd_str} | {sh_str:>8}"
+            f"{r['strategy']:<18} | {strat_pnl_str} | {pnl_pct_str} | {bh_pnl_str} | "
+            f"{r['total_trades']:>6} | {eff_lev_str} | {r['total_liquidations']:>8} | {liq_rate_str:>8} | "
+            f"{r['win_rate']*100:>7.1f}% | {pf_str:>13} | {exp_str} | {mdd_str} | {sh_str:>8}"
         )
-    print("=" * 135)
+    print("=" * 175)
 
     # Chi tiết từng mã cho từng chiến lược
     for r in results:
-        print(f"\n--- CHI TIẾT THEO MÃ: {r['strategy'].upper()} (Khung {interval.upper()}, lot_size={r['lot_size']}) ---")
-        print(f"{'#':<3} {'Mã':<15} {'Nến':>6} {'Giai đoạn':<23} {'PnL Chiến lược (USDT)':>23} {'PnL Mua-Giữ (USDT)':>21} {'Lệnh':>5} {'Win%':>7}")
-        print("-" * 115)
+        print(f"\n--- CHI TIẾT THEO MÃ: {r['strategy'].upper()} (Khung {interval.upper()}, lot_size={r['lot_size']}, leverage={r['leverage']}x) ---")
+        print(f"{'#':<3} {'Mã':<15} {'Nến':>6} {'Giai đoạn':<23} {'PnL Chiến lược (USDT)':>23} {'% Vốn':>8} {'PnL Mua-Giữ (USDT)':>21} {'Lệnh':>5} {'Đòn bẩy thực':>13} {'Thanh lý':>8} {'Tỷ lệ TL':>8} {'Win%':>7}")
+        print("-" * 155)
         for i, (sym, d) in enumerate(r["by_symbol"].items(), 1):
             date_range = f"{d['earliest']} -> {d['latest']}"
             pnl_s = f"{d['strat_pnl']:+20,.2f}"
+            pnl_pct_s = f"{d['strat_pnl_pct']:>7.1f}%"
             bh_s = f"{d['bh_pnl']:+18,.2f}"
-            print(f"{i:<3} {sym:<15} {d['bars']:>6} {date_range:<23} {pnl_s} {bh_s} {d['trades']:>5} {d['win_rate']*100:>6.1f}%")
-        print("-" * 115)
+            lr_s = f"{d['liq_rate']*100:>7.1f}%"
+            eff_s = f"{d['eff_leverage']:>11.2f}x"
+            print(f"{i:<3} {sym:<15} {d['bars']:>6} {date_range:<23} {pnl_s} {pnl_pct_s} {bh_s} {d['trades']:>5} {eff_s} {d['liquidations']:>8} {lr_s:>8} {d['win_rate']*100:>6.1f}%")
+        print("-" * 155)
 def compare_lot_size_effect(
     bars_by_symbol: dict[str, list[Bar]],
     symbols: list[str],
@@ -310,7 +352,9 @@ def main() -> None:
     ap.add_argument("--interval", default="1d", choices=["1d", "1h"])
     ap.add_argument("--strategy", default="all", help="daily_breakout, octopus_pullback, sma_cross, all")
     ap.add_argument("--capital", type=float, default=100_000.0, help="Vốn mỗi mã (USDT)")
-    ap.add_argument("--lot-size", type=int, default=1, help="Kích thước lô (mặc định 1)")
+    ap.add_argument("--lot-size", type=float, default=1.0, help="Kích thước lô (mặc định 1.0)")
+    ap.add_argument("--leverage", type=float, default=1.0, help="Đòn bẩy vị thế (mặc định 1.0)")
+    ap.add_argument("--maintenance-margin-rate", type=float, default=0.005, help="Tỷ lệ ký quỹ duy trì (mặc định 0.005 = 0.5%)")
     ap.add_argument("--symbols", default=None, help="Danh sách mã phân cách dấu phẩy")
     ap.add_argument("--compare-lot-size", action="store_true", help="In bảng so sánh lot_size=100 vs lot_size=1")
     ap.add_argument("--cost-multiplier", type=float, default=1.0, help="Hệ số nhân chi phí (1.0, 1.5, 2.0)")
@@ -356,10 +400,19 @@ def main() -> None:
             fee_rate=base_fee,
             slippage_bps=base_slippage,
             periods_per_year=periods,
+            leverage=args.leverage,
+            maintenance_margin_rate=args.maintenance_margin_rate,
         )
         results.append(res)
 
-    print_crypto_report(results, args.interval, args.capital, fee_rate=base_fee, cost_multiplier=args.cost_multiplier)
+    print_crypto_report(
+        results,
+        args.interval,
+        args.capital,
+        fee_rate=base_fee,
+        cost_multiplier=args.cost_multiplier,
+        leverage=args.leverage,
+    )
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -16,7 +17,9 @@ class RiskManager:
     # C-a (04/09): don vi lo — 100 = lo san HOSE (mac dinh bat bien), 1 = crypto
     # (khong co lo). Ca phep lam tron xuong lan nguong tu choi qty < lot_size
     # doc tu tham so nay — mot cong thuc mot noi.
-    lot_size: int = 100
+    lot_size: int | float = 100
+    # (Brief dot 23): Don bay cho ky quy co lap (isolated margin). Mac dinh 1.0 = khong don bay (bat bien VN).
+    leverage: float = 1.0
     halted_date: date | None = field(default=None, init=False, repr=False)
     # SIZE-1 Viec 2: ly do tu choi gan nhat (None = lan duyet truoc thanh cong
     # hoac chua duyet) — caller (logic.py / real_orders.py) ghi log INFO. Giua
@@ -47,10 +50,10 @@ class RiskManager:
             return False
         if signal.side == "BUY":
             order_value = ref_price * signal.qty
-            if order_value > self.capital * self.max_order_value_pct:
+            if order_value > self.capital * self.max_order_value_pct * self.leverage:
                 self.last_reject_reason = (
                     f"giá trị lệnh {order_value:,.0f} > trần "
-                    f"{self.capital * self.max_order_value_pct:,.0f} (max_order_value_pct)"
+                    f"{self.capital * self.max_order_value_pct * self.leverage:,.0f} (max_order_value_pct)"
                 )
                 return False
             held_symbols = {s for s, p in positions.items() if p.qty > 0}
@@ -100,15 +103,21 @@ class RiskManager:
         if atr is None or atr <= 0:
             self.last_reject_reason = "ATR không hợp lệ (atr=None hoặc <=0)"
             return None
-        qty_atr = int(
-            (self.capital * self.risk_pct / (atr * self.atr_multiplier))
-            // self.lot_size
-        ) * self.lot_size
-        qty_cap = int(
-            (self.capital * self.max_order_value_pct / ref_price)
-            // self.lot_size
-        ) * self.lot_size
-        qty = min(qty_atr, qty_cap)
+        raw_atr = self.capital * self.risk_pct / (atr * self.atr_multiplier)
+        raw_cap = self.capital * self.max_order_value_pct * self.leverage / ref_price
+
+        if isinstance(self.lot_size, int):
+            qty_atr = int(raw_atr // self.lot_size) * self.lot_size
+            qty_cap = int(raw_cap // self.lot_size) * self.lot_size
+            qty = min(qty_atr, qty_cap)
+        else:
+            steps_atr = math.floor(raw_atr / self.lot_size + 1e-9)
+            steps_cap = math.floor(raw_cap / self.lot_size + 1e-9)
+            steps = min(steps_atr, steps_cap)
+            qty = round(steps * self.lot_size, 8)
+            qty_atr = round(steps_atr * self.lot_size, 8)
+            qty_cap = round(steps_cap * self.lot_size, 8)
+
         if qty < self.lot_size:
             self.last_reject_reason = (
                 f"qty sau cap < 1 lô (qty_atr={qty_atr}, qty_cap={qty_cap})"
