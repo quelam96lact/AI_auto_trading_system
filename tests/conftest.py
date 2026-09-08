@@ -8,6 +8,7 @@ Test tro vao:
 - NATS: server rieng cong 4223 (service nats-test trong docker-compose.yml,
   profile "test": docker compose --profile test up -d nats-test)
 """
+
 import os
 
 import psycopg
@@ -45,6 +46,37 @@ if "4222" in TEST_NATS_URL:
 # module, nen hang so cap module trong cac file do cung nhan gia tri moi.
 os.environ["DB_DSN"] = TEST_DSN
 os.environ["NATS_URL"] = TEST_NATS_URL
+
+# ISO-4 (2026-09-09): Telegram la "he thong that" thu ba ma suite cham vao
+# (qua trading/alerts.py -> trading/telegram.py) nhung chua co rao nhu DB/NATS
+# o tren. Neu may chay test co san TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID that
+# trong moi truong (session shell cu, .env bi nap...), cac test integration
+# goi thang trading.engine.main.run() (khong monkeypatch alert) se bắn
+# CRITICAL Telegram THAT voi du lieu TEST: account="" + symbol="ENGT" (mac
+# dinh make_cfg() o test_engine_main.py).
+#
+# HARD-SET (khong phai pop!) — dung y het khuon DB_DSN/NATS_URL o tren, KHONG
+# duoc xoa: scripts/_db_common.py::load_dotenv() dung os.environ.setdefault()
+# de nap .env that (goi qua resolve_dsn() trong scripts/daily_data_check.py,
+# duoc mot so test o test_data_quality.py thuc thi that qua main()). Neu key
+# bi XOA (pop) thi setdefault() coi la "chua co" va NAP LAI token that tu
+# .env, vo hieu hoa hang rao nay giua chung suite (tu bat duoc bang
+# tests/test_telegram_isolation.py khi chay CA suite, khong bat duoc khi
+# chay rieng file do). Set chuoi rong: key VAN "co mat" nen setdefault() bo
+# qua, va trading/telegram.py::send_telegram() coi rong la "chua cau hinh"
+# nen tu no-op.
+os.environ["TELEGRAM_BOT_TOKEN"] = ""
+os.environ["TELEGRAM_CHAT_ID"] = ""
+
+# ISO-5 (2026-09-09 Brief dot 23): Hang rao SSI credentials.
+# Cung ly do voi ISO-4: load_dotenv() trong scripts/_db_common.py dung setdefault()
+# se nap lai secret that tu .env neu key bi pop. Hard-set chuoi rong de giu key ton tai,
+# chan vo tinh goi SSI API that trong cac test hien tai va tuong lai.
+os.environ["SSI_CONSUMER_ID"] = ""
+os.environ["SSI_CONSUMER_SECRET"] = ""
+os.environ["SSI_API_KEY"] = ""
+os.environ["SSI_API_SECRET"] = ""
+os.environ["SSI_PRIVATE_KEY"] = ""
 
 
 @pytest.fixture(scope="session", autouse=True)
