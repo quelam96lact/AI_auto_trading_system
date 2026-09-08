@@ -1,6 +1,7 @@
-# Brief đợt 20 — Tối ưu Dockerfile: thứ tự layer, multi-stage, COPY --chown
+# Brief đợt 20 — Tối ưu Dockerfile + triển khai + dọn build cache
 
-Ngày giao: 08/09/2026
+Ngày giao: 08/09/2026 (cập nhật cùng ngày: bổ sung Task 5 triển khai và Task 6 dọn cache —
+chủ dự án đã quyết giao trọn gói cho agent, xem mục 7)
 Base: `2216db6` (main), cây làm việc sạch, 609 test xanh, ruff sạch.
 Người giao: Claude (planner/auditor).
 Đầu vào: `docs/superpowers/research/2026-09-08-docker-image-update-optimize-check-vps.md`
@@ -68,15 +69,27 @@ Tôi đã audit báo cáo đầu vào và sửa hai chỗ sai. Nêu ở đây đ
 
 → Khi báo cáo kết quả, con số đúng để so là **kích thước một image**, không phải tổng hai.
 
-### 1.3. Đợt này KHÔNG phải việc gì
+### 1.3. Phạm vi đợt này — và ranh giới còn lại
 
-- **Không phải deploy.** Không `docker compose up`, không restart container nào.
-- **Không phải rebuild stack đang chạy.** Việc "image cũ hơn code ~39 giờ" là việc riêng,
-  của chủ dự án, làm sau và làm có chủ đích — xem mục 6.
-- **Không phải chuyện VPS.** `docker-compose.yml:42,65` dùng `build: .` cho cả engine lẫn
-  collector, nghĩa là **trên VPS sẽ build từ source tại chỗ**, không pull image từ máy này.
-  Nên đợt này làm cho mọi lần build ở mọi nơi nhanh và nhẹ hơn — không phải thao tác chuẩn
-  bị riêng cho VPS.
+Đợt này gồm **6 task, theo đúng thứ tự**, không được đảo:
+
+| Task | Việc | Đụng vào stack thật? |
+|---|---|---|
+| 0 | Chụp mốc "trước" | Không |
+| 1 | Viết lại `Dockerfile` | Không |
+| 2 | 5 phép thử image mới không gãy | Không |
+| 3 | Chứng minh cache layer đã sửa | Không |
+| 4 | Đo mức giảm thật | Không |
+| **5** | **Rebuild + triển khai collector/engine** | **CÓ — dừng và tạo lại 2 container** |
+| **6** | **Dọn build cache** (gộp từ brief đợt 19 Task 2) | Không |
+
+Task 0-4 là phần an toàn tuyệt đối. **Task 5 là ranh giới**: từ đây trở đi agent chạm vào
+hệ thống đang chạy. Đọc mục 3 và Task 5 thật kỹ trước khi bước qua.
+
+**Vẫn KHÔNG phải chuyện VPS.** `docker-compose.yml:42,65` dùng `build: .` cho cả engine lẫn
+collector, nghĩa là **trên VPS sẽ build từ source tại chỗ**, không pull image từ máy này.
+Đợt này làm cho mọi lần build ở mọi nơi nhanh và nhẹ hơn — không phải thao tác chuẩn bị
+riêng cho VPS. Không cấu hình gì cho VPS trong đợt này.
 
 ---
 
@@ -87,12 +100,37 @@ Tôi đã audit báo cáo đầu vào và sửa hai chỗ sai. Nêu ở đây đ
 - **`docker-compose.yml` không sửa.** Đợt này chỉ đụng `Dockerfile`.
 - **`pyproject.toml` và `uv.lock` không sửa.** Nếu build đòi đổi lock → dừng, báo cáo.
 - **Không sửa file Python nào.** Không sửa `trading/`, `tests/`, `scripts/`.
-- **Không dừng, không restart, không xoá container nào.** 6 container đang `Up`; engine và
-  collector đang chạy liên tục. Xem mục 3 về cách build mà không đụng chúng.
-- **Không xoá image nào.** Kể cả image thử nghiệm của chính đợt này — để lại, tôi audit xong
-  mới dọn.
-- **Không chạy `docker builder prune`** (đó là brief đợt 19, có điều kiện riêng).
+- **Trong Task 0-4: không dừng, không restart, không xoá container nào.** Xem mục 3.
+- **Chỉ được restart đúng 2 container** `collector` và `engine`, đúng **một lần**, ở Task 5.
+  **Không đụng** `postgres`, `nats`, `nats-test`, `grafana` — vì thế lệnh có `--no-deps`.
+- **Nếu Task 5 thất bại: lùi theo mục Task 5.5, KHÔNG restart lại lần hai.** Xem mục 2.1.
+- **Không xoá image nào**, kể cả image thử nghiệm `dot20-test:*` và image lùi
+  `dot20-rollback-*`. Để lại, tôi audit xong mới dọn.
+- **Không xoá volume, không `docker volume prune`, không `docker system prune`** (dù có `-a`
+  hay không). Task 6 chỉ dùng đúng lệnh được ghi.
 - **Không commit, không push.** Báo cáo lại, tôi commit.
+
+### 2.1. Ràng buộc SSI — vì sao "chỉ một lần"
+
+Log collector hiện tại cho thấy nó **đang gọi SSI thật**, mỗi vòng gồm refresh token rồi
+`accountBalance` / `position` / `maxBuySell` cho **ba tài khoản** 0434221, 0434226, 0434228:
+
+```
+INFO [ssi_sdk.services.token_manager]: Token refreshed successfully
+HTTP Request: GET .../trading/accountBalance?clientId=043422&accountNo=0434221 "HTTP/1.1 200 OK"
+HTTP Request: GET .../trading/maxBuySell?accountNo=0434221&symbol=HII "HTTP/1.1 200 OK"
+...
+```
+
+Mỗi lần restart collector là **một chu kỳ xác thực + một loạt request nữa** tới SSI. Ràng
+buộc thường trực của dự án là *không cố tình gây 429, SSI chạy đúng một lần*. Vì vậy:
+
+- Task 5 restart **đúng một lần**.
+- Nếu container không lên: **đọc log, báo cáo, lùi image** — tuyệt đối **không** chạy
+  `docker compose up -d` lặp lại để "thử lại xem sao". Restart lặp là cách nhanh nhất để ăn
+  429 và làm hỏng token của cả ba tài khoản.
+- Không tự chạy bất kỳ script nào trong `scripts/` có gọi SSI (`spike_ssi_*`, `probe_*`,
+  `backfill_*`, `confirm_real_order.py`). Task 5.4 chỉ dùng script đọc DB/docker.
 - Phát hiện ngoài phạm vi: báo cáo, không tự sửa.
 
 **GitNexus:** `npx gitnexus analyze` trước và sau. Đợt này không sửa symbol Python nào nên
@@ -102,22 +140,39 @@ sửa dòng đếm trong `AGENTS.md`/`CLAUDE.md`; bình thường, đừng rever
 
 ---
 
-## 3. Nguyên tắc an toàn: build ra tag riêng, không đụng stack đang chạy
+## 3. Nguyên tắc an toàn: chứng minh image mới chạy được TRƯỚC khi cho nó thay thế
 
-`docker compose build` sẽ ghi đè `ai_auto_trading_system-collector:latest` — tag mà
-container đang chạy trỏ tới. **Không làm thế trong đợt này.**
+`docker compose build` ghi đè `ai_auto_trading_system-collector:latest` — đúng tag mà
+container đang chạy trỏ tới. Ghi đè xong là mất bản cũ, không có đường lùi.
 
-Thay vào đó, build ra một tag thử nghiệm tách biệt:
+Vì thế thứ tự của đợt này là: **build ra tag thử nghiệm riêng → kiểm chứng đủ 5 phép thử →
+gắn nhãn lùi cho image cũ → mới cho phép ghi đè.**
+
+Task 0-4 dùng tag tách biệt:
 
 ```powershell
 docker build -t dot20-test:new .
 ```
 
-Tag `dot20-test:new` không xuất hiện trong `docker-compose.yml`, không container nào dùng,
-nên mọi thao tác lên nó là vô hại. Stack đang chạy không bị chạm tới.
+Tag `dot20-test:*` không xuất hiện trong `docker-compose.yml`, không container nào dùng, nên
+mọi thao tác lên nó là vô hại.
 
-Kiểm chứng ràng buộc này sau mỗi task: `docker ps` phải vẫn cho đúng 6 container `Up` với
-uptime **tăng lên** (chứng tỏ không bị restart).
+Kiểm chứng sau mỗi task 0-4: `docker ps` vẫn đúng 6 container `Up`, uptime **tăng lên**
+(chứng tỏ không bị restart ngoài ý muốn).
+
+### 3.1. Cổng thời gian — bắt buộc kiểm trước Task 5
+
+Phiên giao dịch VN là 09:00-15:00. **Không được chạy Task 5 trong khoảng 08:45-15:15 giờ VN
+các ngày trong tuần.** Trước khi bắt đầu Task 5, chạy:
+
+```powershell
+Get-Date -Format "yyyy-MM-dd HH:mm:ss dddd"
+```
+
+Chép output vào báo cáo. Nếu rơi vào cửa sổ cấm: **dừng lại, báo cáo, không làm Task 5 và
+Task 6** — Task 0-4 vẫn nộp được, phần còn lại để lần sau.
+
+(Tại thời điểm giao brief: 08/09/2026 21:29 thứ Ba — ngoài phiên, hợp lệ.)
 
 ---
 
@@ -324,22 +379,174 @@ docker history dot20-test:new --format "{{.Size}}`t{{.CreatedBy}}" --no-trunc
 
 ---
 
+---
+
+## Task 5 — Rebuild và triển khai (BƯỚC ĐỤNG HỆ THỐNG THẬT)
+
+Chỉ bước vào task này khi **cả Task 1-4 đã xanh** và **cổng thời gian mục 3.1 hợp lệ**. Nếu
+bất kỳ phép thử nào ở Task 2 hoặc Task 3 thất bại: **dừng, báo cáo, không làm Task 5.**
+
+### 5.1. Gắn nhãn lùi cho image đang chạy — làm TRƯỚC khi build
+
+`docker compose build` sẽ ghi đè `:latest`. Gắn nhãn thứ hai cho image hiện tại để nó không
+biến mất:
+
+```powershell
+docker tag ai_auto_trading_system-collector:latest dot20-rollback-collector:pre
+docker tag ai_auto_trading_system-engine:latest    dot20-rollback-engine:pre
+docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | Select-String "dot20-rollback"
+```
+
+**Kiểm chứng:** phải thấy đủ 2 dòng, và image ID phải là `880dc8930dde` (collector) và
+`212777849854` (engine). Nếu ID khác → có ai đó đã build lại trong lúc này, **dừng, báo cáo**.
+
+Đây là bước không được bỏ. Không có nó thì mục 5.5 vô nghĩa.
+
+### 5.2. Build
+
+```powershell
+docker compose build collector engine
+```
+
+**Kiểm chứng:** exit code 0. Chép dòng cuối và mọi dòng `ERROR`/`WARN`.
+
+### 5.3. Triển khai — đúng một lần
+
+```powershell
+docker compose up -d --no-deps collector engine
+```
+
+`--no-deps` là bắt buộc: không có nó, compose có thể đụng cả `postgres` và `nats`.
+
+**Kiểm chứng ngay:**
+
+```powershell
+docker ps --format "{{.Names}}|{{.Image}}|{{.Status}}"
+```
+
+Kỳ vọng: vẫn 6 container `Up`; `collector-1` và `engine-1` có uptime **vừa reset** (vài
+giây/phút), 4 container còn lại giữ uptime cũ (~13+ giờ) — chứng tỏ `--no-deps` có tác dụng.
+
+**Nếu container không lên `Up`: sang thẳng mục 5.5. KHÔNG chạy lại `up -d`.** Xem mục 2.1.
+
+### 5.4. Xác nhận hệ thống còn sống
+
+Chờ **90 giây** cho engine warm-up xong, rồi chạy đúng ba phép kiểm dưới đây.
+
+**(a) Drift đã hết** — đây là bằng chứng chính của Task 5:
+
+```powershell
+uv run python scripts/deploy_drift_check.py
+echo "exit code: $LASTEXITCODE"
+```
+
+Kỳ vọng **exit code 0**. Script này so mốc build image với commit gần nhất chạm `trading/`
+(cả hai quy về epoch giây). Exit 1 nghĩa là vẫn còn lệch → báo cáo, đừng tự sửa.
+
+**(b) Log hai container không có lỗi mới:**
+
+```powershell
+docker logs --tail 40 ai_auto_trading_system-collector-1
+docker logs --tail 40 ai_auto_trading_system-engine-1
+```
+
+Chép nguyên văn cả hai.
+
+> **QUAN TRỌNG — đọc trước khi hoảng.** Log engine **trước** đợt này đã có sẵn một traceback
+> `psycopg_pool.PoolTimeout: pool initialization incomplete after 30.0 sec` tại
+> `/app/trading/storage/db.py:54` lúc khởi động, rồi **tự hồi phục** và chạy tiếp bình thường:
+>
+> ```
+> psycopg_pool.PoolTimeout: pool initialization incomplete after 30.0 sec
+> {"level": "INFO", "msg": "engine restored state", "cash": 91215342.15, ...}
+> {"level": "INFO", "msg": "warm-up HII xong", "bars": 201, ...}
+> ```
+>
+> Đây là hiện tượng **có từ trước, không phải do đợt 20 gây ra**. Nếu nó xuất hiện lại và
+> **theo sau là dòng `engine restored state`** thì hệ thống đang khoẻ — **báo cáo lại, đừng
+> lùi image.** Chỉ coi là hỏng khi **không** có dòng `engine restored state` sau đó.
+
+Dấu hiệu khoẻ cần tìm:
+- Engine: có `engine restored state`, có `warm-up ... xong`.
+- Collector: có `Token refreshed successfully`, không có traceback nào ngoài ghi chú trên.
+
+**(c) Heartbeat:**
+
+```powershell
+uv run python scripts/heartbeat_check.py
+echo "exit code: $LASTEXITCODE"
+```
+
+Exit 0 = ổn, 1 = đã gửi cảnh báo Telegram, 2 = sai cấu hình. Chép cả output lẫn exit code.
+Exit 1 hoặc 2 → báo cáo, không tự sửa.
+
+### 5.5. Cách lùi nếu hỏng
+
+Chỉ dùng khi 5.3 không lên `Up`, hoặc 5.4(b) cho thấy engine **không** có
+`engine restored state`:
+
+```powershell
+docker tag dot20-rollback-collector:pre ai_auto_trading_system-collector:latest
+docker tag dot20-rollback-engine:pre    ai_auto_trading_system-engine:latest
+docker compose up -d --no-deps collector engine
+docker ps --format "{{.Names}}|{{.Status}}"
+```
+
+Sau khi lùi: **dừng toàn bộ đợt, không làm Task 6**, báo cáo đầy đủ log lỗi. Đây là lần
+`up -d` thứ hai duy nhất được phép, và chỉ để lùi — không phải để thử lại.
+
+---
+
+## Task 6 — Dọn build cache (gộp từ brief đợt 19 Task 2)
+
+Brief đợt 19 hoãn việc này với điều kiện "chỉ làm sau khi đã rebuild". Task 5 vừa rebuild
+xong, nên điều kiện đã thoả. **Task này thay thế brief 19 Task 2 — đừng làm cả hai.**
+
+Chỉ chạy khi Task 5 thành công (không phải đường lùi 5.5).
+
+```powershell
+docker system df
+docker builder prune --filter until=168h -f
+docker system df
+```
+
+`until=168h` giữ cache 7 ngày gần nhất, xoá phần cũ hơn. **Không dùng `-a`** — `-a` xoá cả
+cache mà image hiện tại đang dùng.
+
+**Kiểm chứng:**
+- Chép `docker system df` trước và sau, nêu rõ dòng `Build Cache` đổi thế nào.
+- `docker ps` vẫn 6 container `Up`, collector/engine giữ nguyên uptime từ Task 5 (không bị
+  restart lần nữa).
+- Con số thu hồi được là bao nhiêu thì báo đúng vậy — brief không đặt chỉ tiêu GB.
+
+---
+
 ## 4. Rủi ro và cách lùi
 
 | Việc | Rủi ro | Lùi thế nào |
 |---|---|---|
-| Sửa `Dockerfile` | Thấp — file đã trong git, chưa deploy | `git checkout -- Dockerfile` |
-| Build `dot20-test:*` | Rất thấp — tag không nằm trong compose | `docker image rm dot20-test:before dot20-test:new dot20-test:new2` (chỉ tôi làm, sau khi audit) |
-| Task 3 sửa `db.py` tạm | Thấp, nhưng **phải hoàn tác** | `git checkout -- trading/storage/db.py`, đã có trong Task 3.1 |
-| Stack đang chạy | Không có — đợt này không `compose up`, không restart | — |
+| Sửa `Dockerfile` (Task 1) | Thấp — file trong git, chưa deploy | `git checkout -- Dockerfile` |
+| Build `dot20-test:*` (Task 0-4) | Rất thấp — tag không nằm trong compose | `docker image rm dot20-test:*` (tôi làm sau khi audit) |
+| Task 3 sửa `db.py` tạm | Thấp, nhưng **phải hoàn tác** | `git checkout -- trading/storage/db.py`, đã có sẵn trong Task 3.1 |
+| **Task 5: ghi đè `:latest`** | **Trung bình** — mất bản image đang chạy | Nhãn `dot20-rollback-*:pre` gắn ở 5.1 |
+| **Task 5: restart engine/collector** | **Trung bình** — gián đoạn 2 service, thêm 1 chu kỳ auth SSI | Mục 5.5, dùng đúng một lần |
+| Task 6: dọn build cache | Rất thấp | Cache tự sinh lại ở lần build sau |
 
-Điểm gãy tiềm ẩn duy nhất đáng lo là **editable install** (mục 1.2 điểm 2): nó gãy lúc
-chạy chứ không gãy lúc build. Task 2.2 và 2.4 tồn tại riêng để bắt đúng lỗi đó **trước** khi
-image này được đưa vào dùng thật.
+Hai điểm gãy tiềm ẩn đáng lo, và chỗ nào bắt được chúng:
+
+1. **Editable install** (mục 1.2 điểm 2) — gãy lúc *chạy*, không gãy lúc *build*. Task 2.2 và
+   2.4 tồn tại riêng để bắt đúng lỗi đó **trước** khi image được cho thay thế bản đang chạy.
+   Đây chính là lý do Task 5 phải đứng sau Task 2, không được gộp.
+2. **Restart trúng phiên giao dịch** — cổng thời gian mục 3.1 chặn.
+
+Rủi ro **không** được nhận là "thấp" ở đây: Task 5 dừng engine đang giữ vị thế thật
+(`positions: {"HII": 300, "IJC": 400, "AAA": 400}`, cash 91,2 triệu). Engine có khôi phục
+trạng thái từ DB khi khởi động lại (`engine restored state`), nên đây là thao tác đã có
+đường phục hồi — nhưng vẫn là thao tác lên hệ thống đang giữ tiền, không phải việc vặt.
 
 ---
 
-## 5. Báo cáo nghiệm thu — đúng 6 mục, không thêm
+## 5. Báo cáo nghiệm thu — đúng 9 mục, không thêm
 
 1. `npx gitnexus analyze` trước: output ngắn gọn.
 2. Task 0: output `docker images` + `docker history` của `dot20-test:before`.
@@ -347,29 +554,57 @@ image này được đưa vào dùng thật.
 4. Task 2: output nguyên văn cả 5 phép thử 2.1-2.5.
 5. Task 3: log build đã lọc (`CACHED`) + `git status --porcelain` sau khi hoàn tác.
 6. Task 4: ba output đo dung lượng + mức giảm thực tế đo được.
+7. Task 5: output `Get-Date` (cổng thời gian) + 5.1 nhãn lùi + 5.2 build + 5.3 `docker ps` +
+   5.4 cả ba phép kiểm (a)(b)(c) kèm exit code. Nếu phải lùi: ghi rõ đã lùi và vì sao.
+8. Task 6: `docker system df` trước/sau + `docker ps`.
+9. `git status`, `git diff --stat HEAD`, `gitnexus_detect_changes()`.
 
-Kèm cuối báo cáo: `git status` và `git diff --stat HEAD` (kỳ vọng: **chỉ** `Dockerfile`, cộng
-`AGENTS.md`/`CLAUDE.md` nếu `analyze` sửa dòng đếm), `gitnexus_detect_changes()`, và xác nhận
-`docker ps` vẫn 6 container `Up`.
+Kỳ vọng ở mục 9: `git diff --stat HEAD` chỉ có **`Dockerfile`**, cộng `AGENTS.md`/`CLAUDE.md`
+nếu `analyze` sửa dòng đếm. `gitnexus_detect_changes()` kỳ vọng **không symbol nào bị ảnh
+hưởng** — đợt này không sửa code Python.
 
-**Không viết kết luận, không khuyến nghị, không đề xuất deploy.** Việc quyết định khi nào
-rebuild stack thật là của chủ dự án — mục 6.
+**Không viết kết luận, không khuyến nghị.** Báo cáo chỉ trình bày lệnh đã chạy và output thật.
+Nếu phát hiện vấn đề ngoài phạm vi (ví dụ nguyên nhân `PoolTimeout`): **liệt kê ở mục riêng
+cuối báo cáo, không tự sửa.**
 
 ---
 
-## 6. Việc KHÔNG giao — dành cho chủ dự án
+## 6. Tiêu chí dừng — khi nào phải ngừng và báo cáo
 
-Sau khi tôi audit và commit đợt này, `Dockerfile` mới nằm trong git nhưng **stack đang chạy
-vẫn dùng image cũ (build 06/09, cũ hơn code ~39 giờ)**. Để đưa vào dùng thật:
+Dừng ngay, không đi tiếp, ở bất kỳ tình huống nào sau đây:
 
-```powershell
-docker compose build collector engine
-docker compose up -d --no-deps collector engine
-```
+| Tình huống | Dừng ở đâu |
+|---|---|
+| Task 1 build lỗi | Trước Task 2 |
+| Bất kỳ phép thử nào trong 2.1-2.5 sai kỳ vọng | Trước Task 3 |
+| Task 3: `uv sync --no-install-project` **không** CACHED | Trước Task 4 |
+| Task 3: `git status` còn sót thay đổi `db.py` | Hoàn tác cho sạch rồi mới đi tiếp |
+| Cổng thời gian 3.1 rơi vào 08:45-15:15 ngày làm việc | Trước Task 5 (nộp Task 0-4) |
+| 5.1: image ID không khớp `880dc8930dde`/`212777849854` | Trước Task 5.2 |
+| 5.3: container không lên `Up` | Sang 5.5 lùi, rồi dừng hẳn |
+| 5.4(a): `deploy_drift_check.py` exit ≠ 0 | Sau 5.4, báo cáo, không làm Task 6 |
+| 5.4(b): engine **không** có `engine restored state` | Sang 5.5 lùi, rồi dừng hẳn |
+| 5.4(c): `heartbeat_check.py` exit 1 hoặc 2 | Báo cáo, không làm Task 6 |
+| Bất kỳ lệnh nào đòi sửa `uv.lock`/`pyproject.toml` | Ngay tại đó |
 
-Việc này **dừng và tạo lại** container collector + engine đang chạy. Đó là lý do nó không
-nằm trong brief: thời điểm restart engine là quyết định vận hành, không phải việc agent tự
-chọn — nhất là khi nó đang chạy liên tục và phiên giao dịch có giờ cố định.
+Nguyên tắc chung: **thấy lạ thì dừng và báo, đừng tự sửa cho chạy được.** Một báo cáo dừng
+giữa chừng có bằng chứng rõ ràng thì hữu ích hơn một báo cáo "đã xong" sau khi tự vá.
 
-Sau khi rebuild xong mới đến lượt **brief đợt 19 Task 2** (dọn build cache) — đúng thứ tự
-đã ghi ở đó.
+---
+
+## 7. Ghi chú về thay đổi phạm vi
+
+Bản đầu của brief này (sáng 08/09) chỉ có Task 0-4 và để phần triển khai lại cho chủ dự án,
+với lý do: thời điểm restart engine là quyết định vận hành. Chủ dự án đã quyết giao trọn gói
+cho agent, nên Task 5 và Task 6 được bổ sung.
+
+Quyết định đó không làm rủi ro biến mất — nó chỉ được **chuyển thành ràng buộc kiểm chứng
+được** thay vì thành một câu dặn miệng:
+
+- Thời điểm restart → cổng thời gian mục 3.1.
+- Mất image đang chạy → nhãn lùi 5.1 + đường lùi 5.5.
+- Restart lặp gây 429 → mục 2.1, đúng một lần.
+- Image mới gãy lúc chạy → Task 2 phải xanh trước khi được bước sang Task 5.
+
+Brief đợt 19 (`2026-09-08-brief-dot-19-don-image-docker-cu.md`) vẫn còn giá trị ở **Task 1**
+(xoá 10 image chết). **Task 2 của brief 19 đã được gộp vào Task 6 ở đây — không làm hai lần.**

@@ -161,7 +161,13 @@ brief này sai, phải sửa brief chứ không phải ép xoá.
 
 ---
 
-## Task 2 — Dọn build cache (chỉ làm SAU khi rebuild image)
+## Task 2 — Dọn build cache — ĐÃ CHUYỂN SANG BRIEF ĐỢT 20
+
+> **KHÔNG LÀM TASK NÀY.** Nội dung của nó đã được gộp thành **Task 6 của brief đợt 20**
+> (`2026-09-08-brief-dot-20-toi-uu-dockerfile.md`), nơi điều kiện "phải rebuild trước" được
+> thoả ngay trong cùng đợt (Task 5 rebuild, Task 6 dọn cache). Làm ở cả hai chỗ là làm thừa.
+>
+> Phần dưới giữ lại làm ghi chép lý do, không phải việc được giao.
 
 ### 2.1. Thứ tự quan trọng — đọc kỹ
 
