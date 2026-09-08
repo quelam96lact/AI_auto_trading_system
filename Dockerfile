@@ -28,6 +28,7 @@ WORKDIR /app
 # `RUN chown -R` sau khi copy se ghi lai toan bo file da doi chu thanh mot
 # layer nhan ban (31.3MB o ban cu).
 RUN useradd --create-home --uid 10001 appuser
+RUN chown appuser:appuser /app
 
 # WORKDIR PHAI la /app: `trading` duoc cai EDITABLE, file
 # __editable__.trading-0.1.0.pth trong .venv tro cung vao /app/trading.
