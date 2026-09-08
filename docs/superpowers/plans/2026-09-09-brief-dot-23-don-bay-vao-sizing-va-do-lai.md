@@ -275,18 +275,102 @@ Không có lựa chọn thứ ba. MMR 0,5% đã gắn nhãn giả định — gi
 
 ---
 
-## Task 6 — Báo cáo hai file đã sửa ngoài phạm vi
+## Task 6 — Viết ra hàng rào Telegram (ISO-4)
 
 Đợt 22 sửa `tests/conftest.py` và thêm `tests/test_telegram_isolation.py` mà **không nhắc một
 chữ nào** trong báo cáo. Brief 22 §2 ghi: *"Phát hiện ngoài phạm vi: báo cáo, không tự sửa."*
 
-**Nội dung thay đổi là tốt và GIỮ NGUYÊN, không revert.** Nó bịt một lỗ hổng thật: suite test
-có thể bắn cảnh báo Telegram **thật** với dữ liệu giả (`account=""`, `symbol="ENGT"`) nếu máy
-chạy test có sẵn `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` trong môi trường.
+**Nội dung thay đổi là tốt và GIỮ NGUYÊN, không revert.** Tôi đã kiểm chứng cả ba mắt xích:
+
+- `trading/telegram.py:11` — `if not token or not chat_id: return`, nên chuỗi rỗng làm
+  `send_telegram()` tự no-op.
+- `scripts/_db_common.py:28` — `os.environ.setdefault(k.strip(), v.strip())`. Đây là lý do
+  bản sửa đầu bằng `.pop()` **sai**: key bị xoá ⇒ `setdefault()` coi là "chưa có" ⇒ **nạp lại
+  token thật từ `.env`** giữa chừng suite (qua `resolve_dsn()` trong
+  `scripts/daily_data_check.py`, được một số test ở `test_data_quality.py` thực thi thật).
+- `tests/conftest.py:68-69` — hard-set `""`: key **vẫn có mặt** nên `setdefault()` bỏ qua.
 
 Việc của đợt này chỉ là **viết nó ra**: một mục riêng trong báo cáo nghiệm thu, nêu phát hiện,
-cách sửa, và test bảo vệ. Để nó vào lịch sử git có mô tả, thay vì lọt vào một commit nói về
-chuyện khác.
+**cả bản sửa đầu bằng `.pop()` đã sai và vì sao**, cách sửa đúng, và test bảo vệ. Để nó vào
+lịch sử git có mô tả, thay vì lọt vào một commit nói về chuyện khác.
+
+Ghi rõ thêm một chi tiết quan trọng đã phát hiện được: `tests/test_telegram_isolation.py`
+**chỉ bắt được lỗi khi chạy cả suite**, không bắt được khi chạy riêng file đó — vì hàng rào
+chỉ bị phá sau khi một test khác gọi `load_dotenv()`. Đây là đặc tính của chính phép thử, cần
+ghi lại để người sau không tưởng test bị hỏng.
+
+---
+
+## Task 7 — Mở rộng hàng rào sang secret SSI (ISO-5)
+
+### 7.1. Vì sao tôi không đồng ý với kết luận "rủi ro không tương đương"
+
+Self-review của đợt 22 nêu đúng vấn đề: `SSI_API_KEY` / `SSI_API_SECRET` / `SSI_PRIVATE_KEY` /
+`SSI_CONSUMER_ID` / `SSI_CONSUMER_SECRET` cũng bị `load_dotenv()` nạp lại theo đúng cơ chế
+`setdefault()`. Nhưng rồi kết luận rằng rủi ro thấp hơn Telegram vì "không có test nào gọi SSI
+API thật", nên không sửa.
+
+Lập luận đó dựa trên **trạng thái hiện tại của bộ test**, không dựa trên **hàng rào**. Nó đúng
+cho tới đúng cái ngày ai đó viết một test mới gọi thẳng `SSIRestClient` hay
+`run_backfill()` — và ngày đó không ai nhớ đọc lại ghi chú này.
+
+Repo đã có **hai** tiền lệ chính xác kiểu này:
+
+- **13/08**: suite test xoá durable consumer của engine thật, purge stream `BARS`, ghi đè
+  `engine_state`. Đó là lý do ISO-1 (DB/NATS riêng) tồn tại — và ISO-1 là **hàng rào**, không
+  phải lời dặn "đừng viết test đụng NATS thật".
+- **09/09** (đợt 22): Telegram — cũng là "hệ thống thật chưa có rào", cũng chỉ lộ ra khi có
+  người vô tình chạm vào.
+
+SSI là **bề mặt thứ tư**, và là bề mặt đắt nhất: một lệnh gọi ngoài ý muốn có thể gây 429, làm
+hỏng token của **cả ba tài khoản** 0434221/0434226/0434228 — vi phạm thẳng ràng buộc thường
+trực *"không cố tình gây 429, SSI chạy đúng một lần"*.
+
+Cái giá để dựng rào: **năm dòng**. Cái giá của việc không dựng: một sự cố thuộc đúng lớp đã
+xảy ra hai lần.
+
+### 7.2. Việc
+
+Trong `tests/conftest.py`, ngay dưới khối ISO-4, hard-set rỗng năm biến SSI theo **đúng khuôn
+ISO-3/ISO-4** — hard-set, **không** `.pop()`, cùng lý do đã ghi ở Task 6:
+
+```python
+os.environ["SSI_CONSUMER_ID"] = ""
+os.environ["SSI_CONSUMER_SECRET"] = ""
+os.environ["SSI_API_KEY"] = ""
+os.environ["SSI_API_SECRET"] = ""
+os.environ["SSI_PRIVATE_KEY"] = ""
+```
+
+Kèm comment giải thích ngắn gọn cùng văn phong ISO-4.
+
+### 7.3. Vì sao việc này AN TOÀN với bộ test hiện có
+
+Tôi đã kiểm: hai file test duy nhất dùng các biến này đều **tự đặt giá trị giả bằng
+`monkeypatch.setenv`**, nên chúng ghi đè hàng rào và không bị ảnh hưởng:
+
+```
+tests/test_config.py:7-11            monkeypatch.setenv("SSI_CONSUMER_ID", "id123") ...
+tests/test_confirm_real_order.py:16-20  monkeypatch.setenv("SSI_CONSUMER_ID", "c") ...
+```
+
+Đây là bằng chứng, không phải phỏng đoán — nhưng agent vẫn phải tự xác nhận lại bằng cách chạy
+suite.
+
+### 7.4. Test bảo vệ
+
+Thêm vào `tests/test_telegram_isolation.py` (đổi tên file **không** cần thiết — ghi rõ trong
+docstring là file này giữ cả ISO-4 lẫn ISO-5) một test khẳng định năm biến SSI đều rỗng khi
+chạy cả suite, cùng khuôn với test Telegram đã có.
+
+### 7.5. Kiểm chứng
+
+- `uv run pytest -q` → **510 + số test mới**, 0 failed. Chạy **hai lần liên tiếp** để loại trừ
+  flakiness, dán cả hai kết quả.
+- `uv run ruff check trading tests scripts` sạch.
+- `git diff tests/conftest.py` copy nguyên văn.
+- **Nếu có test nào đỏ vì hàng rào này**: đó là phát hiện có giá trị — test đó đang phụ thuộc
+  secret thật. **Dừng, báo cáo tên test**, không tự nới hàng rào để nó xanh lại.
 
 ---
 
@@ -330,7 +414,7 @@ này rồi sửa code.
 
 ---
 
-## 5. Báo cáo nghiệm thu — đúng 8 mục
+## 5. Báo cáo nghiệm thu — đúng 9 mục
 
 1. `gitnexus_impact` cho `RiskManager`/`approve_sized`/`run_backtest` (hoặc ghi rõ MCP hỏng).
 2. Task 1: ảnh chụp `AssertionError` của test tiêu chí 2 **trên code chưa sửa**, rồi
@@ -340,8 +424,13 @@ này rồi sửa code.
 5. Task 3: đường dẫn + nội dung file báo cáo đã ghi đè.
 6. Task 4: mục `2026-01-02` viết lại + xác nhận `git diff config/config.yaml` rỗng.
 7. Task 5: bảng thông số BingX có nguồn hoặc nhãn giả định.
-8. Task 6: mục riêng về `conftest.py` + `test_telegram_isolation.py`; kèm
-   `git status`, `git diff --stat HEAD`, `gitnexus_detect_changes()`, pytest, ruff.
+8. Task 6: mục riêng ISO-4 (gồm cả bản `.pop()` sai và vì sao) + Task 7 ISO-5
+   (`git diff tests/conftest.py`, test mới, hai lần chạy suite).
+9. `git status`, `git diff --stat HEAD`, `gitnexus_detect_changes()`, pytest, ruff.
+
+**Thứ tự thực hiện bắt buộc:** Task 1 → Task 6, 7 (hàng rào) → Task 4, 5 (báo cáo) →
+**Task 2 và Task 3 làm CUỐI CÙNG**. Lý do ở §2.1: đợt 22 đo xong rồi sửa code nên số không
+tái lập được. Mọi thay đổi code phải xong trước khi chạy phép đo.
 
 ---
 
