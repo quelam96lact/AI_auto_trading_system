@@ -150,6 +150,54 @@ Câu hỏi cần trả lời, **kèm bằng chứng**:
 3. **`heartbeat engine` có tươi trong khi `delivered.stream_seq` đứng im không?** Nếu có,
    đó là **bằng chứng trực tiếp** cho khoảng trống ở §2 — chuông xanh trong khi engine điếc.
 
+### 2.4bis. BỔ SUNG 10:55 — đếm message theo subject, và đối chiếu delta
+
+Claude phát hiện trong lúc audit mốc 1: từ **09:43 → 10:29** consumer nhận **+234 tin**
+nhưng `bars` chỉ thêm **~25 bar**; từ 10:29 → 10:47 là **+69 tin** cho ~11 bar. Trong khi đó
+ở trạng thái ổn định thì đúng 1:1 — **10:47:16 → ~10:52 là +3 tin cho đúng 3 bar**.
+
+Ba bằng chứng cho thấy **không** có nhân bản có hệ thống:
+
+```
+Stream BARS chi co 3 subject:   1384 bars.ssi.AAA | 1191 bars.ssi.IJC | 956 bars.ssi.HII
+Ty le AAA/HII trong stream:     1384/956  = 1,45
+Ty le AAA/HII trong bang bars:  4704/3304 = 1,42   <- khop
+```
+
+Nhưng phần dư đầu phiên **chưa được giải thích**, và nó có hệ quả thật: chốt chống trùng ở
+`trading/engine/main.py:398-403` chỉ bỏ qua bar có `ts <= warmed_until` (đặt lúc warm-up khi
+engine khởi động). **Bar của chính hôm nay nếu bị publish lại sẽ lọt qua chốt** và vào
+`_closes` lần thứ hai — đúng điều comment dòng 395 cảnh báo: *"biến chiến lược mù thành chiến
+lược SAI, tệ hơn bug đang sửa"*.
+
+**Việc thêm, làm ngay từ mốc 11:15:**
+
+1. Bổ sung vào `scripts/probe_engine_consumer.py` một phép đọc nữa — **vẫn chỉ đọc**:
+
+   ```python
+   info = await js.stream_info("BARS", subjects_filter=">")
+   # in: state.messages, state.first_seq, state.last_seq, va state.subjects (dem theo subject)
+   ```
+
+   Không thêm hàm ghi nào. Grep lại và dán kết quả như Task 1.2.
+
+2. Mỗi mốc, ghi thêm **hai số và một tỷ lệ**:
+
+   | Cột | Cách tính |
+   |---|---|
+   | `Δ stream_seq` | `delivered.stream_seq` mốc này − mốc trước |
+   | `Δ bar` | số bar mới trong `bars` giữa hai mốc (3 mã) |
+   | Tỷ lệ | `Δ stream_seq / Δ bar` |
+
+**Cách đọc kết quả:**
+
+- Tỷ lệ ≈ **1,0** ở cả ba mốc chiều ⇒ phần dư sáng nay là hiện tượng khởi động/backfill. Ghi
+  lại, đóng câu hỏi.
+- Tỷ lệ **> 1** kéo dài ⇒ có bar bị publish lại trong phiên ⇒ **lỗi ảnh hưởng trực tiếp tới
+  đúng đắn của chiến lược đang chạy thật**. Báo cáo ngay, **không tự sửa** — cần brief riêng.
+
+Ghi cả ba tỷ lệ vào mục 1 của báo cáo Task 4, và trả lời rõ câu hỏi này ở mục 2.
+
 ### 2.4. Nếu phát hiện engine KHÔNG nhận bar
 
 **Không tự sửa. Không restart.** Báo cáo ngay, kèm cả năm số của mốc phát hiện. Việc khôi phục
