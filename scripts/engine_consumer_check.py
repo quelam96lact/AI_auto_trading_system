@@ -39,10 +39,19 @@ ALERT_COOLDOWN_SECONDS = 900  # 15 phút chống spam
 async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer: str = "engine"):
     """Chỉ đọc consumer_info từ NATS JetStream (read-only)."""
     target_url = nats_url.replace("localhost", "127.0.0.1") if "localhost" in nats_url else nats_url
+    connect_opts = {
+        "connect_timeout": 2,
+        "allow_reconnect": False,
+        "max_reconnect_attempts": 1,
+        "reconnect_time_wait": 0.05,
+    }
     try:
-        nc = await nats.connect(target_url, connect_timeout=3)
+        nc = await nats.connect(target_url, **connect_opts)
     except Exception:
-        nc = await nats.connect(nats_url, connect_timeout=3)
+        if target_url != nats_url:
+            nc = await nats.connect(nats_url, **connect_opts)
+        else:
+            raise
     try:
         js = nc.jetstream()
         info = await js.consumer_info(stream, consumer)

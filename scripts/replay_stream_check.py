@@ -62,7 +62,13 @@ async def replay_stream(
     filter_date: str | None = None,
 ) -> dict:
     """Đọc và phân tích message từ JetStream chỉ bằng get_msg."""
-    nc = await nats.connect(url, connect_timeout=5)
+    nc = await nats.connect(
+        url,
+        connect_timeout=2,
+        allow_reconnect=False,
+        max_reconnect_attempts=1,
+        reconnect_time_wait=0.05,
+    )
     js = nc.jetstream()
 
     try:
