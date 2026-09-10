@@ -1,5 +1,11 @@
 # Brief đợt 25 — Đóng tồn đọng: benchmark, chuông 2C, triển khai, và HII câm
 
+> **ĐÃ BỊ THAY THẾ (10/09/2026) — brief này chưa từng được thực thi.**
+> Bốn task dưới đây vẫn còn giá trị nhưng thứ tự ưu tiên đã đổi, vì sáng 10/09 đã xác nhận
+> dứt điểm lỗi bar chưa đóng. **Agent phải thực hiện theo bản mới:**
+> `2026-09-10-brief-dot-26-sua-bar-chua-dong-va-dong-ton-dong.md`.
+> Bản mới trỏ ngược về đây để lấy chi tiết Task 1/2/3/4 (thành Task 4/5/7/6).
+
 Ngày giao: 09/09/2026
 Base: `3322aaa` (main). Cây làm việc có `scripts/probe_engine_consumer.py` của đợt 24 (chưa
 commit — tôi sẽ commit khi nghiệm thu đợt 24).
