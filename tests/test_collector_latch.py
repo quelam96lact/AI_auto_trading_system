@@ -1,10 +1,13 @@
-"""Unit tests cho BarLatch (trading/collector/latch.py) — Brief đợt 26 Task 1.6.
+"""Unit tests cho BarLatch (trading/collector/latch.py) — Brief đợt 26 Task 1.6 / Brief đợt 27 Task 2.
 
 1. Ba snapshot cùng khung -> offer trả None cả 3 lần.
 2. Snapshot thứ tư sang khung mới -> trả về bar của khung cũ, và giá trị bằng snapshot thứ 3.
 3. Snapshot đến muộn (ts < khung đang mở) -> trả None, khung đang mở không đổi, alert WARN.
 4. flush_due trước hạn -> rỗng; sau ts + interval + grace -> trả đúng bar đó, gọi lần 2 trả rỗng.
 5. flush_all trả mọi khung đang mở của nhiều mã cùng lúc.
+6. Snapshot muộn sau khi flush_due -> không bị phát lại khi khung mới tới.
+7. Snapshot muộn sau khi flush_all -> bỏ qua, không bị coi là khung mới đang mở.
+8. Khung mới hơn sau khi chốt -> vẫn được nhận bình thường.
 """
 
 from datetime import datetime, timedelta
@@ -131,3 +134,73 @@ def test_latch_flush_all_multiple_symbols():
 
     # Sau flush_all, latch rỗng hoàn toàn
     assert latch.flush_all() == []
+
+
+def test_late_snapshot_after_flush_due_not_republished_on_next_frame():
+    """6. Snapshot muộn sau khi flush_due chốt -> bỏ qua, không bị phát lại lần 2 khi khung mới tới."""
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+    t0 = datetime(2026, 9, 10, 9, 45, tzinfo=TZ)
+    t1 = datetime(2026, 9, 10, 9, 50, tzinfo=TZ)
+
+    b1 = Bar("AAA", t0, 100.0, 102.0, 99.0, 101.0, 1000)
+    latch.offer(b1)
+
+    # flush_due chốt khung 09:45
+    due = latch.flush_due(t0 + timedelta(seconds=370))
+    assert len(due) == 1
+    assert due[0].ts == t0
+    assert due[0].close == 101.0
+
+    # Snapshot muộn của chính khung 09:45 tới (vd SSI gửi sót snapshot 105.0)
+    b1_late = Bar("AAA", t0, 100.0, 106.0, 99.0, 105.0, 5000)
+    res_late = latch.offer(b1_late)
+    assert res_late is None
+
+    # Khung 09:50 tới -> chỉ ghi nhận 09:50, KHÔNG trả về 09:45 lần thứ 2
+    b2 = Bar("AAA", t1, 105.0, 106.0, 104.0, 105.5, 2000)
+    res_new = latch.offer(b2)
+    assert res_new is None
+
+
+def test_late_snapshot_after_flush_all_ignored():
+    """7. Snapshot muộn sau khi flush_all -> bỏ qua."""
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+    t0 = datetime(2026, 9, 10, 14, 45, tzinfo=TZ)
+    t1 = datetime(2026, 9, 10, 14, 50, tzinfo=TZ)
+
+    b1 = Bar("AAA", t0, 100.0, 102.0, 99.0, 101.0, 1000)
+    latch.offer(b1)
+    flushed = latch.flush_all()
+    assert len(flushed) == 1
+
+    # Snapshot muộn của t0
+    b1_late = Bar("AAA", t0, 100.0, 103.0, 99.0, 102.0, 2000)
+    assert latch.offer(b1_late) is None
+
+    # Khung mới t1
+    b2 = Bar("AAA", t1, 102.0, 103.0, 101.0, 102.5, 1500)
+    assert latch.offer(b2) is None
+
+
+def test_newer_frame_after_closed_accepted_normally():
+    """8. Khung mới hơn sau khi chốt vẫn được nhận và chốt bình thường."""
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+    t0 = datetime(2026, 9, 10, 9, 45, tzinfo=TZ)
+    t1 = datetime(2026, 9, 10, 9, 50, tzinfo=TZ)
+    t2 = datetime(2026, 9, 10, 9, 55, tzinfo=TZ)
+
+    b1 = Bar("AAA", t0, 100.0, 101.0, 99.0, 100.5, 1000)
+    latch.offer(b1)
+    due = latch.flush_due(t0 + timedelta(seconds=370))
+    assert len(due) == 1
+
+    # Khung t1 tới
+    b2 = Bar("AAA", t1, 100.5, 102.0, 100.0, 101.5, 2000)
+    assert latch.offer(b2) is None
+
+    # Khung t2 tới -> chốt khung t1
+    b3 = Bar("AAA", t2, 101.5, 103.0, 101.0, 102.0, 3000)
+    closed = latch.offer(b3)
+    assert closed is not None
+    assert closed.ts == t1
+    assert closed.close == 101.5

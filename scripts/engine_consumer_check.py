@@ -1,6 +1,6 @@
 """Chuông 2C: Giám sát engine có đang tiêu thụ bar thật từ JetStream hay không.
 
-Brief đợt 25 (Task 2) / Brief đợt 26 (Task 5).
+Brief đợt 25 (Task 2) / Brief đợt 26 (Task 5) / Brief đợt 27 (Task 1).
 CHỈ ĐỌC (read-only): Gọi duy nhất `js.consumer_info("BARS", "engine")` và SELECT bars.
 CẤM TUYỆT ĐỐI các thao tác ghi, xoá, purge, thêm hay sửa consumer.
 
@@ -12,7 +12,7 @@ Cảnh báo khi:
 Exit code:
 0 = OK (hoặc ngoài phiên)
 1 = Đã gửi cảnh báo (hoặc phát hiện sự cố trong phiên)
-2 = Lỗi cấu hình / kết nối
+2 = Lỗi cấu hình / DB_DSN chưa set / kết nối
 """
 
 import argparse
@@ -20,19 +20,15 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import nats
 import psycopg
-
-# Thêm scripts/ vào sys.path để import _db_common
-sys.path.insert(0, str(Path(__file__).parent))
-from _db_common import resolve_dsn
+import yaml
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, is_trading_time
-from trading.config import load_config
 from trading.telegram import send_telegram
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,17 +38,11 @@ ALERT_COOLDOWN_SECONDS = 900  # 15 phút chống spam
 
 async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer: str = "engine"):
     """Chỉ đọc consumer_info từ NATS JetStream (read-only)."""
+    target_url = nats_url.replace("localhost", "127.0.0.1") if "localhost" in nats_url else nats_url
     try:
-        nc = await nats.connect(nats_url)
+        nc = await nats.connect(target_url, connect_timeout=3)
     except Exception:
-        if "localhost" in nats_url:
-            alt_url = nats_url.replace("localhost", "127.0.0.1")
-            nc = await nats.connect(alt_url)
-        elif "127.0.0.1" in nats_url:
-            alt_url = nats_url.replace("127.0.0.1", "localhost")
-            nc = await nats.connect(alt_url)
-        else:
-            raise
+        nc = await nats.connect(nats_url, connect_timeout=3)
     try:
         js = nc.jetstream()
         info = await js.consumer_info(stream, consumer)
@@ -63,8 +53,9 @@ async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer:
 
 def read_today_bars_count(dsn: str) -> int:
     """Đếm số bar được ghi trong ngày hôm nay từ DB."""
+    target_dsn = dsn.replace("@localhost", "@127.0.0.1") if "@localhost" in dsn else dsn
     query = "SELECT count(*) FROM bars WHERE ts >= CURRENT_DATE;"
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+    with psycopg.connect(target_dsn) as conn, conn.cursor() as cur:
         cur.execute(query)
         row = cur.fetchone()
         return int(row[0]) if row else 0
@@ -122,18 +113,35 @@ def run_check(
     force: bool = False,
     pending_threshold: int = 20,
 ) -> int:
-    try:
-        cfg = load_config(config_path)
-    except Exception as e:
-        _print_safe(f"[engine-consumer] Không thể nạp config: {e}")
+    dsn = os.environ.get("DB_DSN")
+    if not dsn:
+        print("DB_DSN chưa được set", file=sys.stderr)
         return 2
 
+    # Đọc config bằng yaml.safe_load — KHÔNG import load_config
+    try:
+        cfg_file = Path(config_path)
+        if not cfg_file.is_absolute():
+            cfg_file = Path(REPO) / config_path
+        with open(cfg_file, encoding="utf-8") as f:
+            cfg_data = yaml.safe_load(f) or {}
+
+        holidays = frozenset(
+            date.fromisoformat(str(h)) for h in (cfg_data.get("holidays") or [])
+        )
+        nats_url = os.environ.get("NATS_URL") or cfg_data.get("nats_url", "nats://localhost:4222")
+        nats_stream = os.environ.get("NATS_STREAM") or cfg_data.get("nats_stream", "BARS")
+    except Exception as e:
+        send_telegram(
+            f"[CRITICAL] engine_consumer_check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
+        )
+        return 1
+
     now = datetime.now(TZ)
-    if not force and not is_trading_time(now, cfg.holidays):
+    if not force and not is_trading_time(now, holidays):
         _print_safe(f"[engine-consumer] Ngoài giờ giao dịch VN ({now.strftime('%H:%M:%S')}), bỏ qua.")
         return 0
 
-    dsn = resolve_dsn(cfg.db_dsn)
     try:
         today_bars = read_today_bars_count(dsn)
     except Exception as e:
@@ -141,11 +149,11 @@ def run_check(
         today_bars = 0
 
     try:
-        info = asyncio.run(read_nats_consumer_info(cfg.nats_url, cfg.nats_stream, "engine"))
+        info = asyncio.run(read_nats_consumer_info(nats_url, nats_stream, "engine"))
     except Exception as e:
         msg = f"[engine-consumer] LỖI: Không thể kết nối NATS hoặc đọc consumer 'engine': {e}"
         _print_safe(msg)
-        send_telegram(cfg, f"🚨 CHUÔNG 2C: {msg}")
+        send_telegram(f"🚨 CHUÔNG 2C: {msg}")
         return 1
 
     prev_state = load_state()
@@ -174,7 +182,7 @@ def run_check(
         _print_safe(alert_msg)
 
         if cooldown_elapsed >= ALERT_COOLDOWN_SECONDS:
-            send_telegram(cfg, alert_msg)
+            send_telegram(alert_msg)
             new_state["last_alert_ts"] = now.timestamp()
         else:
             _print_safe(f"[engine-consumer] Đang trong thời gian chống spam ({cooldown_elapsed:.0f}s < {ALERT_COOLDOWN_SECONDS}s), chưa gửi lại.")
