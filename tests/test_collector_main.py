@@ -429,6 +429,44 @@ async def test_persist_bars_negative_lag_ms_not_clamped(monkeypatch):
     assert info_alerts[0][2]["lag_ms"] == -500.0
 
 
+async def test_persist_bars_custom_interval_lag_ms(monkeypatch):
+    """Brief 32 Task 1: latch dựng với khoảng 1 phút -> lag_ms tính theo 1 phút, KHÔNG theo 5."""
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
+    )
+
+    # Bar lúc 09:00 (nếu interval 1 phút thì đóng khung lúc 09:01). Giả lập now là 09:01:00.200 (+200ms)
+    frozen_now = datetime(2026, 7, 15, 9, 1, 0, 200000, tzinfo=TZ)
+    monkeypatch.setattr(
+        collector_main,
+        "datetime",
+        _FrozenDatetime(frozen_now),
+    )
+
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    bar = Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
+
+    # Truyền interval=timedelta(minutes=1)
+    await collector_main.persist_bars(storage, pub, [bar], interval=timedelta(minutes=1))
+
+    info_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bars closed"
+    ]
+    assert len(info_alerts) == 1
+    assert "lag_ms" in info_alerts[0][2]
+    assert info_alerts[0][2]["lag_ms"] == 200.0
+
+
 async def test_stream_handler_skips_unparsable_message_without_raising(monkeypatch):
     import trading.collector.main as collector_main
 

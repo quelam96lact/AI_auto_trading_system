@@ -73,7 +73,12 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
             signal.signal(sig, _on_signal)
 
 
-async def persist_bars(storage, pub, bars) -> None:
+async def persist_bars(
+    storage,
+    pub,
+    bars,
+    interval: timedelta = timedelta(minutes=5),
+) -> None:
     """Publish NATS trước + ghi DB sau. KHÔNG BAO GIỜ ném: hàm này được gọi qua
     asyncio.create_task() fire-and-forget, exception thoát ra sẽ bị asyncio nuốt
     thành 'Task exception was never retrieved' — bar mất mà không ai biết."""
@@ -105,7 +110,7 @@ async def persist_bars(storage, pub, bars) -> None:
         )
         return
 
-    max_close_ts = max(b.ts for b in bars) + timedelta(minutes=5)
+    max_close_ts = max(b.ts for b in bars) + interval
     lag_ms = round((publish_done_at - max_close_ts).total_seconds() * 1000, 2)
     alert(
         "INFO",
@@ -157,7 +162,9 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
 
             closed = latch.offer(bar)
             if closed is not None:
-                task = asyncio.create_task(persist_bars(storage, pub, [closed]))
+                task = asyncio.create_task(
+                    persist_bars(storage, pub, [closed], interval=latch.interval)
+                )
                 if persist_tasks is not None:
                     persist_tasks.add(task)
                     task.add_done_callback(persist_tasks.discard)
@@ -194,7 +201,9 @@ async def housekeeping_tick(
     if latch is not None and pub is not None:
         due = latch.flush_due(now)
         if due:
-            task = asyncio.create_task(persist_bars(storage, pub, due))
+            task = asyncio.create_task(
+                persist_bars(storage, pub, due, interval=latch.interval)
+            )
             if persist_tasks is not None:
                 persist_tasks.add(task)
                 task.add_done_callback(persist_tasks.discard)

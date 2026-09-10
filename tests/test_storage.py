@@ -859,3 +859,40 @@ def test_read_must_price_symbols_unsynced_account_no_crash(storage):
     )
     got = storage.read_must_price_symbols(["ACC_TEST", "ACC_UNSYNCED"], ["AAA"])
     assert got == ["AAA", "VCB"], f"tai khoan chua dong bo phai duoc bo qua, thuc te: {got}"
+
+
+# ============ Brief 32 Task 2: Storage.read_latest_account_navs ============
+
+
+def test_read_latest_account_navs_returns_latest_per_account(storage):
+    """Brief 32 Task 2: nhiều bản ghi nhiều mốc thời gian cho cùng 1 tài khoản -> chỉ trả về bản mới nhất."""
+    t1 = datetime(2026, 9, 10, 8, 0, tzinfo=TZ)
+    t2 = datetime(2026, 9, 10, 9, 0, tzinfo=TZ)
+    t3 = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM account_nav_snapshot WHERE account_no IN ('ACC_NAV1', 'ACC_NAV2')")
+
+    storage.record_nav("ACC_NAV1", t1, 5_000_000.0, [])
+    storage.record_nav("ACC_NAV1", t3, 10_000_000.0, [])
+    storage.record_nav("ACC_NAV1", t2, 7_000_000.0, [])
+
+    storage.record_nav("ACC_NAV2", t1, 190_000_000.0, [])
+    storage.record_nav("ACC_NAV2", t2, 200_000_000.0, [])
+
+    navs = storage.read_latest_account_navs()
+    assert navs["ACC_NAV1"] == 10_000_000.0
+    assert navs["ACC_NAV2"] == 200_000_000.0
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM account_nav_snapshot WHERE account_no IN ('ACC_NAV1', 'ACC_NAV2')")
+
+
+def test_read_latest_account_navs_empty_table_returns_empty_dict(storage):
+    """Brief 32 Task 2: bảng rỗng -> trả về ánh xạ rỗng, không nổ."""
+    with storage.conn() as c:
+        c.execute("DELETE FROM account_nav_snapshot")
+
+    navs = storage.read_latest_account_navs()
+    assert navs == {}
+

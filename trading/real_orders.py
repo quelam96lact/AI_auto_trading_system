@@ -34,21 +34,11 @@ def _warn_nav_discrepancy_once(cfg: Config, storage: Storage) -> None:
         return
     _warned_nav_discrepancy_accounts.add(account)
     try:
-        with storage.conn() as c:
-            rows = c.execute(
-                "SELECT DISTINCT ON (account_no) account_no, nav "
-                "FROM account_nav_snapshot "
-                "ORDER BY account_no, ts DESC"
-            ).fetchall()
+        nav_map = storage.read_latest_account_navs()
     except Exception:
         return
 
-    if not rows:
-        return
-
-    try:
-        nav_map = {str(row[0]): float(row[1]) for row in rows if row[1] is not None}
-    except (TypeError, ValueError):
+    if not nav_map:
         return
 
     current_nav = nav_map.get(account)

@@ -824,6 +824,17 @@ class Storage:
                 (account_no, ts, nav, list(unpriced_symbols)),
             )
 
+    def read_latest_account_navs(self) -> dict[str, float]:
+        """Ánh xạ account_no -> nav của bản ghi mới nhất mỗi tài khoản trong account_nav_snapshot.
+        Bảng rỗng trả về dict rỗng."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT DISTINCT ON (account_no) account_no, nav "
+                "FROM account_nav_snapshot "
+                "ORDER BY account_no, ts DESC"
+            ).fetchall()
+        return {str(row[0]): float(row[1]) for row in rows if row[1] is not None}
+
 
     def read_real_daily_pnl(self, account_no: str, day: date) -> float:
         """SUM(pnl) từ real_order_fills cho 1 ngày theo giờ Việt Nam.

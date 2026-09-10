@@ -69,6 +69,7 @@ def _make_storage():
     storage.read_position_sync_ts.side_effect = lambda account=None: ro_mod._now(TZ) - timedelta(minutes=5)
     storage.read_real_daily_pnl.return_value = 0.0
     storage.create_pending_order.return_value = 42
+    storage.read_latest_account_navs.return_value = {}
     # T1-B2: suc mua TUOI mac dinh (du lon, khong chan qty sizing trong test cu)
     storage.read_buying_power.return_value = (
         10_000,
@@ -582,15 +583,10 @@ def test_nav_discrepancy_warns_when_ratio_exceeds_threshold(cfg, bar, monkeypatc
 
     now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
     storage = _make_storage()
-    # Mock conn().execute().fetchall() to return 2 accounts
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [
-        ("0434221", 5_021_712.0),
-        ("0434226", 197_517_988.0),
-    ]
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-    storage.conn.return_value.__enter__.return_value = mock_conn
+    storage.read_latest_account_navs.return_value = {
+        "0434221": 5_021_712.0,
+        "0434226": 197_517_988.0,
+    }
 
     cfg_custom = replace(cfg, real_order_account="0434221")
     risk = RiskManager(capital=1_000_000_000.0)
@@ -619,14 +615,10 @@ def test_nav_discrepancy_no_warn_when_ratio_below_threshold(cfg, bar, monkeypatc
 
     now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
     storage = _make_storage()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [
-        ("0434221", 5_000_000.0),
-        ("0434226", 6_000_000.0),
-    ]
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-    storage.conn.return_value.__enter__.return_value = mock_conn
+    storage.read_latest_account_navs.return_value = {
+        "0434221": 5_000_000.0,
+        "0434226": 6_000_000.0,
+    }
 
     cfg_custom = replace(cfg, real_order_account="0434221")
     risk = RiskManager(capital=1_000_000_000.0)
@@ -647,13 +639,9 @@ def test_nav_discrepancy_no_warn_when_single_account(cfg, bar, monkeypatch):
 
     now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
     storage = _make_storage()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [
-        ("0434221", 5_021_712.0),
-    ]
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-    storage.conn.return_value.__enter__.return_value = mock_conn
+    storage.read_latest_account_navs.return_value = {
+        "0434221": 5_021_712.0,
+    }
 
     cfg_custom = replace(cfg, real_order_account="0434221")
     risk = RiskManager(capital=1_000_000_000.0)
@@ -674,14 +662,10 @@ def test_nav_discrepancy_warns_only_once_across_bars(cfg, bar, monkeypatch):
 
     now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
     storage = _make_storage()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [
-        ("0434221", 5_021_712.0),
-        ("0434226", 197_517_988.0),
-    ]
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-    storage.conn.return_value.__enter__.return_value = mock_conn
+    storage.read_latest_account_navs.return_value = {
+        "0434221": 5_021_712.0,
+        "0434226": 197_517_988.0,
+    }
 
     cfg_custom = replace(cfg, real_order_account="0434221")
     risk = RiskManager(capital=1_000_000_000.0)
@@ -719,15 +703,10 @@ def test_nav_discrepancy_does_not_block_order_creation(cfg, bar, monkeypatch):
         now - timedelta(minutes=5),
     )
     storage.read_position_sync_ts.return_value = now - timedelta(minutes=5)
-
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [
-        ("0434221", 5_021_712.0),
-        ("0434226", 197_517_988.0),
-    ]
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value = mock_cursor
-    storage.conn.return_value.__enter__.return_value = mock_conn
+    storage.read_latest_account_navs.return_value = {
+        "0434221": 5_021_712.0,
+        "0434226": 197_517_988.0,
+    }
 
     cfg_custom = replace(cfg, real_order_account="0434221")
     risk = RiskManager(capital=1_000_000_000.0)
@@ -738,6 +717,7 @@ def test_nav_discrepancy_does_not_block_order_creation(cfg, bar, monkeypatch):
     # Pending order was still created
     storage.create_pending_order.assert_called_once()
     assert storage.create_pending_order.call_args.kwargs["account_no"] == "0434221"
+
 
 
 
