@@ -450,3 +450,76 @@ async def test_restart_feed_silent_when_noop(monkeypatch):
 
     await collector_main._restart_feed_and_alert(FakeFeed())
     assert alerts == [], f"restart no-op thi khong duoc kêu gi, thuc te: {alerts}"
+
+
+# ============ Brief đợt 26 Task 1.6: BarLatch wiring test ============
+
+
+async def test_stream_handler_with_latch_publishes_only_closed_bar(monkeypatch):
+    """Brief đợt 26 Tiêu chí 6:
+    Bơm 3 snapshot khung A rồi 1 snapshot khung B qua on_stream_message:
+    → pub.publish được gọi ĐÚNG 1 LẦN, với bar khung A mang giá trị của snapshot thứ 3.
+    → storage.write_bars nhận đầy đủ snapshot từng lần.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.collector.latch import BarLatch
+    from trading.models import Bar
+
+    t0 = datetime(2026, 9, 10, 9, 30, tzinfo=TZ)
+    t1 = datetime(2026, 9, 10, 9, 35, tzinfo=TZ)
+
+    bars_sequence = [
+        Bar("VCB", t0, 90.0, 90.5, 89.8, 90.2, 1000),
+        Bar("VCB", t0, 90.0, 90.8, 89.8, 90.4, 5000),
+        Bar("VCB", t0, 90.0, 91.0, 89.7, 90.9, 12000),  # snapshot 3 của khung A
+        Bar("VCB", t1, 91.0, 91.5, 90.8, 91.2, 2000),   # snapshot 1 của khung B
+    ]
+
+    seq_idx = 0
+
+    def fake_parse(msg):
+        nonlocal seq_idx
+        b = bars_sequence[seq_idx]
+        seq_idx += 1
+        return b
+
+    monkeypatch.setattr(collector_main, "parse_interval_message", fake_parse)
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+
+    wd = MagicMock()
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+
+    persist_tasks = set()
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+    handler = collector_main.make_stream_message_handler(
+        wd, storage, pub, persist_tasks=persist_tasks, latch=latch
+    )
+
+    # Gửi 3 message khung A
+    handler({"dummy": 1})
+    handler({"dummy": 2})
+    handler({"dummy": 3})
+
+    # Gửi 1 message khung B
+    handler({"dummy": 4})
+
+    # Chờ các task async hoàn thành
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    # pub.publish ĐÚNG 1 LẦN
+    assert pub.publish.call_count == 1, f"pub.publish phai duoc goi dung 1 lan, thuc te={pub.publish.call_count}"
+    published_bar = pub.publish.call_args[0][0]
+    assert published_bar.symbol == "VCB"
+    assert published_bar.ts == t0
+    assert published_bar.close == 90.9
+    assert published_bar.volume == 12000
+
+    # storage.write_bars được gọi cho cả 4 snapshot + 1 closed bar
+    assert storage.write_bars.call_count >= 4
+

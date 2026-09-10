@@ -103,3 +103,40 @@ def test_so_sanh_lot_size_100_vs_1():
 
     assert res_100["total_trades"] == 0, f"lot_size=100 phai ra 0 lenh, thuc te: {res_100['total_trades']}"
     assert res_1["total_trades"] > 0, f"lot_size=1 phai vao duoc lenh, thuc te: {res_1['total_trades']}"
+
+
+def test_buy_and_hold_fractional_lot_size_non_zero():
+    """Tái hiện và kiểm chứng: _buy_and_hold với per_symbol=500, giá 62766, lot_size=0.0001
+    phải cho PnL != 0 (thay vì 0.00 do int //).
+    """
+    from trading.backtest import _buy_and_hold
+
+    base_dt = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    bars = [
+        Bar("BTC-USDT", base_dt, 62766.0, 63000.0, 62000.0, 62766.0, 100.0, source="bingx"),
+        Bar("BTC-USDT", base_dt + timedelta(days=1), 62766.0, 65000.0, 62766.0, 64000.0, 100.0, source="bingx"),
+    ]
+    pnl = _buy_and_hold(bars, capital=500.0, fee_rate=0.0005, sell_tax_rate=0.0, slippage_bps=0.0, lot_size=0.0001)
+    assert pnl != 0.0, f"pnl khong duoc bang 0 voi von 500 va gia 62766, thuc te={pnl}"
+    assert pnl > 0.0, f"gia tang tu 62766 len 64000 pnl phai duong, thuc te={pnl}"
+
+
+def test_buy_and_hold_lot_size_1_backward_compatible():
+    """Tiêu chí 3: Cùng đầu vào, lot_size=1 cho kết quả y hệt trước khi sửa."""
+    from trading.backtest import _buy_and_hold, _buy_and_hold_curve
+
+    base_dt = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    bars = [
+        Bar("VCB", base_dt, 100.0, 105.0, 95.0, 100.0, 1000.0),
+        Bar("VCB", base_dt + timedelta(days=1), 100.0, 110.0, 100.0, 108.0, 1000.0),
+    ]
+    # Mặc định lot_size=1
+    pnl_default = _buy_and_hold(bars, capital=1000.0, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0)
+    pnl_explicit_1 = _buy_and_hold(bars, capital=1000.0, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0, lot_size=1)
+    assert pnl_default == pnl_explicit_1
+
+    curve_default = _buy_and_hold_curve(bars, capital=1000.0, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0)
+    curve_explicit_1 = _buy_and_hold_curve(bars, capital=1000.0, fee_rate=0.0015, sell_tax_rate=0.001, slippage_bps=5.0, lot_size=1)
+    assert curve_default == curve_explicit_1
+
+

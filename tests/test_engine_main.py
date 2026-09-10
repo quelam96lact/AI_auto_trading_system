@@ -1370,3 +1370,126 @@ async def test_guard3_silent_when_trading_disabled(storage, monkeypatch):
     assert not any(
         level == "WARN" and "quyền bán" in msg for level, msg in alerts_seen
     ), f"trading tat phai im lang, thuc te: {alerts_seen}"
+
+
+# ============ Brief đợt 26 Task 2.3: Rào chắn tiến trình thời gian của Engine ============
+
+
+async def test_engine_same_ts_processed_once_and_second_skipped_with_warn(storage, monkeypatch):
+    """Brief 26 Tiêu chí 2.3 (1):
+    Hai bar cùng ts cùng mã → process_bar được gọi ĐÚNG 1 LẦN, bar thứ 2 bị bỏ qua kèm alert WARN.
+    """
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    process_bar_calls = []
+    orig_process_bar = engine_main.process_bar
+
+    def mock_process_bar(bar, *args, **kwargs):
+        process_bar_calls.append(bar)
+        return orig_process_bar(bar, *args, **kwargs)
+
+    monkeypatch.setattr(engine_main, "process_bar", mock_process_bar)
+
+    cfg = make_cfg(symbols=["ENGT"])
+    pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
+    await pub.connect()
+
+    t0 = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+    b1 = Bar("ENGT", t0, 50.0, 50.5, 49.5, 50.2, 1000)
+    b2 = Bar("ENGT", t0, 50.0, 50.8, 49.5, 50.6, 3000)
+
+    await pub.publish(b1)
+    await pub.publish(b2)
+    await pub.close()
+
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    await run(cfg, strategy=strat, max_messages=2)
+
+    assert len(process_bar_calls) == 1, f"process_bar chi duoc goi 1 lan, thuc te {len(process_bar_calls)}"
+    assert any(
+        level == "WARN" and "non-advancing bar timestamp" in msg for level, msg in alerts_seen
+    ), f"phai co WARN non-advancing bar timestamp, thuc te: {alerts_seen}"
+
+
+async def test_engine_past_ts_skipped_with_warn(storage, monkeypatch):
+    """Brief 26 Tiêu chí 2.3 (2):
+    Bar có ts lùi về quá khứ so với bar đã xử lý → bị bỏ qua, có alert WARN.
+    """
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    process_bar_calls = []
+    orig_process_bar = engine_main.process_bar
+
+    def mock_process_bar(bar, *args, **kwargs):
+        process_bar_calls.append(bar)
+        return orig_process_bar(bar, *args, **kwargs)
+
+    monkeypatch.setattr(engine_main, "process_bar", mock_process_bar)
+
+    cfg = make_cfg(symbols=["ENGT"])
+    pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
+    await pub.connect()
+
+    t1 = datetime(2026, 9, 10, 10, 5, tzinfo=TZ)
+    t_past = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+    b1 = Bar("ENGT", t1, 50.0, 50.5, 49.5, 50.2, 1000)
+    b_past = Bar("ENGT", t_past, 49.0, 49.5, 48.5, 49.2, 800)
+
+    await pub.publish(b1)
+    await pub.publish(b_past)
+    await pub.close()
+
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    await run(cfg, strategy=strat, max_messages=2)
+
+    assert len(process_bar_calls) == 1, f"chi bar t1 duoc xu ly, thuc te {len(process_bar_calls)}"
+    assert any(
+        level == "WARN" and "non-advancing bar timestamp" in msg for level, msg in alerts_seen
+    ), f"phai co WARN non-advancing bar timestamp, thuc te: {alerts_seen}"
+
+
+async def test_engine_different_symbols_same_ts_both_processed(storage, monkeypatch):
+    """Brief 26 Tiêu chí 2.3 (3):
+    Hai mã khác nhau cùng ts → CẢ HAI đều được xử lý độc lập.
+    """
+    import trading.engine.main as engine_main
+
+    process_bar_calls = []
+    orig_process_bar = engine_main.process_bar
+
+    def mock_process_bar(bar, *args, **kwargs):
+        process_bar_calls.append(bar)
+        return orig_process_bar(bar, *args, **kwargs)
+
+    monkeypatch.setattr(engine_main, "process_bar", mock_process_bar)
+    monkeypatch.setattr(engine_main, "alert", lambda *a, **k: None)
+
+    cfg = make_cfg(symbols=["SYM_A", "SYM_B"])
+    pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
+    await pub.connect()
+
+    t0 = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+    b_a = Bar("SYM_A", t0, 50.0, 50.5, 49.5, 50.2, 1000)
+    b_b = Bar("SYM_B", t0, 20.0, 20.5, 19.5, 20.2, 2000)
+
+    await pub.publish(b_a)
+    await pub.publish(b_b)
+    await pub.close()
+
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    await run(cfg, strategy=strat, max_messages=2)
+
+    assert len(process_bar_calls) == 2, f"ca 2 ma deu phai duoc xu ly, thuc te {len(process_bar_calls)}"
+    processed_symbols = {b.symbol for b in process_bar_calls}
+    assert processed_symbols == {"SYM_A", "SYM_B"}
+

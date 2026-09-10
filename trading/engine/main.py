@@ -294,6 +294,7 @@ async def run(
             )
     marks: dict[str, float] = {}
     day_state: dict = {}
+    last_processed_ts: dict[str, datetime] = dict(warmed_until)
 
     nc = await nats.connect(cfg.nats_url)
     js = nc.jetstream()
@@ -388,19 +389,29 @@ async def run(
                 continue
             try:
                 bar = bar_from_payload(json.loads(msg.data))
-                # CHONG NAP TRUNG (WARM-1 muc 4): consumer engine la DURABLE —
-                # khi restart, JetStream giao lai cac bar CHUA ACK. Nhung bar
-                # do cung nam trong bang bars (COLLECTOR ghi, engine khong ghi)
-                # nen vua duoc warm-up nap. Khong chan thi cung mot bar vao
-                # _closes HAI LAN, lech cua so MA — bien chien luoc "mu" thanh
-                # chien luoc "SAI", te hon bug dang sua. Bo qua toan bo xu ly
-                # bar ts <= warmed_until (van ack: state da phan anh no roi).
-                if bar.ts <= warmed_until.get(
-                    bar.symbol, datetime.min.replace(tzinfo=bar.ts.tzinfo)
-                ):
-                    await msg.ack()
-                    processed += 1  # bar da xu ly (state da phan anh) — dem vao, khong thi loop cho message khong ton tai
-                    continue
+                # CHONG NAP TRUNG (WARM-1 muc 4) & RAO CHAN TIEN TRINH (Brief 26 Task 2):
+                # 1. Bar trong qua khu hoac trung voi warm-up -> bo qua khong canh bao (replayed durable message).
+                # 2. Bar trung hoac lui thoi gian so voi bar da xu ly trong phien -> alert WARN vi la bar khong tien len.
+                last_ts = last_processed_ts.get(bar.symbol)
+                if last_ts is not None and bar.ts <= last_ts:
+                    warm_cutoff = warmed_until.get(
+                        bar.symbol, datetime.min.replace(tzinfo=bar.ts.tzinfo)
+                    )
+                    if bar.ts <= warm_cutoff:
+                        await msg.ack()
+                        processed += 1
+                        continue
+                    else:
+                        alert(
+                            "WARN",
+                            "non-advancing bar timestamp received, skipping",
+                            symbol=bar.symbol,
+                            incoming_ts=bar.ts.isoformat(),
+                            last_processed_ts=last_ts.isoformat(),
+                        )
+                        await msg.ack()
+                        processed += 1
+                        continue
                 was_halted = risk.halted_date
                 was_real_halted = real_risk.halted_date
                 fills = process_bar(
@@ -413,6 +424,7 @@ async def run(
                     day_state,
                     on_crossover=on_real_crossover,
                 )
+                last_processed_ts[bar.symbol] = bar.ts
                 persist_fills(fills)
                 # Trailing stop luong THAT (RTS-1): canh bao cham stop moi bar —
                 # KHONG phai stop-loss tu dong, chi sinh lenh SELL cho xac

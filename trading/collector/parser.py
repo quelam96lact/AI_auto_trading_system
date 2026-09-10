@@ -70,10 +70,12 @@ def parse_message(raw: dict | str) -> Tick | IndexValue | None:
 def parse_interval_message(msg) -> Bar | None:
     """Map ssi-sdk IntervalMessage to Bar.
 
-    UNCONFIRMED WITH LIVE STREAM DATA: interval_time/trading_time string format.
-    This assumes the same "YYYY/MM/DD HH:mm:ss" format verified for REST OHLC.
-    If SSI stream uses a different format, return None so one bad message does
-    not crash the collector; Phase 4 should verify this with a real session.
+    Định dạng "%Y/%m/%d %H:%M:%S" đã được xác nhận với dữ liệu stream thật.
+    LƯU Ý QUAN TRỌNG: Một IntervalMessage từ SSI là SNAPSHOT của khung đang hình
+    thành, KHÔNG phải sự kiện đóng nến. SSI phát lại cùng một khung trung bình 7 lần
+    (cao nhất 30 lần), volume là luỹ kế trong khung, open bất biến, close là giá
+    tạm thời. Không được publish trực tiếp Bar này ra NATS — phải đưa qua BarLatch
+    để chỉ phát khi khung đã đóng.
     """
     try:
         ts = datetime.strptime(msg.interval_time, "%Y/%m/%d %H:%M:%S").replace(tzinfo=TZ)

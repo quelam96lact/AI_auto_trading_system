@@ -140,10 +140,11 @@ def run_strategy_on_crypto(
             settle_days=0,
             leverage=leverage,
             maintenance_margin_rate=maintenance_margin_rate,
+            lot_size=lot_size,
         )
 
         pnl = rep.realized_pnl + rep.unrealized_pnl
-        bh_pnl = _buy_and_hold(bars, capital_per_symbol, fee_rate=fee_rate, sell_tax_rate=0.0, slippage_bps=slippage_bps)
+        bh_pnl = _buy_and_hold(bars, capital_per_symbol, fee_rate=fee_rate, sell_tax_rate=0.0, slippage_bps=slippage_bps, lot_size=lot_size)
 
         winning_trades = sum(1 for f in rep.fills if f.side == "SELL" and f.pnl is not None and f.pnl > 0)
         buy_fills = [f for f in rep.fills if f.side == "BUY"]

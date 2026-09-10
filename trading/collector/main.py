@@ -12,6 +12,7 @@ from trading.collector.account_sync import sync_account_data
 from trading.collector.backfill import SSIRestClient, run_backfill
 from trading.collector.derivative_sync import sync_derivative_data
 from trading.collector.feed import SSIFeed
+from trading.collector.latch import BarLatch
 from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
 from trading.config import load_config
@@ -93,10 +94,27 @@ async def persist_bars(storage, pub, bars) -> None:
         )
 
 
-def make_stream_message_handler(wd, storage, pub, persist_tasks=None):
+async def persist_snapshot(storage, bar) -> None:
+    """Ghi DB duy nhất cho snapshot nến đang chạy (upsert, không publish NATS)."""
+    try:
+        storage.write_bars([bar])
+    except Exception as e:
+        alert(
+            "WARN",
+            "snapshot write failed",
+            error=f"{type(e).__name__}: {e}"[:200],
+            symbol=bar.symbol,
+            ts=bar.ts.isoformat(),
+        )
+
+
+def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None):
     """Callback cho AsyncStream.streaming.on_data. Một message dị dạng không
     được ném ngược vào vòng stream của SDK. `persist_tasks` (set, tuỳ chọn):
-    theo dõi task persist_bars fire-and-forget để shutdown chờ chúng xong."""
+    theo dõi task persist_bars fire-and-forget để shutdown chờ chúng xong.
+    `latch` (BarLatch, tuỳ chọn): lọc chỉ publish nến đã đóng ra NATS."""
+    if latch is None:
+        latch = BarLatch()
 
     def on_stream_message(msg):
         try:
@@ -110,10 +128,17 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None):
             return
         if bar is not None:
             wd.beat()
-            task = asyncio.create_task(persist_bars(storage, pub, [bar]))
+            task_snap = asyncio.create_task(persist_snapshot(storage, bar))
             if persist_tasks is not None:
-                persist_tasks.add(task)
-                task.add_done_callback(persist_tasks.discard)
+                persist_tasks.add(task_snap)
+                task_snap.add_done_callback(persist_tasks.discard)
+
+            closed = latch.offer(bar)
+            if closed is not None:
+                task = asyncio.create_task(persist_bars(storage, pub, [closed]))
+                if persist_tasks is not None:
+                    persist_tasks.add(task)
+                    task.add_done_callback(persist_tasks.discard)
         # Index streaming (VNINDEX/VN30): không có nguồn dữ liệu real-time nào
         # trong ssi-sdk hiện tại — xem PLAN_INDEX_STREAMING.md (điều tra thật
         # 2026-08-07). Không viết IndexValue cho tới khi có nguồn dữ liệu khác.
@@ -127,7 +152,15 @@ class HousekeepingState:
     last_account_sync: datetime | None = None
 
 
-async def housekeeping_tick(cfg, storage, wd, state: HousekeepingState) -> None:
+async def housekeeping_tick(
+    cfg,
+    storage,
+    wd,
+    state: HousekeepingState,
+    latch: BarLatch | None = None,
+    pub: BarPublisher | None = None,
+    persist_tasks: set[asyncio.Task] | None = None,
+) -> None:
     """Một vòng housekeeping. Được phép ném — housekeeping_loop chịu trách nhiệm bắt."""
     wd.check()
     # WARM-1 Viec B: timeout=5 thay vi 30s mac dinh — khi DB chet, tick that bai
@@ -136,6 +169,13 @@ async def housekeeping_tick(cfg, storage, wd, state: HousekeepingState) -> None:
     # nguyen hanh vi cho moi caller khac.
     storage.beat("collector", timeout=5)
     now = datetime.now(TZ)
+    if latch is not None and pub is not None:
+        due = latch.flush_due(now)
+        if due:
+            task = asyncio.create_task(persist_bars(storage, pub, due))
+            if persist_tasks is not None:
+                persist_tasks.add(task)
+                task.add_done_callback(persist_tasks.discard)
     if state.last_account_sync is None or now - state.last_account_sync >= timedelta(
         minutes=5
     ):
@@ -179,6 +219,9 @@ async def housekeeping_loop(
     sleep_seconds: float = 30.0,
     max_ticks: int | None = None,
     stop_event: asyncio.Event | None = None,
+    latch: BarLatch | None = None,
+    pub: BarPublisher | None = None,
+    persist_tasks: set[asyncio.Task] | None = None,
 ) -> None:
     """Vòng housekeeping vô hạn. Một lỗi (vd Postgres restart) KHÔNG được giết
     collector — bắt hết, alert WARN, rồi chạy tiếp vòng sau.
@@ -199,7 +242,15 @@ async def housekeeping_loop(
         if stop_event.is_set():
             break
         try:
-            await housekeeping_tick(cfg, storage, wd, state)
+            await housekeeping_tick(
+                cfg,
+                storage,
+                wd,
+                state,
+                latch=latch,
+                pub=pub,
+                persist_tasks=persist_tasks,
+            )
         except Exception as e:
             alert(
                 "WARN",
@@ -219,6 +270,10 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
     pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
     await pub.connect()
     persist_tasks: set[asyncio.Task] = set()
+    latch = BarLatch(
+        interval_seconds=cfg.bar_interval_minutes * 60,
+        grace_seconds=60,
+    )
 
     alert("INFO", "backfill start")
     client = SSIRestClient(cfg, storage)
@@ -252,14 +307,31 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
     feed = SSIFeed(
         cfg,
         storage,
-        on_message=make_stream_message_handler(wd, storage, pub, persist_tasks),
+        on_message=make_stream_message_handler(wd, storage, pub, persist_tasks, latch=latch),
     )
     feed.start()
 
     try:
-        await housekeeping_loop(cfg, storage, wd, stop_event=stop_event)
+        await housekeeping_loop(
+            cfg,
+            storage,
+            wd,
+            stop_event=stop_event,
+            latch=latch,
+            pub=pub,
+            persist_tasks=persist_tasks,
+        )
     finally:
         await feed.stop()
+        remaining = latch.flush_all()
+        if remaining:
+            try:
+                storage.write_bars(remaining)
+                for b in remaining:
+                    await pub.publish(b)
+                alert("INFO", "flushed remaining bars at shutdown", count=len(remaining))
+            except Exception as e:
+                alert("WARN", "failed to flush remaining bars at shutdown", error=str(e)[:100])
         if persist_tasks:
             _, pending = await asyncio.wait(persist_tasks, timeout=10)
             if pending:

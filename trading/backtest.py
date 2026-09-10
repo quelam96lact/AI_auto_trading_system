@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 
 from trading.broker import Fill
@@ -77,10 +78,18 @@ def ever_liquid(bars: list[Bar], threshold: float, window: int) -> bool:
     return False
 
 
-def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rate: float, slippage_bps: float) -> float:
+def _buy_and_hold(
+    bars: list[Bar],
+    capital: float,
+    fee_rate: float,
+    sell_tax_rate: float,
+    slippage_bps: float,
+    lot_size: float = 1,
+) -> float:
     """SPEC-1b: voi moi ma, mua o bar DAU (gom phi mua vao gia von nhu
     PaperBroker), giu toi bar CUOI, ban (tru phi ban + thue). Von ban dau chia
-    deu cho cac ma de khong double-count; 1 ma -> dung toan bo von."""
+    deu cho cac ma de khong double-count; 1 ma -> dung toan bo von.
+    (Brief dot 25/26 Task 4): ho tro lot_size phan so cho crypto."""
     symbols = sorted({b.symbol for b in bars})
     if not symbols:
         return 0.0
@@ -92,8 +101,14 @@ def _buy_and_hold(bars: list[Bar], capital: float, fee_rate: float, sell_tax_rat
         first, last = sym_bars[0], sym_bars[-1]
         buy_price = first.open * (1 + slip)
         sell_price = last.close * (1 - slip)
-        qty = int(per_symbol // (buy_price * (1 + fee_rate)))  # phi mua trong gia von
-        if qty <= 0:
+        if isinstance(lot_size, int):
+            qty = int(per_symbol // (buy_price * (1 + fee_rate)))  # phi mua trong gia von
+            qty = (qty // lot_size) * lot_size
+        else:
+            raw_qty = per_symbol / (buy_price * (1 + fee_rate))
+            steps = math.floor(raw_qty / lot_size + 1e-9)
+            qty = round(steps * lot_size, 8)
+        if qty < lot_size or qty <= 0:
             continue
         buy_cost = qty * buy_price * (1 + fee_rate)
         sell_proceeds = qty * sell_price * (1 - fee_rate - sell_tax_rate)
@@ -107,6 +122,7 @@ def _buy_and_hold_curve(
     fee_rate: float,
     sell_tax_rate: float,
     slippage_bps: float,
+    lot_size: float = 1,
 ) -> list[tuple]:
     """Duong von MUA-VA-GIU that, mot diem moi bar (cung moc ts voi
     equity_curve cua run_backtest).
@@ -119,6 +135,7 @@ def _buy_and_hold_curve(
 
     Trong khi con giu: mark-to-market theo close (chua tru phi ban — chua ban).
     Tu bar CUOI cua moi ma tro di: quy ra tien da tru phi ban + thue.
+    (Brief dot 25/26 Task 4): ho tro lot_size phan so cho crypto.
     """
     if not bars:
         return []
@@ -126,7 +143,7 @@ def _buy_and_hold_curve(
     per_symbol = capital / len(symbols)
     slip = slippage_bps / 10_000
 
-    qty: dict[str, int] = {}
+    qty: dict[str, int | float] = {}
     sold_value: dict[str, float] = {}
     last_idx: dict[str, int] = {}
     spent = 0.0
@@ -134,8 +151,14 @@ def _buy_and_hold_curve(
         sym_bars = [b for b in bars if b.symbol == sym]
         first, last = sym_bars[0], sym_bars[-1]
         buy_price = first.open * (1 + slip)
-        q = int(per_symbol // (buy_price * (1 + fee_rate)))
-        if q <= 0:
+        if isinstance(lot_size, int):
+            q = int(per_symbol // (buy_price * (1 + fee_rate)))
+            q = (q // lot_size) * lot_size
+        else:
+            raw_qty = per_symbol / (buy_price * (1 + fee_rate))
+            steps = math.floor(raw_qty / lot_size + 1e-9)
+            q = round(steps * lot_size, 8)
+        if q < lot_size or q <= 0:
             continue
         qty[sym] = q
         spent += q * buy_price * (1 + fee_rate)
@@ -171,6 +194,7 @@ def run_backtest(
     settle_days: int | None = None,
     leverage: float = 1.0,
     maintenance_margin_rate: float = 0.005,
+    lot_size: float = 1,
 ) -> BacktestReport:
     """(goi B 2026-09-03) Nhan tham so phi/thue/settle — crypto khong co thue
     ban / T+3, ep luat VN len crypto la sai am tham (con so dep gia tao). Mac
@@ -179,7 +203,8 @@ def run_backtest(
     khong doi.
 
     (Brief dot 22): leverage (mac dinh 1.0 = khong don bay) va maintenance_margin_rate
-    (mac dinh 0.005 = 0.5%). Mo phong thanh ly kiem tra theo low cua tung bar."""
+    (mac dinh 0.005 = 0.5%). Mo phong thanh ly kiem tra theo low cua tung bar.
+    (Brief dot 25/26 Task 4): lot_size (mac dinh 1) cho benchmark mua-va-giu."""
     # SPEC-1c: loai bar rac TRUOC khi vao vong lap — khong co lenh nao khop o
     # gia 0, va so dong loai duoc bao cao theo tung ma (im lang loc = che giau
     # van de du lieu).
@@ -281,12 +306,22 @@ def run_backtest(
         win_rate=(wins / len(sell_fills)) if sell_fills else 0.0,
         trades=len(sell_fills),
         buy_and_hold_pnl=_buy_and_hold(
-            bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
+            bars,
+            capital,
+            broker.fee_rate,
+            broker.sell_tax_rate,
+            broker.slippage_bps,
+            lot_size=lot_size,
         ),
         filtered_bars=filtered,
         equity_curve=equity_curve,
         buy_and_hold_curve=_buy_and_hold_curve(
-            bars, capital, broker.fee_rate, broker.sell_tax_rate, broker.slippage_bps
+            bars,
+            capital,
+            broker.fee_rate,
+            broker.sell_tax_rate,
+            broker.slippage_bps,
+            lot_size=lot_size,
         ),
         liquidations=liquidations,
     )
