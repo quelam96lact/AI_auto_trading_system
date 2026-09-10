@@ -160,7 +160,35 @@ Gọi `flush_all` ở nhánh `finally` của `main()`, cạnh chỗ chờ `persi
 Giữ nguyên style code hiện có. Không "tiện thể" refactor `persist_bars`, không dọn code xung
 quanh, không đổi tên gì.
 
-### 1.5. Kiểm chứng — tiêu chí thành công
+### 1.5. Cập nhật docstring `parse_interval_message` — bắt buộc, không phải tuỳ chọn
+
+`trading/collector/parser.py:71-77` hiện ghi:
+
+```python
+    """Map ssi-sdk IntervalMessage to Bar.
+
+    UNCONFIRMED WITH LIVE STREAM DATA: interval_time/trading_time string format.
+    This assumes the same "YYYY/MM/DD HH:mm:ss" format verified for REST OHLC.
+    If SSI stream uses a different format, return None so one bad message does
+    not crash the collector; Phase 4 should verify this with a real session.
+    """
+```
+
+Docstring này giờ **sai theo hướng nguy hiểm**. Sửa lại cho đúng hai điều đã biết chắc:
+
+1. Định dạng `"%Y/%m/%d %H:%M:%S"` **đã được xác nhận** với dữ liệu stream thật — 860/860
+   message của phiên 09/09 parse thành công (báo cáo 10/09). Bỏ chữ "UNCONFIRMED" và bỏ câu
+   "Phase 4 should verify".
+2. **Ghi rõ điều quan trọng hơn:** một `IntervalMessage` là **snapshot của khung đang hình
+   thành**, KHÔNG phải sự kiện đóng nến. SSI phát lại cùng một khung trung bình 7 lần (đo
+   được, cao nhất 30 lần), `volume` là luỹ kế trong khung, `open` bất biến, `close` là giá
+   tạm thời. Ai gọi hàm này mà publish thẳng ra là tái lập đúng lỗi vừa sửa — nói thẳng câu
+   đó trong docstring và trỏ tới `BarLatch`.
+
+**Chỉ sửa docstring. Không đổi một dòng logic nào** trong `parse_interval_message` — hàm này
+đang chạy đúng. Đây là lý do duy nhất `parser.py` được phép xuất hiện trong `git diff`.
+
+### 1.6. Kiểm chứng — tiêu chí thành công
 
 Test mới trong `tests/test_collector_latch.py` (file mới) cho `BarLatch`:
 
