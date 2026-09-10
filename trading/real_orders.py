@@ -20,6 +20,59 @@ POSITION_MAX_AGE_MINUTES = 15
 # do chu du an dat 06/09 cho giai doan thu nghiem (khong phai gioi han ky thuat).
 # LUU Y: CHI ap dung cho lenh MUA, KHONG ap dung cho lenh BAN (tranh nhot vi the).
 MAX_REAL_BUY_QTY = 100
+# Brief dot 30 Task 2: Cảnh báo khi tài khoản cấu hình (real_order_account) có NAV
+# nhỏ hơn đáng kể (từ 10x trở lên) so với một tài khoản khác đã đồng bộ trong
+# account_nav_snapshot — nói ra sự chênh lệch đáng ngờ một lần khi khởi động,
+# không tự đổi tài khoản và không chặn lệnh.
+NAV_DISCREPANCY_RATIO_THRESHOLD = 10.0
+_warned_nav_discrepancy_accounts: set[str] = set()
+
+
+def _warn_nav_discrepancy_once(cfg: Config, storage: Storage) -> None:
+    account = cfg.real_order_account
+    if account in _warned_nav_discrepancy_accounts:
+        return
+    _warned_nav_discrepancy_accounts.add(account)
+    try:
+        with storage.conn() as c:
+            rows = c.execute(
+                "SELECT DISTINCT ON (account_no) account_no, nav "
+                "FROM account_nav_snapshot "
+                "ORDER BY account_no, ts DESC"
+            ).fetchall()
+    except Exception:
+        return
+
+    if not rows:
+        return
+
+    try:
+        nav_map = {str(row[0]): float(row[1]) for row in rows if row[1] is not None}
+    except (TypeError, ValueError):
+        return
+
+    current_nav = nav_map.get(account)
+    if current_nav is None or current_nav <= 0:
+        return
+
+    for other_acc, other_nav in nav_map.items():
+        if other_acc == account:
+            continue
+        if other_nav >= current_nav * NAV_DISCREPANCY_RATIO_THRESHOLD:
+            ratio = other_nav / current_nav
+            alert(
+                "WARN",
+                f"tai khoan cau hinh {account} co NAV ({current_nav:,.0f}) nho hon {ratio:.1f}x "
+                f"so voi tai khoan {other_acc} ({other_nav:,.0f}) trong account_nav_snapshot — "
+                f"kiem tra lai real_order_account neu day khong phai chu y",
+                account=account,
+                nav=current_nav,
+                other_account=other_acc,
+                other_nav=other_nav,
+                ratio=round(ratio, 2),
+            )
+
+
 # Dong ho module-level de test tiêm duoc (plan: khong goi datetime.now() tran
 # trong ham).
 _now = datetime.now
@@ -69,6 +122,8 @@ def handle_crossover(
             ts=str(pos_sync_ts),
         )
         return
+
+    _warn_nav_discrepancy_once(cfg, storage)
 
     positions = storage.read_real_positions(cfg.real_order_account)
     real_pos = positions.get(bar.symbol)

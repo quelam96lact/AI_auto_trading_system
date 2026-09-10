@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,7 @@ from trading.config import Config
 from trading.models import Bar
 from trading.real_orders import (
     PENDING_ORDER_TTL_MINUTES,
+    _warned_nav_discrepancy_accounts,
     handle_crossover,
 )
 from trading.risk import RiskManager
@@ -569,5 +571,173 @@ def test_task5_sell_not_capped_at_100(cfg, bar, monkeypatch):
 
     storage.create_pending_order.assert_called_once()
     assert storage.create_pending_order.call_args.kwargs["quantity"] == 500
+
+
+# ============ Brief 30 Task 2: Lá chắn cấu hình tài khoản lệnh thật ============
+
+
+def test_nav_discrepancy_warns_when_ratio_exceeds_threshold(cfg, bar, monkeypatch):
+    """1. Tài khoản cấu hình NAV 5.021.712, tài khoản khác NAV 197.517.988 -> WARN có cả 2 số TK và 2 NAV."""
+    _warned_nav_discrepancy_accounts.clear()
+
+    now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
+    storage = _make_storage()
+    # Mock conn().execute().fetchall() to return 2 accounts
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("0434221", 5_021_712.0),
+        ("0434226", 197_517_988.0),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    storage.conn.return_value.__enter__.return_value = mock_conn
+
+    cfg_custom = replace(cfg, real_order_account="0434221")
+    risk = RiskManager(capital=1_000_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+
+    # Check that WARN alert was emitted for NAV discrepancy
+    warn_calls = [c for c in mock_alert.call_args_list if c.args and c.args[0] == "WARN"]
+    nav_warns = [
+        c for c in warn_calls
+        if "tai khoan cau hinh 0434221 co NAV" in str(c.args[1])
+    ]
+    assert len(nav_warns) == 1
+    call_kwargs = nav_warns[0].kwargs
+    assert call_kwargs["account"] == "0434221"
+    assert call_kwargs["nav"] == 5_021_712.0
+    assert call_kwargs["other_account"] == "0434226"
+    assert call_kwargs["other_nav"] == 197_517_988.0
+    assert call_kwargs["ratio"] >= 10.0
+
+
+def test_nav_discrepancy_no_warn_when_ratio_below_threshold(cfg, bar, monkeypatch):
+    """2. Hai tài khoản NAV xấp xỉ nhau -> KHÔNG WARN."""
+    _warned_nav_discrepancy_accounts.clear()
+
+    now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
+    storage = _make_storage()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("0434221", 5_000_000.0),
+        ("0434226", 6_000_000.0),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    storage.conn.return_value.__enter__.return_value = mock_conn
+
+    cfg_custom = replace(cfg, real_order_account="0434221")
+    risk = RiskManager(capital=1_000_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+
+    nav_warns = [
+        c for c in mock_alert.call_args_list
+        if c.args and c.args[0] == "WARN" and "tai khoan cau hinh" in str(c.args[1])
+    ]
+    assert len(nav_warns) == 0
+
+
+def test_nav_discrepancy_no_warn_when_single_account(cfg, bar, monkeypatch):
+    """3. Chỉ có đúng một tài khoản trong snapshot -> KHÔNG WARN, không nổ."""
+    _warned_nav_discrepancy_accounts.clear()
+
+    now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
+    storage = _make_storage()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("0434221", 5_021_712.0),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    storage.conn.return_value.__enter__.return_value = mock_conn
+
+    cfg_custom = replace(cfg, real_order_account="0434221")
+    risk = RiskManager(capital=1_000_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+
+    nav_warns = [
+        c for c in mock_alert.call_args_list
+        if c.args and c.args[0] == "WARN" and "tai khoan cau hinh" in str(c.args[1])
+    ]
+    assert len(nav_warns) == 0
+
+
+def test_nav_discrepancy_warns_only_once_across_bars(cfg, bar, monkeypatch):
+    """4. Cảnh báo phát một lần, không lặp lại ở bar tiếp theo."""
+    _warned_nav_discrepancy_accounts.clear()
+
+    now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
+    storage = _make_storage()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("0434221", 5_021_712.0),
+        ("0434226", 197_517_988.0),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    storage.conn.return_value.__enter__.return_value = mock_conn
+
+    cfg_custom = replace(cfg, real_order_account="0434221")
+    risk = RiskManager(capital=1_000_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert") as mock_alert:
+        # First bar
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+        nav_warns_1 = [
+            c for c in mock_alert.call_args_list
+            if c.args and c.args[0] == "WARN" and "tai khoan cau hinh" in str(c.args[1])
+        ]
+        assert len(nav_warns_1) == 1
+
+        mock_alert.reset_mock()
+        # Second bar (reset positions so it doesn't skip buy because already held)
+        storage.read_real_positions.return_value = {}
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+        nav_warns_2 = [
+            c for c in mock_alert.call_args_list
+            if c.args and c.args[0] == "WARN" and "tai khoan cau hinh" in str(c.args[1])
+        ]
+        assert len(nav_warns_2) == 0
+
+
+def test_nav_discrepancy_does_not_block_order_creation(cfg, bar, monkeypatch):
+    """5. Có WARN nhưng lệnh vẫn được xử lý bình thường (không chặn lệnh)."""
+    _warned_nav_discrepancy_accounts.clear()
+
+    now = datetime(2026, 9, 10, 9, 10, tzinfo=TZ)
+    storage = _make_storage()
+    storage.read_buying_power.return_value = (
+        10_000,
+        10_000,
+        50.0,
+        now - timedelta(minutes=5),
+    )
+    storage.read_position_sync_ts.return_value = now - timedelta(minutes=5)
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("0434221", 5_021_712.0),
+        ("0434226", 197_517_988.0),
+    ]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    storage.conn.return_value.__enter__.return_value = mock_conn
+
+    cfg_custom = replace(cfg, real_order_account="0434221")
+    risk = RiskManager(capital=1_000_000_000.0)
+
+    with patch("trading.real_orders._now", return_value=now), patch("trading.real_orders.alert"):
+        handle_crossover(cfg_custom, storage, risk, "bull", bar, atr=500.0)
+
+    # Pending order was still created
+    storage.create_pending_order.assert_called_once()
+    assert storage.create_pending_order.call_args.kwargs["account_no"] == "0434221"
+
 
 
