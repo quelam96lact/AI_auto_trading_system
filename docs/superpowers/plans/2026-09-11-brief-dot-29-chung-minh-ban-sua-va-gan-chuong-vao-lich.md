@@ -246,6 +246,72 @@ việc bỏ HII khỏi danh mục là **quyết định của chủ dự án**, 
 
 ---
 
+## Task 4 — Chuông 2C báo động GIẢ sau mỗi lần backfill (**làm trước khi đăng ký lịch**)
+
+### 4.1. Bằng chứng
+
+Sau khi dựng lại collector lúc 18:15 ngày 10/09, tôi chạy chuông 2C và nó kêu:
+
+```
+🚨 CHUÔNG 2C (Engine Consumer): Phát hiện sự cố tiêu thụ bar:
+engine dừng tiêu thụ bar: DB tăng 46 bar nhưng stream_seq không đổi (27279 <= 27279)
+```
+
+**Đây là báo động giả.** Engine hoàn toàn khoẻ — nó vừa khởi động lại, warm-up cả ba mã
+thành công, `num_pending` bằng 0. Thứ làm DB tăng 46 bar là **backfill**, không phải stream.
+
+### 4.2. Nguyên nhân
+
+Bảng `bars` có **hai nguồn ghi**, và chỉ một trong hai đi qua NATS:
+
+| Đường ghi | Ghi DB | Publish NATS |
+|---|---|---|
+| Stream thời gian thực (`persist_bars`, `main.py:82-84`) | có | **có** |
+| Backfill (`backfill.py:359` — `storage.write_bars(intraday)`) | có | **không** |
+
+Quy tắc số 2 của chuông giả định *"DB tăng ⇒ stream phải tiến"*. Giả định đó **sai** vì
+backfill ghi thẳng vào DB. Mà backfill chạy **mỗi lần collector khởi động**, cộng lịch nạp
+hằng đêm.
+
+### 4.3. Vì sao phải sửa TRƯỚC khi đăng ký scheduled task
+
+Chuông báo động giả còn nguy hiểm hơn chuông câm: người ta tắt nó đi, hoặc quen với việc bỏ
+qua nó, rồi bỏ qua luôn lần kêu thật. Ta vừa mất hai đợt (27 và 28) để chuông này kêu được —
+đừng để nó tự huỷ uy tín ngay tuần đầu.
+
+Chủ dự án **chưa chạy lệnh đăng ký** nên chưa có spam. Sửa trước, đăng ký sau.
+
+### 4.4. Việc cần làm
+
+Bỏ hẳn phép so sánh với số bar trong DB. Câu hỏi đúng mà chuông cần trả lời là **"consumer có
+theo kịp stream không"** — hỏi thẳng JetStream, không mượn DB làm trung gian:
+
+- `js.stream_info("BARS").state.last_seq` — stream đã có tới đâu.
+- `consumer_info.delivered.stream_seq` — engine đã nhận tới đâu.
+- Engine đứng im khi `last_seq` tiến lên giữa hai lần chạy mà `delivered.stream_seq` **không**
+  tiến, và khoảng cách `last_seq - delivered.stream_seq` vượt ngưỡng.
+
+Cách này miễn nhiễm hoàn toàn với backfill, vì backfill không chạm vào stream. Cả hai lệnh
+đều là lệnh **đọc** — vẫn giữ ràng buộc không `add`/`update`/`delete`/`purge`.
+
+Giữ nguyên quy tắc số 1 (`num_pending >= ngưỡng`) — nó vẫn đúng và độc lập.
+
+Hàm `read_today_bars_count()` sau khi không còn ai dùng thì **xoá luôn** (đây là dead code do
+chính thay đổi này sinh ra, được phép xoá theo nguyên tắc 3). Nếu vẫn muốn giữ con số bar
+trong thông điệp cảnh báo cho dễ đọc thì giữ, nhưng **không được dùng nó để quyết định có
+kêu hay không** — nói rõ điều đó bằng một dòng chú thích.
+
+### 4.5. Kiểm chứng
+
+1. **Tái hiện lỗi trước khi sửa:** viết test bơm tình huống `last_seq` không đổi +
+   `bars_today` tăng → chuông **không** được kêu.
+2. Test: `last_seq` tiến, `delivered.stream_seq` đứng im, khoảng cách vượt ngưỡng → **kêu**.
+3. Test: cả hai cùng tiến → **không kêu**.
+4. Chạy thật sau khi sửa, ngay sau một lần backfill → **không kêu**. Dán output.
+5. Bốn test cũ vẫn pass. Suite đầy đủ pass, ruff sạch.
+
+---
+
 ## 4. Báo cáo
 
 Ngắn, đủ, đúng thứ tự. **Đừng dán toàn văn `git diff` và output dài** — dán con số và kết
