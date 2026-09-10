@@ -272,8 +272,32 @@ async def test_housekeeping_tick_skips_account_sync_within_5_minutes(cfg, monkey
     assert calls == [], "chưa đủ 5 phút thì không sync account"
 
 
-async def test_persist_bars_alerts_critical_instead_of_raising(monkeypatch):
-    """DB lỗi không được nuốt im lặng thành 'Task exception was never retrieved'."""
+# ============ Brief 31 Task 1 & 2: persist_bars publish-first & lag_ms ============
+
+
+async def test_persist_bars_calls_publish_before_write_bars(monkeypatch):
+    """1. Test: pub.publish được gọi TRƯỚC storage.write_bars."""
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    call_order = []
+    storage = MagicMock()
+    storage.write_bars.side_effect = lambda bars: call_order.append("write_bars")
+    pub = MagicMock()
+    pub.publish = AsyncMock(side_effect=lambda b: call_order.append("publish"))
+
+    bar = Bar("VCB", datetime(2026, 7, 15, 9, 5, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
+    await collector_main.persist_bars(storage, pub, [bar])
+
+    assert call_order == ["publish", "write_bars"]
+
+
+async def test_persist_bars_alerts_critical_when_publish_fails(monkeypatch):
+    """2. Test: publish ném lỗi -> alert CRITICAL, nội dung nói bar chưa tới engine."""
+    from unittest.mock import AsyncMock
+
     import trading.collector.main as collector_main
     from trading.models import Bar
 
@@ -281,20 +305,128 @@ async def test_persist_bars_alerts_critical_instead_of_raising(monkeypatch):
     monkeypatch.setattr(
         collector_main,
         "alert",
-        lambda level, msg, **f: alerts_seen.append((level, msg)),
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
+    )
+
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock(side_effect=RuntimeError("nats disconnected"))
+    bar = Bar("VCB", datetime(2026, 7, 15, 9, 5, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
+
+    await collector_main.persist_bars(storage, pub, [bar])
+
+    storage.write_bars.assert_not_called()
+    assert any(
+        lvl == "CRITICAL" and "bar publish failed" in m and "not delivered to engine" in m
+        for lvl, m, _ in alerts_seen
+    )
+
+
+async def test_persist_bars_alerts_critical_when_db_write_fails_after_publish(monkeypatch):
+    """3. Test: publish thành công nhưng write_bars ném lỗi -> alert CRITICAL,
+    nói bar đã tới engine, DB thiếu; và KHÔNG dùng chữ 'dropped'."""
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
     )
 
     storage = MagicMock()
     storage.write_bars.side_effect = OSError("connection refused")
     pub = MagicMock()
+    pub.publish = AsyncMock()
     bar = Bar("VCB", datetime(2026, 7, 15, 9, 5, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
 
     await collector_main.persist_bars(storage, pub, [bar])
 
-    assert any(
-        lvl == "CRITICAL" and "bar persist/publish failed" in m
-        for lvl, m in alerts_seen
+    pub.publish.assert_called_once_with(bar)
+    critical_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "CRITICAL"
+    ]
+    assert len(critical_alerts) == 1
+    _lvl, msg, _ = critical_alerts[0]
+    assert "bar db persist failed" in msg
+    assert "already published to engine" in msg
+    assert "dropped" not in msg
+
+
+async def test_persist_bars_lag_ms_in_alert(monkeypatch):
+    """Task 2: lag_ms xuất hiện trong payload alert và có giá trị đúng."""
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
     )
+
+    # Bar lúc 09:00 (đóng khung lúc 09:05). Giả lập now là 09:05:00.150 (+150ms)
+    frozen_now = datetime(2026, 7, 15, 9, 5, 0, 150000, tzinfo=TZ)
+    monkeypatch.setattr(
+        collector_main,
+        "datetime",
+        _FrozenDatetime(frozen_now),
+    )
+
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    bar = Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
+
+    await collector_main.persist_bars(storage, pub, [bar])
+
+    info_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bars closed"
+    ]
+    assert len(info_alerts) == 1
+    assert "lag_ms" in info_alerts[0][2]
+    assert info_alerts[0][2]["lag_ms"] == 150.0
+
+
+async def test_persist_bars_negative_lag_ms_not_clamped(monkeypatch):
+    """Task 2: đồng hồ lệch cho giá trị âm -> vẫn ghi ra, không bị kẹp về 0."""
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
+    )
+
+    # Bar lúc 09:00 (đóng khung lúc 09:05). Giả lập now là 09:04:59.500 (-500ms)
+    frozen_now = datetime(2026, 7, 15, 9, 4, 59, 500000, tzinfo=TZ)
+    monkeypatch.setattr(
+        collector_main,
+        "datetime",
+        _FrozenDatetime(frozen_now),
+    )
+
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    bar = Bar("VCB", datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 1.0, 1.0, 1.0, 1.0, 10)
+
+    await collector_main.persist_bars(storage, pub, [bar])
+
+    info_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bars closed"
+    ]
+    assert len(info_alerts) == 1
+    assert info_alerts[0][2]["lag_ms"] == -500.0
 
 
 async def test_stream_handler_skips_unparsable_message_without_raising(monkeypatch):

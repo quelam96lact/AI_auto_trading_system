@@ -74,24 +74,46 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
 
 
 async def persist_bars(storage, pub, bars) -> None:
-    """Ghi bar vào DB + publish NATS. KHÔNG BAO GIỜ ném: hàm này được gọi qua
+    """Publish NATS trước + ghi DB sau. KHÔNG BAO GIỜ ném: hàm này được gọi qua
     asyncio.create_task() fire-and-forget, exception thoát ra sẽ bị asyncio nuốt
     thành 'Task exception was never retrieved' — bar mất mà không ai biết."""
     if not bars:
         return
     try:
-        storage.write_bars(bars)
         for b in bars:
             await pub.publish(b)
-        alert("INFO", "bars closed", n=len(bars), symbols=[b.symbol for b in bars])
+        publish_done_at = datetime.now(TZ)
     except Exception as e:
         alert(
             "CRITICAL",
-            "bar persist/publish failed, bars dropped",
+            "bar publish failed, bars dropped (not delivered to engine)",
             error=f"{type(e).__name__}: {e}"[:200],
             symbols=[b.symbol for b in bars],
             ts=[b.ts.isoformat() for b in bars],
         )
+        return
+
+    try:
+        storage.write_bars(bars)
+    except Exception as e:
+        alert(
+            "CRITICAL",
+            "bar db persist failed, bars already published to engine (db missing)",
+            error=f"{type(e).__name__}: {e}"[:200],
+            symbols=[b.symbol for b in bars],
+            ts=[b.ts.isoformat() for b in bars],
+        )
+        return
+
+    max_close_ts = max(b.ts for b in bars) + timedelta(minutes=5)
+    lag_ms = round((publish_done_at - max_close_ts).total_seconds() * 1000, 2)
+    alert(
+        "INFO",
+        "bars closed",
+        n=len(bars),
+        symbols=[b.symbol for b in bars],
+        lag_ms=lag_ms,
+    )
 
 
 async def persist_snapshot(storage, bar) -> None:

@@ -1493,3 +1493,72 @@ async def test_engine_different_symbols_same_ts_both_processed(storage, monkeypa
     processed_symbols = {b.symbol for b in process_bar_calls}
     assert processed_symbols == {"SYM_A", "SYM_B"}
 
+
+# ============ Brief 31 Task 2: Engine lag_ms metric ============
+
+
+async def test_engine_emits_lag_ms_on_processed_bar(storage, monkeypatch):
+    """Brief 31 Task 2: Engine phát alert INFO bar processed chứa lag_ms đúng."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg(symbols=["ENGT"])
+    pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
+    await pub.connect()
+
+    # Bar lúc 10:00 (đóng khung lúc 10:15 với interval 15m). Giả lập now là 10:15:00.250 (+250ms)
+    t0 = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+    bar = Bar("ENGT", t0, 50.0, 50.5, 49.5, 50.2, 1000)
+    await pub.publish(bar)
+    await pub.close()
+
+    now_fixed = datetime(2026, 9, 10, 10, 15, 0, 250000, tzinfo=TZ)
+    monkeypatch.setattr(engine_main, "datetime", type("FrozenDT", (), {"now": staticmethod(lambda tz=None: now_fixed)}))
+
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    await run(cfg, strategy=strat, max_messages=1)
+
+    info_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bar processed"
+    ]
+    assert len(info_alerts) == 1
+    assert "lag_ms" in info_alerts[0][2]
+    assert info_alerts[0][2]["lag_ms"] == 250.0
+
+
+async def test_engine_negative_lag_ms_not_clamped(storage, monkeypatch):
+    """Brief 31 Task 2: Lệch đồng hồ cho lag_ms âm -> không bị kẹp về 0."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg(symbols=["ENGT"])
+    pub = BarPublisher(cfg.nats_url, cfg.nats_stream)
+    await pub.connect()
+
+    # Bar lúc 10:00 (đóng khung lúc 10:15). Giả lập now là 10:14:59.000 (-1000ms)
+    t0 = datetime(2026, 9, 10, 10, 0, tzinfo=TZ)
+    bar = Bar("ENGT", t0, 50.0, 50.5, 49.5, 50.2, 1000)
+    await pub.publish(bar)
+    await pub.close()
+
+    now_fixed = datetime(2026, 9, 10, 10, 14, 59, 0, tzinfo=TZ)
+    monkeypatch.setattr(engine_main, "datetime", type("FrozenDT", (), {"now": staticmethod(lambda tz=None: now_fixed)}))
+
+    strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
+    await run(cfg, strategy=strat, max_messages=1)
+
+    info_alerts = [
+        (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bar processed"
+    ]
+    assert len(info_alerts) == 1
+    assert info_alerts[0][2]["lag_ms"] == -1000.0
+
+

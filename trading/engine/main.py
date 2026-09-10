@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
@@ -425,6 +425,18 @@ async def run(
                     on_crossover=on_real_crossover,
                 )
                 last_processed_ts[bar.symbol] = bar.ts
+                now_engine = datetime.now(TZ)
+                bar_close_ts = bar.ts + timedelta(minutes=cfg.bar_interval_minutes)
+                engine_lag_ms = round(
+                    (now_engine - bar_close_ts).total_seconds() * 1000, 2
+                )
+                alert(
+                    "INFO",
+                    "bar processed",
+                    symbol=bar.symbol,
+                    ts=bar.ts.isoformat(),
+                    lag_ms=engine_lag_ms,
+                )
                 persist_fills(fills)
                 # Trailing stop luong THAT (RTS-1): canh bao cham stop moi bar —
                 # KHONG phai stop-loss tu dong, chi sinh lenh SELL cho xac
