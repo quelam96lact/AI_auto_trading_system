@@ -1,4 +1,9 @@
-symbols: [HII, IJC, AAA]
+# HII bi loai 10/09/2026: chi 38/108 phien dat nguong thanh khoan 2 ty (35,2%),
+# GTGD dao dong 15,3 trieu - 30 ty (bung no theo dot roi tat). Hau qua do duoc:
+# chi 1.461/3.351 bar dung duoc (mat 57%, IJC mat 19%), ky vong toan hoc ~1,6
+# tin hieu tren toan bo lich su -> thuc te 0 lenh. Xem brief dot 29 Task 3.
+# Thay bang HPG: 100% phien dat nguong, GTGD thap nhat 26,93 ty.
+symbols: [HPG, IJC, AAA]
 indices: [VNINDEX, VN30]
 bar_interval_minutes: 5
 ssi_equity_accounts: ["0434221", "0434226"]

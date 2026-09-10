@@ -61,6 +61,14 @@ Dùng `scripts/replay_stream_check.py` đã có. **Không viết lại script.**
 Đọc dải seq của phiên 11/09, tính `tổng message / số (symbol, ts) duy nhất`.
 → Đạt khi tỷ lệ **≤ 1,10**. Ghi rõ dải seq đã đọc.
 
+> **CẬP NHẬT 10/09 18:20 — danh mục đã đổi, mốc so sánh đổi theo.** Chủ dự án quyết định bỏ
+> HII. `config/config.yaml` giờ là `[HPG, IJC, AAA]`, image đã dựng lại và triển khai lúc
+> 18:15. Hệ quả cho tiêu chí B: HII trước đây **thiếu bar** ở những phút không có giao dịch,
+> nên hai mốc 120 và 131 đã bị HII kéo xuống. HPG thanh khoản gấp bội nên số bar dự kiến
+> **tăng**, tiệm cận trần lý thuyết ~46 khung/phiên × 3 mã ≈ 138. Vì vậy tiêu chí B đọc là:
+> số bar **≥ 131** và không vượt trần lý thuyết. Nếu **giảm** so với 131 thì đó là dấu hiệu
+> mất bar — dừng và báo cáo.
+
 **Tiêu chí B — số bar KHÔNG được giảm.** Đây là tiêu chí chống hồi quy, và là tiêu chí tôi
 quan tâm nhất.
 
