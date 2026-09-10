@@ -129,3 +129,34 @@ mới nhất, giá trị còn lại trong DB chính là snapshot **cuối cùng*
 - Không cần chạy lại phép đo crypto vì lý do này.
 
 **Chưa sửa gì tại thời điểm viết báo cáo.** Hướng sửa giao trong brief đợt 26.
+
+---
+
+## 7. Xác nhận lần hai trên phiên độc lập 10/09, và mốc "sau khi sửa"
+
+Phiên 10/09 được đo bằng cùng phương pháp chỉ-đọc (`js.get_msg`), trên dải seq
+**26.185 → 27.279**, trước khi triển khai bản sửa:
+
+```
+doc duoc      : 1095 / 1095 message
+so bar duy nhat (symbol, ts): 131
+trung binh message / bar     : 8.36
+```
+
+| Phiên | Message | Bar duy nhất | Tỷ lệ |
+|---|---:|---:|---:|
+| 09/09 | 860 | 120 | 7,17× |
+| 10/09 | 1.095 | 131 | **8,36×** |
+
+Hai phiên độc lập, cùng một hình thái. Khung bị phát nhiều nhất của phiên 10/09 —
+`AAA @ 13:25` — lặp lại đúng đặc trưng nến đang hình thành: `open` bất biến 7.240,
+`volume` tăng đơn điệu 100 → 159.500, `high` nới rộng 7.240 → 7.320.
+
+**Bản sửa đã lên sóng lúc 16:44 ngày 10/09** (collector `0118d94a6010`, engine
+`2a8d32201eb5`). Đã xác minh `BarLatch._last_closed_ts` và `last_processed_ts` nằm vật lý
+trong container đang chạy; `deploy_drift_check.py` exit 0; log không có `CRITICAL` hay
+traceback.
+
+**Việc còn lại của phiên 11/09:** đo lại tỷ lệ message/bar. Nếu bản sửa đúng, tỷ lệ phải về
+**≈ 1,0**. Đây là phép kiểm chứng cuối cùng — hai con số 7,17 và 8,36 ở trên là mốc "trước
+khi sửa" để so sánh.
