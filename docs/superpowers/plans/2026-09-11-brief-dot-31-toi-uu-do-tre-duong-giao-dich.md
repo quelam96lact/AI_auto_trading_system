@@ -12,31 +12,39 @@ Người giao: Claude (planner/auditor).
 
 ## 0. Đo trước khi tối ưu — và kết quả đo đổi hẳn thứ tự ưu tiên
 
-Tôi đo từng chặng trên DB test và NATS test (không chạm hệ thống thật), 40 lượt mỗi chặng:
+Đo **từ bên trong container collector** — đúng chỗ code thật chạy — tới `postgres:5432` và
+`nats-test:4222`, DB `trading_test`, 40 lượt mỗi chặng:
 
 ```
-storage.write_bars (dong bo)  n=40  trung vi    8.16 ms | p95  10.79 ms | max  13.49 ms
-pub.publish (NATS)            n=40  trung vi    1.35 ms | p95   2.01 ms | max   2.17 ms
-persist_bars = DB roi NATS    n=40  trung vi    8.61 ms | p95   9.62 ms | max   9.69 ms
+storage.write_bars (dong bo)  n=40  trung vi   3.33 ms | p95  3.97 ms | max  6.50 ms
+pub.publish (NATS)            n=40  trung vi   0.22 ms | p95  0.51 ms | max  1.10 ms
 ```
 
-**Ghi DB chiếm 85,8% thời gian của `persist_bars`.** Và vì `persist_bars` ghi DB **trước**
+**Ghi DB chiếm 93,8% thời gian của `persist_bars`.** Và vì `persist_bars` ghi DB **trước**
 rồi mới publish (`collector/main.py:83-85`), engine phải chờ Postgres commit xong mới nhìn
 thấy bar.
+
+> **Cảnh báo về phương pháp — tôi đã đo sai một lần, ghi lại để không ai lặp lại.**
+> Lần đầu tôi đo **từ host Windows** qua cổng chuyển tiếp `127.0.0.1:5432` và ra
+> `8,16 ms` cho DB, `1,35 ms` cho NATS. Sai — **phóng đại 2,45 lần**. Port-forward của
+> Docker Desktop trên Windows cộng thêm ~4,8 ms mà đường thật không hề có, vì collector nói
+> thẳng tới `postgres:5432` trong mạng nội bộ của compose.
+> **Quy tắc rút ra: đo độ trễ phải đo từ đúng nơi code chạy.** Mọi phép đo độ trễ trong đợt
+> này phải chạy bằng `docker exec` vào container, không chạy từ host.
 
 ### 0.1. Nhưng phải đặt con số đó cạnh thang đo thật
 
 | Chặng | Thời gian | So với một khung 5 phút |
 |---|---:|---:|
-| Ghi DB chặn publish | ~8 ms | 0,003% |
-| Publish NATS | ~1,4 ms | 0,0005% |
+| Ghi DB chặn publish | ~3,3 ms | 0,001% |
+| Publish NATS | ~0,2 ms | 0,00007% |
 | **Khung nến 5 phút** | **300.000 ms** | 100% |
 | **Cửa xác nhận lệnh thật thủ công** | **900.000 ms** | 300% |
 
-Toàn bộ độ trễ có thể tối ưu được trong code là **~10 ms**, trên một đường mà con người phải
+Toàn bộ độ trễ có thể tối ưu được trong code là **~3,5 ms**, trên một đường mà con người phải
 gõ `YES` trong vòng **900 giây** (`real_orders.py:11`, `PENDING_ORDER_TTL_MINUTES = 15`).
 
-**Nói thẳng:** rút 8 ms không đổi được kết quả giao dịch nào của hệ thống này. Nếu mục tiêu
+**Nói thẳng:** rút 3,3 ms không đổi được kết quả giao dịch nào của hệ thống này. Nếu mục tiêu
 thật là "tín hiệu tới tay nhanh hơn", thì thứ cần bàn là **cửa xác nhận thủ công 15 phút** và
 **độ dài khung nến**, cả hai đều là quyết định của chủ dự án chứ không phải việc tối ưu code.
 
@@ -59,7 +67,7 @@ thì không phải là nhanh. **Không được "tối ưu" bằng cách quay l�
 
 | Task | Việc | Thu được |
 |---|---|---|
-| 1 | Publish NATS **trước**, ghi DB sau | ~8 ms mỗi bar |
+| 1 | Publish NATS **trước**, ghi DB sau | ~3,3 ms mỗi bar |
 | 2 | Đo độ trễ đầu-cuối thật, có số liệu | không đoán nữa |
 | 3 | Đánh giá việc chặn event loop — **chỉ đo, không sửa** | dữ liệu cho quyết định sau |
 
@@ -96,8 +104,8 @@ Giữ nguyên toàn bộ ràng buộc các đợt trước. Nhắc lại phần 
         alert("INFO", "bars closed", n=len(bars), symbols=[b.symbol for b in bars])
 ```
 
-Engine — người tiêu thụ duy nhất quan tâm tới độ trễ — phải chờ Postgres commit (8,16 ms
-trung vị, p95 10,79 ms) trước khi bar rời khỏi collector.
+Engine — người tiêu thụ duy nhất quan tâm tới độ trễ — phải chờ Postgres commit (3,33 ms
+trung vị, p95 3,97 ms, đo trong container) trước khi bar rời khỏi collector.
 
 ### 1.2. Vì sao đảo thứ tự là an toàn
 
@@ -136,8 +144,10 @@ Chỉ sửa `trading/collector/main.py`.
 
 ## Task 2 — Đo độ trễ đầu-cuối thật
 
-Hiện ta **không biết** một bar mất bao lâu từ lúc SSI gửi tới lúc engine xử lý xong. Mọi con
-số ở §0 là đo từng chặng rời rạc trong môi trường test, không phải đường thật.
+Hiện ta **không biết** một bar mất bao lâu từ lúc SSI gửi tới lúc engine xử lý xong. Số ở §0
+đo đúng nơi code chạy, nhưng vẫn là **từng chặng rời rạc trên DB `trading_test`** — không
+phải đường thật đầu-cuối, và không gồm thời gian SSI gửi tới, thời gian parse, thời gian
+engine nhận và chạy chiến lược.
 
 ### 2.1. Việc cần làm
 
@@ -171,24 +181,24 @@ vẫn ghi ra — **không im lặng kẹp về 0**, vì đồng hồ lệch là 
 loop của collector **đứng hoàn toàn** — không nhận được message SSI mới, không publish được
 gì khác.
 
-Đo được: 8,16 ms mỗi lần ghi. Mà từ đợt 26, **mỗi snapshot đều ghi DB** (`persist_snapshot`),
+Đo được: 3,33 ms mỗi lần ghi. Mà từ đợt 26, **mỗi snapshot đều ghi DB** (`persist_snapshot`),
 và mỗi cây nến có trung bình ~7 snapshot:
 
 ```
-7 x 8.16 ms = 57.15 ms khoa event loop / bar / ma
+7 x 3.33 ms = 23.3 ms khoa event loop / bar / ma
 ```
 
-Với 3 mã là khoảng 170 ms mỗi chu kỳ 5 phút. Nhỏ, nhưng nó tăng tuyến tính theo số mã: 30 mã
-sẽ là ~1,7 giây mỗi khung.
+Với 3 mã là khoảng 70 ms mỗi chu kỳ 5 phút. Nhỏ, nhưng nó tăng tuyến tính theo số mã: 30 mã
+sẽ là ~700 ms mỗi khung.
 
 ### 3.2. Vì sao KHÔNG sửa trong đợt này
 
 Cách sửa hiển nhiên là đẩy `write_bars` sang thread (`asyncio.to_thread`). Nhưng kết nối
 psycopg **không an toàn khi dùng chung giữa các thread**, và `Storage` hiện chia sẻ kết nối.
-Làm ẩu ở đây đổi một vấn đề hiệu năng 57 ms lấy một lỗi hỏng dữ liệu ngẫu nhiên — trên đường
+Làm ẩu ở đây đổi một vấn đề hiệu năng 23 ms lấy một lỗi hỏng dữ liệu ngẫu nhiên — trên đường
 ghi bar của một hệ thống giao dịch.
 
-**Không có gì trong hệ thống này đang chịu thiệt vì 170 ms.** Nên: đo, ghi lại, quyết sau.
+**Không có gì trong hệ thống này đang chịu thiệt vì 70 ms.** Nên: đo, ghi lại, quyết sau.
 
 ### 3.3. Việc cần làm
 
@@ -246,8 +256,8 @@ Ngắn, đủ, đúng thứ tự. Task nào chưa làm ghi thẳng **"CHƯA LÀM
 | Cửa xác nhận lệnh thật thủ công | **900.000 ms** | chủ dự án (tự động hoá? trực phiên?) |
 | Khung nến 5 phút | **300.000 ms** | chủ dự án (đổi `bar_interval_minutes`?) |
 | `flush_due` grace cho khung cuối phiên | 60.000 ms | có thể chỉnh, chỉ ảnh hưởng bar 14:45 |
-| Ghi DB chặn publish | 8 ms | **Task 1 của brief này** |
-| Publish NATS | 1,4 ms | không đáng động |
+| Ghi DB chặn publish | 3,3 ms | **Task 1 của brief này** |
+| Publish NATS | 0,2 ms | không đáng động |
 
 Ba dòng đầu lớn hơn hai dòng cuối **từ bốn tới sáu bậc độ lớn**. Nếu mục tiêu là giao dịch
 nhanh hơn thật sự, cuộc bàn đúng là về ba dòng đầu — và cả ba đều là quyết định về cách vận
