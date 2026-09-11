@@ -693,3 +693,117 @@ async def test_stream_handler_with_latch_publishes_only_closed_bar(monkeypatch):
     # storage.write_bars được gọi cho cả 4 snapshot + 1 closed bar
     assert storage.write_bars.call_count >= 4
 
+
+# ============ Brief đợt 35 Task 1: Sleep / clock drift detection ============
+
+
+async def test_housekeeping_tick_first_tick_no_alert(cfg):
+    """Tiêu chí 4: Tick đầu tiên (chưa có mốc trước) -> không cảnh báo, không nổ."""
+    import trading.collector.main as collector_main
+
+    storage = MagicMock()
+    wd = MagicMock()
+    state = HousekeepingState()
+
+    alerts = []
+    collector_main.alert = lambda level, msg, **kw: alerts.append((level, msg, kw))
+
+    await housekeeping_tick(cfg, storage, wd, state)
+
+    critical_alerts = [a for a in alerts if a[0] == "CRITICAL"]
+    assert len(critical_alerts) == 0
+    assert state.last_monotonic is not None
+    assert state.last_wall is not None
+
+
+async def test_housekeeping_tick_normal_drift_no_alert(cfg, monkeypatch):
+    """Tiêu chí 1: Hai tick liên tiếp bình thường (drift ~0) -> không cảnh báo."""
+    import trading.collector.main as collector_main
+
+    storage = MagicMock()
+    wd = MagicMock()
+
+    t0_wall = datetime(2026, 9, 11, 10, 0, 0, tzinfo=TZ)
+    t1_wall = datetime(2026, 9, 11, 10, 0, 30, tzinfo=TZ)
+
+    state = HousekeepingState(
+        last_monotonic=100.0,
+        last_wall=t0_wall,
+    )
+
+    monkeypatch.setattr(collector_main.time, "monotonic", lambda: 130.0)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t1_wall))
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw)))
+
+    await housekeeping_tick(cfg, storage, wd, state)
+
+    critical_alerts = [a for a in alerts if a[0] == "CRITICAL"]
+    assert len(critical_alerts) == 0
+
+
+async def test_housekeeping_tick_large_drift_in_trading_hours_alerts_critical(cfg, monkeypatch):
+    """Tiêu chí 2: Δwall = 5400s còn Δmonotonic = 30s, trong giờ giao dịch -> có CRITICAL, ghi rõ số giây và 'trong giờ giao dịch'."""
+    import trading.collector.main as collector_main
+
+    storage = MagicMock()
+    wd = MagicMock()
+
+    t0_wall = datetime(2026, 9, 11, 10, 0, 0, tzinfo=TZ)
+    t1_wall = datetime(2026, 9, 11, 11, 30, 0, tzinfo=TZ)
+
+    state = HousekeepingState(
+        last_monotonic=100.0,
+        last_wall=t0_wall,
+    )
+
+    monkeypatch.setattr(collector_main.time, "monotonic", lambda: 130.0)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t1_wall))
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw)))
+
+    await housekeeping_tick(cfg, storage, wd, state)
+
+    critical_alerts = [a for a in alerts if a[0] == "CRITICAL"]
+    assert len(critical_alerts) == 1
+    _level, msg, kw = critical_alerts[0]
+    assert _level == "CRITICAL"
+    assert "5370" in msg or kw.get("dead_seconds") == 5370.0
+    assert "trong giờ giao dịch" in msg
+    assert kw.get("in_trading_hours") is True
+
+
+async def test_housekeeping_tick_large_drift_outside_trading_hours_alerts_outside(cfg, monkeypatch):
+    """Tiêu chí 3: Cùng drift lớn nhưng ngoài giờ giao dịch -> vẫn cảnh báo nhưng ghi rõ 'ngoài giờ giao dịch'."""
+    import trading.collector.main as collector_main
+
+    storage = MagicMock()
+    wd = MagicMock()
+
+    t0_wall = datetime(2026, 9, 11, 20, 0, 0, tzinfo=TZ)
+    t1_wall = datetime(2026, 9, 11, 21, 30, 0, tzinfo=TZ)
+
+    state = HousekeepingState(
+        last_monotonic=100.0,
+        last_wall=t0_wall,
+    )
+
+    monkeypatch.setattr(collector_main.time, "monotonic", lambda: 130.0)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t1_wall))
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw)))
+
+    await housekeeping_tick(cfg, storage, wd, state)
+
+    critical_alerts = [a for a in alerts if a[0] == "CRITICAL"]
+    assert len(critical_alerts) == 1
+    _level, msg, kw = critical_alerts[0]
+    assert _level == "CRITICAL"
+    assert "5370" in msg or kw.get("dead_seconds") == 5370.0
+    assert "ngoài giờ giao dịch" in msg
+    assert kw.get("in_trading_hours") is False
+
+

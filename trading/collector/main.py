@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -19,6 +20,7 @@ from trading.config import load_config
 from trading.storage.db import Storage
 
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
+CLOCK_DRIFT_THRESHOLD_SECONDS = 120.0  # Ngưỡng phát hiện máy chủ ngủ (nhịp tick 30s: drift > 120s chỉ ra hệ thống ngủ/đóng băng)
 
 
 async def _restart_feed_and_alert(feed) -> None:
@@ -179,6 +181,8 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
 class HousekeepingState:
     eod_done_for: date | None = None
     last_account_sync: datetime | None = None
+    last_monotonic: float | None = None
+    last_wall: datetime | None = None
 
 
 async def housekeeping_tick(
@@ -190,14 +194,41 @@ async def housekeeping_tick(
     pub: BarPublisher | None = None,
     persist_tasks: set[asyncio.Task] | None = None,
 ) -> None:
-    """Một vòng housekeeping. Được phép ném — housekeeping_loop chịu trách nhiệm bắt."""
+    """Một vòng housekeeping. Được phép ném — housekeeping_loop chịu trách nhiệm bắt.
+
+    Phát hiện gián đoạn/máy chủ ngủ: So sánh độ trôi giữa time.monotonic() và datetime.now(TZ).
+    LƯU Ý GIỚI HẠN: Đây là phát hiện sau sự việc (post-factum detection), không phải phòng ngừa.
+    Khi máy đang ngủ thì toàn bộ tiến trình đóng băng nên không thể phát cảnh báo trong lúc ngủ.
+    """
     wd.check()
     # WARM-1 Viec B: timeout=5 thay vi 30s mac dinh — khi DB chet, tick that bai
     # NHANH (5s + sleep 30s = ~35s phuc hoi heartbeat thay vi ~90s truoc; chu du
     # an khong ha timeout toan cuc vi _get_pool la CRITICAL). Mac dinh None giu
     # nguyen hanh vi cho moi caller khac.
     storage.beat("collector", timeout=5)
+
+    cur_mono = time.monotonic()
     now = datetime.now(TZ)
+
+    if state.last_monotonic is not None and state.last_wall is not None:
+        delta_wall = (now - state.last_wall).total_seconds()
+        delta_mono = cur_mono - state.last_monotonic
+        drift = delta_wall - delta_mono
+        if drift >= CLOCK_DRIFT_THRESHOLD_SECONDS:
+            holidays = getattr(cfg, "holidays", frozenset())
+            in_session = is_trading_time(now, holidays) or is_trading_time(state.last_wall, holidays)
+            session_str = "trong giờ giao dịch" if in_session else "ngoài giờ giao dịch"
+            alert(
+                "CRITICAL",
+                f"phát hiện máy chủ ngủ/gián đoạn {drift:.0f}s ({session_str}) từ {state.last_wall.strftime('%H:%M:%S')} đến {now.strftime('%H:%M:%S')}",
+                dead_seconds=round(drift, 1),
+                from_ts=state.last_wall.isoformat(),
+                to_ts=now.isoformat(),
+                in_trading_hours=in_session,
+            )
+    state.last_monotonic = cur_mono
+    state.last_wall = now
+
     if latch is not None and pub is not None:
         due = latch.flush_due(now)
         if due:

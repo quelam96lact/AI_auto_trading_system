@@ -55,7 +55,7 @@ async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer:
         js = nc.jetstream()
         info = await js.consumer_info(stream, consumer)
         s_info = await js.stream_info(stream)
-        stream_last_seq = s_info.state.last_seq if hasattr(s_info, "state") else getattr(s_info, "last_seq", 0)
+        stream_last_seq = s_info.state.last_seq
         return info, stream_last_seq
     finally:
         await nc.close()
@@ -140,12 +140,7 @@ def run_check(
         return 0
 
     try:
-        info_res = asyncio.run(read_nats_consumer_info(nats_url, nats_stream, "engine"))
-        if isinstance(info_res, tuple):
-            info, stream_last_seq = info_res
-        else:
-            info = info_res
-            stream_last_seq = getattr(info, "stream_last_seq", 0)
+        info, stream_last_seq = asyncio.run(read_nats_consumer_info(nats_url, nats_stream, "engine"))
     except Exception as e:
         msg = f"[engine-consumer] LỖI: Không thể kết nối NATS hoặc đọc consumer 'engine': {e}"
         _print_safe(msg)
