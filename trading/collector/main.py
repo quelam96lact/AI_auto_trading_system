@@ -157,6 +157,16 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
             return
         if bar is not None:
             wd.beat()
+            now = datetime.now(TZ)
+            late_ms = (now - (bar.ts + latch.interval)).total_seconds() * 1000
+            if late_ms > 0:
+                alert(
+                    "INFO",
+                    "late snapshot",
+                    symbol=bar.symbol,
+                    bar_ts=bar.ts.isoformat(),
+                    late_ms=round(late_ms, 2),
+                )
             task_snap = asyncio.create_task(persist_snapshot(storage, bar))
             if persist_tasks is not None:
                 persist_tasks.add(task_snap)

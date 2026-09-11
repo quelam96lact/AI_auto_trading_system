@@ -807,3 +807,93 @@ async def test_housekeeping_tick_large_drift_outside_trading_hours_alerts_outsid
     assert kw.get("in_trading_hours") is False
 
 
+# ============ Brief đợt 36 Task 2: Late snapshot observation ============
+
+
+async def test_stream_handler_snapshot_during_open_frame_no_late_log(monkeypatch):
+    """Tiêu chí 1: Snapshot tới khi khung còn mở (late_ms <= 0) -> không ghi log late snapshot."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.collector.latch import BarLatch
+    from trading.models import Bar
+
+    # Khung 09:30, đóng lúc 09:35
+    t0 = datetime(2026, 9, 14, 9, 30, tzinfo=TZ)
+    # Thời điểm nhận: 09:32 (còn mở, late_ms = -180,000 ms)
+    t_now = datetime(2026, 9, 14, 9, 32, tzinfo=TZ)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t_now))
+
+    bar = Bar("VCB", t0, 90.0, 90.5, 89.8, 90.2, 1000)
+    monkeypatch.setattr(collector_main, "parse_interval_message", lambda msg: bar)
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw)))
+
+    wd = MagicMock()
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    persist_tasks = set()
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+
+    handler = collector_main.make_stream_message_handler(
+        wd, storage, pub, persist_tasks=persist_tasks, latch=latch
+    )
+    handler({"dummy": 1})
+
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    late_logs = [a for a in alerts if a[1] == "late snapshot"]
+    assert len(late_logs) == 0
+
+
+async def test_stream_handler_snapshot_after_frame_close_logs_late_snapshot(monkeypatch):
+    """Tiêu chí 2: Snapshot tới sau mốc đóng khung (late_ms > 0) -> có log late snapshot với late_ms đúng."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.collector.latch import BarLatch
+    from trading.models import Bar
+
+    # Khung 09:30, đóng lúc 09:35 (300s interval)
+    t0 = datetime(2026, 9, 14, 9, 30, tzinfo=TZ)
+    # Thời điểm nhận: 09:35:03.500 (+3.5s = +3500ms sau mốc đóng khung)
+    t_now = datetime(2026, 9, 14, 9, 35, 3, 500000, tzinfo=TZ)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t_now))
+
+    bar = Bar("VCB", t0, 90.0, 90.5, 89.8, 90.2, 1000)
+    monkeypatch.setattr(collector_main, "parse_interval_message", lambda msg: bar)
+
+    alerts = []
+    monkeypatch.setattr(collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw)))
+
+    wd = MagicMock()
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    persist_tasks = set()
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+
+    handler = collector_main.make_stream_message_handler(
+        wd, storage, pub, persist_tasks=persist_tasks, latch=latch
+    )
+    handler({"dummy": 1})
+
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    late_logs = [a for a in alerts if a[1] == "late snapshot"]
+    assert len(late_logs) == 1
+    level, msg, kw = late_logs[0]
+    assert level == "INFO"
+    assert msg == "late snapshot"
+    assert kw.get("symbol") == "VCB"
+    assert kw.get("bar_ts") == t0.isoformat()
+    assert kw.get("late_ms") == 3500.0
+
+
+
