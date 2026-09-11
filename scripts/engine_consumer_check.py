@@ -1,18 +1,18 @@
 """Chuông 2C: Giám sát engine có đang tiêu thụ bar thật từ JetStream hay không.
 
-Brief đợt 25 (Task 2) / Brief đợt 26 (Task 5) / Brief đợt 27 (Task 1).
-CHỈ ĐỌC (read-only): Gọi duy nhất `js.consumer_info("BARS", "engine")` và SELECT bars.
-CẤM TUYỆT ĐỐI các thao tác ghi, xoá, purge, thêm hay sửa consumer.
+Brief đợt 25 (Task 2) / Brief đợt 26 (Task 5) / Brief đợt 27 (Task 1) / Brief đợt 34 (Task 2).
+CHỈ ĐỌC (read-only): Gọi duy nhất `js.consumer_info("BARS", "engine")` và `js.stream_info("BARS")`.
+CẤM TUYỆT ĐỐI các thao tác ghi, xoá, purge, thêm hay sửa stream/consumer.
 
 Cảnh báo khi:
 1. Đang trong giờ giao dịch (is_trading_time).
-2. num_pending vượt ngưỡng HOẶC delivered.stream_seq không đổi trong khi số bar trong DB tăng.
+2. num_pending vượt ngưỡng HOẶC last_seq tiến lên trong khi delivered.stream_seq không đổi và khoảng cách vượt ngưỡng.
 3. Đã qua thời gian chống spam (15 phút).
 
 Exit code:
 0 = OK (hoặc ngoài phiên)
 1 = Đã gửi cảnh báo (hoặc phát hiện sự cố trong phiên)
-2 = Lỗi cấu hình / DB_DSN chưa set / kết nối
+2 = Lỗi cấu hình / kết nối
 """
 
 import argparse
@@ -24,7 +24,6 @@ from datetime import date, datetime
 from pathlib import Path
 
 import nats
-import psycopg
 import yaml
 
 from trading.alerts import _print_safe
@@ -37,7 +36,7 @@ ALERT_COOLDOWN_SECONDS = 900  # 15 phút chống spam
 
 
 async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer: str = "engine"):
-    """Chỉ đọc consumer_info từ NATS JetStream (read-only)."""
+    """Chỉ đọc consumer_info và stream_info từ NATS JetStream (read-only)."""
     target_url = nats_url.replace("localhost", "127.0.0.1") if "localhost" in nats_url else nats_url
     connect_opts = {
         "connect_timeout": 2,
@@ -55,19 +54,11 @@ async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer:
     try:
         js = nc.jetstream()
         info = await js.consumer_info(stream, consumer)
-        return info
+        s_info = await js.stream_info(stream)
+        stream_last_seq = s_info.state.last_seq if hasattr(s_info, "state") else getattr(s_info, "last_seq", 0)
+        return info, stream_last_seq
     finally:
         await nc.close()
-
-
-def read_today_bars_count(dsn: str) -> int:
-    """Đếm số bar được ghi trong ngày hôm nay từ DB."""
-    target_dsn = dsn.replace("@localhost", "@127.0.0.1") if "@localhost" in dsn else dsn
-    query = "SELECT count(*) FROM bars WHERE ts >= CURRENT_DATE;"
-    with psycopg.connect(target_dsn) as conn, conn.cursor() as cur:
-        cur.execute(query)
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
 
 
 def load_state() -> dict:
@@ -89,7 +80,7 @@ def save_state(state: dict) -> None:
 
 def check_consumer(
     info,
-    today_bars: int,
+    stream_last_seq: int,
     prev_state: dict,
     now: datetime,
     pending_threshold: int = 20,
@@ -106,12 +97,14 @@ def check_consumer(
 
     if prev_state:
         prev_stream_seq = prev_state.get("stream_seq", stream_seq)
-        prev_bars = prev_state.get("today_bars", today_bars)
-        # Nếu DB đã tăng bar mới nhưng engine không nhúc nhích stream_seq
-        if today_bars > prev_bars and stream_seq <= prev_stream_seq:
+        prev_last_seq = prev_state.get("last_seq", stream_last_seq)
+        gap = stream_last_seq - stream_seq
+        # Nếu Stream đã có bar mới nhưng engine không nhúc nhích stream_seq và khoảng cách vượt ngưỡng
+        if stream_last_seq > prev_last_seq and stream_seq <= prev_stream_seq and gap >= pending_threshold:
             return True, (
-                f"engine dừng tiêu thụ bar: DB tăng {today_bars - prev_bars} bar "
-                f"nhưng stream_seq không đổi ({stream_seq} <= {prev_stream_seq})"
+                f"engine dừng tiêu thụ bar: stream_last_seq tiến ({prev_last_seq} -> {stream_last_seq}) "
+                f"nhưng delivered.stream_seq không đổi ({stream_seq} <= {prev_stream_seq}), "
+                f"khoảng cách {gap} >= {pending_threshold}"
             )
 
     return False, "OK"
@@ -122,11 +115,6 @@ def run_check(
     force: bool = False,
     pending_threshold: int = 20,
 ) -> int:
-    dsn = os.environ.get("DB_DSN")
-    if not dsn:
-        print("DB_DSN chưa được set", file=sys.stderr)
-        return 2
-
     # Đọc config bằng yaml.safe_load — KHÔNG import load_config
     try:
         cfg_file = Path(config_path)
@@ -152,13 +140,12 @@ def run_check(
         return 0
 
     try:
-        today_bars = read_today_bars_count(dsn)
-    except Exception as e:
-        _print_safe(f"[engine-consumer] Lỗi đọc DB: {e}")
-        today_bars = 0
-
-    try:
-        info = asyncio.run(read_nats_consumer_info(nats_url, nats_stream, "engine"))
+        info_res = asyncio.run(read_nats_consumer_info(nats_url, nats_stream, "engine"))
+        if isinstance(info_res, tuple):
+            info, stream_last_seq = info_res
+        else:
+            info = info_res
+            stream_last_seq = getattr(info, "stream_last_seq", 0)
     except Exception as e:
         msg = f"[engine-consumer] LỖI: Không thể kết nối NATS hoặc đọc consumer 'engine': {e}"
         _print_safe(msg)
@@ -168,7 +155,7 @@ def run_check(
     prev_state = load_state()
     is_faulty, reason = check_consumer(
         info,
-        today_bars=today_bars,
+        stream_last_seq=stream_last_seq,
         prev_state=prev_state,
         now=now,
         pending_threshold=pending_threshold,
@@ -179,7 +166,7 @@ def run_check(
 
     new_state = {
         "stream_seq": stream_seq,
-        "today_bars": today_bars,
+        "last_seq": stream_last_seq,
         "ts": now.timestamp(),
         "last_alert_ts": prev_state.get("last_alert_ts", 0),
     }
@@ -199,7 +186,7 @@ def run_check(
         save_state(new_state)
         return 1
 
-    _print_safe(f"[engine-consumer] OK: engine đang tiêu thụ bình thường (seq={stream_seq}, bars_today={today_bars}).")
+    _print_safe(f"[engine-consumer] OK: engine đang tiêu thụ bình thường (delivered_seq={stream_seq}, stream_last_seq={stream_last_seq}).")
     save_state(new_state)
     return 0
 
@@ -216,3 +203,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

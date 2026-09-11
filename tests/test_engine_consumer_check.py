@@ -36,10 +36,9 @@ def test_consumer_healthy_returns_zero(monkeypatch, tmp_path):
     state_file = tmp_path / ".state.json"
     monkeypatch.setattr(ecc, "STATE_FILE", state_file)
     monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
-    monkeypatch.setattr(ecc, "read_today_bars_count", lambda dsn: 50)
 
     fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
-    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=fake_info))
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 100)))
 
     sent_alerts = []
     monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
@@ -54,10 +53,9 @@ def test_consumer_pending_in_trading_hours_alerts_and_returns_one(monkeypatch, t
     state_file = tmp_path / ".state.json"
     monkeypatch.setattr(ecc, "STATE_FILE", state_file)
     monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
-    monkeypatch.setattr(ecc, "read_today_bars_count", lambda dsn: 50)
 
     fake_info = FakeConsumerInfo(num_pending=25, stream_seq=100)  # > threshold 20
-    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=fake_info))
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 125)))
 
     sent_alerts = []
     monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
@@ -88,7 +86,6 @@ def test_nats_connection_failure_alerts_and_returns_one(monkeypatch, tmp_path):
     state_file = tmp_path / ".state.json"
     monkeypatch.setattr(ecc, "STATE_FILE", state_file)
     monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
-    monkeypatch.setattr(ecc, "read_today_bars_count", lambda dsn: 50)
 
     monkeypatch.setattr(
         ecc,
@@ -119,10 +116,9 @@ def test_missing_ssi_env_vars_still_reaches_consumer_check(monkeypatch, tmp_path
     state_file = tmp_path / ".state.json"
     monkeypatch.setattr(ecc, "STATE_FILE", state_file)
     monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
-    monkeypatch.setattr(ecc, "read_today_bars_count", lambda dsn: 10)
 
     fake_info = FakeConsumerInfo(num_pending=0, stream_seq=50)
-    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=fake_info))
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 50)))
 
     sent_alerts = []
     monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
@@ -130,3 +126,71 @@ def test_missing_ssi_env_vars_still_reaches_consumer_check(monkeypatch, tmp_path
     code = ecc.run_check()
     assert code == 0
     assert len(sent_alerts) == 0
+
+
+def test_backfill_db_bars_increase_but_stream_seq_unchanged_does_not_alert(monkeypatch, tmp_path):
+    """Tái hiện lỗi chuông 2C: DB tăng sau backfill nhưng stream last_seq và delivered không đổi -> KHÔNG được kêu."""
+    state_file = tmp_path / ".state.json"
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    # Giả lập state trước đó: seq=100, last_seq=100
+    ecc.save_state({"stream_seq": 100, "last_seq": 100, "ts": 1000.0, "last_alert_ts": 0})
+
+    # Giả lập lần đọc hiện tại: stream_seq vẫn 100, last_seq vẫn 100, num_pending=0
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 100)))
+
+    sent_alerts = []
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
+
+    code = ecc.run_check()
+    assert code == 0
+    assert len(sent_alerts) == 0
+
+
+def test_stream_advances_but_consumer_stalled_alerts_and_returns_one(monkeypatch, tmp_path):
+    """last_seq tiến, delivered.stream_seq đứng im, khoảng cách vượt ngưỡng => kêu."""
+    state_file = tmp_path / ".state.json"
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    # State trước: seq=100, last_seq=100
+    ecc.save_state({"stream_seq": 100, "last_seq": 100, "ts": 1000.0, "last_alert_ts": 0})
+
+    # Lần này: stream_seq vẫn 100, last_seq tiến lên 125 (gap 25 >= threshold 20), num_pending=0
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 125)))
+
+    sent_alerts = []
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
+
+    code = ecc.run_check(pending_threshold=20)
+    assert code == 1
+    assert len(sent_alerts) == 1
+    assert "CHUÔNG 2C" in sent_alerts[0]
+    assert "engine dừng tiêu thụ bar" in sent_alerts[0]
+    assert "stream_last_seq" in sent_alerts[0]
+
+
+def test_both_stream_and_consumer_advance_healthy_returns_zero(monkeypatch, tmp_path):
+    """Cả stream last_seq và delivered.stream_seq cùng tiến => không kêu."""
+    state_file = tmp_path / ".state.json"
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    # State trước: seq=100, last_seq=100
+    ecc.save_state({"stream_seq": 100, "last_seq": 100, "ts": 1000.0, "last_alert_ts": 0})
+
+    # Lần này: cả hai cùng tiến lên 125
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=125)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 125)))
+
+    sent_alerts = []
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
+
+    code = ecc.run_check(pending_threshold=20)
+    assert code == 0
+    assert len(sent_alerts) == 0
+
+
