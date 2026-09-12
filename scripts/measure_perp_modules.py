@@ -142,7 +142,7 @@ def print_report_table(
 
     # Bảng số đo tổng hợp (§3.4)
     header = (
-        f"{'Signals':<8} {'Expired':<8} {'Cancel':<8} {'Trades':<8} {'WinRate':<9} "
+        f"{'Signals':<8} {'Expired':<8} {'Cancel':<8} {'Dropped':<8} {'Trades':<8} {'WinRate':<9} "
         f"{'Net PnL':<12} {'PnL%':<9} {'BH PnL':<12} {'PF':<7} {'Expectancy':<11} "
         f"{'MaxDD%':<8} {'Sharpe':<8} {'AvgBars':<8} {'Fees':<9} {'Clip':<6} {'Liq':<5} {'FundSpans':<9}"
     )
@@ -153,6 +153,7 @@ def print_report_table(
         f"{report.signals_generated:<8} "
         f"{report.orders_expired:<8} "
         f"{report.orders_cancelled:<8} "
+        f"{report.orders_dropped:<8} "
         f"{n_trades:<8} "
         f"{win_rate:>6.1f}%   "
         f"{net_pnl:>10.2f}  "
