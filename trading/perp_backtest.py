@@ -12,6 +12,7 @@ Ràng buộc & quy ước:
 - Không mô hình hoá funding & thanh lý (thay vào đó đo funding_spans và would_liquidate).
 """
 
+import random
 import statistics
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +28,13 @@ from trading.indicators import (
     percent_b,
 )
 from trading.models import Bar
+
+
+@dataclass(frozen=True)
+class RandomEntryConfig:
+    seed: int
+    signal_prob: float      # xác suất phát tín hiệu tại mỗi bar đủ warm-up
+    long_prob: float = 0.5  # xác suất chiều LONG khi đã quyết định phát tín hiệu
 
 
 @dataclass
@@ -63,6 +71,7 @@ class PerpReport:
     signals_generated: int   # số tín hiệu phát ra
     orders_expired: int      # lệnh stop hết hạn không khớp
     orders_cancelled: int    # huỷ vì giá chạy quá xa
+    orders_dropped: int = 0  # loại bỏ bởi 3 phép lọc quản trị lệnh của module B
 
 
 def run_perp_backtest(
@@ -75,6 +84,7 @@ def run_perp_backtest(
     risk_fraction: float = 0.005,
     max_leverage: float = 10.0,
     use_ema_filter: bool = False,   # chỉ module A
+    random_entry: RandomEntryConfig | None = None,
 ) -> PerpReport:
     """Chạy backtest mô phỏng module perpetual 1H.
 
@@ -103,6 +113,7 @@ def run_perp_backtest(
             signals_generated=0,
             orders_expired=0,
             orders_cancelled=0,
+            orders_dropped=0,
         )
 
     # Khởi tạo các chỉ báo theo module
@@ -124,6 +135,9 @@ def run_perp_backtest(
     signals_generated = 0
     orders_expired = 0
     orders_cancelled = 0
+    orders_dropped = 0
+
+    rng = random.Random(random_entry.seed) if random_entry is not None else None
 
     # Trạng thái vị thế đang mở
     pos_open = False
@@ -369,6 +383,7 @@ def run_perp_backtest(
                             drop_order = True
 
                         if drop_order:
+                            orders_dropped += 1
                             pending_order = None
                         else:
                             target_price = min(middle_t, entry_price + 1.25 * r_value)
@@ -410,6 +425,7 @@ def run_perp_backtest(
                             drop_order = True
 
                         if drop_order:
+                            orders_dropped += 1
                             pending_order = None
                         else:
                             target_price = max(middle_t, entry_price - 1.25 * r_value)
@@ -437,7 +453,79 @@ def run_perp_backtest(
         # --- 4. Phát hiện tín hiệu tại CLOSE bar t ---
         # Chỉ xét khi không có vị thế, không có lệnh chờ, và không vừa đóng vị thế trong bar này
         if not pos_open and pending_order is None and not just_closed_in_bar:
-            if module == "donchian_breakout":
+            if random_entry is not None and rng is not None:
+                if module == "donchian_breakout":
+                    warmup_ok = (
+                        donchian_val is not None
+                        and atr_val is not None
+                        and len(atr_history) >= 50
+                    )
+                    if use_ema_filter:
+                        warmup_ok = warmup_ok and (ema50_val is not None and ema200_val is not None)
+
+                    if warmup_ok and rng.random() < random_entry.signal_prob:
+                        signals_generated += 1
+                        is_long = rng.random() < random_entry.long_prob
+                        upper_20, lower_20 = donchian_val
+                        atr_14 = atr_val
+
+                        if is_long:
+                            pending_order = {
+                                "side": "LONG",
+                                "trigger": upper_20 + 0.05 * atr_14,
+                                "breakout_low": b.low,
+                                "breakout_atr": atr_14,
+                                "signal_ts": b.ts,
+                                "created_bar_idx": i,
+                            }
+                        else:
+                            pending_order = {
+                                "side": "SHORT",
+                                "trigger": lower_20 - 0.05 * atr_14,
+                                "breakout_high": b.high,
+                                "breakout_atr": atr_14,
+                                "signal_ts": b.ts,
+                                "created_bar_idx": i,
+                            }
+
+                elif module == "bollinger_mr":
+                    warmup_ok = (
+                        bb_val is not None
+                        and adx_val is not None
+                        and atr_val is not None
+                        and ema50_val is not None
+                        and ema200_val is not None
+                        and len(ema50_history) >= 3
+                        and len(bw_history) >= 240
+                    )
+                    if warmup_ok and rng.random() < random_entry.signal_prob:
+                        signals_generated += 1
+                        is_long = rng.random() < random_entry.long_prob
+                        middle_t, upper_t, lower_t = bb_val
+                        atr_14 = atr_val
+
+                        if is_long:
+                            pending_order = {
+                                "side": "LONG",
+                                "close_t": b.close,
+                                "atr_t": atr_14,
+                                "low_t": b.low,
+                                "middle_t": middle_t,
+                                "signal_ts": b.ts,
+                                "created_bar_idx": i,
+                            }
+                        else:
+                            pending_order = {
+                                "side": "SHORT",
+                                "close_t": b.close,
+                                "atr_t": atr_14,
+                                "high_t": b.high,
+                                "middle_t": middle_t,
+                                "signal_ts": b.ts,
+                                "created_bar_idx": i,
+                            }
+
+            elif module == "donchian_breakout":
                 # Điều kiện Donchian breakout (Price-only)
                 # GHI CHÚ: Điều kiện Order Flow (delta, taker-buy ratio) bị BỎ vì repo không có dữ liệu.
                 if donchian_val is not None and atr_val is not None and len(atr_history) >= 50:
@@ -576,4 +664,5 @@ def run_perp_backtest(
         signals_generated=signals_generated,
         orders_expired=orders_expired,
         orders_cancelled=orders_cancelled,
+        orders_dropped=orders_dropped,
     )
