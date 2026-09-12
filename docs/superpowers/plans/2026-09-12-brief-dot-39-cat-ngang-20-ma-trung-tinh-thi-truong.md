@@ -93,17 +93,20 @@ buộc trong mọi báo cáo**, cùng hạng với cảnh báo funding.
 
 ### 1.1. File được sửa — chỉ bốn file, tất cả đều mới
 
-| File | Việc |
-|---|---|
-| `trading/cross_sectional.py` | engine danh mục cắt ngang |
-| `scripts/measure_cross_sectional.py` | CLI đo lường + phân phối null + báo cáo |
-| `tests/test_cross_sectional.py` | test |
-| `docs/superpowers/research/2026-09-12-dot-39-cat-ngang-20-ma.md` | kết quả |
+| File | Trạng thái | Việc |
+|---|---|---|
+| `trading/metrics.py` | có sẵn | **Task 0** — nhận hai hàm phân vị chuyển về |
+| `scripts/significance_test.py` | có sẵn | **Task 0** — bỏ hai hàm đó, import từ `trading.metrics` |
+| `trading/cross_sectional.py` | **mới** | engine danh mục cắt ngang |
+| `scripts/measure_cross_sectional.py` | **mới** | CLI đo lường + phân phối null + báo cáo |
+| `tests/test_cross_sectional.py` | **mới** | test |
+| `docs/superpowers/research/2026-09-12-dot-39-cat-ngang-20-ma.md` | **mới** | kết quả |
 
-**Không sửa file có sẵn nào.** Bao gồm `trading/perp_backtest.py`,
-`scripts/significance_test.py`, `scripts/measure_perp_modules.py`, `trading/indicators.py`,
-`trading/backtest.py`, `trading/crypto_fees.py`, và mọi thứ trong `trading/collector/`,
-`trading/engine/`, `trading/strategies/`.
+**Ngoài hai file của Task 0, không sửa file có sẵn nào.** Bao gồm
+`trading/perp_backtest.py`, `scripts/measure_perp_modules.py`, `trading/indicators.py`,
+`trading/backtest.py`, `trading/crypto_fees.py`, `tests/test_significance.py`,
+`tests/test_perp_backtest.py`, và mọi thứ trong `trading/collector/`, `trading/engine/`,
+`trading/strategies/`.
 
 Được **import** thoải mái: `trading.crypto_fees.BINGX_PERP_TAKER`, `trading.metrics.*`,
 `trading.models.Bar`, `trading.data_quality.is_dirty_bar`,
@@ -183,6 +186,57 @@ Bỏ nến rác bằng `is_dirty_bar` trước mọi tính toán.
 - Tái cân bằng **mỗi 7 ngày lịch**.
 - **Không thanh lý, không ký quỹ.** Gross 1×, net 0 nên rủi ro thanh lý coi như không có; ghi
   rõ giả định này thay vì mô phỏng.
+
+---
+
+## Task 0 — Đưa hai hàm phân vị về `trading/metrics.py`
+
+**Làm trước tiên. Nhỏ, thuần cấu trúc, không đổi hành vi.**
+
+### 0.1. Vì sao
+
+Đợt 38 đặt hai hàm này trong `scripts/significance_test.py`:
+
+```python
+def calculate_percentile(values: list[float], p: float) -> float:
+def empirical_percentile_rank(values: list[float], target: float) -> float:
+```
+
+Cả hai là **hàm thuần trên số**, không dính gì tới `perp_backtest`. Đợt 39 cần đúng hai hàm
+đó. Nếu viết lại, ta có **hai bản của một công thức** — và đây không phải mối lo lý thuyết:
+`empirical_percentile_rank` chứa một lựa chọn quy ước thật (`0.5 * equal`, cách xử lý giá trị
+bằng nhau). Hai bản chọn khác nhau sẽ cho hai phân vị khác nhau, **trông giống hệt nhau**, và
+kết luận của đợt 38 với đợt 39 không còn so được với nhau.
+
+Dự án có nguyên tắc **"một công thức, một chỗ"**. `trading/metrics.py` đã là chỗ đó — nó đang
+giữ `profit_factor`, `expectancy`, `max_drawdown`, `sharpe`.
+
+### 0.2. Việc cần làm
+
+1. Chuyển **nguyên văn** hai hàm sang `trading/metrics.py`, đặt cạnh các hàm sẵn có, giữ
+   nguyên tên, chữ ký, docstring và thân hàm. **Không "tiện thể" cải tiến.** Nếu cần `math`,
+   thêm import.
+2. Trong `scripts/significance_test.py`, xoá hai định nghĩa và thay bằng
+   `from trading.metrics import calculate_percentile, empirical_percentile_rank`.
+   **Giữ nguyên tên đã import** để `tests/test_significance.py` và mọi chỗ gọi khác không
+   phải sửa một dòng nào.
+3. Xoá import nào trong `significance_test.py` trở nên thừa **do chính thay đổi này** (ví dụ
+   `math`, nếu không còn chỗ dùng). Không xoá gì khác.
+
+### 0.3. Kiểm chứng Task 0 — phép kiểm hồi quy thật
+
+1. `tests/test_significance.py` pass **không sửa một dòng nào**. Dán `git diff` của file đó —
+   tôi kỳ vọng **rỗng**.
+2. **Tái lập đợt 38:**
+
+   ```
+   uv run python scripts/significance_test.py --module donchian_breakout --split oos --iterations 1000
+   ```
+
+   phải cho **đúng** `phân vị A = 69.1%` và `phân vị B = 66.1%`, trung vị null `-4.42` và
+   `-3.45`. Lệch bất kỳ chữ số nào nghĩa là phép chuyển đã đổi hành vi — **dừng, báo cáo**.
+   Lượt này khoảng 9 phút.
+3. Suite đầy đủ pass (mốc **697** — phép chuyển không được làm đổi số test), ruff sạch.
 
 ---
 
@@ -329,9 +383,12 @@ cùng điều kiện đủ tư cách, cùng phí; **chỉ thay cách chọn mã 
 
 In: trung vị, p05, p25, p75, p95, p99, và **phân vị của kết quả thật**.
 
-Theo đúng khuôn của `scripts/significance_test.py` (đợt 38) — đọc file đó trước, giữ cùng
-cách trình bày. **Không sửa file đó**, không import cấu trúc nội bộ của nó; chép khuôn báo
-cáo thì được, nhưng nói rõ trong báo cáo là đã chép.
+**Dùng `calculate_percentile` và `empirical_percentile_rank` import từ `trading.metrics`**
+(đã chuyển về đó ở Task 0). **Không viết lại hai hàm này** — đó là toàn bộ lý do Task 0 tồn
+tại.
+
+Giữ cùng cách trình bày bảng với `scripts/significance_test.py` (đợt 38) — đọc file đó trước.
+Riêng phần *trình bày* được phép chép; phần *tính toán* thì không.
 
 Ở đây **không cần hiệu chỉnh xác suất** như đợt 38: số kỳ tái cân bằng và số vị thế giống hệt
 nhau theo thiết kế. Nêu điều đó trong output, thay cho khối hiệu chỉnh.
@@ -434,7 +491,9 @@ file nào**.
 
 1. `gitnexus_detect_changes()` (hoặc ghi rõ MCP timeout).
 2. `git diff --stat` và `git status --short`.
-3. Task 1: kết quả 11 test. Task 2: kết quả 3 tiêu chí, **kèm con số `universe_tb` thật** của
+3. **Task 0: `git diff` của `tests/test_significance.py` (kỳ vọng rỗng), và hai phân vị tái
+   lập `69.1% / 66.1%` dán từ terminal.**
+4. Task 1: kết quả 11 test. Task 2: kết quả 3 tiêu chí, **kèm con số `universe_tb` thật** của
    cả hai tập.
 4. Task 3: bảng tổng hợp, kết luận §3.3, nhận định bề mặt tham số §3.2.
 5. Ba dòng: số test pass (mốc **697**), ruff, cổng cứng VN đủ bốn con số.
@@ -449,7 +508,9 @@ Task nào chưa làm ghi thẳng **"CHƯA LÀM"** kèm lý do. **Không commit, 
 - **Không** chạy khung 1H. Đã giải thích ở §2.1.
 - **Không** thêm bộ lọc biến động, bộ lọc thanh khoản, trọng số theo vốn hoá, hay chuẩn hoá
   rủi ro. Baseline chia đều là baseline. Mọi thứ đó là đợt sau, **nếu** đợt này cho tín hiệu.
-- **Không** đụng hai module một-mã của đợt 37, không sửa công cụ của đợt 38.
+- **Không** đụng hai module một-mã của đợt 37. Với công cụ của đợt 38, thay đổi duy nhất được
+  phép là phép chuyển hai hàm ở **Task 0** — không sửa logic mô phỏng, không đổi hiệu chỉnh
+  xác suất, không đổi cách trình bày của nó.
 - **Không** nạp dữ liệu Binance, không mở module C/D của tài liệu gốc.
 - **Không** dùng dữ liệu sau `2026-09-02`. Xem §0.2.
 - **Không** dò lưới tham số. Bốn lượt độ nhạy ở §3.1 là để đọc hình dạng bề mặt, không phải
