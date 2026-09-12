@@ -8,7 +8,6 @@ Hai đối chứng:
 """
 
 import argparse
-import math
 import os
 import sys
 import time
@@ -29,6 +28,7 @@ except ImportError:
     from measure_crypto_strategies import read_crypto_bars
 
 from trading.crypto_fees import BINGX_PERP_TAKER
+from trading.metrics import calculate_percentile, empirical_percentile_rank
 from trading.models import Bar
 from trading.perp_backtest import RandomEntryConfig, run_perp_backtest
 
@@ -42,30 +42,6 @@ IS_END = datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC)
 OOS_START = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 OOS_END = datetime(2026, 9, 8, 23, 59, 59, tzinfo=UTC)
 
-
-def calculate_percentile(values: list[float], p: float) -> float:
-    """Tính phân vị thứ p (0 đến 100) theo phương pháp nội suy tuyến tính."""
-    if not values:
-        return 0.0
-    sorted_v = sorted(values)
-    n = len(sorted_v)
-    if n == 1:
-        return sorted_v[0]
-    rank = (p / 100.0) * (n - 1)
-    k = int(rank)
-    d = rank - k
-    if k >= n - 1:
-        return sorted_v[-1]
-    return sorted_v[k] + d * (sorted_v[k + 1] - sorted_v[k])
-
-
-def empirical_percentile_rank(values: list[float], target: float) -> float:
-    """Tính phân vị thực nghiệm của target trong null distribution (0 đến 100)."""
-    if not values:
-        return 0.0
-    less = sum(1 for v in values if v < target)
-    equal = sum(1 for v in values if math.isclose(v, target, abs_tol=1e-9))
-    return (less + 0.5 * equal) / len(values) * 100.0
 
 
 def _worker_single_run(args: tuple) -> tuple[float, int, int]:

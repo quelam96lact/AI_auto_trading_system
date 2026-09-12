@@ -143,3 +143,28 @@ def portfolio_equity_curve(
         curve.append(current_equity)
 
     return curve
+
+
+def calculate_percentile(values: list[float], p: float) -> float:
+    """Tính phân vị thứ p (0 đến 100) theo phương pháp nội suy tuyến tính."""
+    if not values:
+        return 0.0
+    sorted_v = sorted(values)
+    n = len(sorted_v)
+    if n == 1:
+        return sorted_v[0]
+    rank = (p / 100.0) * (n - 1)
+    k = int(rank)
+    d = rank - k
+    if k >= n - 1:
+        return sorted_v[-1]
+    return sorted_v[k] + d * (sorted_v[k + 1] - sorted_v[k])
+
+
+def empirical_percentile_rank(values: list[float], target: float) -> float:
+    """Tính phân vị thực nghiệm của target trong null distribution (0 đến 100)."""
+    if not values:
+        return 0.0
+    less = sum(1 for v in values if v < target)
+    equal = sum(1 for v in values if math.isclose(v, target, abs_tol=1e-9))
+    return (less + 0.5 * equal) / len(values) * 100.0
