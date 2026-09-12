@@ -383,3 +383,54 @@ Mặc dù trên OOS chiến lược mất ít hơn Mua-và-giữ BTC (+48.96 USD
 3. **Giả định thanh khoản lý tưởng:** Chiến lược giả định các lệnh tái cân bằng luôn khớp được ở giá Open $t+1$ cho mọi mã với cùng mức trượt giá danh nghĩa, không tính đến độ trượt thực tế và độ sâu sổ lệnh khác nhau giữa các altcoin vốn hoá nhỏ và BTC/ETH.
 4. **Giới hạn một sàn giao dịch:** Toàn bộ dữ liệu lấy từ BingX perpetual, không phản ánh sự khác biệt về spread hay funding giữa các sàn lớn như Binance hay OKX.
 5. **Chưa kiểm định Walk-Forward:** Phép đo sử dụng một mốc chia cố định (IS 2022–2025 và OOS 2026), chưa áp dụng tái tối ưu hoá cửa sổ trượt (rolling walk-forward).
+
+---
+
+## 6. Ghi chú của người kiểm chứng (Claude, 12/09/2026)
+
+Phần trên là báo cáo nguyên văn của agent thực thi. Tôi đã chạy lại độc lập và **mọi con số
+đều tái lập đúng từng chữ số**: IS `+1.001,51 / 98,6%`, OOS `−16,25 / 53,0%`, và ba mốc
+mua-và-giữ `+532,62 / +554,61 / +937,29` tôi tính lại bằng số học tay từ giá BTC thô.
+
+Kết luận ở §3 **không đổi**. Nhưng §4 có một chỗ đọc sai bằng chứng, ghi lại ở đây để người
+sau không lặp lại.
+
+### 6.1. Không so được PnL thô giữa các biến thể — mỗi biến thể chạy một cửa sổ khác nhau
+
+`compute_btc_buy_and_hold` lấy mốc bắt đầu là `rebalances[0].fill_ts`, tức **ngày vốn thực sự
+được triển khai**. Lookback dài hơn đẩy ngày đó muộn hơn:
+
+```
+lookback 30: fill đầu 2022-03-23  BTC open 42.374,30  | BH +532,62 | 198 kỳ (bỏ 5)
+lookback 60: fill đầu 2022-04-20  BTC open 41.490,70  | BH +554,61 | 194 kỳ (bỏ 9)
+lookback 90: fill đầu 2022-05-18  BTC open 30.443,90  | BH +937,29 | 190 kỳ (bỏ 13)
+```
+
+`2022-05-18` rơi ngay sau cú sập LUNA, khi BTC ở `30.443` thay vì `42.374`. Nên lookback 90
+"kém hơn" (`+281` so với `+1.001`) **một phần chỉ vì nó bắt đầu ở một điểm giá hoàn toàn
+khác** — không phải vì cửa sổ 90 ngày xếp hạng dở hơn.
+
+Đại lượng **so được** là phân vị trong phân phối null của chính biến thể đó, vì null dùng đúng
+cửa sổ và đúng ngày tái cân bằng của biến thể ấy: `98,6 / 99,2 / 90,4 / 97,0 / 98,7`. Đọc
+theo cột này thì bề mặt thật sự tương đối phẳng — cùng kết luận với §4, nhưng bằng lập luận
+đứng được.
+
+**Bài học cho brief sau:** khi mốc bắt đầu phụ thuộc tham số, PnL thô giữa các biến thể là số
+không so được. Hoặc cố định cửa sổ triển khai cho mọi biến thể, hoặc chỉ so bằng phân vị.
+
+### 6.2. Ngay cả trên IS, `98,6%` là bằng chứng mỏng
+
+Phân phối null IS có đuôi phải rất béo: `p95 = +493,81`, `p99 = +1.159,18`. Kết quả thật
+`+1.001,51` nằm **dưới p99** — tức khoảng 1,4% danh mục bốc thăm thuần tuý vẫn làm tốt hơn.
+Ngưỡng 95 là ngưỡng tôi chốt trước và tôi giữ nó, nhưng với độ phân tán này nó không phải bằng
+chứng mạnh.
+
+### 6.3. Điều đáng đo nếu có ai quay lại hướng này
+
+Trung vị null IS là `−152,16 USDT` (−30% vốn): **short ngẫu nhiên altcoin giai đoạn 2022–2025
+tốn kém khủng khiếp.** Phần lớn khoảng cách `+1.153` giữa kết quả thật và trung vị null có thể
+đến từ việc vế short tránh được mã tăng, chứ không phải vế long chọn được mã mạnh.
+
+Phép đo hiện tại **không tách được hai vế**. Mà đúng vế long mới là chỗ thiên lệch sống sót
+(§5.1) tác động mạnh nhất. Nếu quay lại hướng này, việc đầu tiên là phân rã PnL theo vế long
+và vế short riêng — trước khi tin bất kỳ con số IS nào.
