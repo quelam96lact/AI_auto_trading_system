@@ -175,8 +175,19 @@ Thêm trường `orders_dropped: int = 0` vào `PerpReport` và tăng nó tại 
 `drop_order` (LONG và SHORT) của module B. Sau khi vá, phải luôn đúng:
 
 ```
-signals_generated == orders_expired + orders_cancelled + orders_dropped + len(trades) + (0 hoặc 1 lệnh còn treo cuối kỳ)
+signals_generated == orders_expired + orders_cancelled + orders_dropped + len(trades) + con_treo
 ```
+
+trong đó `con_treo` là **0 hoặc 1**, bằng `1` khi lúc kết thúc vòng lặp bar vẫn còn **một lệnh
+chờ chưa khớp HOẶC một vị thế đang mở chưa đóng**. Hai tình huống đó không thể xảy ra cùng lúc
+(engine chỉ giữ một vị thế và chỉ tạo tín hiệu khi đang rảnh), nên `con_treo` không bao giờ
+vượt `1`.
+
+Nói rõ vế `con_treo` vì tôi suýt viết thiếu: một vị thế mở tới bar cuối cùng của tập dữ liệu
+sẽ **không** sinh ra `PerpTrade` nào. Cả bốn lượt chạy đợt 37 đều có `con_treo = 0`
+(`129 = 1+43+85`, `46 = 20+26`), nên nếu chỉ nhìn số liệu thật thì không thấy vế này — nhưng
+trên chuỗi tổng hợp của test nó rất dễ bằng `1`. Một tiêu chí bỏ sót nó sẽ bắt agent đi sửa
+code đúng thành code sai.
 
 Việc này thành bắt buộc ở đợt này vì ta sắp làm thống kê: không giải thích được 5/20 tín hiệu
 thì không nói được gì về ý nghĩa thống kê.
@@ -206,9 +217,20 @@ thì không nói được gì về ý nghĩa thống kê.
 
 1. Chạy module **thật** một lần trên tập đã chọn → lấy `net_pnl` thật, số lệnh thật, tỷ lệ
    long thật.
-2. **Hiệu chỉnh `signal_prob`:** đếm số bar đủ warm-up trong tập (chạy một lượt với
-   `signal_prob=1.0` và đọc `signals_generated`), rồi đặt
-   `signal_prob = signals_thật / bars_đủ_điều_kiện`.
+2. **Hiệu chỉnh `signal_prob` — đọc kỹ, chỗ này tôi suýt viết sai.**
+
+   Mẫu số đúng **không phải** số bar đủ warm-up. Nó là số **cơ hội vào lệnh**: bar mà engine
+   đang rảnh (không giữ vị thế, không có lệnh chờ, đã đủ warm-up). Con số đó **phụ thuộc đường
+   đi**, vì mỗi lệnh khoá engine hơn chục bar — Donchian giữ trung bình 10,6 bar.
+
+   Cách ước lượng ban đầu: chạy một lượt đối chứng với `signal_prob = 1.0`, đọc
+   `signals_generated` — đó là số chu kỳ tối đa engine chạy hết được trong tập. Đặt
+   `signal_prob = signals_thật / con số đó`.
+
+   **Ước lượng này thiên thấp một cách có hệ thống:** ở `prob = 1.0` mỗi chu kỳ ngắn hơn vì
+   lệnh vào ngay cơ hội đầu tiên, nên mẫu số to hơn thực tế, nên `signal_prob` nhỏ hơn cần
+   thiết, nên đối chứng sẽ có ít lệnh hơn lượt thật. Vòng hiệu chỉnh ở §2.3 tồn tại đúng để
+   bù chỗ này — đừng ngạc nhiên khi lần đầu lệch.
 3. Chạy **đối chứng A** (`long_prob=0.5`) với `seed = 0 .. N-1`.
 4. Chạy **đối chứng B** (`long_prob =` tỷ lệ long thật) với `seed = 0 .. N-1`.
 5. In, cho mỗi đối chứng: trung vị, p05, p25, p75, p95, p99 của `net_pnl` trong phân phối null;
@@ -232,9 +254,17 @@ và nếu chép thì nêu rõ trong báo cáo.
 
 In ra mỗi lần chạy, vì nếu ba số này sai thì mọi phân vị đều vô nghĩa:
 
-1. **Số lệnh đối chứng trung bình so với số lệnh thật.** Phải trong khoảng **±20%**. Ngoài
-   khoảng đó → in cảnh báo rõ ràng; hiệu chỉnh `signal_prob` **một lần** rồi chạy lại, và ghi
-   cả hai giá trị vào báo cáo. Không dò lặp tới khi vừa ý.
+1. **Số lệnh đối chứng trung bình so với số lệnh thật.** Phải trong khoảng **±20%**.
+
+   Ngoài khoảng đó: nhân `signal_prob` với `số_lệnh_thật / số_lệnh_đối_chứng` rồi chạy lại.
+   Cho phép **tối đa ba vòng**. Ghi **mọi** giá trị `signal_prob` đã dùng vào báo cáo, kể cả
+   các vòng bị bỏ. Sau ba vòng vẫn lệch → dừng, báo cáo, đừng tự nghĩ cách khác.
+
+   **Vì sao vòng lặp này không phải là dò tham số bậy:** nó chỉ nhắm vào **số lệnh của đối
+   chứng**, để hai bên so được với nhau. Nó không được phép nhìn tới phân vị của chiến lược
+   thật. **Khoá `signal_prob` xong mới được xem phân vị** — xem phân vị rồi quay lại chỉnh
+   `signal_prob` thì toàn bộ phép kiểm mất giá trị, và phải ghi thẳng điều đó vào báo cáo nếu
+   lỡ làm.
 2. **Tỷ lệ long thật** và tỷ lệ long trung bình của đối chứng B.
 3. **Thời gian chạy.** Nếu một lượt `--iterations 1000` quá **20 phút**, hạ xuống 500 và ghi
    rõ con số đã dùng. Đừng im lặng đổi.
