@@ -6,6 +6,7 @@ close tạm thời). BarLatch giữ snapshot mới nhất cho mỗi mã. Chỉ k
 để publish ra NATS.
 """
 
+import time
 from datetime import datetime, timedelta
 
 from trading.alerts import alert
@@ -22,6 +23,14 @@ class BarLatch:
         self.grace = timedelta(seconds=grace_seconds)
         self._current_bars: dict[str, Bar] = {}
         self._last_closed_ts: dict[str, datetime] = {}
+        self._snapshot_counts: dict[str, int] = {}
+        self.total_snapshots_received: int = 0
+        self.last_snapshot_mono: float | None = None
+        self.last_snapshot_ts: datetime | None = None
+
+    def get_snapshot_count(self, symbol: str) -> int:
+        """Lấy số snapshot hiện tại của khung đang mở cho symbol."""
+        return self._snapshot_counts.get(symbol, 0)
 
     def offer(self, bar: Bar) -> Bar | None:
         """Nhận một snapshot bar.
@@ -32,6 +41,10 @@ class BarLatch:
         - Nếu bar.ts < cur.ts: snapshot đến muộn -> alert WARN, bỏ qua, trả None.
         """
         sym = bar.symbol
+        self.total_snapshots_received += 1
+        self.last_snapshot_mono = time.monotonic()
+        self.last_snapshot_ts = bar.ts
+
         last_closed = self._last_closed_ts.get(sym)
         if last_closed is not None and bar.ts <= last_closed:
             alert(
@@ -46,16 +59,21 @@ class BarLatch:
         cur = self._current_bars.get(sym)
         if cur is None:
             self._current_bars[sym] = bar
+            self._snapshot_counts[sym] = 1
             return None
 
         if bar.ts == cur.ts:
             self._current_bars[sym] = bar
+            self._snapshot_counts[sym] = self._snapshot_counts.get(sym, 0) + 1
             return None
 
         if bar.ts > cur.ts:
             closed = cur
             self._last_closed_ts[sym] = closed.ts
+            count = self._snapshot_counts.get(sym, 1)
+            object.__setattr__(closed, "snapshot_count", count)
             self._current_bars[sym] = bar
+            self._snapshot_counts[sym] = 1
             return closed
 
         # bar.ts < cur.ts: snapshot đến muộn
@@ -80,6 +98,8 @@ class BarLatch:
 
         for sym, bar in zip(due_syms, due_bars):
             self._last_closed_ts[sym] = bar.ts
+            count = self._snapshot_counts.pop(sym, 1)
+            object.__setattr__(bar, "snapshot_count", count)
             del self._current_bars[sym]
 
         return due_bars
@@ -89,5 +109,8 @@ class BarLatch:
         bars = list(self._current_bars.values())
         for bar in bars:
             self._last_closed_ts[bar.symbol] = bar.ts
+            count = self._snapshot_counts.pop(bar.symbol, 1)
+            object.__setattr__(bar, "snapshot_count", count)
         self._current_bars.clear()
+        self._snapshot_counts.clear()
         return bars

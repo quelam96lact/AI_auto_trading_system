@@ -80,6 +80,7 @@ async def persist_bars(
     pub,
     bars,
     interval: timedelta = timedelta(minutes=5),
+    snapshots: list[int] | None = None,
 ) -> None:
     """Publish NATS trước + ghi DB sau. KHÔNG BAO GIỜ ném: hàm này được gọi qua
     asyncio.create_task() fire-and-forget, exception thoát ra sẽ bị asyncio nuốt
@@ -114,12 +115,15 @@ async def persist_bars(
 
     max_close_ts = max(b.ts for b in bars) + interval
     lag_ms = round((publish_done_at - max_close_ts).total_seconds() * 1000, 2)
+    if snapshots is None:
+        snapshots = [getattr(b, "snapshot_count", 1) for b in bars]
     alert(
         "INFO",
         "bars closed",
         n=len(bars),
         symbols=[b.symbol for b in bars],
         lag_ms=lag_ms,
+        snapshots=snapshots,
     )
 
 
@@ -175,7 +179,13 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
             closed = latch.offer(bar)
             if closed is not None:
                 task = asyncio.create_task(
-                    persist_bars(storage, pub, [closed], interval=latch.interval)
+                    persist_bars(
+                        storage,
+                        pub,
+                        [closed],
+                        interval=latch.interval,
+                        snapshots=[getattr(closed, "snapshot_count", 1)],
+                    )
                 )
                 if persist_tasks is not None:
                     persist_tasks.add(task)
@@ -193,6 +203,9 @@ class HousekeepingState:
     last_account_sync: datetime | None = None
     last_monotonic: float | None = None
     last_wall: datetime | None = None
+    warned_stream_silent: bool = False
+    last_seen_snapshot_count: int = 0
+    session_start_mono: float | None = None
 
 
 async def housekeeping_tick(
@@ -219,31 +232,69 @@ async def housekeeping_tick(
 
     cur_mono = time.monotonic()
     now = datetime.now(TZ)
+    holidays = getattr(cfg, "holidays", frozenset())
+    in_session = is_trading_time(now, holidays)
 
     if state.last_monotonic is not None and state.last_wall is not None:
         delta_wall = (now - state.last_wall).total_seconds()
         delta_mono = cur_mono - state.last_monotonic
         drift = delta_wall - delta_mono
         if drift >= CLOCK_DRIFT_THRESHOLD_SECONDS:
-            holidays = getattr(cfg, "holidays", frozenset())
-            in_session = is_trading_time(now, holidays) or is_trading_time(state.last_wall, holidays)
-            session_str = "trong giờ giao dịch" if in_session else "ngoài giờ giao dịch"
+            in_session_drift = in_session or is_trading_time(state.last_wall, holidays)
+            session_str = "trong giờ giao dịch" if in_session_drift else "ngoài giờ giao dịch"
             alert(
                 "CRITICAL",
                 f"phát hiện máy chủ ngủ/gián đoạn {drift:.0f}s ({session_str}) từ {state.last_wall.strftime('%H:%M:%S')} đến {now.strftime('%H:%M:%S')}",
                 dead_seconds=round(drift, 1),
                 from_ts=state.last_wall.isoformat(),
                 to_ts=now.isoformat(),
-                in_trading_hours=in_session,
+                in_trading_hours=in_session_drift,
             )
     state.last_monotonic = cur_mono
     state.last_wall = now
+
+    if in_session and latch is not None:
+        if latch.total_snapshots_received > state.last_seen_snapshot_count:
+            state.warned_stream_silent = False
+            state.last_seen_snapshot_count = latch.total_snapshots_received
+
+        if state.session_start_mono is None:
+            state.session_start_mono = cur_mono
+
+        last_mono = latch.last_snapshot_mono
+        if last_mono is None:
+            silent_seconds = cur_mono - state.session_start_mono
+        else:
+            silent_seconds = cur_mono - max(last_mono, state.session_start_mono)
+
+        if silent_seconds >= 120.0 and not state.warned_stream_silent:
+            last_ts_str = (
+                latch.last_snapshot_ts.isoformat()
+                if latch.last_snapshot_ts
+                else None
+            )
+            alert(
+                "WARN",
+                f"khong nhan snapshot nao trong {int(silent_seconds)} giay (trong phien)",
+                seconds=round(silent_seconds),
+                last_snapshot_ts=last_ts_str,
+            )
+            state.warned_stream_silent = True
+    else:
+        state.session_start_mono = None
+        state.warned_stream_silent = False
 
     if latch is not None and pub is not None:
         due = latch.flush_due(now)
         if due:
             task = asyncio.create_task(
-                persist_bars(storage, pub, due, interval=latch.interval)
+                persist_bars(
+                    storage,
+                    pub,
+                    due,
+                    interval=latch.interval,
+                    snapshots=[getattr(b, "snapshot_count", 1) for b in due],
+                )
             )
             if persist_tasks is not None:
                 persist_tasks.add(task)

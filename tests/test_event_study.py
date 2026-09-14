@@ -230,6 +230,7 @@ def test_3_positive_control():
     assert res["n_events"] >= 30
     assert res["details_horizons"]["1h"]["mean_event"] > 0.03
     assert res["details_horizons"]["1h"]["above_p95"] is True
+    assert res["overall_pass"] is True
 
 
 def test_4_negative_control():
@@ -283,3 +284,80 @@ def test_5_deterministic_reproducibility():
     for h in ("1h", "4h", "24h"):
         assert abs(res1["null_p95"][h] - res2["null_p95"][h]) < 1e-12
         assert abs(res1["event_mean"][h] - res2["event_mean"][h]) < 1e-12
+
+
+def test_6_net_edge_formula_exact_deduction():
+    """Brief 44 §3.4 Tiêu chí 2: loi_the_rong bằng đúng chênh lệch - 0.0010, tính lại trong test."""
+    from trading.crypto_fees import BINGX_PERP_TAKER
+
+    expected_round_trip = 2 * BINGX_PERP_TAKER
+    assert abs(expected_round_trip - 0.0010) < 1e-12
+
+    n_hours = 120
+    start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    bars, funding, metrics, orderflow = _build_synthetic_dataset(n_hours=n_hours, start_ts=start)
+
+    res = run_event_study(
+        bars, funding, metrics, orderflow,
+        is_start=bars[60].ts,
+        is_end=bars[110].ts,
+        n_permutations=10,
+        seed=42,
+    )
+
+    for h in ("1h", "4h", "24h"):
+        d = res["details_horizons"][h]
+        expected_net_edge = d["diff"] - expected_round_trip
+        assert abs(d["loi_the_rong"] - expected_net_edge) < 1e-12
+
+
+def test_7_high_percentile_but_negative_net_edge_concludes_negative():
+    """Brief 44 §3.4 Tiêu chí 3: một chân trời có phân vị cao nhưng loi_the_rong âm -> kết luận âm."""
+    n_hours = 360
+    start = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    bars, funding, metrics, orderflow = _build_synthetic_dataset(n_hours=n_hours, start_ts=start)
+
+    # Tạo 35 sự kiện
+    event_indices = [70 + i * 7 for i in range(35)]
+    event_set = set(event_indices)
+
+    # Đặt mức tăng sau sự kiện rất nhỏ (+0.03% = 3 bps), trong khi nến khác đi ngang (tăng 0)
+    # diff ~ +0.0003, nhưng phí 0.0010 (10 bps) -> loi_the_rong = -0.0007 < 0
+    p = 40000.0
+    for idx in range(n_hours):
+        t = start + timedelta(hours=idx)
+        if (idx - 1) in event_set:
+            p += p * 0.0003  # Tăng 0.03% (nhỏ hơn phí 0.10%)
+        bars[idx] = _make_bar(t, p)
+
+    oi_event_ts = set()
+    for ev_i in event_indices:
+        t_ev = bars[ev_i].ts
+        close_ts = t_ev + timedelta(hours=1)
+        m_ts_now = close_ts - timedelta(minutes=5)
+        oi_event_ts.add(m_ts_now)
+        orderflow[ev_i]["taker_buy_volume"] = 80.0
+        orderflow[ev_i]["taker_sell_volume"] = 20.0
+        orderflow[ev_i]["delta"] = 60.0
+
+    for m in metrics:
+        if m["ts"] in oi_event_ts:
+            m["sum_open_interest"] = 48000.0
+        else:
+            m["sum_open_interest"] = 50000.0
+
+    res = run_event_study(
+        bars, funding, metrics, orderflow,
+        is_start=bars[65].ts,
+        is_end=bars[320].ts,
+        n_permutations=100,
+        seed=42,
+    )
+
+    assert res["n_events"] >= 30
+    # Phân vị của 1h rất cao (trên phân vị 95 của max null)
+    assert res["max_actual_rank"] > res["max_null_p95"]
+    # Nhưng lợi thế ròng âm!
+    assert res["details_horizons"]["1h"]["loi_the_rong"] < 0
+    # Tiêu chí chốt trước bắt buộc: kết luận overall_pass PHẢI là False!
+    assert res["overall_pass"] is False

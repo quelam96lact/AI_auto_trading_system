@@ -42,10 +42,13 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
+from trading.crypto_fees import BINGX_PERP_TAKER
 from trading.feature_panel import build_feature_panel
 from trading.indicators import EmaCalculator
-from trading.metrics import calculate_percentile
+from trading.metrics import calculate_percentile, empirical_percentile_rank
 from trading.models import Bar
+
+ROUND_TRIP_FEE = 2 * BINGX_PERP_TAKER  # 0.0010 = 10 điểm cơ bản
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -304,6 +307,8 @@ def run_event_study(
     # Phép kiểm ý nghĩa: Block Permutation Test (nếu n_events >= 1)
     null_p95 = {"1h": 0.0, "4h": 0.0, "24h": 0.0}
     null_means = {"1h": [], "4h": [], "24h": []}
+    max_null_ranks: list[float] = []
+    max_null_p95 = 0.0
 
     if n_events > 0 and n_permutations > 0:
         rng = random.Random(seed)
@@ -333,38 +338,86 @@ def run_event_study(
         for h in ("1h", "4h", "24h"):
             null_p95[h] = calculate_percentile(null_means[h], 95.0)
 
-    # Đánh giá tiêu chí §4.2:
-    # 1. Số sự kiện >= 30
-    # 2. Lợi suất TB > 0 ở ít nhất một chân trời
-    # 3. Lợi suất đó nằm trên phân vị 95 của phân phối null
-    has_sufficient_power = n_events >= 30
-    passed_any_horizon = False
-    details_horizons = {}
+        # Brief 44 §3.1: Mỗi lần hoán vị, quy thành phân vị thực nghiệm trong phân phối riêng của nó,
+        # rồi lấy giá trị lớn nhất trong ba -> phân phối null của thống kê lớn nhất
+        for b_idx in range(n_permutations):
+            r1_b = null_means["1h"][b_idx]
+            r4_b = null_means["4h"][b_idx]
+            r24_b = null_means["24h"][b_idx]
+            rank1 = empirical_percentile_rank(null_means["1h"], r1_b)
+            rank4 = empirical_percentile_rank(null_means["4h"], r4_b)
+            rank24 = empirical_percentile_rank(null_means["24h"], r24_b)
+            max_null_ranks.append(max(rank1, rank4, rank24))
 
+        max_null_p95 = calculate_percentile(max_null_ranks, 95.0)
+
+    # Tính phân vị thực nghiệm của kết quả thật
+    actual_ranks = {}
+    for h in ("1h", "4h", "24h"):
+        actual_ranks[h] = (
+            empirical_percentile_rank(null_means[h], event_mean[h])
+            if (n_events > 0 and n_permutations > 0)
+            else 0.0
+        )
+
+    best_horizon = max(("1h", "4h", "24h"), key=lambda h: actual_ranks[h])
+    max_actual_rank = actual_ranks[best_horizon]
+
+    # Brief 44 §3.2 & §3.3:
+    # 1. Số sự kiện >= 30
+    # 2. loi_the_rong = mean_event - mean_uncond - 2 * BINGX_PERP_TAKER > 0 ở ít nhất một chân trời
+    # 3. Phân vị lớn nhất của kết quả thật vượt phân vị 95 của phân phối null giá trị lớn nhất
+    # 4. Chân trời thoả (2) và chân trời thoả (3) là cùng một chân trời
+    has_sufficient_power = n_events >= 30
+    is_statistically_significant = (
+        max_actual_rank > max_null_p95 if (n_events > 0 and n_permutations > 0) else False
+    )
+
+    details_horizons = {}
+    has_positive_net_edge = False
     for h in ("1h", "4h", "24h"):
         m_ev = event_mean[h]
-        p95 = null_p95[h]
-        is_pos = m_ev > 0
-        is_above_p95 = m_ev > p95 if n_events > 0 else False
-        horizon_pass = is_pos and is_above_p95
-        if horizon_pass:
-            passed_any_horizon = True
+        u_m = uncond_mean[h]
+        diff = m_ev - u_m
+        net_edge = diff - ROUND_TRIP_FEE
+        is_net_pos = net_edge > 0
+        if is_net_pos:
+            has_positive_net_edge = True
+        is_above_max_p95 = actual_ranks[h] > max_null_p95 if (n_events > 0 and n_permutations > 0) else False
+        horizon_pass = is_net_pos and is_above_max_p95
         details_horizons[h] = {
             "mean_event": m_ev,
-            "mean_uncond": uncond_mean[h],
-            "diff": m_ev - uncond_mean[h],
-            "null_p95": p95,
-            "is_pos": is_pos,
-            "above_p95": is_above_p95,
+            "mean_uncond": u_m,
+            "diff": diff,
+            "round_trip_fee": ROUND_TRIP_FEE,
+            "loi_the_rong": net_edge,
+            "empirical_percentile": actual_ranks[h],
+            "single_null_p95": null_p95[h],
+            "null_p95": null_p95[h],
+            "is_pos": m_ev > 0,
+            "is_net_pos": is_net_pos,
+            "above_p95": is_above_max_p95,
             "pass": horizon_pass,
         }
 
-    overall_pass = has_sufficient_power and passed_any_horizon
+    same_horizon = (details_horizons[best_horizon]["loi_the_rong"] > 0) and is_statistically_significant
+    overall_pass = (
+        has_sufficient_power
+        and has_positive_net_edge
+        and is_statistically_significant
+        and same_horizon
+    )
 
     return {
         "n_is": n_is,
         "n_events": n_events,
         "has_sufficient_power": has_sufficient_power,
+        "has_positive_net_edge": has_positive_net_edge,
+        "is_statistically_significant": is_statistically_significant,
+        "same_horizon": same_horizon,
+        "best_horizon": best_horizon,
+        "max_actual_rank": max_actual_rank,
+        "max_null_p95": max_null_p95,
         "counts_by_condition": counts_by_condition,
         "events": events_info,
         "uncond_mean": uncond_mean,
@@ -421,26 +474,35 @@ def main() -> None:
     print(f"5. Order flow (delta_norm > 0 & cvd_3h_t > cvd_3h_{{t-3}}):         {c_counts['orderflow']} giờ ({c_counts['orderflow']/res['n_is']*100:.2f}%)")
     print(f"-> HỢP CẢ 5 VẾ ({MODULE_C_NAME}):                                  {c_counts['all_combined']} giờ ({c_counts['all_combined']/res['n_is']*100:.2f}%)")
 
-    print("\n--- PHÉP ĐO LỢI SUẤT TƯƠNG LAI VÀ KIỂM ĐỊNH Ý NGHĨA (§4.2) ---")
-    print(f"{'Chân trời':<10} | {'Lợi suất TB SK (%)':<20} | {'K.điều kiện (%)':<16} | {'Chênh lệch (%)':<16} | {'Null P95 (%)':<14} | {'Vượt P95?':<10}")
-    print("-" * 96)
+    print("\n--- PHÉP ĐO LỢI THẾ RÒNG VÀ KIỂM ĐỊNH GIÁ TRỊ LỚN NHẤT (Brief 44 §3.1, §3.2) ---")
+    print(f"Phí vòng lệnh: 2 * BINGX_PERP_TAKER = {ROUND_TRIP_FEE*100:.2f}% ({ROUND_TRIP_FEE*10000:.0f} bps)")
+    print(f"Ngưỡng thống kê Max Null P95: {res['max_null_p95']:.2f}%")
+    print(f"{'Chân trời':<10} | {'Lợi suất TB SK (%)':<18} | {'K.điều kiện (%)':<15} | {'Chênh lệch (%)':<15} | {'Lợi thế ròng (%)':<16} | {'Phân vị (%)':<12} | {'Vượt Max P95?':<13} | {'Lợi thế ròng > 0?'}")
+    print("-" * 122)
 
     for h in ("1h", "4h", "24h"):
         d = res["details_horizons"][h]
         v_str = "CÓ" if d["above_p95"] else "Không"
+        net_str = "CÓ" if d["is_net_pos"] else "KHÔNG"
         print(
-            f"{h:<10} | {d['mean_event']*100:+.4f}%              | "
-            f"{d['mean_uncond']*100:+.4f}%        | {d['diff']*100:+.4f}%          | "
-            f"{d['null_p95']*100:+.4f}%       | {v_str:<10}"
+            f"{h:<10} | {d['mean_event']*100:+.4f}%            | "
+            f"{d['mean_uncond']*100:+.4f}%      | {d['diff']*100:+.4f}%        | "
+            f"{d['loi_the_rong']*100:+.4f}%         | {d['empirical_percentile']:6.2f}%      | "
+            f"{v_str:<13} | {net_str}"
         )
 
-    print("\n================ KẾT LUẬN TIÊU CHÍ CHỐT TRƯỚC (§4.2) ================")
-    if not res["has_sufficient_power"]:
-        print(f"KẾT QUẢ: ÂM — Số sự kiện N = {res['n_events']} < 30: KHÔNG ĐỦ LỰC THỐNG KÊ (DỪNG theo §4.3).")
-    elif res["overall_pass"]:
-        print(f"KẾT QUẢ: DƯƠNG — Số sự kiện N = {res['n_events']} >= 30 và vượt phân vị 95 null!")
+    print(f"\nChân trời đạt phân vị lớn nhất: {res['best_horizon']} ({res['max_actual_rank']:.2f}%)")
+
+    print("\n================ KẾT LUẬN TIÊU CHÍ CHỐT TRƯỚC (Brief 44 §3.3) ================")
+    print(f"1. Số sự kiện N >= 30: {res['n_events']} -> {'ĐẠT' if res['has_sufficient_power'] else 'KHÔNG ĐẠT'}")
+    print(f"2. Lợi thế ròng > 0 ở ít nhất 1 chân trời: {'ĐẠT' if res['has_positive_net_edge'] else 'KHÔNG ĐẠT'}")
+    print(f"3. Phân vị lớn nhất ({res['max_actual_rank']:.2f}%) vượt Max Null P95 ({res['max_null_p95']:.2f}%): {'ĐẠT' if res['is_statistically_significant'] else 'KHÔNG ĐẠT'}")
+    print(f"4. Chân trời thoả (2) và (3) là cùng một chân trời ({res['best_horizon']}): {'ĐẠT' if res['same_horizon'] else 'KHÔNG ĐẠT'}")
+    print("-" * 80)
+    if res["overall_pass"]:
+        print(">>> KẾT LUẬN TOÀN CUỘC: DƯƠNG — Thoả mãn cả 4 điều kiện chốt trước!")
     else:
-        print(f"KẾT QUẢ: ÂM — Số sự kiện N = {res['n_events']} >= 30 nhưng không vượt phân vị 95 null.")
+        print(">>> KẾT LUẬN TOÀN CUỘC: ÂM — Không thoả mãn đủ 4 điều kiện chốt trước.")
 
 
 if __name__ == "__main__":
