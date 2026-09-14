@@ -50,9 +50,9 @@ def test_2_metrics_staleness():
     ts = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
     bar = _make_bar(ts, 40000.0)
 
-    # Mốc metrics gần nhất lúc 00:45 (cách close_ts 15 phút, vượt ngưỡng 10 phút)
+    # Mốc metrics gần nhất lúc 00:40 (hoàn tất 00:45, cách close_ts 15 phút, vượt ngưỡng staleness 10 phút)
     stale_metric = {
-        "ts": datetime(2024, 1, 1, 0, 45, tzinfo=UTC),
+        "ts": datetime(2024, 1, 1, 0, 40, tzinfo=UTC),
         "sum_open_interest": 50000.0,
         "count_long_short_ratio": 1.5,
         "sum_toptrader_long_short_ratio": 1.2,
@@ -69,9 +69,9 @@ def test_3_oi_zero_becomes_null_ratio_preserved():
     ts = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
     bar = _make_bar(ts, 40000.0)
 
-    # Metrics tại close_ts (01:00) có sum_open_interest = 0
+    # Metrics hoàn tất tại close_ts (01:00) có mốc 00:55, sum_open_interest = 0
     m_now = {
-        "ts": datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
+        "ts": datetime(2024, 1, 1, 0, 55, tzinfo=UTC),
         "sum_open_interest": 0.0,
         "sum_open_interest_value": 0.0,
         "count_long_short_ratio": 1.68,
@@ -80,7 +80,7 @@ def test_3_oi_zero_becomes_null_ratio_preserved():
     }
     # Mốc 3h trước hợp lệ
     m_prev = {
-        "ts": datetime(2023, 12, 31, 22, 0, tzinfo=UTC),
+        "ts": datetime(2023, 12, 31, 21, 55, tzinfo=UTC),
         "sum_open_interest": 45000.0,
         "count_long_short_ratio": 1.5,
     }
@@ -241,3 +241,58 @@ def test_8_non_leakage_truncation():
         else:
             assert val_trunc is not None, f"Lệch tại {feat}: full={val_full}, trunc=None"
             assert abs(val_full - val_trunc) < 1e-9, f"Lệch giá trị tại {feat}: {val_full} != {val_trunc}"
+
+
+def test_9_completed_metric_at_close_ts_is_used():
+    """Test 9: Mốc hoàn tất đúng lúc close_ts được dùng: mốc 09:55 với close_ts = 10:00 -> dùng được."""
+    ts = datetime(2024, 1, 1, 9, 0, tzinfo=UTC)  # bar 09:00 -> close_ts 10:00
+    bar = _make_bar(ts, 40000.0)
+    m_955 = {
+        "ts": datetime(2024, 1, 1, 9, 55, tzinfo=UTC),
+        "sum_open_interest": 50000.0,
+        "count_long_short_ratio": 1.75,
+        "sum_toptrader_long_short_ratio": 1.45,
+        "sum_taker_long_short_vol_ratio": 1.30,
+    }
+    panel = build_feature_panel([bar], [], [m_955], [])
+    assert panel[0]["long_short_ratio"] == 1.75
+    assert panel[0]["toptrader_ls_ratio"] == 1.45
+    assert panel[0]["taker_ls_vol_ratio"] == 1.30
+
+
+def test_10_uncompleted_metric_at_close_ts_is_rejected():
+    """Test 10: Mốc chưa hoàn tất bị loại: mốc 10:00 với close_ts = 10:00 -> không được dùng; hàng phải lấy 09:55."""
+    ts = datetime(2024, 1, 1, 9, 0, tzinfo=UTC)  # bar 09:00 -> close_ts 10:00
+    bar = _make_bar(ts, 40000.0)
+    m_955 = {
+        "ts": datetime(2024, 1, 1, 9, 55, tzinfo=UTC),
+        "count_long_short_ratio": 1.75,
+    }
+    m_1000 = {
+        "ts": datetime(2024, 1, 1, 10, 0, tzinfo=UTC),
+        "count_long_short_ratio": 9.99,  # Giá trị của mốc tương lai (nhìn trước)
+    }
+    panel = build_feature_panel([bar], [], [m_955, m_1000], [])
+    # Phải lấy mốc 09:55 (1.75), KHÔNG ĐƯỢC lấy mốc 10:00 (9.99)
+    assert panel[0]["long_short_ratio"] == 1.75
+
+
+def test_11_metric_lag_10_minutes():
+    """Test 11: metric_lag_minutes = 10 -> mốc muộn nhất dùng được tại close_ts = 10:00 là 09:50."""
+    ts = datetime(2024, 1, 1, 9, 0, tzinfo=UTC)  # bar 09:00 -> close_ts 10:00
+    bar = _make_bar(ts, 40000.0)
+    m_950 = {
+        "ts": datetime(2024, 1, 1, 9, 50, tzinfo=UTC),
+        "count_long_short_ratio": 1.50,
+    }
+    m_955 = {
+        "ts": datetime(2024, 1, 1, 9, 55, tzinfo=UTC),
+        "count_long_short_ratio": 1.75,
+    }
+    m_1000 = {
+        "ts": datetime(2024, 1, 1, 10, 0, tzinfo=UTC),
+        "count_long_short_ratio": 9.99,
+    }
+    # Với metric_lag_minutes = 10: mốc 09:55 và 10:00 bị loại, mốc muộn nhất hợp lệ là 09:50
+    panel = build_feature_panel([bar], [], [m_950, m_955, m_1000], [], metric_lag_minutes=10)
+    assert panel[0]["long_short_ratio"] == 1.50

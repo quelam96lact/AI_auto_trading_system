@@ -41,6 +41,7 @@ def build_feature_panel(
     metrics: list[dict],
     orderflow: list[dict],
     *,
+    metric_lag_minutes: int = 5,
     max_metric_staleness_minutes: int = 10,
 ) -> list[dict]:
     """Dựng bảng đặc trưng 1 giờ chống nhìn trước từ các nguồn dữ liệu phi giá.
@@ -50,6 +51,7 @@ def build_feature_panel(
     - funding: Danh sách tuple (funding_time, funding_rate).
     - metrics: Danh sách dict metrics 5m (chứa ts, sum_open_interest, count_long_short_ratio,...).
     - orderflow: Danh sách dict orderflow 1h (chứa ts, delta, taker_buy_volume, taker_sell_volume,...).
+    - metric_lag_minutes: Số phút hoàn tất của metric (mặc định 5, Brief đợt 42).
     - max_metric_staleness_minutes: Số phút tối đa cho phép độ trễ của metrics (mặc định 10).
     """
     if not klines:
@@ -86,16 +88,17 @@ def build_feature_panel(
 
     results = []
 
-    # Helper tìm metric gần nhất <= target_ts
+    # Helper tìm metric gần nhất thoả: ts + metric_lag_minutes <= target_ts (Brief 42 §2.1)
     def get_latest_metric(target_ts: datetime) -> dict | None:
         if not metric_times:
             return None
-        # bisect_right tìm vị trí chèn sau các phần tử <= target_ts
-        idx = bisect.bisect_right(metric_times, target_ts) - 1
+        effective_target = target_ts - timedelta(minutes=metric_lag_minutes)
+        # bisect_right tìm vị trí chèn sau các phần tử <= effective_target
+        idx = bisect.bisect_right(metric_times, effective_target) - 1
         if idx < 0:
             return None
         m = cleaned_metrics[idx]
-        diff_sec = (target_ts - m["ts"]).total_seconds()
+        diff_sec = (target_ts - (m["ts"] + timedelta(minutes=metric_lag_minutes))).total_seconds()
         # Không được dùng tương lai và không được quá cũ
         if 0 <= diff_sec <= max_metric_staleness_minutes * 60:
             return m

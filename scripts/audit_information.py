@@ -340,6 +340,8 @@ def main() -> None:
     parser.add_argument("--permutations", type=int, default=1000)
     parser.add_argument("--block-size", type=int, default=48)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--metric-lag", type=int, default=5, help="Độ trễ hoàn tất của metric (phút, mặc định 5)")
+    parser.add_argument("--compare-lags", action="store_true", help="Chạy đối chiếu 2 mức lag 5m và 10m (Brief 42 §3.2)")
     parser.add_argument("--control-test", action="store_true", help="Chạy đối chứng dương và âm để kiểm tra công cụ")
     parser.add_argument("--dsn", default=None, help="Database DSN override")
 
@@ -352,6 +354,7 @@ def main() -> None:
 
     print(f"=== [KIỂM TOÁN THÔNG TIN DỮ LIỆU PHI GIÁ] {args.symbol} ===")
     print(f"Khoảng In-Sample (IS): {is_start_dt} -> {is_end_dt} UTC (Năm 2026 niêm phong)")
+    print(f"Tham số metric_lag_minutes: {args.metric_lag}m (so sánh 5m vs 10m: {args.compare_lags})")
 
     # 1. Tải dữ liệu từ DB
     klines, funding, metrics, orderflow = load_is_data_from_db(conn, symbol=args.symbol, is_start=is_start_dt, is_end=is_end_dt)
@@ -361,10 +364,16 @@ def main() -> None:
 
     # 2. Dựng bảng đặc trưng
     t_p0 = time.perf_counter()
-    raw_panel = build_feature_panel(klines, funding, metrics, orderflow)
+    raw_panel = build_feature_panel(klines, funding, metrics, orderflow, metric_lag_minutes=args.metric_lag)
     # Lọc đúng khoảng IS
     is_panel = [r for r in raw_panel if is_start_dt <= r["ts"] <= is_end_dt]
-    print(f"Bảng đặc trưng IS: {len(is_panel)} hàng ({time.perf_counter() - t_p0:.2f}s).")
+    print(f"Bảng đặc trưng IS (lag={args.metric_lag}m): {len(is_panel)} hàng ({time.perf_counter() - t_p0:.2f}s).")
+
+    is_panel_10m = None
+    if args.compare_lags:
+        raw_panel_10m = build_feature_panel(klines, funding, metrics, orderflow, metric_lag_minutes=10)
+        is_panel_10m = [r for r in raw_panel_10m if is_start_dt <= r["ts"] <= is_end_dt]
+        print(f"Bảng đặc trưng IS (lag=10m biên an toàn): {len(is_panel_10m)} hàng.")
 
     # Kiểm tra đối chứng nếu có cờ --control-test
     if args.control_test:
@@ -388,6 +397,10 @@ def main() -> None:
     # 3. Tính tương quan thực tế cho 27 cặp
     real_corrs = compute_all_correlations(is_panel, FEATURE_NAMES, TARGET_NAMES)
 
+    corrs_10m = {}
+    if is_panel_10m is not None:
+        corrs_10m = compute_all_correlations(is_panel_10m, FEATURE_NAMES, TARGET_NAMES)
+
     # 4. Chạy hoán vị khối 48h (1000 lần)
     threshold_95, _null_dist = run_block_permutation_test(
         is_panel,
@@ -400,18 +413,30 @@ def main() -> None:
 
     print("\n================ KẾT QUẢ KIỂM TOÁN 27 CẶP (IN-SAMPLE 2024-2025) ================")
     print(f"Ngưỡng phân vị 95 của phân phối Null max(|rho|): {threshold_95:.6f}")
-    print(f"{'Đặc trưng':<22} | {'Mục tiêu':<12} | {'Spearman rho':<14} | {'Số hàng':<8} | {'Vượt ngưỡng?':<12}")
-    print("-" * 75)
 
     significant_pairs = []
     sorted_pairs = sorted(real_corrs.items(), key=lambda item: abs(item[1][0]), reverse=True)
 
-    for (f, t), (rho, cnt) in sorted_pairs:
-        is_sig = abs(rho) > threshold_95
-        if is_sig:
-            significant_pairs.append(((f, t), rho, cnt))
-        status_str = "CÓ (VƯỢT)" if is_sig else "Không"
-        print(f"{f:<22} | {t:<12} | {rho:+.6f}      | {cnt:<8} | {status_str:<12}")
+    if is_panel_10m is not None:
+        print(f"{'Đặc trưng':<22} | {'Mục tiêu':<12} | {'rho (5m)':<12} | {'rho (10m)':<12} | {'Δ rho':<10} | {'Số hàng':<8} | {'Vượt ngưỡng?':<12}")
+        print("-" * 92)
+        for (f, t), (rho_5m, cnt_5m) in sorted_pairs:
+            rho_10m, _cnt_10m = corrs_10m.get((f, t), (0.0, 0))
+            delta_rho = rho_10m - rho_5m
+            is_sig = abs(rho_5m) > threshold_95
+            if is_sig:
+                significant_pairs.append(((f, t), rho_5m, cnt_5m))
+            status_str = "CÓ (VƯỢT)" if is_sig else "Không"
+            print(f"{f:<22} | {t:<12} | {rho_5m:+.6f}   | {rho_10m:+.6f}    | {delta_rho:+.6f}  | {cnt_5m:<8} | {status_str:<12}")
+    else:
+        print(f"{'Đặc trưng':<22} | {'Mục tiêu':<12} | {'Spearman rho':<14} | {'Số hàng':<8} | {'Vượt ngưỡng?':<12}")
+        print("-" * 75)
+        for (f, t), (rho, cnt) in sorted_pairs:
+            is_sig = abs(rho) > threshold_95
+            if is_sig:
+                significant_pairs.append(((f, t), rho, cnt))
+            status_str = "CÓ (VƯỢT)" if is_sig else "Không"
+            print(f"{f:<22} | {t:<12} | {rho:+.6f}      | {cnt:<8} | {status_str:<12}")
 
     print("\n================ KẾT LUẬN KIỂM TOÁN ================")
     if significant_pairs:
