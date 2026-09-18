@@ -80,6 +80,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: 1.0
+    volumes:
+      - ./logs:/app/logs
   grafana:
     image: grafana/grafana:11.2.0
     # 127.0.0.1: Grafana KHONG duoc mo thang ra internet. Dat sau nginx+TLS

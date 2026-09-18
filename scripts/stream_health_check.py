@@ -221,7 +221,8 @@ def fetch_expected_bars_from_db(
         cur.execute("SET TimeZone='Asia/Ho_Chi_Minh';")
 
         if session == "sang":
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT count(DISTINCT time_bucket('5m', ts)) as slots,
                        count(DISTINCT symbol) as syms,
                        count(*) as total_bars
@@ -229,9 +230,12 @@ def fetch_expected_bars_from_db(
                 WHERE ts >= (%s || ' 09:00:00+07')::timestamptz
                   AND ts <= (%s || ' 11:35:00+07')::timestamptz
                   AND symbol = ANY(%s);
-            """, (check_date.isoformat(), check_date.isoformat(), list(symbols)))
+            """,
+                (check_date.isoformat(), check_date.isoformat(), list(symbols)),
+            )
         elif session == "chieu":
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT count(DISTINCT time_bucket('5m', ts)) as slots,
                        count(DISTINCT symbol) as syms,
                        count(*) as total_bars
@@ -239,10 +243,13 @@ def fetch_expected_bars_from_db(
                 WHERE ts >= (%s || ' 13:00:00+07')::timestamptz
                   AND ts <= (%s || ' 15:05:00+07')::timestamptz
                   AND symbol = ANY(%s);
-            """, (check_date.isoformat(), check_date.isoformat(), list(symbols)))
+            """,
+                (check_date.isoformat(), check_date.isoformat(), list(symbols)),
+            )
         else:
             # Cả ngày (cả 2 phiên)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT count(DISTINCT time_bucket('5m', ts)) as slots,
                        count(DISTINCT symbol) as syms,
                        count(*) as total_bars
@@ -254,7 +261,9 @@ def fetch_expected_bars_from_db(
                     (ts::time >= '09:00:00' AND ts::time <= '11:35:00') OR
                     (ts::time >= '13:00:00' AND ts::time <= '15:05:00')
                   );
-            """, (check_date.isoformat(), check_date.isoformat(), list(symbols)))
+            """,
+                (check_date.isoformat(), check_date.isoformat(), list(symbols)),
+            )
 
         row = cur.fetchone()
         slots = row[0] if row else 0
@@ -302,13 +311,44 @@ def evaluate_stream_health(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Kiểm tra sức khoẻ luồng SSI thời gian thực (Brief 43 & Brief 49).")
-    parser.add_argument("--session", choices=["sang", "chieu"], default=None, help="Phiên giao dịch (sang hoặc chieu)")
+    parser = argparse.ArgumentParser(
+        description="Kiểm tra sức khoẻ luồng SSI thời gian thực (Brief 43 & Brief 49)."
+    )
+    parser.add_argument(
+        "--session",
+        choices=["sang", "chieu"],
+        default=None,
+        help="Phiên giao dịch (sang hoặc chieu)",
+    )
     parser.add_argument("--date", default=None, help="Ngày kiểm tra (YYYY-MM-DD)")
-    parser.add_argument("--log-file", default=None, help="Đường dẫn file log để đọc (dùng cho test/audit)")
-    parser.add_argument("--min-coverage-warn", type=float, default=None, help="Ngưỡng cảnh báo độ phủ luồng (ví dụ 0.90)")
-    parser.add_argument("--min-coverage-crit", type=float, default=None, help="Ngưỡng nghiêm trọng độ phủ luồng (ví dụ 0.50)")
-    parser.add_argument("--expected-bars", type=int, default=None, help="Số nến kỳ vọng mẫu số (mock cho test)")
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Đường dẫn file log để đọc (dùng cho test/audit)",
+    )
+    parser.add_argument(
+        "--persistent-log",
+        default=None,
+        help="Đường dẫn file log bền vững (mặc định logs/bars_closed.log)",
+    )
+    parser.add_argument(
+        "--min-coverage-warn",
+        type=float,
+        default=None,
+        help="Ngưỡng cảnh báo độ phủ luồng (ví dụ 0.90)",
+    )
+    parser.add_argument(
+        "--min-coverage-crit",
+        type=float,
+        default=None,
+        help="Ngưỡng nghiêm trọng độ phủ luồng (ví dụ 0.50)",
+    )
+    parser.add_argument(
+        "--expected-bars",
+        type=int,
+        default=None,
+        help="Số nến kỳ vọng mẫu số (mock cho test)",
+    )
     parser.add_argument("--dsn", default=None, help="Database DSN override")
 
     args = parser.parse_args()
@@ -327,31 +367,66 @@ def main() -> None:
         # Cả hai đều thiếu: chọn phiên gần nhất ĐÃ KẾT THÚC
         resolved = resolve_target_session(now_vn)
         if resolved is None:
-            print("bo qua: khong co phien giao dich nao ket thuc trong vong 24 gio (ngay nghi/cuoi tuan)")
+            print(
+                "bo qua: khong co phien giao dich nao ket thuc trong vong 24 gio (ngay nghi/cuoi tuan)"
+            )
             sys.exit(0)
         check_date, session = resolved
         target_name = f"phien {session}"
 
     # Bổ sung Brief 50 Task 1: Phiên chưa kết thúc thì bỏ qua, không kêu
     if not is_session_ended(check_date, session, now_vn):
-        print(f"bo qua: {target_name} ngay {check_date.isoformat()} chua ket thuc tai thoi diem kiem tra")
+        print(
+            f"bo qua: {target_name} ngay {check_date.isoformat()} chua ket thuc tai thoi diem kiem tra"
+        )
         sys.exit(0)
 
+    # Brief 52 Task 1.3: Thứ tự ưu tiên nguồn log:
+    # 1. args.log_file (nếu truyền cờ --log-file, dùng cho audit/test riêng).
+    # 2. File bền vững (args.persistent_log hoặc logs/bars_closed.log), nguồn 'file'.
+    # 3. Docker container logs (fetch_docker_collector_logs), nguồn 'log'.
+    repo_root = Path(__file__).resolve().parents[1]
+    default_persistent_path = repo_root / "logs" / "bars_closed.log"
+    persistent_path = (
+        Path(args.persistent_log) if args.persistent_log else default_persistent_path
+    )
+
     if args.log_file:
+        source = "file"
         with open(args.log_file, encoding="utf-8", errors="replace") as f:
             logs = f.read()
     else:
-        logs = fetch_docker_collector_logs()
+        # File bền chỉ được ưu tiên khi nó THỰC SỰ chứa bằng chứng chốt nến. Nếu chỉ
+        # có nó mà rỗng bằng chứng thì rơi về log container — nếu không, một file
+        # chứa toàn alert khác (hoặc rác từ một tiến trình lạ) sẽ đè lên nguồn thật
+        # và biến mọi phiên cũ thành "0 nen / exit 2".
+        persistent_text = None
+        if persistent_path.is_file():
+            with open(persistent_path, encoding="utf-8", errors="replace") as f:
+                candidate = f.read()
+            if "bars closed" in candidate:
+                persistent_text = candidate
+
+        if persistent_text is not None:
+            source = "file"
+            logs = persistent_text
+        else:
+            source = "log"
+            logs = fetch_docker_collector_logs()
 
     # Tính tử số: số nến chốt từ luồng
     if session is None:
-        count = count_stream_bars_closed(logs, "sang", check_date) + count_stream_bars_closed(logs, "chieu", check_date)
+        count = count_stream_bars_closed(
+            logs, "sang", check_date
+        ) + count_stream_bars_closed(logs, "chieu", check_date)
     else:
         count = count_stream_bars_closed(logs, session, check_date)
 
     # Tính mẫu số nếu bật kiểm tra độ phủ
     denom = None
-    has_coverage_check = (args.min_coverage_warn is not None) or (args.min_coverage_crit is not None)
+    has_coverage_check = (args.min_coverage_warn is not None) or (
+        args.min_coverage_crit is not None
+    )
     if has_coverage_check:
         if args.expected_bars is not None:
             denom = args.expected_bars
@@ -362,35 +437,45 @@ def main() -> None:
                 sys.stderr.write(f"Loi truy van DB tinh mau so do phu: {e}\n")
                 denom = None
 
-    code, _level = evaluate_stream_health(count, denom, args.min_coverage_warn, args.min_coverage_crit)
+    code, _level = evaluate_stream_health(
+        count, denom, args.min_coverage_warn, args.min_coverage_crit
+    )
 
     if code == 2:
         if count == 0:
             sys.stderr.write(
-                f"dung: {target_name} ngay {check_date.isoformat()} khong co dong 'bars closed' nao tu luong thoi gian thuc (0 nen)\n"
+                f"dung: {target_name} ngay {check_date.isoformat()} khong co dong 'bars closed' nao tu luong thoi gian thuc (0 nen) [nguon: {source}]\n"
             )
         else:
             cov_str = f"{count / denom:.1%}" if (denom and denom > 0) else "N/A"
-            crit_val = args.min_coverage_crit if args.min_coverage_crit is not None else 0.50
+            crit_val = (
+                args.min_coverage_crit if args.min_coverage_crit is not None else 0.50
+            )
             sys.stderr.write(
                 f"dung: do phu luong {target_name} ngay {check_date.isoformat()} chi dat {cov_str} "
-                f"({count}/{denom} nen), duoi nguong nghiem trong {crit_val:.0%}\n"
+                f"({count}/{denom} nen), duoi nguong nghiem trong {crit_val:.0%} [nguon: {source}]\n"
             )
         sys.exit(2)
     elif code == 1:
         cov_str = f"{count / denom:.1%}" if (denom and denom > 0) else "N/A"
-        warn_val = args.min_coverage_warn if args.min_coverage_warn is not None else 0.90
+        warn_val = (
+            args.min_coverage_warn if args.min_coverage_warn is not None else 0.90
+        )
         print(
             f"WARN: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} "
-            f"({count}/{denom} nen), duoi nguong canh bao {warn_val:.0%}"
+            f"({count}/{denom} nen), duoi nguong canh bao {warn_val:.0%} [nguon: {source}]"
         )
         sys.exit(1)
     else:
         if denom and denom > 0 and has_coverage_check:
             cov_str = f"{count / denom:.1%}"
-            print(f"OK: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} ({count}/{denom} nen tu luong thoi gian thuc).")
+            print(
+                f"OK: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} ({count}/{denom} nen tu luong thoi gian thuc) [nguon: {source}]."
+            )
         else:
-            print(f"OK: {target_name} ngay {check_date.isoformat()} co {count} lan chot nen tu luong thoi gian thuc.")
+            print(
+                f"OK: {target_name} ngay {check_date.isoformat()} co {count} lan chot nen tu luong thoi gian thuc [nguon: {source}]."
+            )
         sys.exit(0)
 
 

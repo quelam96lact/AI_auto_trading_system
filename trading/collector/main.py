@@ -4,7 +4,9 @@ import logging
 import signal
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
@@ -241,7 +243,9 @@ async def housekeeping_tick(
         drift = delta_wall - delta_mono
         if drift >= CLOCK_DRIFT_THRESHOLD_SECONDS:
             in_session_drift = in_session or is_trading_time(state.last_wall, holidays)
-            session_str = "trong giờ giao dịch" if in_session_drift else "ngoài giờ giao dịch"
+            session_str = (
+                "trong giờ giao dịch" if in_session_drift else "ngoài giờ giao dịch"
+            )
             alert(
                 "CRITICAL",
                 f"phát hiện máy chủ ngủ/gián đoạn {drift:.0f}s ({session_str}) từ {state.last_wall.strftime('%H:%M:%S')} đến {now.strftime('%H:%M:%S')}",
@@ -270,9 +274,7 @@ async def housekeeping_tick(
 
         if silent_seconds >= 120.0 and not state.warned_stream_silent:
             last_ts_str = (
-                latch.last_snapshot_ts.isoformat()
-                if latch.last_snapshot_ts
-                else None
+                latch.last_snapshot_ts.isoformat() if latch.last_snapshot_ts else None
             )
             alert(
                 "WARN",
@@ -431,7 +433,9 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
     feed = SSIFeed(
         cfg,
         storage,
-        on_message=make_stream_message_handler(wd, storage, pub, persist_tasks, latch=latch),
+        on_message=make_stream_message_handler(
+            wd, storage, pub, persist_tasks, latch=latch
+        ),
     )
     feed.start()
 
@@ -453,9 +457,15 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
                 storage.write_bars(remaining)
                 for b in remaining:
                     await pub.publish(b)
-                alert("INFO", "flushed remaining bars at shutdown", count=len(remaining))
+                alert(
+                    "INFO", "flushed remaining bars at shutdown", count=len(remaining)
+                )
             except Exception as e:
-                alert("WARN", "failed to flush remaining bars at shutdown", error=str(e)[:100])
+                alert(
+                    "WARN",
+                    "failed to flush remaining bars at shutdown",
+                    error=str(e)[:100],
+                )
         if persist_tasks:
             _, pending = await asyncio.wait(persist_tasks, timeout=10)
             if pending:
@@ -480,6 +490,48 @@ def _configure_logging() -> None:
     # bảng heartbeat. KHÔNG đụng logger ssi_sdk.services.token_manager — nó log
     # "Token refreshed successfully", hữu ích và không chứa secret.
     logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)
+
+    # Brief 52 Task 1: Gắn RotatingFileHandler vào logger "trading.alerts" để ghi bằng chứng
+    # nến chốt (và mọi alert collector) bền vững ra volume mount (/app/logs/bars_closed.log).
+    # 1. Gắn tại đây (khởi tạo logging collector), không gắn ở alerts.py để tránh sinh file rác khi test/script.
+    # 2. Không bao giờ được ném: try/except toàn bộ để collector vẫn chạy nếu không có thư mục hoặc thiếu quyền.
+    # 3. Xoay vòng RotatingFileHandler: maxBytes=5MB, backupCount=5 (~30MB tối đa, đủ lưu nhiều năm).
+    # 4. Formatter: ISO-8601 UTC kết thúc bằng Z giống định dạng docker logs -t để stream_health_check đọc tự nhiên.
+    # 5. CHI gan khi dang chay trong container (/app/logs la volume mount). Ban dau co
+    #    nhanh du phong ve Path("logs") tren host — bo di: moi lan chay pytest tu goc repo
+    #    deu goi ham nay va do 559 dong alert TEST (SYM_B, ENGT) vao dung file ma
+    #    stream_health_check lay lam nguon uu tien, bien mot phien lanh 93,8% thanh
+    #    "0 nen / exit 2". Nguon bang chung phai chi do tien trinh that ghi.
+    try:
+        log_dir = Path("/app/logs")
+        if log_dir.is_dir():
+            log_file = log_dir / "bars_closed.log"
+
+            class AlertUtcIsoFormatter(logging.Formatter):
+                def format(self, record: logging.LogRecord) -> str:
+                    ts = datetime.fromtimestamp(record.created, tz=UTC).strftime(
+                        "%Y-%m-%dT%H:%M:%S.%fZ"
+                    )
+                    return f"{ts} {record.getMessage()}"
+
+            handler = RotatingFileHandler(
+                str(log_file),
+                maxBytes=5 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            handler.setFormatter(AlertUtcIsoFormatter())
+            handler.setLevel(logging.INFO)
+            handler.set_name("trading-alerts-file")
+            alerts_logger = logging.getLogger("trading.alerts")
+            # Goi ham nay hai lan thi them hai handler -> moi alert ghi hai dong.
+            # Da thay that trong file 18/09: moi dong lap dung hai lan.
+            if not any(
+                h.get_name() == "trading-alerts-file" for h in alerts_logger.handlers
+            ):
+                alerts_logger.addHandler(handler)
+    except Exception:
+        pass
 
 
 def main() -> None:

@@ -54,30 +54,36 @@ def _human_drift(seconds: int) -> str:
     return f"{seconds // 86400} ngày {seconds % 86400 // 3600} giờ"
 
 
-def drift_report(commit_epoch: int, images: dict[str, int | None]) -> list[str]:
+def drift_report(commit_epoch: int, images: dict[str, int | str | None]) -> list[str]:
     """So mốc build image với commit gần nhất chạm trading/.
 
-    images: {"collector": epoch, "engine": epoch}; None = không đọc được
-    (container không chạy / không có image). Rỗng = mọi thứ ổn.
+    images: {"collector": epoch_or_status, "engine": epoch_or_status};
+    - int: epoch giây build image
+    - 'image_missing': container đang chạy nhưng image đã biến mất
+    - None / 'container_down': container không chạy
 
     Quy tắc:
+    - container đang chạy nhưng image biến mất ⇒ cảnh báo nghiêm trọng (chạy code không ai truy được).
+    - container không chạy ⇒ cảnh báo container không chạy.
     - image cũ hơn commit ⇒ cảnh báo, nêu rõ lệch bao nhiêu và service nào.
-    - None ⇒ cảnh báo riêng, KHÔNG im lặng coi như ổn (thiếu dữ liệu thì từ
-      chối + báo, không bao giờ rơi về giá trị dễ dãi).
-    - image bằng đúng commit_epoch ⇒ ổn (build ngay sau commit).
+    - image bằng hoặc mới hơn commit_epoch ⇒ ổn.
     """
     messages = []
-    for service, image_epoch in images.items():
-        if image_epoch is None:
+    for service, val in images.items():
+        if val == "image_missing":
             messages.append(
-                f"[deploy-drift] {service}: KHÔNG đọc được image build — "
-                "container không chạy hoặc không có image, không xác nhận được "
-                "đang chạy code hiện tại"
+                f"[deploy-drift] {service}: container đang chạy nhưng image đã BIẾN MẤT "
+                "(bị xoá hoặc build mới đè tag) — đang chạy code không ai truy được!"
             )
-        elif image_epoch < commit_epoch:
+        elif val is None or val == "container_down":
+            messages.append(
+                f"[deploy-drift] {service}: container KHÔNG chạy — "
+                "không xác nhận được đang chạy code hiện tại"
+            )
+        elif isinstance(val, (int, float)) and val < commit_epoch:
             messages.append(
                 f"[deploy-drift] {service}: image CŨ hơn commit gần nhất chạm "
-                f"trading/ ({_human_drift(commit_epoch - image_epoch)}) — "
+                f"trading/ ({_human_drift(commit_epoch - int(val))}) — "
                 "dựng lại container (docker compose build collector engine && "
                 "docker compose up -d --no-deps collector engine)"
             )
@@ -104,8 +110,13 @@ def _git_trading_commit_epoch() -> int | None:
         return None
 
 
-def _image_created_epoch(container: str) -> int | None:
-    """Epoch giây build của image container đang dùng. None = không đọc được."""
+def _image_created_epoch(container: str) -> int | str | None:
+    """Epoch giây build của image container đang dùng.
+    Trả về:
+    - int: epoch giây khi đọc thành công.
+    - 'image_missing': container đang chạy nhưng image đã biến mất (bị xoá/đè tag).
+    - None: container không chạy hoặc docker lỗi.
+    """
     try:
         img = subprocess.run(
             ["docker", "inspect", "-f", "{{.Image}}", container],
@@ -116,15 +127,18 @@ def _image_created_epoch(container: str) -> int | None:
         )
         if img.returncode != 0:
             return None
+        image_id = img.stdout.strip()
+        if not image_id:
+            return None
         created = subprocess.run(
-            ["docker", "inspect", "-f", "{{.Created}}", img.stdout.strip()],
+            ["docker", "inspect", "-f", "{{.Created}}", image_id],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
         )
         if created.returncode != 0:
-            return None
+            return "image_missing"
         iso = created.stdout.strip()
         # docker in UTC dạng "2026-09-01T13:33:33.982599925Z" — fromisoformat
         # (Python >= 3.11) đọc 'Z' trực tiếp

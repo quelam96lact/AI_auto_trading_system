@@ -112,3 +112,14 @@ def test_get_container_name_with_explicit_project_name():
     name = deploy_drift_check.get_container_name("engine", project_name="my_custom_project")
     assert name == "my_custom_project-engine-1"
 
+
+def test_image_missing_warns_specifically():
+    """Brief 52 Task 4.1: Container đang chạy nhưng image đã biến mất -> thông điệp riêng, cảnh báo nguy hiểm."""
+    images = {"collector": "image_missing", "engine": COMMIT + 1000}
+    msgs = drift_report(COMMIT, images)
+    assert len(msgs) == 1
+    assert "collector" in msgs[0]
+    assert "BIẾN MẤT" in msgs[0]
+    assert "đang chạy code không ai truy được" in msgs[0]
+
+

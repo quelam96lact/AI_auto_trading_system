@@ -301,3 +301,86 @@ def test_11_cli_unended_session_scenarios(monkeypatch, capsys, tmp_path):
     assert not out.startswith("bo qua:")
 
 
+def test_12_persistent_file_only_uses_file_source(tmp_path, monkeypatch, capsys):
+    """12. Brief 52 Task 1.4: Có file bền, không có docker log -> đếm đúng, in nguồn file."""
+    from scripts import stream_health_check
+
+    p_file = tmp_path / "bars_closed.log"
+    p_file.write_text(
+        '2026-09-17T06:10:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+        '2026-09-17T06:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+        '2026-09-17T06:30:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(stream_health_check, "fetch_docker_collector_logs", lambda: "")
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--persistent-log", str(p_file),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        stream_health_check.main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "co 3 lan chot nen" in out
+    assert "[nguon: file]" in out
+
+
+def test_13_no_persistent_file_falls_back_to_log_source(tmp_path, monkeypatch, capsys):
+    """13. Brief 52 Task 1.4: Không có file bền, có log -> đếm đúng như cũ, in nguồn log."""
+    from scripts import stream_health_check
+
+    non_existent = tmp_path / "bars_closed_missing.log"
+    docker_log = (
+        '2026-09-17T06:10:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+        '2026-09-17T06:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+    )
+    monkeypatch.setattr(stream_health_check, "fetch_docker_collector_logs", lambda: docker_log)
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--persistent-log", str(non_existent),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        stream_health_check.main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "co 2 lan chot nen" in out
+    assert "[nguon: log]" in out
+
+
+def test_14_both_sources_exist_prefers_persistent_file(tmp_path, monkeypatch, capsys):
+    """14. Brief 52 Task 1.4: Có cả hai nguồn -> ưu tiên file bền, chọn con số từ file (5 nến thay vì 2 nến từ log)."""
+    from scripts import stream_health_check
+
+    p_file = tmp_path / "bars_closed.log"
+    p_file.write_text(
+        "".join(
+            f'2026-09-17T06:1{i}:00.000000Z {{"level": "INFO", "msg": "bars closed", "n": 1}}\n'
+            for i in range(5)
+        ),
+        encoding="utf-8",
+    )
+    docker_log = (
+        '2026-09-17T06:10:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+        '2026-09-17T06:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+    )
+    monkeypatch.setattr(stream_health_check, "fetch_docker_collector_logs", lambda: docker_log)
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--persistent-log", str(p_file),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        stream_health_check.main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    # Con số từ file bền (5) được chọn, không phải con số từ log (2)
+    assert "co 5 lan chot nen" in out
+    assert "[nguon: file]" in out
+
+
+
