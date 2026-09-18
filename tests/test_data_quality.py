@@ -19,7 +19,7 @@ def test_infer_trading_sessions_excludes_holidays_and_weekends():
     daily_counts = {
         date(2026, 1, 5): 850,  # Thứ 2: phiên thật
         date(2026, 1, 6): 860,  # Thứ 3: phiên thật
-        date(2026, 1, 7): 5,    # Thứ 4: ngày test / nghỉ lễ
+        date(2026, 1, 7): 5,  # Thứ 4: ngày test / nghỉ lễ
         date(2026, 1, 8): 870,  # Thứ 5: phiên thật
         date(2026, 1, 9): 865,  # Thứ 6: phiên thật
     }
@@ -326,12 +326,17 @@ def test_daily_data_check_union_includes_must_price(monkeypatch):
     class FakeCfg:
         ssi_equity_accounts: ClassVar[list[str]] = ["CAP"]
         symbols: ClassVar[list[str]] = []
+        # Config that co field bat buoc `holidays` (trading/config.py:14) — fake
+        # thieu no la fake lech that, khong phai ly do de giu getattr o production.
+        holidays: ClassVar[set] = set()
 
     sent = []
     monkeypatch.setattr(ddc, "send_telegram", lambda msg: sent.append(msg))
     monkeypatch.setattr(ddc, "load_config", lambda path: FakeCfg())
     monkeypatch.setattr(ddc, "Storage", lambda dsn: FakeStorage())
-    monkeypatch.setattr(ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x")
+    monkeypatch.setattr(
+        ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x"
+    )
     monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "2026-09-01"])
 
     with pytest.raises(SystemExit) as exc:
@@ -521,8 +526,6 @@ def test_get_status_str_cause_tags():
         missing_middle_collection_error=1,
         missing_middle_no_trading=1,
     )
-    assert get_status_str(mixed) == "COLLECTION_ERROR+NO_TRADING+MISSING_TAIL+DIRTY_BARS"
-
-
-
-
+    assert (
+        get_status_str(mixed) == "COLLECTION_ERROR+NO_TRADING+MISSING_TAIL+DIRTY_BARS"
+    )
