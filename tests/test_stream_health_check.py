@@ -106,3 +106,89 @@ def test_5_cli_exit_codes_and_messages(tmp_path, monkeypatch, capsys):
     captured2 = capsys.readouterr()
     assert captured2.err.startswith("dung:")
     assert "0 nen" in captured2.err
+
+
+def test_6_coverage_evaluation_unit():
+    """6. Kiểm tra hàm evaluate_stream_health với các mức độ phủ (Brief 49 §2.3, §2.5)."""
+    from scripts.stream_health_check import evaluate_stream_health
+
+    # 1. 0 nến -> luôn CRITICAL / exit 2
+    assert evaluate_stream_health(0, denom=100, min_coverage_warn=0.90, min_coverage_crit=0.50) == (2, "CRITICAL")
+    assert evaluate_stream_health(0) == (2, "CRITICAL")
+
+    # 2. Phủ 95% -> exit 0, OK
+    assert evaluate_stream_health(95, denom=100, min_coverage_warn=0.90, min_coverage_crit=0.50) == (0, "OK")
+
+    # 3. Phủ 59% -> exit 1, WARN
+    assert evaluate_stream_health(59, denom=100, min_coverage_warn=0.90, min_coverage_crit=0.50) == (1, "WARN")
+
+    # 4. Phủ 20% -> exit 2, CRITICAL
+    assert evaluate_stream_health(20, denom=100, min_coverage_warn=0.90, min_coverage_crit=0.50) == (2, "CRITICAL")
+
+    # 5. Không truyền cờ ngưỡng -> hành vi cũ (>0 nến luôn là OK / exit 0)
+    assert evaluate_stream_health(59, denom=100, min_coverage_warn=None, min_coverage_crit=None) == (0, "OK")
+
+
+def test_7_cli_with_coverage_flags(tmp_path, monkeypatch, capsys):
+    """7. Kiểm tra CLI với cờ coverage và expected-bars mock."""
+    # Tạo log với 59 dòng bars closed
+    log_file = tmp_path / "log_warn.log"
+    content = "\n".join(
+        f'2026-09-17T02:20:{i%60:02d}.000000Z {{"level": "INFO", "msg": "bars closed", "n": 1}}'
+        for i in range(59)
+    )
+    log_file.write_text(content, encoding="utf-8")
+
+    # Phủ 59/100 = 59% -> exit 1, in WARN
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--session", "sang",
+        "--date", "2026-09-17",
+        "--log-file", str(log_file),
+        "--expected-bars", "100",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "WARN" in out
+    assert "59.0%" in out
+
+
+def test_8_resolve_target_session_midday_friday():
+    """8. Giả lập mốc 12:14 thứ Sáu -> chọn phiên sáng thứ Sáu (Brief 49 §2.6)."""
+    from datetime import datetime
+
+    from scripts.stream_health_check import resolve_target_session
+
+    dt_friday_noon = datetime(2026, 9, 18, 12, 14, 0, tzinfo=TZ_VN)
+    res = resolve_target_session(dt_friday_noon)
+    assert res == (date(2026, 9, 18), "sang"), f"Kỳ vọng (2026-09-18, 'sang'), nhận: {res}"
+
+
+def test_9_resolve_target_session_saturday_ignored(monkeypatch, capsys):
+    """9. Giả lập mốc 10:00 thứ Bảy -> trả về None và CLI exit 0 với thông điệp bỏ qua (Brief 49 §2.6)."""
+    from datetime import datetime
+
+    from scripts.stream_health_check import resolve_target_session
+
+    dt_sat_morning = datetime(2026, 9, 19, 10, 0, 0, tzinfo=TZ_VN)
+    res = resolve_target_session(dt_sat_morning)
+    assert res is None
+
+    # Kiểm tra CLI khi now là thứ Bảy
+    monkeypatch.setattr("scripts.stream_health_check.datetime", type("MockDT", (), {
+        "now": lambda tz=None: dt_sat_morning,
+        "combine": datetime.combine,
+        "fromisoformat": datetime.fromisoformat,
+    }))
+    monkeypatch.setattr("sys.argv", ["stream_health_check.py"])
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("bo qua:")
+

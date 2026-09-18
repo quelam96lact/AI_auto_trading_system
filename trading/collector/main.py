@@ -232,7 +232,7 @@ async def housekeeping_tick(
 
     cur_mono = time.monotonic()
     now = datetime.now(TZ)
-    holidays = getattr(cfg, "holidays", frozenset())
+    holidays = cfg.holidays
     in_session = is_trading_time(now, holidays)
 
     if state.last_monotonic is not None and state.last_wall is not None:

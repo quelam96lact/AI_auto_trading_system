@@ -150,3 +150,119 @@ def test_6_no_infrastructure_required():
     # Việc inspect không chạm vào auth token hay mạng
     sig = inspect.signature(AsyncTradingService.place_limit_order)
     assert sig is not None
+
+
+def test_7_expanded_sdk_symbols_exist():
+    """7. Khẳng định 4 nhóm ký hiệu SDK mở rộng (Brief 49 §0.1) import được và tồn tại trên lớp."""
+    # Nhóm 1: trading/collector/backfill.py
+    from ssi_sdk import AsyncData
+    from ssi_sdk.exceptions import AuthenticationError
+    from ssi_sdk.services.market_data import AsyncMarketDataService
+
+    assert AsyncData is not None
+    assert AuthenticationError is not None
+    assert hasattr(AsyncMarketDataService, "get_ohlc_1day_historical")
+    assert hasattr(AsyncMarketDataService, "get_ohlc_5minute_historical")
+
+    # Nhóm 2: trading/collector/derivative_sync.py & account_sync.py
+    from ssi_sdk.services.portfolio import AsyncPortfolioService
+
+    assert AsyncPortfolioService is not None
+    assert hasattr(AsyncPortfolioService, "get_equity_positions")
+    assert hasattr(AsyncPortfolioService, "get_derivative_balance")
+    assert hasattr(AsyncPortfolioService, "get_derivative_ppmmr")
+    assert hasattr(AsyncPortfolioService, "get_derivative_positions")
+
+    # Nhóm 3: scripts/_ssi_spike_common.py
+    from ssi_sdk import AsyncAuth, Config
+    from ssi_sdk.exceptions import SSIError
+    from ssi_sdk.models import Token
+
+    assert Config is not None
+    assert AsyncAuth is not None
+    assert SSIError is not None
+    assert Token is not None
+
+    # Nhóm 4: tests/test_backfill.py
+    from ssi_sdk.models import OHLCData
+
+    assert OHLCData is not None
+
+
+def test_8_market_data_ohlc_signatures():
+    """8. Khẳng định chữ ký của get_ohlc_1day_historical và get_ohlc_5minute_historical:
+
+    (self, symbol, from_date, to_date, page=1, size=1000).
+    """
+    from ssi_sdk.services.market_data import AsyncMarketDataService
+
+    expected_params = ["self", "symbol", "from_date", "to_date", "page", "size"]
+
+    sig_1d = inspect.signature(AsyncMarketDataService.get_ohlc_1day_historical)
+    assert list(sig_1d.parameters.keys()) == expected_params, (
+        f"Chữ ký get_ohlc_1day_historical không khớp! Thực tế: {list(sig_1d.parameters.keys())}"
+    )
+
+    sig_5m = inspect.signature(AsyncMarketDataService.get_ohlc_5minute_historical)
+    assert list(sig_5m.parameters.keys()) == expected_params, (
+        f"Chữ ký get_ohlc_5minute_historical không khớp! Thực tế: {list(sig_5m.parameters.keys())}"
+    )
+
+
+def test_9_portfolio_service_signatures():
+    """9. Khẳng định chữ ký của các phương thức AsyncPortfolioService được gọi trong code:
+
+    (self, account_no).
+    """
+    from ssi_sdk.services.portfolio import AsyncPortfolioService
+
+    expected_params = ["self", "account_no"]
+
+    methods = [
+        "get_equity_positions",
+        "get_derivative_balance",
+        "get_derivative_ppmmr",
+        "get_derivative_positions",
+    ]
+
+    for m in methods:
+        func = getattr(AsyncPortfolioService, m)
+        sig = inspect.signature(func)
+        assert list(sig.parameters.keys()) == expected_params, (
+            f"Chữ ký {m} không khớp! Thực tế: {list(sig.parameters.keys())}, Kỳ vọng: {expected_params}"
+        )
+
+
+def test_10_ast_code_calls_match_sdk_signatures():
+    """10. Phân tích AST của các file gọi SDK để bảo đảm số đối số khớp với chữ ký thật."""
+    repo_root = Path(__file__).resolve().parents[1]
+
+    # Kiểm tra trading/collector/account_sync.py
+    acc_sync_path = repo_root / "trading" / "collector" / "account_sync.py"
+    assert acc_sync_path.exists()
+    tree = ast.parse(acc_sync_path.read_text(encoding="utf-8"))
+
+    equity_pos_calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get_equity_positions"
+    ]
+    assert len(equity_pos_calls) == 1
+    assert len(equity_pos_calls[0].args) == 1  # account_no
+
+    # Kiểm tra trading/collector/derivative_sync.py
+    deriv_sync_path = repo_root / "trading" / "collector" / "derivative_sync.py"
+    assert deriv_sync_path.exists()
+    tree_d = ast.parse(deriv_sync_path.read_text(encoding="utf-8"))
+
+    for method_name in ["get_derivative_balance", "get_derivative_ppmmr", "get_derivative_positions"]:
+        calls = [
+            node for node in ast.walk(tree_d)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == method_name
+        ]
+        assert len(calls) == 1, f"Kỳ vọng 1 lời gọi {method_name}, thấy {len(calls)}"
+        assert len(calls[0].args) == 1, f"{method_name} phải được gọi với 1 tham số vị trí"
+

@@ -73,7 +73,10 @@ case "${1:-}" in
   stream-health)
     shift || true
     exec "$RUN" stream-health.log stream-health \
-      uv run python scripts/stream_health_check.py "$@"
+      uv run python scripts/stream_health_check.py \
+      --min-coverage-warn 0.90 \
+      --min-coverage-crit 0.50 \
+      "$@"
     ;;
   *)
     echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health}" >&2
