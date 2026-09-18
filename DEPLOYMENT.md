@@ -20,6 +20,13 @@ cp .env.example .env
 # edit .env with real SSI credentials + Telegram token (see README.md for
 # which variables config.py requires). Never commit this file.
 chmod 600 .env
+
+# Tạo thư mục logs trên host và phân quyền cho appuser (uid 10001 trong Dockerfile)
+# BẮT BUỘC: docker-compose.yml gắn mount ./logs:/app/logs cho collector. Nếu không
+# tạo trước, Docker daemon sẽ tự tạo thư mục thuộc root:root, collector (chạy uid 10001)
+# sẽ bị PermissionError khi ghi bars_closed.log, nuốt lỗi và chạy tiếp im lặng
+# làm mất toàn bộ bằng chứng chốt nến luồng mà không có cảnh báo nào!
+mkdir -p logs && sudo chown 10001:10001 logs
 ```
 
 Review `config/config.yaml` — in particular keep `real_trading_enabled: false`
@@ -225,29 +232,50 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# thêm — chạy 8:00-15:59 ngày giao dịch. KHÔNG ghi 9-15: script có nhánh
-# tiền-phiên 8:00-8:59 (cảnh báo token trước giờ mở cửa, 7700992) — lịch 9-15
-# sẽ không bao giờ gọi nhánh đó (CRON-1).
+# Cài đặt đầy đủ 7 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+
+# 1. Kiểm tra token trước giờ mở cửa và heartbeat trong phiên (08:00–15:55, mỗi 5 phút, T2–T6)
+# Chạy từ 8:00 để kích hoạt nhánh tiền-phiên (cảnh báo token SSI trước 09:00, CRON-1)
 */5 8-15 * * 1-5 /opt/trading/scripts/sched.sh heartbeat
 
-# Kiểm tra sót bar daily sau phiên giao dịch (chạy 15:30 thứ 2 - thứ 6 hàng tuần)
-30 15 * * 1-5 /opt/trading/scripts/sched.sh daily-check
+# 2. Phát hiện image container cũ hơn commit git trước phiên giao dịch (08:00, T2–T6)
+0 8 * * 1-5 /opt/trading/scripts/sched.sh deploy-drift
+
+# 3. Giám sát NATS consumer của engine trong giờ giao dịch (mỗi 5 phút, 09:00–15:10, T2–T6)
+*/5 9-15 * * 1-5 /opt/trading/scripts/sched.sh engine-consumer
+
+# 4. Kiểm tra độ phủ nến luồng thời gian thực sau khi chốt phiên chiều (15:10, T2–T6)
+10 15 * * 1-5 /opt/trading/scripts/sched.sh stream-health
+
+# 5. Phát hiện engine câm không sinh tín hiệu sau phiên giao dịch (15:15, T2–T6)
+15 15 * * 1-5 /opt/trading/scripts/sched.sh engine-cam
+
+# 6. Backfill nến ngày lịch sử toàn vũ trụ mã ban đêm (20:30, T2–T6)
+30 20 * * 1-5 /opt/trading/scripts/sched.sh backfill
+
+# 7. Kiểm tra tính toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
+# BẮT BUỘC 21:00: backfill đêm nạp nến lúc 20:30; kiểm trước giờ đó thì bảng nến ngày luôn rỗng!
+0 21 * * 1-5 /opt/trading/scripts/sched.sh daily-check
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Ba task tương ứng với ba dòng
+Máy Windows dùng Task Scheduler, không phải cron. Bảy task tương ứng với bảy dòng
 cron ở trên (tên task `trading-*`):
 
-Cả ba gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả bảy gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
 | Task | Lịch | Action |
 |---|---|---|
-| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 | `wscript.exe //B //Nologo "D:\...\scripts\run_hidden.vbs" heartbeat` |
-| `trading-daily-data-check` | 15:30 T2–T6 | cùng vbs, tham số `daily-check` |
+| `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 (lặp 7h) | `wscript.exe //B //Nologo "D:\...\scripts\run_hidden.vbs" heartbeat` |
+| `trading-deploy-drift` | 08:00 T2–T6 | cùng vbs, tham số `deploy-drift` |
+| `trading-engine-consumer` | 5 phút/lần, 09:00–15:10, T2–T6 (lặp 6h10m) | cùng vbs, tham số `engine-consumer` |
+| `trading-stream-health` | 15:10 T2–T6 | cùng vbs, tham số `stream-health` |
+| `trading-engine-cam` | 15:15 T2–T6 | cùng vbs, tham số `engine-cam` |
 | `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
+| `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
 
 #### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
 
@@ -456,10 +484,9 @@ warm-up từ đó, cho từng mã trong `config.symbols`, rồi kêu nếu:
 - cổng thanh khoản đóng 100% (`CRITICAL_SILENT`), hoặc
 - không có tín hiệu `bull` nào trong toàn bộ lịch sử (`WARN_NO_BULL`).
 
-- Windows (máy dev): scheduled task `trading-engine-cam`, **08:15 T2–T6**, qua
-  `scripts/run_hidden.vbs` (sau `trading-deploy-drift` 08:00 — dựng lại image
-  xong mới hỏi chiến lược có câm không).
-- Ubuntu: `15 8 * * 1-5 /opt/trading/scripts/sched.sh engine-cam`
+- Windows (máy dev): scheduled task `trading-engine-cam`, **15:15 T2–T6**, qua
+  `scripts/run_hidden.vbs` (sau khi đóng phiên 15:00, kiểm tra xem cả phiên engine có bị câm không).
+- Ubuntu: `15 15 * * 1-5 /opt/trading/scripts/sched.sh engine-cam`
   (job `engine-cam` trong `scripts/sched.sh`, log ra `logs/engine-cam.log`).
 
 Có mã câm ⇒ in bảng ra log, gửi Telegram, exit 1; ổn ⇒ in `[OK]` và exit 0.
