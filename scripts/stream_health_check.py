@@ -171,6 +171,29 @@ def resolve_target_session(
         return current_date, "chieu"
 
 
+def is_session_ended(check_date: date, session: str | None, now_vn: datetime) -> bool:
+    """Kiểm tra xem phiên giao dịch đã kết thúc tại thời điểm now_vn chưa (Brief 50 Task 1).
+
+    - Phiên sáng kết thúc lúc 11:30.
+    - Phiên chiều kết thúc lúc 15:05.
+    - Chế độ cả ngày (session is None) coi là kết thúc khi phiên chiều đã kết thúc (15:05).
+    """
+    cur_date = now_vn.date()
+    if check_date < cur_date:
+        return True
+    if check_date > cur_date:
+        return False
+
+    # check_date == cur_date
+    if session == "sang":
+        cutoff = datetime.combine(check_date, time(11, 30), tzinfo=TZ_VN)
+    else:
+        # "chieu" hoặc None (cả ngày)
+        cutoff = datetime.combine(check_date, time(15, 5), tzinfo=TZ_VN)
+
+    return now_vn >= cutoff
+
+
 def fetch_expected_bars_from_db(
     check_date: date,
     session: str | None = None,
@@ -308,6 +331,11 @@ def main() -> None:
             sys.exit(0)
         check_date, session = resolved
         target_name = f"phien {session}"
+
+    # Bổ sung Brief 50 Task 1: Phiên chưa kết thúc thì bỏ qua, không kêu
+    if not is_session_ended(check_date, session, now_vn):
+        print(f"bo qua: {target_name} ngay {check_date.isoformat()} chua ket thuc tai thoi diem kiem tra")
+        sys.exit(0)
 
     if args.log_file:
         with open(args.log_file, encoding="utf-8", errors="replace") as f:

@@ -192,3 +192,112 @@ def test_9_resolve_target_session_saturday_ignored(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert out.startswith("bo qua:")
 
+
+def test_10_is_session_ended_unit():
+    """10. Kiểm tra hàm is_session_ended (Brief 50 Task 1.1)."""
+    from datetime import datetime
+
+    from scripts.stream_health_check import is_session_ended
+
+    dt_noon = datetime(2026, 9, 18, 12, 0, 0, tzinfo=TZ_VN)
+    today = date(2026, 9, 18)
+    yesterday = date(2026, 9, 17)
+    tomorrow = date(2026, 9, 19)
+
+    # 1. Hôm nay lúc 12:00 -> phiên chiều chưa kết thúc (15:05)
+    assert is_session_ended(today, "chieu", dt_noon) is False
+
+    # 2. Hôm nay lúc 12:00 -> phiên sáng ĐÃ kết thúc (11:30)
+    assert is_session_ended(today, "sang", dt_noon) is True
+
+    # 3. Hôm nay lúc 12:00 -> cả ngày chưa kết thúc (cần phiên chiều xong)
+    assert is_session_ended(today, None, dt_noon) is False
+
+    # 4. Hôm qua -> phiên chiều ĐÃ kết thúc
+    assert is_session_ended(yesterday, "chieu", dt_noon) is True
+
+    # 5. Ngày mai -> chưa kết thúc
+    assert is_session_ended(tomorrow, "sang", dt_noon) is False
+
+
+def test_11_cli_unended_session_scenarios(monkeypatch, capsys, tmp_path):
+    """11. Kiểm chứng CLI với các trường hợp phiên chưa/đã kết thúc (Brief 50 §1.2)."""
+    from datetime import datetime
+
+    dt_noon = datetime(2026, 9, 18, 12, 0, 0, tzinfo=TZ_VN)
+
+    monkeypatch.setattr("scripts.stream_health_check.datetime", type("MockDT", (), {
+        "now": lambda tz=None: dt_noon,
+        "combine": datetime.combine,
+        "fromisoformat": datetime.fromisoformat,
+    }))
+
+    dummy_log = tmp_path / "dummy.log"
+    dummy_log.write_text(
+        '2026-09-18T02:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 10}\n'
+        '2026-09-17T07:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 10}\n',
+        encoding="utf-8",
+    )
+
+    # Case 1: --date <hôm nay> --session chieu chạy lúc 12:00 -> bo qua, exit 0
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-18",
+        "--session", "chieu",
+        "--log-file", str(dummy_log),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("bo qua:")
+    assert "phien chieu" in out
+
+    # Case 2: --date <hôm nay> (cả ngày) chạy lúc 12:00 -> bo qua, exit 0
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-18",
+        "--log-file", str(dummy_log),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("bo qua:")
+    assert "ca ngay" in out
+
+    # Case 3: --date <hôm nay> --session sang chạy lúc 12:00 -> kiểm bình thường (sáng đã xong)
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-18",
+        "--session", "sang",
+        "--log-file", str(dummy_log),
+        "--expected-bars", "1",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "OK:" in out
+    assert not out.startswith("bo qua:")
+
+    # Case 4: --date <hôm qua> --session chieu -> kiểm bình thường
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--log-file", str(dummy_log),
+        "--expected-bars", "1",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "OK:" in out
+    assert not out.startswith("bo qua:")
+
+
