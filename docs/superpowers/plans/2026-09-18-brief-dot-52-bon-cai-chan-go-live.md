@@ -138,30 +138,52 @@ thư mục đó, **đừng tạo thư mục mới**.
 
 Sai bất kỳ điều nào → **dừng, báo cáo**, đừng chữa bằng cách đổi quyền hệ thống.
 
-### 1.2. Ghi bằng chứng
+### 1.2. Ghi bằng chứng — **đừng chế định dạng mới**
 
-Tại chỗ đang phát `alert("INFO", "bars closed", ...)` trong `persist_bars`
-(`trading/collector/main.py`, khoảng dòng 113–128), ghi thêm một dòng vào
-`/app/logs/bars_closed.log`, mỗi lần chốt một dòng:
+Bản nháp đầu của brief này bảo ghi tay một dòng `<ts> <symbol> <so snapshot>` vào
+`bars_closed.log`. Tôi bỏ cách đó sau khi đọc lại `trading/alerts.py`. Lý do:
 
+```python
+# trading/alerts.py:33-35
+def alert(level: str, msg: str, **fields) -> None:
+    _log.log(_LEVELS[level], json.dumps({"level": level, "msg": msg, **fields}, ...))
 ```
-<ISO ts chot, +07> <symbol> <so snapshot>
-```
 
-Ba điều **bắt buộc**, mỗi điều đã có người trả giá:
+Mọi cảnh báo **đã** là một dòng JSON đi qua module `logging`, và `stream_health_check` **đã** biết
+đọc đúng định dạng đó (nó đang đọc chính những dòng này từ `docker logs`). Chế thêm một định dạng
+thứ hai là tự tạo ra "một công thức hai chỗ" — đúng thứ `4ea4c8d` dạy là sớm muộn sẽ lệch.
 
-1. **Không bao giờ được ném.** `persist_bars` chạy qua `asyncio.create_task()` fire-and-forget —
-   exception thoát ra bị asyncio nuốt thành "Task exception was never retrieved", bar mất mà
-   không ai biết. Chính docstring của hàm đó đã cảnh báo. Bọc `try/except` riêng, hỏng thì nuốt.
-2. **Ghi sau khi đã `publish` và `write_bars` xong.** Giao bar cho engine luôn ưu tiên hơn ghi
-   bằng chứng.
-3. **Mở–ghi–đóng từng lần**, không giữ file handle mở suốt đời tiến trình. Giữ handle thì khi
-   file bị xoay vòng hoặc thư mục bị thay, tiến trình ghi vào chỗ không ai đọc — im lặng.
+**Cách làm: gắn một `logging.FileHandler` vào logger `trading.alerts`, trỏ tới `/app/logs/`.**
+Cùng dòng, cùng định dạng, chỉ khác chỗ đậu. Đổi lại:
+
+- **Không đụng `persist_bars`.** Tự nhiên không còn rủi ro làm hỏng đường fire-and-forget của nó.
+- **Mọi cảnh báo đều bền**, không riêng `bars closed`. Hôm nay ta mất **toàn bộ** log collector
+  hai lần; bản vá này chữa cả hai lần đó chứ không chỉ chữa phần đếm nến.
+- **`stream_health_check` không cần parser mới** — chỉ cần một nguồn đầu vào thứ hai.
+
+Bốn điều phải làm đúng, mỗi điều có lý do:
+
+1. **Gắn ở đâu:** chỗ tiến trình collector khởi tạo logging, **không** gắn ở thời điểm import
+   của `alerts.py` — gắn lúc import thì mọi test, mọi script, mọi lần `uv run` đều đẻ ra file log.
+2. **Không bao giờ được ném.** Không có thư mục, không có quyền ghi → chạy tiếp, không chặn
+   collector. Một chuông không ghi được vẫn tốt hơn một collector chết.
+3. **Xoay vòng theo kích thước** (`RotatingFileHandler`), kèm `backupCount`. Mỗi bar đóng là một
+   dòng, mỗi phiên hàng trăm dòng, chạy liên tục nhiều tháng — không xoay vòng thì có ngày đầy đĩa
+   và collector chết vì một tính năng giám sát. Nêu rõ con số bạn chọn và vì sao.
+4. **Đo blast radius trước khi sửa:** `gitnexus_impact({target: "alert", direction: "upstream"})`.
+   `alert` được gọi ở rất nhiều nơi; nếu kết quả là HIGH/CRITICAL thì **báo cáo trước**, đừng sửa
+   rồi báo sau.
+
+Nếu sau khi đọc code bạn thấy cách này **không** khả thi vì một lý do cụ thể trong repo: **dừng,
+nói rõ lý do**, rồi mới quay lại cách ghi tay. Đừng im lặng chọn cách dễ.
 
 ### 1.3. `stream_health_check` đọc nguồn bền trước
 
 Thứ tự: **file bền trước, log container sau**, và **in rõ đã dùng nguồn nào**. Không có file
 (mọi phiên trước hôm nay) → rơi về log y như hiện nay. Tương thích ngược tuyệt đối.
+
+Vì hai nguồn giờ cùng định dạng JSON, phần **đếm** phải dùng lại đúng một hàm cho cả hai. Nếu bạn
+thấy mình viết hai vòng đếm gần giống nhau, đó là dấu hiệu làm sai.
 
 ### 1.4. Kiểm chứng
 
@@ -208,10 +230,22 @@ làm. Nên không có cách nào tập trên dữ liệu sẵn có. Cần dựng
 
 ### 2.2. `scripts/rehearse_confirm_gate.py`
 
-Một script, làm đúng bốn việc, **chỉ trên `trading_test`**:
+Một script, làm đúng bốn việc, **chỉ trên `trading_test`**.
 
-1. Tạo một dòng `pending_real_orders` giống hệt hình dạng dòng thật (nhìn dòng `id=1226` làm
-   mẫu: `0434221`, `IJC`, `BUY`, `100`, `7330`), TTL 15 phút.
+**Không viết một câu SQL nào.** `Storage` đã có sẵn đủ bộ, dùng lại:
+
+```
+trading/storage/db.py:541  create_pending_order
+              :560  get_pending_order
+              :584  update_pending_order_status
+              :615  expire_stale_pending_orders
+```
+
+Script tự viết `INSERT` là công thức thứ hai cho cùng một bảng — và là cách chắc chắn để bài diễn
+tập lệch khỏi đường thật, tức là tập một thứ không phải thứ sẽ chạy.
+
+1. Tạo một dòng `pending_real_orders` **qua `create_pending_order`**, giống hình dạng dòng thật
+   (nhìn dòng `id=1226` làm mẫu: `0434221`, `IJC`, `BUY`, `100`, `7330`), TTL 15 phút.
 2. In ra **đúng câu lệnh** mà người dùng sẽ phải gõ, kèm `order_id`.
 3. Chạy `confirm()` với `confirm_input="YES"` và `real_trading_enabled=false`, in nguyên văn
    kết quả.
@@ -233,9 +267,14 @@ viết script.
    09:20, 09:20, 09:21, 09:33, 13:42, 13:52, 13:54, 13:57, 13:59 — hãy tự kiểm lại và đối chiếu.)
 4. **Nếu người dùng gõ `YES` ở phút thứ 16 thì sao?** Thông điệp từ chối có nói rõ "đã hết hạn,
    chờ tín hiệu sau" không, hay nó khó hiểu?
-5. **Có đường nào để đơn tự hết hạn mà không ai được báo không?** Tức là: khi một đơn chuyển
-   `pending` → `expired`, có cảnh báo nào không? Nếu **không** thì đó là một chuông thiếu — báo
-   cáo, **đừng tự thêm**.
+5. **Đơn tự hết hạn thì có ai được báo không?** `Storage.expire_stale_pending_orders`
+   (`db.py:615`) tồn tại, nên việc quét là **có**. Câu hỏi là hai vế khác:
+   (a) ai gọi nó, và gọi theo nhịp nào?
+   (b) khi nó chuyển một đơn `pending` → `expired`, có `alert` nào được phát không?
+
+   Chín đơn hết hạn mà chủ dự án không hề biết cho tới khi tôi đi tra bảng — nên tôi ngờ vế (b)
+   là **không**. Kiểm bằng code, đừng suy từ hiện tượng. Nếu đúng là thiếu chuông: **báo cáo,
+   đừng tự thêm** — một chuông mới cần brief riêng với đủ ràng buộc chống spam.
 
 ### 2.4. Kiểm chứng
 
