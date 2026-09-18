@@ -490,3 +490,84 @@ luận đã đo của đợt 51.
 Nên đây là **việc đầu tiên của brief sau**, và nó là việc chặn go-live trên VPS: cả
 `DEPLOYMENT.md` lẫn `README_VPS_UBUNTU.md` phải được sửa **cùng nhau, cùng một nội dung**, nếu
 không ta lại có một công thức hai chỗ.
+
+
+---
+
+## Phụ lục — kiểm chứng sau khi dọn, 18/09/2026 tối muộn
+
+Tôi xoá 284,7MB build cache, nên phải tự chứng minh lần build kế tiếp vẫn chạy — thứ Hai không
+phải lúc phát hiện điều đó.
+
+### A. Build sau khi dọn cache: 11,8 giây, đạt
+
+```
+$ docker compose build collector
+#19 naming to docker.io/library/ai_auto_trading_system-collector:latest done
+thoi luong: 11.8 giay
+```
+
+`builder prune` bỏ 284,7MB nhưng giữ lại 229,4MB — và phần giữ lại rõ ràng là phần quan trọng
+(layer nền, `uv sync`). Không có nguy cơ thứ Hai phải build nguội.
+
+Hai tag rollback giữ lại cũng còn nguyên vẹn, mỗi tag **10 layer**, `docker image inspect` đọc
+được: `dot46-rollback-collector:pre`, `dot47-rollback-collector:pre`.
+
+### B. Nhưng chính lần build kiểm chứng đó tạo ra lệch triển khai
+
+```
+run = sha256:4dcbd464...      <- container dang chay
+tag = sha256:250fd422...      <- image vua build
+```
+
+**Mã nguồn không đổi một dòng nào** giữa hai lần build. Vậy mà image ID khác. Nghĩa là build của
+repo này **không tái lập được từng byte**: chạy lại cùng một `Dockerfile` trên cùng một cây mã
+cho ra digest khác (timestamp, thứ tự file, siêu dữ liệu của `uv sync`).
+
+Hệ quả thực tế, và nó đáng ghi:
+
+1. **"Build lại để kiểm tra" tự nó là một hành động triển khai.** Nó thay tag, làm container đang
+   chạy trỏ vào một ảnh không còn tag — đúng tình huống `deploy-drift` vừa được dạy cách gọi tên
+   ở đợt 52. Tôi vừa tự tạo lại nó sau đúng nửa ngày.
+2. **Vì vậy so image ID giữa hai lần build là vô nghĩa.** Cách `deploy_drift_check.py` làm — so
+   **mốc build** với **commit gần nhất chạm `trading/`** — mới là cách đúng, và giờ tôi hiểu tại
+   sao nó được viết như thế thay vì so hash.
+
+Chữa bằng `docker compose up -d --no-deps --force-recreate collector`. Sau đó:
+
+```
+run = tag = sha256:250fd422...
+grep -c "trading-alerts-file" trong container -> 2      (ban va dot 52 co mat)
+deploy_drift_check.py -> OK: khong lech trien khai, exit 0
+```
+
+### C. Và nó chứng minh cơ chế đợt 52 lần thứ ba
+
+Container bị **huỷ và dựng lại trên một image hoàn toàn khác**. File bằng chứng:
+
+```
+truoc: 8 dong
+sau  : 9 dong
+```
+
+Sống sót, và container mới ghi tiếp vào đúng file cũ:
+
+```
+2026-09-18T12:57:29Z {"level": "INFO", "msg": "eod held-symbol pricing done", "counts": {...}}
+2026-09-18T13:51:36Z {"level": "INFO", "msg": "backfill start"}
+2026-09-18T13:51:44Z {"level": "INFO", "msg": "backfill done", "counts": {"HPG": 0, ...}}
+```
+
+Đây là lần thứ ba trong ngày cơ chế này được chứng minh, và là lần chặt nhất — hai lần trước chỉ
+dựng lại trên cùng image. **Nhưng nó vẫn chưa phải phép đo quyết định**: cả chín dòng đều là alert
+vận hành, **chưa có một dòng `bars closed` nào** vì ngoài phiên. Phép đo thật vẫn là phiên 22/09.
+
+### D. Điều này làm Task 3 của brief 54 nặng hơn
+
+Brief 54 Task 3 hỏi vì sao thói quen gắn tag `dotNN-rollback-*:pre` bị đứt hôm nay. Mục B thêm
+một lý do vào câu trả lời: **mỗi lần build đều sinh image mới**, nên nếu không tag trước khi
+triển khai thì ảnh cũ mất tag ngay lập tức và chỉ còn sống nhờ container đang chạy. Dựng lại lần
+nữa là mất hẳn.
+
+Hôm nay đã dựng lại **năm lần** (bốn lần triển khai + một lần kiểm chứng này), không tag lần nào.
+Ảnh trước đợt 52 hiện **không còn tồn tại trên máy**.
