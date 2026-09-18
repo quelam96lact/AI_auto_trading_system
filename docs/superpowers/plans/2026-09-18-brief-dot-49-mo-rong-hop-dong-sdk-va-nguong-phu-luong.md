@@ -207,6 +207,17 @@ giá: máy ngủ lúc 15:10 thì mất luôn lượt kiểm hôm đó.
   vòng 24 giờ (cuối tuần, ngày lễ) → in một dòng `bo qua: ...` và **`exit 0`**, không phải
   `exit 2`. Cuối tuần không có luồng là bình thường.
 
+**Ba tổ hợp tham số, mỗi tổ hợp một hành vi — chốt rõ ở đây để không phải đoán:**
+
+| Tham số | Hành vi |
+|---|---|
+| `--date` **và** `--session` | kiểm đúng phiên đó của đúng ngày đó (như hiện tại, không đổi) |
+| `--date` mà **không** `--session` | kiểm **cả ngày** — cộng nến luồng của hai phiên, mẫu số là toàn bộ khung nến trong ngày |
+| **cả hai đều thiếu** | chọn **phiên gần nhất đã kết thúc** theo quy tắc trên — đây là đường mà Scheduled Task đi |
+
+Con số kiểm chứng ở §2.5 mục 3 (`0%` / `~59%` / `~95%`) là số **cả ngày**, nên hàng thứ hai
+của bảng trên phải cho đúng ba con số đó.
+
 Test bắt buộc: giả mốc `12:14` thứ Sáu → chọn **phiên sáng thứ Sáu**, không phải phiên chiều.
 Giả mốc `10:00` thứ Bảy → `exit 0` với thông điệp bỏ qua.
 
