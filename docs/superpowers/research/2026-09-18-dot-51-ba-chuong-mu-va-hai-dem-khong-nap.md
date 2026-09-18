@@ -1,13 +1,13 @@
-# BÃƒÂ¡o cÃƒÂ¡o Ã„ÂÃ¡Â»Â£t 51 Ã¢â‚¬â€ Ba chuÃƒÂ´ng mÃƒÂ¹, hai Ã„â€˜ÃƒÂªm khÃƒÂ´ng nÃ¡ÂºÂ¡p, vÃƒÂ  mÃ¡Â»â„¢t image bÃ¡ÂºÂ£y ngÃƒÂ y tuÃ¡Â»â€¢i
+# BÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â£t 51 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Ba chuÃƒÆ’Ã‚Â´ng mÃƒÆ’Ã‚Â¹, hai Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âªm khÃƒÆ’Ã‚Â´ng nÃƒÂ¡Ã‚ÂºÃ‚Â¡p, vÃƒÆ’Ã‚Â  mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t image bÃƒÂ¡Ã‚ÂºÃ‚Â£y ngÃƒÆ’Ã‚Â y tuÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i
 
-- **ThÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m thÃ¡Â»Â±c thi:** 18/09/2026, 17:28 PM (GiÃ¡Â»Â VN - sau phiÃƒÂªn Ã„â€˜ÃƒÂ³ng cÃ¡Â»Â­a).
-- **NgÃ†Â°Ã¡Â»Âi thÃ¡Â»Â±c thi:** Gemini Flash 3.8.
-- **NgÃ†Â°Ã¡Â»Âi lÃ¡ÂºÂ­p kÃ¡ÂºÂ¿ hoÃ¡ÂºÂ¡ch & kiÃ¡Â»Æ’m toÃƒÂ¡n:** Claude.
-- **Cam kÃ¡ÂºÂ¿t tuÃƒÂ¢n thÃ¡Â»Â§:** KhÃƒÂ´ng commit, khÃƒÂ´ng push. KhÃƒÂ´ng sÃ¡Â»Â­a `docker-compose.yml`. KhÃƒÂ´ng dÃ¡Â»Â±ng lÃ¡ÂºÂ¡i container. KhÃƒÂ´ng can thiÃ¡Â»â€¡p NATS JetStream.
+- **ThÃƒÂ¡Ã‚Â»Ã‚Âi Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m thÃƒÂ¡Ã‚Â»Ã‚Â±c thi:** 18/09/2026, 17:28 PM (GiÃƒÂ¡Ã‚Â»Ã‚Â VN - sau phiÃƒÆ’Ã‚Âªn Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³ng cÃƒÂ¡Ã‚Â»Ã‚Â­a).
+- **NgÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âi thÃƒÂ¡Ã‚Â»Ã‚Â±c thi:** Gemini Flash 3.8.
+- **NgÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âi lÃƒÂ¡Ã‚ÂºÃ‚Â­p kÃƒÂ¡Ã‚ÂºÃ‚Â¿ hoÃƒÂ¡Ã‚ÂºÃ‚Â¡ch & kiÃƒÂ¡Ã‚Â»Ã†â€™m toÃƒÆ’Ã‚Â¡n:** Claude.
+- **Cam kÃƒÂ¡Ã‚ÂºÃ‚Â¿t tuÃƒÆ’Ã‚Â¢n thÃƒÂ¡Ã‚Â»Ã‚Â§:** KhÃƒÆ’Ã‚Â´ng commit, khÃƒÆ’Ã‚Â´ng push. KhÃƒÆ’Ã‚Â´ng sÃƒÂ¡Ã‚Â»Ã‚Â­a `docker-compose.yml`. KhÃƒÆ’Ã‚Â´ng dÃƒÂ¡Ã‚Â»Ã‚Â±ng lÃƒÂ¡Ã‚ÂºÃ‚Â¡i container. KhÃƒÆ’Ã‚Â´ng can thiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡p NATS JetStream.
 
 ---
 
-## 1. TrÃ¡ÂºÂ¡ng thÃƒÂ¡i Git
+## 1. TrÃƒÂ¡Ã‚ÂºÃ‚Â¡ng thÃƒÆ’Ã‚Â¡i Git
 
 ### 1.1. `git diff --stat`
 ```text
@@ -26,7 +26,7 @@
  M README.md
  M scripts/daily_data_check.py
  M tests/test_daily_data_check.py
-?? "CÃƒÂ¡c chiÃ¡ÂºÂ¿n lÃ†Â°Ã¡Â»Â£c BTCUSDT perpetual 1H bÃ¡Â»â€¢ sung cho EMA + Order Flow.md"
+?? "CÃƒÆ’Ã‚Â¡c chiÃƒÂ¡Ã‚ÂºÃ‚Â¿n lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c BTCUSDT perpetual 1H bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ sung cho EMA + Order Flow.md"
 ?? docs/README_VPS_UBUNTU.md
 ?? docs/superpowers/research/2026-09-18-dot-47-trien-khai-grace-va-do-nen.md
 ?? docs/superpowers/research/2026-09-18-dot-51-ba-chuong-mu-va-hai-dem-khong-nap.md
@@ -34,7 +34,7 @@
 
 ---
 
-## 2. Git Diff cÃ¡Â»Â§a cÃƒÂ¡c file Ã„â€˜ÃƒÂ£ sÃ¡Â»Â­a
+## 2. Git Diff cÃƒÂ¡Ã‚Â»Ã‚Â§a cÃƒÆ’Ã‚Â¡c file Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ sÃƒÂ¡Ã‚Â»Ã‚Â­a
 
 ### 2.1. `git diff scripts/daily_data_check.py`
 ```diff
@@ -50,7 +50,7 @@ index cf4378f..7ad1438 100644
 +from datetime import datetime, time
  from pathlib import Path
  
- # Ã„ÂÃ¡ÂºÂ£m bÃ¡ÂºÂ£o import Ã„â€˜Ã†Â°Ã¡Â»Â£c _db_common vÃƒÂ  trading
+ # Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚ÂºÃ‚Â£m bÃƒÂ¡Ã‚ÂºÃ‚Â£o import Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c _db_common vÃƒÆ’Ã‚Â  trading
 @@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
  from _db_common import resolve_dsn
  
@@ -66,31 +66,31 @@ index cf4378f..7ad1438 100644
      present_symbols: set[str],
 +    is_trading_day: bool = False,
  ) -> tuple[int, set[str], str]:
-     """HÃƒÂ m thuÃ¡ÂºÂ§n Ã„â€˜ÃƒÂ¡nh giÃƒÂ¡ trÃ¡ÂºÂ¡ng thÃƒÂ¡i bar daily cÃ¡Â»Â§a cÃƒÂ¡c mÃƒÂ£ active.
+     """HÃƒÆ’Ã‚Â m thuÃƒÂ¡Ã‚ÂºÃ‚Â§n Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â¡nh giÃƒÆ’Ã‚Â¡ trÃƒÂ¡Ã‚ÂºÃ‚Â¡ng thÃƒÆ’Ã‚Â¡i bar daily cÃƒÂ¡Ã‚Â»Ã‚Â§a cÃƒÆ’Ã‚Â¡c mÃƒÆ’Ã‚Â£ active.
  
-     TrÃ¡ÂºÂ£ vÃ¡Â»Â: (exit_code, missing_symbols, message)
--    - exit_code 0: KhÃƒÂ´ng cÃƒÂ³ lÃ¡Â»â€”i cÃ¡ÂºÂ§n cÃ¡ÂºÂ£nh bÃƒÂ¡o (hoÃ¡ÂºÂ·c cÃ¡ÂºÂ£ feed khÃƒÂ´ng cÃƒÂ³ bar -> nhÃ†Â°Ã¡Â»Âng 2A).
-+    - exit_code 0: Ã„ÂÃ¡ÂºÂ§y Ã„â€˜Ã¡Â»Â§ bar, HOÃ¡ÂºÂ¶C ngÃƒÂ y nghÃ¡Â»â€° khÃƒÂ´ng cÃƒÂ³ bar (nhÃ†Â°Ã¡Â»Âng 2A).
-     - exit_code 1: SÃƒÂ³t mÃƒÂ£ active khi feed vÃ¡ÂºÂ«n cÃƒÂ³ dÃ¡Â»Â¯ liÃ¡Â»â€¡u cÃƒÂ¡c mÃƒÂ£ khÃƒÂ¡c.
-+    - exit_code 2: NgÃƒÂ y giao dÃ¡Â»â€¹ch mÃƒÂ  KHÃƒâ€NG cÃƒÂ³ mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar (lÃ¡Â»â€”i dÃ¡Â»Â¯ liÃ¡Â»â€¡u / feed chÃ¡ÂºÂ¿t toÃƒÂ n diÃ¡Â»â€¡n).
+     TrÃƒÂ¡Ã‚ÂºÃ‚Â£ vÃƒÂ¡Ã‚Â»Ã‚Â: (exit_code, missing_symbols, message)
+-    - exit_code 0: KhÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ lÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i cÃƒÂ¡Ã‚ÂºÃ‚Â§n cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o (hoÃƒÂ¡Ã‚ÂºÃ‚Â·c cÃƒÂ¡Ã‚ÂºÃ‚Â£ feed khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ bar -> nhÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng 2A).
++    - exit_code 0: Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚ÂºÃ‚Â§y Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ bar, HOÃƒÂ¡Ã‚ÂºÃ‚Â¶C ngÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ bar (nhÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng 2A).
+     - exit_code 1: SÃƒÆ’Ã‚Â³t mÃƒÆ’Ã‚Â£ active khi feed vÃƒÂ¡Ã‚ÂºÃ‚Â«n cÃƒÆ’Ã‚Â³ dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u cÃƒÆ’Ã‚Â¡c mÃƒÆ’Ã‚Â£ khÃƒÆ’Ã‚Â¡c.
++    - exit_code 2: NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch mÃƒÆ’Ã‚Â  KHÃƒÆ’Ã¢â‚¬ÂNG cÃƒÆ’Ã‚Â³ mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar (lÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u / feed chÃƒÂ¡Ã‚ÂºÃ‚Â¿t toÃƒÆ’Ã‚Â n diÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n).
      """
      if not active_symbols:
-         return 0, set(), "KhÃƒÂ´ng cÃƒÂ³ mÃƒÂ£ active nÃƒÂ o trong symbol_universe."
+         return 0, set(), "KhÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ mÃƒÆ’Ã‚Â£ active nÃƒÆ’Ã‚Â o trong symbol_universe."
  
--    # NÃ¡ÂºÂ¿u toÃƒÂ n bÃ¡Â»â„¢ thÃ¡Â»â€¹ trÃ†Â°Ã¡Â»Âng 0 cÃƒÂ³ bar nÃƒÂ o: ngÃƒÂ y nghÃ¡Â»â€° hoÃ¡ÂºÂ·c feed chÃ¡ÂºÂ¿t toÃƒÂ n diÃ¡Â»â€¡n (viÃ¡Â»â€¡c cÃ¡Â»Â§a 2A)
-+    # NÃ¡ÂºÂ¿u toÃƒÂ n bÃ¡Â»â„¢ thÃ¡Â»â€¹ trÃ†Â°Ã¡Â»Âng 0 cÃƒÂ³ bar nÃƒÂ o:
+-    # NÃƒÂ¡Ã‚ÂºÃ‚Â¿u toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ thÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng 0 cÃƒÆ’Ã‚Â³ bar nÃƒÆ’Ã‚Â o: ngÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° hoÃƒÂ¡Ã‚ÂºÃ‚Â·c feed chÃƒÂ¡Ã‚ÂºÃ‚Â¿t toÃƒÆ’Ã‚Â n diÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n (viÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡c cÃƒÂ¡Ã‚Â»Ã‚Â§a 2A)
++    # NÃƒÂ¡Ã‚ÂºÃ‚Â¿u toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ thÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng 0 cÃƒÆ’Ã‚Â³ bar nÃƒÆ’Ã‚Â o:
      if not present_symbols:
 +        if is_trading_day:
 +            msg = (
-+                f"Ã°Å¸Å¡Â¨ [AI Trading] SÃ¡Â»Â° CÃ¡Â»Â DÃ¡Â»Â® LIÃ¡Â»â€ U: NgÃƒÂ y giao dÃ¡Â»â€¹ch nhÃ†Â°ng 0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar daily trong DB "
-+                f"(toÃƒÂ n bÃ¡Â»â„¢ {len(active_symbols)} mÃƒÂ£ active thiÃ¡ÂºÂ¿u bar)!"
++                f"ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â¨ [AI Trading] SÃƒÂ¡Ã‚Â»Ã‚Â° CÃƒÂ¡Ã‚Â»Ã‚Â DÃƒÂ¡Ã‚Â»Ã‚Â® LIÃƒÂ¡Ã‚Â»Ã¢â‚¬Â U: NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch nhÃƒâ€ Ã‚Â°ng 0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar daily trong DB "
++                f"(toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ {len(active_symbols)} mÃƒÆ’Ã‚Â£ active thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u bar)!"
 +            )
 +            return 2, set(active_symbols), msg
          return (
              0,
              set(),
 @@ -125,16 +134,22 @@ def main() -> None:
-         _print_safe(f"LÃ¡Â»â€“I TRUY VÃ¡ÂºÂ¤N DB: {e}")
+         _print_safe(f"LÃƒÂ¡Ã‚Â»Ã¢â‚¬â€œI TRUY VÃƒÂ¡Ã‚ÂºÃ‚Â¤N DB: {e}")
          sys.exit(2)
  
 -    code, _missing, msg = evaluate_daily_completeness(active_symbols, present_symbols)
@@ -108,16 +108,16 @@ index cf4378f..7ad1438 100644
 +    if code in (1, 2):
          try:
              send_telegram(f"[{target_date}] {msg}")
-             _print_safe("-> Ã„ÂÃƒÂ£ gÃ¡Â»Â­i cÃ¡ÂºÂ£nh bÃƒÂ¡o qua Telegram.")
+             _print_safe("-> Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ gÃƒÂ¡Ã‚Â»Ã‚Â­i cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o qua Telegram.")
          except Exception as e:
-             _print_safe(f"LÃ¡Â»â€”i khi gÃ¡Â»Â­i Telegram: {e}")
+             _print_safe(f"LÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i khi gÃƒÂ¡Ã‚Â»Ã‚Â­i Telegram: {e}")
 -        sys.exit(1)
 +        sys.exit(code)
  
      sys.exit(0)
 ```
 
-### 2.2. `git diff tests/test_daily_data_check.py` (ChÃ¡Â»â€° cÃƒÂ³ phÃ¡ÂºÂ§n thÃƒÂªm +)
+### 2.2. `git diff tests/test_daily_data_check.py` (ChÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° cÃƒÆ’Ã‚Â³ phÃƒÂ¡Ã‚ÂºÃ‚Â§n thÃƒÆ’Ã‚Âªm +)
 ```diff
 diff --git a/tests/test_daily_data_check.py b/tests/test_daily_data_check.py
 index dc87b76..9c4a5c4 100644
@@ -126,22 +126,22 @@ index dc87b76..9c4a5c4 100644
 @@ -67,4 +67,36 @@ def test_qua_15_ma_thieu_thi_message_co_phan_cut():
      assert code == 1
      assert len(missing) == 19
-     assert "... (+4 mÃƒÂ£ nÃ¡Â»Â¯a)" in msg  # 19 - 15 = 4
+     assert "... (+4 mÃƒÆ’Ã‚Â£ nÃƒÂ¡Ã‚Â»Ã‚Â¯a)" in msg  # 19 - 15 = 4
 +
 +
 +def test_ngay_giao_dich_present_rong_thi_exit_2():
-+    """Brief 51 Task 2: NgÃƒÂ y giao dÃ¡Â»â€¹ch mÃƒÂ  0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar -> exit 2 (lÃ¡Â»â€”i dÃ¡Â»Â¯ liÃ¡Â»â€¡u / feed chÃ¡ÂºÂ¿t)."""
++    """Brief 51 Task 2: NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch mÃƒÆ’Ã‚Â  0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar -> exit 2 (lÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u / feed chÃƒÂ¡Ã‚ÂºÃ‚Â¿t)."""
 +    active = ["AAA", "HPG", "IJC"]
 +    present = set()
 +    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=True)
 +    assert code == 2
 +    assert missing == {"AAA", "HPG", "IJC"}
-+    assert "SÃ¡Â»Â° CÃ¡Â»Â DÃ¡Â»Â® LIÃ¡Â»â€ U" in msg
-+    assert "0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar" in msg
++    assert "SÃƒÂ¡Ã‚Â»Ã‚Â° CÃƒÂ¡Ã‚Â»Ã‚Â DÃƒÂ¡Ã‚Â»Ã‚Â® LIÃƒÂ¡Ã‚Â»Ã¢â‚¬Â U" in msg
++    assert "0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar" in msg
 +
 +
 +def test_ngay_nghi_present_rong_thi_exit_0():
-+    """Brief 51 Task 2: NgÃƒÂ y nghÃ¡Â»â€° (thÃ¡Â»Â© BÃ¡ÂºÂ£y / CN / LÃ¡Â»â€¦) mÃƒÂ  0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar -> exit 0 (nhÃ†Â°Ã¡Â»Âng 2A)."""
++    """Brief 51 Task 2: NgÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° (thÃƒÂ¡Ã‚Â»Ã‚Â© BÃƒÂ¡Ã‚ÂºÃ‚Â£y / CN / LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¦) mÃƒÆ’Ã‚Â  0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar -> exit 0 (nhÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng 2A)."""
 +    active = ["AAA", "HPG", "IJC"]
 +    present = set()
 +    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=False)
@@ -151,87 +151,87 @@ index dc87b76..9c4a5c4 100644
 +
 +
 +def test_present_thieu_mot_phan_exit_1():
-+    """Brief 51 Task 2: CÃƒÂ³ bar nhÃ†Â°ng thiÃ¡ÂºÂ¿u mÃ¡Â»â„¢t phÃ¡ÂºÂ§n -> exit 1 nhÃ†Â° cÃ…Â©."""
++    """Brief 51 Task 2: CÃƒÆ’Ã‚Â³ bar nhÃƒâ€ Ã‚Â°ng thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t phÃƒÂ¡Ã‚ÂºÃ‚Â§n -> exit 1 nhÃƒâ€ Ã‚Â° cÃƒâ€¦Ã‚Â©."""
 +    active = ["AAA", "HPG", "IJC"]
 +    present = {"AAA", "HPG"}
 +    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=True)
 +    assert code == 1
 +    assert missing == {"IJC"}
-+    assert "CÃ¡ÂºÂ¢NH BÃƒÂO: SÃƒÂ³t bar daily" in msg
++    assert "CÃƒÂ¡Ã‚ÂºÃ‚Â¢NH BÃƒÆ’Ã‚ÂO: SÃƒÆ’Ã‚Â³t bar daily" in msg
 ```
 
 ---
 
-## 3. Task 1 Ã¢â‚¬â€ BÃ¡ÂºÂ±ng chÃ¡Â»Â©ng chÃ¡Â»â€˜t nÃ¡ÂºÂ¿n vÃƒÂ  giÃ¡Â»â€ºi hÃ¡ÂºÂ¡n Volume Container
+## 3. Task 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â BÃƒÂ¡Ã‚ÂºÃ‚Â±ng chÃƒÂ¡Ã‚Â»Ã‚Â©ng chÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœt nÃƒÂ¡Ã‚ÂºÃ‚Â¿n vÃƒÆ’Ã‚Â  giÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi hÃƒÂ¡Ã‚ÂºÃ‚Â¡n Volume Container
 
-### 3.1. Ã„ÂiÃ¡Â»Æ’m nghÃ¡ÂºÂ½n kiÃ¡ÂºÂ¿n trÃƒÂºc Volume Container (DÃ¡Â»Â«ng vÃƒÂ  BÃƒÂ¡o cÃƒÂ¡o theo Ã‚Â§1.2 mÃ¡Â»Â¥c 3)
-1. **KiÃ¡Â»Æ’m tra `docker-compose.yml`:** Service `collector` **hoÃƒÂ n toÃƒÂ n khÃƒÂ´ng cÃƒÂ³ cÃ¡ÂºÂ¥u hÃƒÂ¬nh volume** nÃƒÂ o Ã„â€˜Ã†Â°Ã¡Â»Â£c mount ra host:
+### 3.1. Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m nghÃƒÂ¡Ã‚ÂºÃ‚Â½n kiÃƒÂ¡Ã‚ÂºÃ‚Â¿n trÃƒÆ’Ã‚Âºc Volume Container (DÃƒÂ¡Ã‚Â»Ã‚Â«ng vÃƒÆ’Ã‚Â  BÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o theo Ãƒâ€šÃ‚Â§1.2 mÃƒÂ¡Ã‚Â»Ã‚Â¥c 3)
+1. **KiÃƒÂ¡Ã‚Â»Ã†â€™m tra `docker-compose.yml`:** Service `collector` **hoÃƒÆ’Ã‚Â n toÃƒÆ’Ã‚Â n khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ cÃƒÂ¡Ã‚ÂºÃ‚Â¥u hÃƒÆ’Ã‚Â¬nh volume** nÃƒÆ’Ã‚Â o Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c mount ra host:
    ```yaml
    collector:
      build: .
      command: python -m trading.collector.main --config config/config.yaml
-     # KHÃƒâ€NG CÃƒâ€œ VOLUME NÃƒâ‚¬O Ã„ÂÃ†Â¯Ã¡Â»Â¢C MOUNT
+     # KHÃƒÆ’Ã¢â‚¬ÂNG CÃƒÆ’Ã¢â‚¬Å“ VOLUME NÃƒÆ’Ã¢â€šÂ¬O Ãƒâ€žÃ‚ÂÃƒâ€ Ã‚Â¯ÃƒÂ¡Ã‚Â»Ã‚Â¢C MOUNT
    ```
-2. **KiÃ¡Â»Æ’m tra Container thÃ¡Â»Â±c tÃ¡ÂºÂ¿:**
+2. **KiÃƒÂ¡Ã‚Â»Ã†â€™m tra Container thÃƒÂ¡Ã‚Â»Ã‚Â±c tÃƒÂ¡Ã‚ÂºÃ‚Â¿:**
    ```bash
    $ docker inspect --format='{{json .Mounts}}' ai_auto_trading_system-collector-1
    []
    ```
-   Container `collector` chÃ¡ÂºÂ¡y hoÃƒÂ n toÃƒÂ n cÃƒÂ´ lÃ¡ÂºÂ­p vÃ¡Â»Â mÃ¡ÂºÂ·t filesystem (Mounts = `[]`).
-3. **HÃ¡Â»â€¡ quÃ¡ÂºÂ£ & RÃƒÂ ng buÃ¡Â»â„¢c:**
-   - NÃ¡ÂºÂ¿u collector ghi bÃ¡ÂºÂ±ng chÃ¡Â»Â©ng chÃ¡Â»â€˜t nÃ¡ÂºÂ¿n vÃƒÂ o Ã„â€˜Ã†Â°Ã¡Â»Âng dÃ¡ÂºÂ«n cÃ¡Â»Â¥c bÃ¡Â»â„¢ bÃƒÂªn trong container (vÃƒÂ­ dÃ¡Â»Â¥ `/app/logs/stream_bars_closed.log`), file nÃƒÂ y sÃ¡ÂºÂ½ nÃ¡ÂºÂ±m trÃƒÂªn writable container layer vÃƒÂ  **sÃ¡ÂºÂ½ bÃ¡Â»â€¹ xoÃƒÂ¡ sÃ¡ÂºÂ¡ch** mÃ¡Â»â€”i lÃ¡ÂºÂ§n `docker compose build` hoÃ¡ÂºÂ·c recreate.
-   - Ã„ÂÃ¡Â»Æ’ file bÃ¡Â»Ân vÃ¡Â»Â¯ng sÃ¡Â»â€˜ng ngoÃƒÂ i container, bÃ¡ÂºÂ¯t buÃ¡Â»â„¢c phÃ¡ÂºÂ£i khai bÃƒÂ¡o mount volume trong `docker-compose.yml` (vÃƒÂ­ dÃ¡Â»Â¥: `- ./logs:/app/logs`).
-   - Theo Ã„â€˜ÃƒÂºng quy Ã„â€˜Ã¡Â»â€¹nh nghiÃƒÂªm ngÃ¡ÂºÂ·t tÃ¡ÂºÂ¡i **Brief 51 Ã‚Â§1.2 mÃ¡Â»Â¥c 3 vÃƒÂ  PhÃ¡ÂºÂ§n 3**:
-     > *"NÃ¡ÂºÂ¿u khÃƒÂ´ng cÃƒÂ³ volume nÃƒÂ o phÃƒÂ¹ hÃ¡Â»Â£p: **dÃ¡Â»Â«ng, bÃƒÂ¡o cÃƒÂ¡o** Ã¢â‚¬â€ thÃƒÂªm volume lÃƒÂ  Ã„â€˜Ã¡Â»â€¢i `docker-compose.yml`, ngoÃƒÂ i phÃ¡ÂºÂ¡m vi Ã„â€˜Ã¡Â»Â£t nÃƒÂ y vÃƒÂ  cÃ¡ÂºÂ§n dÃ¡Â»Â±ng lÃ¡ÂºÂ¡i container."*
-   - Do Ã„â€˜ÃƒÂ³, agent **DÃ¡Â»ÂªNG** viÃ¡Â»â€¡c sÃ¡Â»Â­a mÃƒÂ£ nguÃ¡Â»â€œn Task 1 vÃƒÂ  bÃƒÂ¡o cÃƒÂ¡o Ã„â€˜iÃ¡Â»Æ’m nghÃ¡ÂºÂ½n nÃƒÂ y Ã„â€˜Ã¡Â»Æ’ ChÃ¡Â»Â§ dÃ¡Â»Â± ÃƒÂ¡n phÃƒÂª duyÃ¡Â»â€¡t thÃƒÂªm mount volume `./logs:/app/logs` vÃƒÂ o `docker-compose.yml` trong Ã„â€˜Ã¡Â»Â£t bÃ¡ÂºÂ£o trÃƒÂ¬ tiÃ¡ÂºÂ¿p theo.
-4. **MÃ¡Â»Â¥c ghi nhÃ¡ÂºÂ­n:** **"CHÃ†Â¯A LÃƒâ‚¬M Ã¢â‚¬â€ chÃ¡Â»Â phiÃƒÂªn 22/09"** (sau khi volume Ã„â€˜Ã†Â°Ã¡Â»Â£c mount vÃƒÂ  collector chÃ¡ÂºÂ¡y qua phiÃƒÂªn giao dÃ¡Â»â€¹ch tiÃ¡ÂºÂ¿p theo).
+   Container `collector` chÃƒÂ¡Ã‚ÂºÃ‚Â¡y hoÃƒÆ’Ã‚Â n toÃƒÆ’Ã‚Â n cÃƒÆ’Ã‚Â´ lÃƒÂ¡Ã‚ÂºÃ‚Â­p vÃƒÂ¡Ã‚Â»Ã‚Â mÃƒÂ¡Ã‚ÂºÃ‚Â·t filesystem (Mounts = `[]`).
+3. **HÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ quÃƒÂ¡Ã‚ÂºÃ‚Â£ & RÃƒÆ’Ã‚Â ng buÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c:**
+   - NÃƒÂ¡Ã‚ÂºÃ‚Â¿u collector ghi bÃƒÂ¡Ã‚ÂºÃ‚Â±ng chÃƒÂ¡Ã‚Â»Ã‚Â©ng chÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœt nÃƒÂ¡Ã‚ÂºÃ‚Â¿n vÃƒÆ’Ã‚Â o Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng dÃƒÂ¡Ã‚ÂºÃ‚Â«n cÃƒÂ¡Ã‚Â»Ã‚Â¥c bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ bÃƒÆ’Ã‚Âªn trong container (vÃƒÆ’Ã‚Â­ dÃƒÂ¡Ã‚Â»Ã‚Â¥ `/app/logs/stream_bars_closed.log`), file nÃƒÆ’Ã‚Â y sÃƒÂ¡Ã‚ÂºÃ‚Â½ nÃƒÂ¡Ã‚ÂºÃ‚Â±m trÃƒÆ’Ã‚Âªn writable container layer vÃƒÆ’Ã‚Â  **sÃƒÂ¡Ã‚ÂºÃ‚Â½ bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ xoÃƒÆ’Ã‚Â¡ sÃƒÂ¡Ã‚ÂºÃ‚Â¡ch** mÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i lÃƒÂ¡Ã‚ÂºÃ‚Â§n `docker compose build` hoÃƒÂ¡Ã‚ÂºÃ‚Â·c recreate.
+   - Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã†â€™ file bÃƒÂ¡Ã‚Â»Ã‚Ân vÃƒÂ¡Ã‚Â»Ã‚Â¯ng sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœng ngoÃƒÆ’Ã‚Â i container, bÃƒÂ¡Ã‚ÂºÃ‚Â¯t buÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c phÃƒÂ¡Ã‚ÂºÃ‚Â£i khai bÃƒÆ’Ã‚Â¡o mount volume trong `docker-compose.yml` (vÃƒÆ’Ã‚Â­ dÃƒÂ¡Ã‚Â»Ã‚Â¥: `- ./logs:/app/logs`).
+   - Theo Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng quy Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh nghiÃƒÆ’Ã‚Âªm ngÃƒÂ¡Ã‚ÂºÃ‚Â·t tÃƒÂ¡Ã‚ÂºÃ‚Â¡i **Brief 51 Ãƒâ€šÃ‚Â§1.2 mÃƒÂ¡Ã‚Â»Ã‚Â¥c 3 vÃƒÆ’Ã‚Â  PhÃƒÂ¡Ã‚ÂºÃ‚Â§n 3**:
+     > *"NÃƒÂ¡Ã‚ÂºÃ‚Â¿u khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ volume nÃƒÆ’Ã‚Â o phÃƒÆ’Ã‚Â¹ hÃƒÂ¡Ã‚Â»Ã‚Â£p: **dÃƒÂ¡Ã‚Â»Ã‚Â«ng, bÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o** ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â thÃƒÆ’Ã‚Âªm volume lÃƒÆ’Ã‚Â  Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i `docker-compose.yml`, ngoÃƒÆ’Ã‚Â i phÃƒÂ¡Ã‚ÂºÃ‚Â¡m vi Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t nÃƒÆ’Ã‚Â y vÃƒÆ’Ã‚Â  cÃƒÂ¡Ã‚ÂºÃ‚Â§n dÃƒÂ¡Ã‚Â»Ã‚Â±ng lÃƒÂ¡Ã‚ÂºÃ‚Â¡i container."*
+   - Do Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³, agent **DÃƒÂ¡Ã‚Â»Ã‚ÂªNG** viÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡c sÃƒÂ¡Ã‚Â»Ã‚Â­a mÃƒÆ’Ã‚Â£ nguÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“n Task 1 vÃƒÆ’Ã‚Â  bÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m nghÃƒÂ¡Ã‚ÂºÃ‚Â½n nÃƒÆ’Ã‚Â y Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ ChÃƒÂ¡Ã‚Â»Ã‚Â§ dÃƒÂ¡Ã‚Â»Ã‚Â± ÃƒÆ’Ã‚Â¡n phÃƒÆ’Ã‚Âª duyÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡t thÃƒÆ’Ã‚Âªm mount volume `./logs:/app/logs` vÃƒÆ’Ã‚Â o `docker-compose.yml` trong Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t bÃƒÂ¡Ã‚ÂºÃ‚Â£o trÃƒÆ’Ã‚Â¬ tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p theo.
+4. **MÃƒÂ¡Ã‚Â»Ã‚Â¥c ghi nhÃƒÂ¡Ã‚ÂºÃ‚Â­n:** **"CHÃƒâ€ Ã‚Â¯A LÃƒÆ’Ã¢â€šÂ¬M ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â chÃƒÂ¡Ã‚Â»Ã‚Â phiÃƒÆ’Ã‚Âªn 22/09"** (sau khi volume Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c mount vÃƒÆ’Ã‚Â  collector chÃƒÂ¡Ã‚ÂºÃ‚Â¡y qua phiÃƒÆ’Ã‚Âªn giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p theo).
 
-### 3.2. BÃ¡Â»â€˜n lÃ†Â°Ã¡Â»Â£t kiÃ¡Â»Æ’m tra dÃ¡Â»Â¯ liÃ¡Â»â€¡u thÃ¡ÂºÂ­t rÃ†Â¡i vÃ¡Â»Â log container
+### 3.2. BÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœn lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£t kiÃƒÂ¡Ã‚Â»Ã†â€™m tra dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u thÃƒÂ¡Ã‚ÂºÃ‚Â­t rÃƒâ€ Ã‚Â¡i vÃƒÂ¡Ã‚Â»Ã‚Â log container
 
-| LÃ¡Â»â€¡nh thÃ¡Â»Â±c hiÃ¡Â»â€¡n | KÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ thÃ¡Â»Â±c tÃ¡ÂºÂ¿ | MÃƒÂ£ thoÃƒÂ¡t | Ã„ÂÃƒÂ¡nh giÃƒÂ¡ |
+| LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh thÃƒÂ¡Ã‚Â»Ã‚Â±c hiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n | KÃƒÂ¡Ã‚ÂºÃ‚Â¿t quÃƒÂ¡Ã‚ÂºÃ‚Â£ thÃƒÂ¡Ã‚Â»Ã‚Â±c tÃƒÂ¡Ã‚ÂºÃ‚Â¿ | MÃƒÆ’Ã‚Â£ thoÃƒÆ’Ã‚Â¡t | Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â¡nh giÃƒÆ’Ã‚Â¡ |
 |---|---|---|---|
-| `uv run python scripts/stream_health_check.py --date 2026-09-17 --session sang --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `dung: do phu luong phien sang ngay 2026-09-17 chi dat 35.8% (29/81 nen), duoi nguong nghiem trong 50%` | **exit 2** | KhÃ¡Â»â€ºp 100% (35.8%) |
-| `uv run python scripts/stream_health_check.py --date 2026-09-15 --session sang --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `OK: do phu luong phien sang ngay 2026-09-15 dat 93.8% (76/81 nen tu luong thoi gian thuc).` | **exit 0** | KhÃ¡Â»â€ºp 100% (93.8%) |
-| `uv run python scripts/stream_health_check.py --date 2026-09-18 --session chieu --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `bo qua: phien chieu ngay 2026-09-18 chua ket thuc tai thoi diem kiem tra` (nÃ¡ÂºÂ¿u chÃ¡ÂºÂ¡y trÃ†Â°Ã¡Â»â€ºc 15:05) hoÃ¡ÂºÂ·c `dung: 0 nen` (do container recreate lÃƒÂºc 16:27 xÃƒÂ³a log) | **exit 0 / exit 2** | PhÃ¡ÂºÂ£n ÃƒÂ¡nh Ã„â€˜ÃƒÂºng thÃ¡Â»Â±c trÃ¡ÂºÂ¡ng mÃ¡ÂºÂ¥t log khi container bÃ¡Â»â€¹ recreate |
-| `uv run python scripts/stream_health_check.py --date 2026-09-19 --session sang` | `bo qua: khong co phien giao dich nao ket thuc trong vong 24 gio (ngay nghi/cuoi tuan)` | **exit 0** | KhÃ¡Â»â€ºp nhÃƒÂ¡nh ngÃƒÂ y nghÃ¡Â»â€° |
+| `uv run python scripts/stream_health_check.py --date 2026-09-17 --session sang --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `dung: do phu luong phien sang ngay 2026-09-17 chi dat 35.8% (29/81 nen), duoi nguong nghiem trong 50%` | **exit 2** | KhÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp 100% (35.8%) |
+| `uv run python scripts/stream_health_check.py --date 2026-09-15 --session sang --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `OK: do phu luong phien sang ngay 2026-09-15 dat 93.8% (76/81 nen tu luong thoi gian thuc).` | **exit 0** | KhÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp 100% (93.8%) |
+| `uv run python scripts/stream_health_check.py --date 2026-09-18 --session chieu --min-coverage-warn 0.90 --min-coverage-crit 0.50` | `bo qua: phien chieu ngay 2026-09-18 chua ket thuc tai thoi diem kiem tra` (nÃƒÂ¡Ã‚ÂºÃ‚Â¿u chÃƒÂ¡Ã‚ÂºÃ‚Â¡y trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºc 15:05) hoÃƒÂ¡Ã‚ÂºÃ‚Â·c `dung: 0 nen` (do container recreate lÃƒÆ’Ã‚Âºc 16:27 xÃƒÆ’Ã‚Â³a log) | **exit 0 / exit 2** | PhÃƒÂ¡Ã‚ÂºÃ‚Â£n ÃƒÆ’Ã‚Â¡nh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng thÃƒÂ¡Ã‚Â»Ã‚Â±c trÃƒÂ¡Ã‚ÂºÃ‚Â¡ng mÃƒÂ¡Ã‚ÂºÃ‚Â¥t log khi container bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ recreate |
+| `uv run python scripts/stream_health_check.py --date 2026-09-19 --session sang` | `bo qua: khong co phien giao dich nao ket thuc trong vong 24 gio (ngay nghi/cuoi tuan)` | **exit 0** | KhÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp nhÃƒÆ’Ã‚Â¡nh ngÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° |
 
 ---
 
-## 4. Task 2 Ã¢â‚¬â€ BÃ¡Â»â€¹t nhÃƒÂ¡nh mÃƒÂ¹ cÃ¡Â»Â§a `daily-data-check` vÃƒÂ  XÃƒÂ¡c lÃ¡ÂºÂ­p NhÃ¡Â»â€¹p chuÃ¡ÂºÂ©n
+## 4. Task 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â BÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹t nhÃƒÆ’Ã‚Â¡nh mÃƒÆ’Ã‚Â¹ cÃƒÂ¡Ã‚Â»Ã‚Â§a `daily-data-check` vÃƒÆ’Ã‚Â  XÃƒÆ’Ã‚Â¡c lÃƒÂ¡Ã‚ÂºÃ‚Â­p NhÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹p chuÃƒÂ¡Ã‚ÂºÃ‚Â©n
 
-### 4.1. KhÃ¡ÂºÂ¯c phÃ¡Â»Â¥c nhÃƒÂ¡nh mÃƒÂ¹ (Ã‚Â§2.1b)
-- SÃ¡Â»Â­ dÃ¡Â»Â¥ng hÃƒÂ m chuÃ¡ÂºÂ©n [`is_trading_time`](file:///D:/My_Vault_Obsidian/Project/AI_auto_trading_system/trading/calendar_vn.py#L8) tÃ¡Â»Â« `trading/calendar_vn.py` Ã„â€˜Ã¡Â»Æ’ kiÃ¡Â»Æ’m tra ngÃƒÂ y giao dÃ¡Â»â€¹ch.
-- NgÃƒÂ y giao dÃ¡Â»â€¹ch nhÃ†Â°ng `present_symbols` rÃ¡Â»â€”ng (0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar): TrÃ¡ÂºÂ£ vÃ¡Â»Â `exit 2` kÃƒÂ¨m thÃƒÂ´ng Ã„â€˜iÃ¡Â»â€¡p `Ã°Å¸Å¡Â¨ [AI Trading] SÃ¡Â»Â° CÃ¡Â»Â DÃ¡Â»Â® LIÃ¡Â»â€ U...` vÃƒÂ  gÃ¡Â»Â­i Telegram.
-- NgÃƒÂ y nghÃ¡Â»â€° (thÃ¡Â»Â© 7, CN, ngÃƒÂ y lÃ¡Â»â€¦): TrÃ¡ÂºÂ£ vÃ¡Â»Â `exit 0` im lÃ¡ÂºÂ·ng nhÃ†Â°Ã¡Â»Âng Heartbeat 2A nhÃ†Â° cÃ…Â©.
-- ThiÃ¡ÂºÂ¿u mÃ¡Â»â„¢t phÃ¡ÂºÂ§n mÃƒÂ£: TrÃ¡ÂºÂ£ vÃ¡Â»Â `exit 1` nhÃ†Â° cÃ…Â©.
+### 4.1. KhÃƒÂ¡Ã‚ÂºÃ‚Â¯c phÃƒÂ¡Ã‚Â»Ã‚Â¥c nhÃƒÆ’Ã‚Â¡nh mÃƒÆ’Ã‚Â¹ (Ãƒâ€šÃ‚Â§2.1b)
+- SÃƒÂ¡Ã‚Â»Ã‚Â­ dÃƒÂ¡Ã‚Â»Ã‚Â¥ng hÃƒÆ’Ã‚Â m chuÃƒÂ¡Ã‚ÂºÃ‚Â©n [`is_trading_time`](file:///D:/My_Vault_Obsidian/Project/AI_auto_trading_system/trading/calendar_vn.py#L8) tÃƒÂ¡Ã‚Â»Ã‚Â« `trading/calendar_vn.py` Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ kiÃƒÂ¡Ã‚Â»Ã†â€™m tra ngÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch.
+- NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch nhÃƒâ€ Ã‚Â°ng `present_symbols` rÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng (0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar): TrÃƒÂ¡Ã‚ÂºÃ‚Â£ vÃƒÂ¡Ã‚Â»Ã‚Â `exit 2` kÃƒÆ’Ã‚Â¨m thÃƒÆ’Ã‚Â´ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡p `ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â¨ [AI Trading] SÃƒÂ¡Ã‚Â»Ã‚Â° CÃƒÂ¡Ã‚Â»Ã‚Â DÃƒÂ¡Ã‚Â»Ã‚Â® LIÃƒÂ¡Ã‚Â»Ã¢â‚¬Â U...` vÃƒÆ’Ã‚Â  gÃƒÂ¡Ã‚Â»Ã‚Â­i Telegram.
+- NgÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° (thÃƒÂ¡Ã‚Â»Ã‚Â© 7, CN, ngÃƒÆ’Ã‚Â y lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¦): TrÃƒÂ¡Ã‚ÂºÃ‚Â£ vÃƒÂ¡Ã‚Â»Ã‚Â `exit 0` im lÃƒÂ¡Ã‚ÂºÃ‚Â·ng nhÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng Heartbeat 2A nhÃƒâ€ Ã‚Â° cÃƒâ€¦Ã‚Â©.
+- ThiÃƒÂ¡Ã‚ÂºÃ‚Â¿u mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t phÃƒÂ¡Ã‚ÂºÃ‚Â§n mÃƒÆ’Ã‚Â£: TrÃƒÂ¡Ã‚ÂºÃ‚Â£ vÃƒÂ¡Ã‚Â»Ã‚Â `exit 1` nhÃƒâ€ Ã‚Â° cÃƒâ€¦Ã‚Â©.
 
-### 4.2. KiÃ¡Â»Æ’m thÃ¡Â»Â­ tÃ¡Â»Â± Ã„â€˜Ã¡Â»â„¢ng (8/8 passed)
-- 5 test cÃ…Â© pass nguyÃƒÂªn vÃ¡ÂºÂ¹n.
-- 3 test mÃ¡Â»â€ºi thÃƒÂªm vÃƒÂ o:
+### 4.2. KiÃƒÂ¡Ã‚Â»Ã†â€™m thÃƒÂ¡Ã‚Â»Ã‚Â­ tÃƒÂ¡Ã‚Â»Ã‚Â± Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ng (8/8 passed)
+- 5 test cÃƒâ€¦Ã‚Â© pass nguyÃƒÆ’Ã‚Âªn vÃƒÂ¡Ã‚ÂºÃ‚Â¹n.
+- 3 test mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi thÃƒÆ’Ã‚Âªm vÃƒÆ’Ã‚Â o:
   + `test_ngay_giao_dich_present_rong_thi_exit_2`: PASSED
   + `test_ngay_nghi_present_rong_thi_exit_0`: PASSED
   + `test_present_thieu_mot_phan_exit_1`: PASSED
 
-### 4.3. DÃ¡Â»Â¯ liÃ¡Â»â€¡u thÃ¡ÂºÂ­t & SÃ¡Â»â€˜ tin Telegram Ã„â€˜ÃƒÂ£ gÃ¡Â»Â­i
-1. **LÃ¡Â»â€¡nh 1:** `uv run python scripts/daily_data_check.py --date 2026-09-18`
-   - Output: `[2026-09-18] Ã„ÂÃ¡ÂºÂ§y Ã„â€˜Ã¡Â»Â§: toÃƒÂ n bÃ¡Â»â„¢ 175 mÃƒÂ£ active Ã„â€˜Ã¡Â»Âu Ã„â€˜ÃƒÂ£ cÃƒÂ³ bar daily.`
-   - Exit code: **`0`** (vÃƒÂ¬ Task 3 Ã„â€˜ÃƒÂ£ nÃ¡ÂºÂ¡p bÃƒÂ¹ thÃƒÂ nh cÃƒÂ´ng 175/175 mÃƒÂ£).
-2. **LÃ¡Â»â€¡nh 2:** `uv run python scripts/daily_data_check.py --date 2026-09-15`
-   - Output: `[2026-09-15] Ã¢Å¡Â Ã¯Â¸Â [AI Trading] CÃ¡ÂºÂ¢NH BÃƒÂO: SÃƒÂ³t bar daily sau phiÃƒÂªn! TÃ¡Â»â€¢ng sÃ¡Â»â€˜ mÃƒÂ£ active: 175, SÃ¡Â»â€˜ mÃƒÂ£ cÃƒÂ³ bar: 174, SÃ¡Â»â€˜ mÃƒÂ£ THIÃ¡ÂºÂ¾U bar (1 mÃƒÂ£): POM -> Ã„ÂÃƒÂ£ gÃ¡Â»Â­i cÃ¡ÂºÂ£nh bÃƒÂ¡o qua Telegram.`
+### 4.3. DÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u thÃƒÂ¡Ã‚ÂºÃ‚Â­t & SÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ tin Telegram Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ gÃƒÂ¡Ã‚Â»Ã‚Â­i
+1. **LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh 1:** `uv run python scripts/daily_data_check.py --date 2026-09-18`
+   - Output: `[2026-09-18] Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚ÂºÃ‚Â§y Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§: toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ 175 mÃƒÆ’Ã‚Â£ active Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Âu Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ cÃƒÆ’Ã‚Â³ bar daily.`
+   - Exit code: **`0`** (vÃƒÆ’Ã‚Â¬ Task 3 Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ nÃƒÂ¡Ã‚ÂºÃ‚Â¡p bÃƒÆ’Ã‚Â¹ thÃƒÆ’Ã‚Â nh cÃƒÆ’Ã‚Â´ng 175/175 mÃƒÆ’Ã‚Â£).
+2. **LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh 2:** `uv run python scripts/daily_data_check.py --date 2026-09-15`
+   - Output: `[2026-09-15] ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [AI Trading] CÃƒÂ¡Ã‚ÂºÃ‚Â¢NH BÃƒÆ’Ã‚ÂO: SÃƒÆ’Ã‚Â³t bar daily sau phiÃƒÆ’Ã‚Âªn! TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ mÃƒÆ’Ã‚Â£ active: 175, SÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ mÃƒÆ’Ã‚Â£ cÃƒÆ’Ã‚Â³ bar: 174, SÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ mÃƒÆ’Ã‚Â£ THIÃƒÂ¡Ã‚ÂºÃ‚Â¾U bar (1 mÃƒÆ’Ã‚Â£): POM -> Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ gÃƒÂ¡Ã‚Â»Ã‚Â­i cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o qua Telegram.`
    - Exit code: **`1`**.
-3. **LÃ¡Â»â€¡nh 3:** `uv run python scripts/daily_data_check.py --date 2026-09-19` (thÃ¡Â»Â© BÃ¡ÂºÂ£y)
-   - Output: `[2026-09-19] KhÃƒÂ´ng cÃƒÂ³ mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar trong ngÃƒÂ y (ngÃƒÂ y nghÃ¡Â»â€° hoÃ¡ÂºÂ·c feed ngÃ¡Â»Â«ng toÃƒÂ n diÃ¡Â»â€¡n Ã¢â‚¬â€ nhÃ†Â°Ã¡Â»Âng Heartbeat 2A).`
+3. **LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh 3:** `uv run python scripts/daily_data_check.py --date 2026-09-19` (thÃƒÂ¡Ã‚Â»Ã‚Â© BÃƒÂ¡Ã‚ÂºÃ‚Â£y)
+   - Output: `[2026-09-19] KhÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar trong ngÃƒÆ’Ã‚Â y (ngÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° hoÃƒÂ¡Ã‚ÂºÃ‚Â·c feed ngÃƒÂ¡Ã‚Â»Ã‚Â«ng toÃƒÆ’Ã‚Â n diÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â nhÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng Heartbeat 2A).`
    - Exit code: **`0`**.
-4. **LÃ¡Â»â€¡nh kiÃ¡Â»Æ’m chÃ¡Â»Â©ng nhÃƒÂ¡nh mÃ¡Â»â€ºi (NgÃƒÂ y giao dÃ¡Â»â€¹ch rÃ¡Â»â€”ng - 2026-09-21):**
-   - Output: `[2026-09-21] Ã°Å¸Å¡Â¨ [AI Trading] SÃ¡Â»Â° CÃ¡Â»Â DÃ¡Â»Â® LIÃ¡Â»â€ U: NgÃƒÂ y giao dÃ¡Â»â€¹ch nhÃ†Â°ng 0 mÃƒÂ£ nÃƒÂ o cÃƒÂ³ bar daily trong DB (toÃƒÂ n bÃ¡Â»â„¢ 175 mÃƒÂ£ active thiÃ¡ÂºÂ¿u bar)! -> Ã„ÂÃƒÂ£ gÃ¡Â»Â­i cÃ¡ÂºÂ£nh bÃƒÂ¡o qua Telegram.`
+4. **LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh kiÃƒÂ¡Ã‚Â»Ã†â€™m chÃƒÂ¡Ã‚Â»Ã‚Â©ng nhÃƒÆ’Ã‚Â¡nh mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi (NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch rÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng - 2026-09-21):**
+   - Output: `[2026-09-21] ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Â¨ [AI Trading] SÃƒÂ¡Ã‚Â»Ã‚Â° CÃƒÂ¡Ã‚Â»Ã‚Â DÃƒÂ¡Ã‚Â»Ã‚Â® LIÃƒÂ¡Ã‚Â»Ã¢â‚¬Â U: NgÃƒÆ’Ã‚Â y giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch nhÃƒâ€ Ã‚Â°ng 0 mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o cÃƒÆ’Ã‚Â³ bar daily trong DB (toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ 175 mÃƒÆ’Ã‚Â£ active thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u bar)! -> Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ gÃƒÂ¡Ã‚Â»Ã‚Â­i cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o qua Telegram.`
    - Exit code: **`2`**.
 
-**TÃ¡Â»â€¢ng sÃ¡Â»â€˜ tin Telegram Ã„â€˜ÃƒÂ£ gÃ¡Â»Â­i:** **2 tin** (1 tin cÃ¡ÂºÂ£nh bÃƒÂ¡o thiÃ¡ÂºÂ¿u mÃƒÂ£ POM ngÃƒÂ y 15/09 vÃƒÂ  1 tin cÃ¡ÂºÂ£nh bÃƒÂ¡o sÃ¡Â»Â± cÃ¡Â»â€˜ dÃ¡Â»Â¯ liÃ¡Â»â€¡u ngÃƒÂ y 21/09).
+**TÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ tin Telegram Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ gÃƒÂ¡Ã‚Â»Ã‚Â­i:** **2 tin** (1 tin cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u mÃƒÆ’Ã‚Â£ POM ngÃƒÆ’Ã‚Â y 15/09 vÃƒÆ’Ã‚Â  1 tin cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o sÃƒÂ¡Ã‚Â»Ã‚Â± cÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u ngÃƒÆ’Ã‚Â y 21/09).
 
-### 4.4. Ã„ÂÃ¡Â»Â xuÃ¡ÂºÂ¥t Ã„â€˜iÃ¡Â»Âu chÃ¡Â»â€°nh NhÃ¡Â»â€¹p chÃ¡ÂºÂ¡y cÃ¡Â»Â§a `daily-data-check`
-- **HiÃ¡Â»â€¡n trÃ¡ÂºÂ¡ng:** Task Scheduler `trading-daily-data-check` chÃ¡ÂºÂ¡y lÃƒÂºc **15:30**, trong khi backfill Ã„â€˜ÃƒÂªm nÃ¡ÂºÂ¡p bar daily chÃ¡ÂºÂ¡y lÃƒÂºc **20:30** (chÃ¡ÂºÂ¡y sÃ¡Â»â€ºm hÃ†Â¡n dÃ¡Â»Â¯ liÃ¡Â»â€¡u 5 tiÃ¡ÂºÂ¿ng).
-- **Ã„ÂÃ¡Â»Â xuÃ¡ÂºÂ¥t:** DÃ¡Â»Âi giÃ¡Â»Â chÃ¡ÂºÂ¡y sang **21:00** (sau khi backfill Ã„â€˜ÃƒÂªm 20:30 hoÃƒÂ n tÃ¡ÂºÂ¥t).
-- **LÃ¡Â»â€¡nh PowerShell soÃ¡ÂºÂ¡n sÃ¡ÂºÂµn (sÃ¡Â»Â­a Trigger):**
+### 4.4. Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â xuÃƒÂ¡Ã‚ÂºÃ‚Â¥t Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã‚Âu chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â°nh NhÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹p chÃƒÂ¡Ã‚ÂºÃ‚Â¡y cÃƒÂ¡Ã‚Â»Ã‚Â§a `daily-data-check`
+- **HiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n trÃƒÂ¡Ã‚ÂºÃ‚Â¡ng:** Task Scheduler `trading-daily-data-check` chÃƒÂ¡Ã‚ÂºÃ‚Â¡y lÃƒÆ’Ã‚Âºc **15:30**, trong khi backfill Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âªm nÃƒÂ¡Ã‚ÂºÃ‚Â¡p bar daily chÃƒÂ¡Ã‚ÂºÃ‚Â¡y lÃƒÆ’Ã‚Âºc **20:30** (chÃƒÂ¡Ã‚ÂºÃ‚Â¡y sÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºm hÃƒâ€ Ã‚Â¡n dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u 5 tiÃƒÂ¡Ã‚ÂºÃ‚Â¿ng).
+- **Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â xuÃƒÂ¡Ã‚ÂºÃ‚Â¥t:** DÃƒÂ¡Ã‚Â»Ã‚Âi giÃƒÂ¡Ã‚Â»Ã‚Â chÃƒÂ¡Ã‚ÂºÃ‚Â¡y sang **21:00** (sau khi backfill Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âªm 20:30 hoÃƒÆ’Ã‚Â n tÃƒÂ¡Ã‚ÂºÃ‚Â¥t).
+- **LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh PowerShell soÃƒÂ¡Ã‚ÂºÃ‚Â¡n sÃƒÂ¡Ã‚ÂºÃ‚Âµn (sÃƒÂ¡Ã‚Â»Ã‚Â­a Trigger):**
 ```powershell
 $Trigger = New-ScheduledTaskTrigger -Daily -At 21:00
 Set-ScheduledTask -TaskName "trading-daily-data-check" -Trigger $Trigger
@@ -239,34 +239,34 @@ Set-ScheduledTask -TaskName "trading-daily-data-check" -Trigger $Trigger
 
 ---
 
-## 5. Task 3 Ã¢â‚¬â€ Ã„Âo Ã„â€˜Ã¡ÂºÂ¡c Backfill Ã„â€˜ÃƒÂªm vÃƒÂ  SoÃ¡ÂºÂ¡n lÃ¡Â»â€¡nh nÃ¡Â»â€ºi giÃ¡Â»â€ºi hÃ¡ÂºÂ¡n
+## 5. Task 3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Ãƒâ€žÃ‚Âo Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â¡c Backfill Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âªm vÃƒÆ’Ã‚Â  SoÃƒÂ¡Ã‚ÂºÃ‚Â¡n lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh nÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi giÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi hÃƒÂ¡Ã‚ÂºÃ‚Â¡n
 
-### 5.1. Hai phÃƒÂ©p Ã„â€˜o thÃ¡Â»Âi lÃ†Â°Ã¡Â»Â£ng thÃ¡ÂºÂ­t
-1. **LÃ†Â°Ã¡Â»Â£t 15/09 (tÃ¡Â»Â« `logs/backfill.log`):**
-   - BÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u: `2026-09-15 20:30:12 backfill start`
+### 5.1. Hai phÃƒÆ’Ã‚Â©p Ãƒâ€žÃ¢â‚¬Ëœo thÃƒÂ¡Ã‚Â»Ã‚Âi lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£ng thÃƒÂ¡Ã‚ÂºÃ‚Â­t
+1. **LÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£t 15/09 (tÃƒÂ¡Ã‚Â»Ã‚Â« `logs/backfill.log`):**
+   - BÃƒÂ¡Ã‚ÂºÃ‚Â¯t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â§u: `2026-09-15 20:30:12 backfill start`
    - Token refresh: `2026-09-15 20:30:49`
-   - KÃ¡ÂºÂ¿t thÃƒÂºc: khoÃ¡ÂºÂ£ng `20:31:45` (~93 giÃƒÂ¢y, tÃ¡Â»Â©c **~1.5 phÃƒÂºt**).
-2. **LÃ†Â°Ã¡Â»Â£t chÃ¡ÂºÂ¡y bÃƒÂ¹ trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p chiÃ¡Â»Âu nay (nÃ¡ÂºÂ¡p bÃƒÂ¹ 3 ngÃƒÂ y 16, 17, 18/09):**
-   - BÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u: `2026-09-18 17:11:41`
-   - KÃ¡ÂºÂ¿t thÃƒÂºc: `2026-09-18 17:12:55`
-   - ThÃ¡Â»Âi lÃ†Â°Ã¡Â»Â£ng: Ã„â€˜ÃƒÂºng **74 giÃƒÂ¢y (~1.23 phÃƒÂºt)** cho 175/175 mÃƒÂ£ thÃƒÂ nh cÃƒÂ´ng (`ok=175 skip=0 err=0`).
+   - KÃƒÂ¡Ã‚ÂºÃ‚Â¿t thÃƒÆ’Ã‚Âºc: khoÃƒÂ¡Ã‚ÂºÃ‚Â£ng `20:31:45` (~93 giÃƒÆ’Ã‚Â¢y, tÃƒÂ¡Ã‚Â»Ã‚Â©c **~1.5 phÃƒÆ’Ã‚Âºt**).
+2. **LÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£t chÃƒÂ¡Ã‚ÂºÃ‚Â¡y bÃƒÆ’Ã‚Â¹ trÃƒÂ¡Ã‚Â»Ã‚Â±c tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p chiÃƒÂ¡Ã‚Â»Ã‚Âu nay (nÃƒÂ¡Ã‚ÂºÃ‚Â¡p bÃƒÆ’Ã‚Â¹ 3 ngÃƒÆ’Ã‚Â y 16, 17, 18/09):**
+   - BÃƒÂ¡Ã‚ÂºÃ‚Â¯t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â§u: `2026-09-18 17:11:41`
+   - KÃƒÂ¡Ã‚ÂºÃ‚Â¿t thÃƒÆ’Ã‚Âºc: `2026-09-18 17:12:55`
+   - ThÃƒÂ¡Ã‚Â»Ã‚Âi lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£ng: Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng **74 giÃƒÆ’Ã‚Â¢y (~1.23 phÃƒÆ’Ã‚Âºt)** cho 175/175 mÃƒÆ’Ã‚Â£ thÃƒÆ’Ã‚Â nh cÃƒÆ’Ã‚Â´ng (`ok=175 skip=0 err=0`).
 
-### 5.2. KÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ kiÃ¡Â»Æ’m tra sau khi chÃ¡ÂºÂ¡y backfill bÃƒÂ¹
-- NgÃƒÂ y 16/09: TÃ„Æ’ng tÃ¡Â»Â« 8 mÃƒÂ£ lÃƒÂªn **174/175 mÃƒÂ£** (chÃ¡Â»â€° thiÃ¡ÂºÂ¿u POM do ngÃ¡Â»Â«ng giao dÃ¡Â»â€¹ch).
-- NgÃƒÂ y 17/09: TÃ„Æ’ng tÃ¡Â»Â« 8 mÃƒÂ£ lÃƒÂªn **174/175 mÃƒÂ£** (chÃ¡Â»â€° thiÃ¡ÂºÂ¿u POM).
-- NgÃƒÂ y 18/09: TÃ„Æ’ng tÃ¡Â»Â« 8 mÃƒÂ£ lÃƒÂªn **175/175 mÃƒÂ£** (Ã„â€˜Ã¡ÂºÂ§y Ã„â€˜Ã¡Â»Â§ 100%).
+### 5.2. KÃƒÂ¡Ã‚ÂºÃ‚Â¿t quÃƒÂ¡Ã‚ÂºÃ‚Â£ kiÃƒÂ¡Ã‚Â»Ã†â€™m tra sau khi chÃƒÂ¡Ã‚ÂºÃ‚Â¡y backfill bÃƒÆ’Ã‚Â¹
+- NgÃƒÆ’Ã‚Â y 16/09: TÃƒâ€žÃ†â€™ng tÃƒÂ¡Ã‚Â»Ã‚Â« 8 mÃƒÆ’Ã‚Â£ lÃƒÆ’Ã‚Âªn **174/175 mÃƒÆ’Ã‚Â£** (chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u POM do ngÃƒÂ¡Ã‚Â»Ã‚Â«ng giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch).
+- NgÃƒÆ’Ã‚Â y 17/09: TÃƒâ€žÃ†â€™ng tÃƒÂ¡Ã‚Â»Ã‚Â« 8 mÃƒÆ’Ã‚Â£ lÃƒÆ’Ã‚Âªn **174/175 mÃƒÆ’Ã‚Â£** (chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° thiÃƒÂ¡Ã‚ÂºÃ‚Â¿u POM).
+- NgÃƒÆ’Ã‚Â y 18/09: TÃƒâ€žÃ†â€™ng tÃƒÂ¡Ã‚Â»Ã‚Â« 8 mÃƒÆ’Ã‚Â£ lÃƒÆ’Ã‚Âªn **175/175 mÃƒÆ’Ã‚Â£** (Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â§y Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ 100%).
 
-### 5.3. TrÃ¡ÂºÂ£ lÃ¡Â»Âi cÃƒÂ¢u hÃ¡Â»Âi: `MultipleInstances IgnoreNew` cÃƒÂ³ gÃƒÂ¢y rÃ¡ÂºÂ¯c rÃ¡Â»â€˜i khÃƒÂ´ng?
-**TrÃ¡ÂºÂ£ lÃ¡Â»Âi: KHÃƒâ€NG.**
-- `MultipleInstances IgnoreNew` chÃ¡Â»â€° bÃ¡Â»Â qua lÃ†Â°Ã¡Â»Â£t trigger mÃ¡Â»â€ºi nÃ¡ÂºÂ¿u instance cÃ…Â© *vÃ¡ÂºÂ«n Ã„â€˜ang chÃ¡ÂºÂ¡y*.
-- Chu kÃ¡Â»Â³ trigger cÃ¡Â»Â§a backfill lÃƒÂ  **24 giÃ¡Â»Â** (mÃ¡Â»â€”i ngÃƒÂ y mÃ¡Â»â„¢t lÃ¡ÂºÂ§n lÃƒÂºc 20:30).
-- ThÃ¡Â»Âi gian chÃ¡ÂºÂ¡y bÃƒÂ¬nh thÃ†Â°Ã¡Â»Âng chÃ¡Â»â€° ~1.5 phÃƒÂºt, vÃƒÂ  vÃ¡Â»â€ºi `ExecutionTimeLimit = PT30M`, Task Scheduler sÃ¡ÂºÂ½ cÃ†Â°Ã¡Â»Â¡ng chÃ¡ÂºÂ¿ dÃ¡Â»Â«ng tiÃ¡ÂºÂ¿n trÃƒÂ¬nh sau tÃ¡Â»â€˜i Ã„â€˜a 30 phÃƒÂºt.
-- Do Ã„â€˜ÃƒÂ³, mÃ¡Â»â„¢t instance khÃƒÂ´ng bao giÃ¡Â»Â chÃ¡ÂºÂ¡y quÃƒÂ¡ 30 phÃƒÂºt, hoÃƒÂ n toÃƒÂ n khÃƒÂ´ng thÃ¡Â»Æ’ kÃƒÂ©o dÃƒÂ i 24 tiÃ¡ÂºÂ¿ng Ã„â€˜Ã¡Â»Æ’ chÃ¡Â»â€œng lÃ¡ÂºÂ¥n vÃƒÂ o lÃ†Â°Ã¡Â»Â£t trigger tiÃ¡ÂºÂ¿p theo.
-- CÃ¡Â»Â `IgnoreNew` lÃƒÂ  chÃ¡Â»â€˜t chÃ¡ÂºÂ·n an toÃƒÂ n ngÃ„Æ’n ngÃ¡Â»Â«a viÃ¡Â»â€¡c chÃ¡ÂºÂ¡y trÃƒÂ¹ng lÃ¡ÂºÂ·p hai luÃ¡Â»â€œng backfill cÃƒÂ¹ng lÃƒÂºc.
+### 5.3. TrÃƒÂ¡Ã‚ÂºÃ‚Â£ lÃƒÂ¡Ã‚Â»Ã‚Âi cÃƒÆ’Ã‚Â¢u hÃƒÂ¡Ã‚Â»Ã‚Âi: `MultipleInstances IgnoreNew` cÃƒÆ’Ã‚Â³ gÃƒÆ’Ã‚Â¢y rÃƒÂ¡Ã‚ÂºÃ‚Â¯c rÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi khÃƒÆ’Ã‚Â´ng?
+**TrÃƒÂ¡Ã‚ÂºÃ‚Â£ lÃƒÂ¡Ã‚Â»Ã‚Âi: KHÃƒÆ’Ã¢â‚¬ÂNG.**
+- `MultipleInstances IgnoreNew` chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° bÃƒÂ¡Ã‚Â»Ã‚Â qua lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£t trigger mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi nÃƒÂ¡Ã‚ÂºÃ‚Â¿u instance cÃƒâ€¦Ã‚Â© *vÃƒÂ¡Ã‚ÂºÃ‚Â«n Ãƒâ€žÃ¢â‚¬Ëœang chÃƒÂ¡Ã‚ÂºÃ‚Â¡y*.
+- Chu kÃƒÂ¡Ã‚Â»Ã‚Â³ trigger cÃƒÂ¡Ã‚Â»Ã‚Â§a backfill lÃƒÆ’Ã‚Â  **24 giÃƒÂ¡Ã‚Â»Ã‚Â** (mÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i ngÃƒÆ’Ã‚Â y mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t lÃƒÂ¡Ã‚ÂºÃ‚Â§n lÃƒÆ’Ã‚Âºc 20:30).
+- ThÃƒÂ¡Ã‚Â»Ã‚Âi gian chÃƒÂ¡Ã‚ÂºÃ‚Â¡y bÃƒÆ’Ã‚Â¬nh thÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° ~1.5 phÃƒÆ’Ã‚Âºt, vÃƒÆ’Ã‚Â  vÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi `ExecutionTimeLimit = PT30M`, Task Scheduler sÃƒÂ¡Ã‚ÂºÃ‚Â½ cÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â¡ng chÃƒÂ¡Ã‚ÂºÃ‚Â¿ dÃƒÂ¡Ã‚Â»Ã‚Â«ng tiÃƒÂ¡Ã‚ÂºÃ‚Â¿n trÃƒÆ’Ã‚Â¬nh sau tÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi Ãƒâ€žÃ¢â‚¬Ëœa 30 phÃƒÆ’Ã‚Âºt.
+- Do Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³, mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t instance khÃƒÆ’Ã‚Â´ng bao giÃƒÂ¡Ã‚Â»Ã‚Â chÃƒÂ¡Ã‚ÂºÃ‚Â¡y quÃƒÆ’Ã‚Â¡ 30 phÃƒÆ’Ã‚Âºt, hoÃƒÆ’Ã‚Â n toÃƒÆ’Ã‚Â n khÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ kÃƒÆ’Ã‚Â©o dÃƒÆ’Ã‚Â i 24 tiÃƒÂ¡Ã‚ÂºÃ‚Â¿ng Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ chÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“ng lÃƒÂ¡Ã‚ÂºÃ‚Â¥n vÃƒÆ’Ã‚Â o lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£t trigger tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p theo.
+- CÃƒÂ¡Ã‚Â»Ã‚Â `IgnoreNew` lÃƒÆ’Ã‚Â  chÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœt chÃƒÂ¡Ã‚ÂºÃ‚Â·n an toÃƒÆ’Ã‚Â n ngÃƒâ€žÃ†â€™n ngÃƒÂ¡Ã‚Â»Ã‚Â«a viÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡c chÃƒÂ¡Ã‚ÂºÃ‚Â¡y trÃƒÆ’Ã‚Â¹ng lÃƒÂ¡Ã‚ÂºÃ‚Â·p hai luÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“ng backfill cÃƒÆ’Ã‚Â¹ng lÃƒÆ’Ã‚Âºc.
 
-### 5.4. LÃ¡Â»â€¡nh PowerShell soÃ¡ÂºÂ¡n sÃ¡ÂºÂµn nÃ¡Â»â€ºi giÃ¡Â»â€ºi hÃ¡ÂºÂ¡n thÃ¡Â»Âi gian chÃ¡ÂºÂ¡y cho `trading-backfill-universe`
-- **BiÃƒÂªn an toÃƒÂ n Ã„â€˜Ã¡Â»Â xuÃ¡ÂºÂ¥t:** NÃ¡Â»â€ºi `ExecutionTimeLimit` tÃ¡Â»Â« `PT10M` (10 phÃƒÂºt) lÃƒÂªn **`PT30M` (30 phÃƒÂºt)** (gÃ¡ÂºÂ¥p 20 lÃ¡ÂºÂ§n thÃ¡Â»Âi gian chÃ¡ÂºÂ¡y thÃ¡Â»Â±c tÃ¡ÂºÂ¿ 1.5 phÃƒÂºt, Ã„â€˜Ã¡Â»Â§ Ã„â€˜Ã¡Â»Æ’ chÃ¡Â»â€¹u Ã„â€˜Ã¡Â»Â±ng cÃƒÂ¡c Ã„â€˜Ã¡Â»Â£t mÃ¡ÂºÂ¡ng SSI chÃ¡ÂºÂ­p chÃ¡Â»Ân vÃƒÂ  retry nhiÃ¡Â»Âu lÃ¡ÂºÂ§n mÃƒÂ  khÃƒÂ´ng bÃ¡Â»â€¹ Task Scheduler giÃ¡ÂºÂ¿t giÃ¡Â»Â¯a chÃ¡Â»Â«ng).
-- **KhuÃƒÂ´n lÃ¡Â»â€¡nh PowerShell soÃ¡ÂºÂ¡n sÃ¡ÂºÂµn:**
+### 5.4. LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh PowerShell soÃƒÂ¡Ã‚ÂºÃ‚Â¡n sÃƒÂ¡Ã‚ÂºÃ‚Âµn nÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi giÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi hÃƒÂ¡Ã‚ÂºÃ‚Â¡n thÃƒÂ¡Ã‚Â»Ã‚Âi gian chÃƒÂ¡Ã‚ÂºÃ‚Â¡y cho `trading-backfill-universe`
+- **BiÃƒÆ’Ã‚Âªn an toÃƒÆ’Ã‚Â n Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â xuÃƒÂ¡Ã‚ÂºÃ‚Â¥t:** NÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi `ExecutionTimeLimit` tÃƒÂ¡Ã‚Â»Ã‚Â« `PT10M` (10 phÃƒÆ’Ã‚Âºt) lÃƒÆ’Ã‚Âªn **`PT30M` (30 phÃƒÆ’Ã‚Âºt)** (gÃƒÂ¡Ã‚ÂºÃ‚Â¥p 20 lÃƒÂ¡Ã‚ÂºÃ‚Â§n thÃƒÂ¡Ã‚Â»Ã‚Âi gian chÃƒÂ¡Ã‚ÂºÃ‚Â¡y thÃƒÂ¡Ã‚Â»Ã‚Â±c tÃƒÂ¡Ã‚ÂºÃ‚Â¿ 1.5 phÃƒÆ’Ã‚Âºt, Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹u Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â±ng cÃƒÆ’Ã‚Â¡c Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t mÃƒÂ¡Ã‚ÂºÃ‚Â¡ng SSI chÃƒÂ¡Ã‚ÂºÃ‚Â­p chÃƒÂ¡Ã‚Â»Ã‚Ân vÃƒÆ’Ã‚Â  retry nhiÃƒÂ¡Ã‚Â»Ã‚Âu lÃƒÂ¡Ã‚ÂºÃ‚Â§n mÃƒÆ’Ã‚Â  khÃƒÆ’Ã‚Â´ng bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ Task Scheduler giÃƒÂ¡Ã‚ÂºÃ‚Â¿t giÃƒÂ¡Ã‚Â»Ã‚Â¯a chÃƒÂ¡Ã‚Â»Ã‚Â«ng).
+- **KhuÃƒÆ’Ã‚Â´n lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh PowerShell soÃƒÂ¡Ã‚ÂºÃ‚Â¡n sÃƒÂ¡Ã‚ÂºÃ‚Âµn:**
 ```powershell
 $Task = Get-ScheduledTask -TaskName "trading-backfill-universe"
 $Task.Settings.ExecutionTimeLimit = "PT30M"
@@ -275,80 +275,80 @@ Set-ScheduledTask -InputObject $Task
 
 ---
 
-## 6. Task 4 Ã¢â‚¬â€ Ã„ÂÃƒÂ¡nh giÃƒÂ¡ Image Engine bÃ¡ÂºÂ£y ngÃƒÂ y tuÃ¡Â»â€¢i
+## 6. Task 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â¡nh giÃƒÆ’Ã‚Â¡ Image Engine bÃƒÂ¡Ã‚ÂºÃ‚Â£y ngÃƒÆ’Ã‚Â y tuÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i
 
-### 6.1. Danh sÃƒÂ¡ch commit chÃ¡ÂºÂ¡m `trading/` tÃ¡Â»Â« `2026-09-11T12:44:25Z` Ã„â€˜Ã¡ÂºÂ¿n nay
-CÃƒÂ³ tÃ¡Â»â€¢ng cÃ¡Â»â„¢ng **9 commit** chÃ¡ÂºÂ¡m vÃƒÂ o thÃ†Â° mÃ¡Â»Â¥c `trading/`:
+### 6.1. Danh sÃƒÆ’Ã‚Â¡ch commit chÃƒÂ¡Ã‚ÂºÃ‚Â¡m `trading/` tÃƒÂ¡Ã‚Â»Ã‚Â« `2026-09-11T12:44:25Z` Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â¿n nay
+CÃƒÆ’Ã‚Â³ tÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng cÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ng **9 commit** chÃƒÂ¡Ã‚ÂºÃ‚Â¡m vÃƒÆ’Ã‚Â o thÃƒâ€ Ã‚Â° mÃƒÂ¡Ã‚Â»Ã‚Â¥c `trading/`:
 1. `6ee3d54` (12/09): `trading/collector/main.py` -> Collector
-2. `deec346` (12/09): `trading/indicators.py`, `trading/perp_backtest.py` -> NghiÃƒÂªn cÃ¡Â»Â©u Crypto Perp
-3. `da85c01` (12/09): `trading/perp_backtest.py` -> NghiÃƒÂªn cÃ¡Â»Â©u Crypto Perp
-4. `bcdad9e` (12/09): `trading/cross_sectional.py`, `trading/metrics.py` -> NghiÃƒÂªn cÃ¡Â»Â©u chÃƒÂ©o
+2. `deec346` (12/09): `trading/indicators.py`, `trading/perp_backtest.py` -> NghiÃƒÆ’Ã‚Âªn cÃƒÂ¡Ã‚Â»Ã‚Â©u Crypto Perp
+3. `da85c01` (12/09): `trading/perp_backtest.py` -> NghiÃƒÆ’Ã‚Âªn cÃƒÂ¡Ã‚Â»Ã‚Â©u Crypto Perp
+4. `bcdad9e` (12/09): `trading/cross_sectional.py`, `trading/metrics.py` -> NghiÃƒÆ’Ã‚Âªn cÃƒÂ¡Ã‚Â»Ã‚Â©u chÃƒÆ’Ã‚Â©o
 5. `d5dd50c` (12/09): `trading/feature_panel.py` -> Order flow feature panel
 6. `23662db` (14/09): `trading/feature_panel.py` -> Order flow feature panel
 7. `f191f01` (14/09): `trading/collector/latch.py`, `trading/collector/main.py` -> Collector
 8. `a98646f` (18/09): `trading/calendar_vn.py`, `trading/collector/main.py` -> Collector & calendar
 9. `0b0491b` (18/09): `trading/collector/main.py` -> Collector
 
-### 6.2. KiÃ¡Â»Æ’m tra `trading/engine/`
+### 6.2. KiÃƒÂ¡Ã‚Â»Ã†â€™m tra `trading/engine/`
 ```bash
 $ git log --since="2026-09-11T12:44:25Z" -- trading/engine/
-(HoÃƒÂ n toÃƒÂ n rÃ¡Â»â€”ng Ã¢â‚¬â€ 0 commit)
+(HoÃƒÆ’Ã‚Â n toÃƒÆ’Ã‚Â n rÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 0 commit)
 ```
 
-### 6.3. KÃ¡ÂºÂ¿t luÃ¡ÂºÂ­n
-- **KhÃƒÂ¡c vÃ¡Â»Â hash nhÃ†Â°ng KHÃƒâ€NG KHÃƒÂC VÃ¡Â»â‚¬ MÃ¡ÂºÂ¶T HÃƒâ‚¬NH VI.**
-- **LÃƒÂ½ do:** KÃ¡Â»Æ’ tÃ¡Â»Â« thÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m build image engine (`11/09/2026 19:44 VN`), toÃƒÂ n bÃ¡Â»â„¢ cÃƒÂ¡c thay Ã„â€˜Ã¡Â»â€¢i trong repo chÃ¡Â»â€° nÃ¡ÂºÂ±m Ã¡Â»Å¸ container `collector`, cÃƒÂ¡c script nghiÃƒÂªn cÃ¡Â»Â©u offline crypto (`perp_backtest.py`, `indicators.py`, `feature_panel.py`) vÃƒÂ  test suite. ThÃ†Â° mÃ¡Â»Â¥c `trading/engine/` cÃƒÂ¹ng toÃƒÂ n bÃ¡Â»â„¢ logic giao dÃ¡Â»â€¹ch cÃ†Â¡ sÃ¡Â»Å¸ (`OctopusPullbackStrategy`, `models.py`, `storage/db.py`, `bus/`) khÃƒÂ´ng hÃ¡Â»Â bÃ¡Â»â€¹ thay Ã„â€˜Ã¡Â»â€¢i mÃ¡Â»â„¢t dÃƒÂ²ng mÃƒÂ£ nÃƒÂ o.
-- **KhuyÃ¡ÂºÂ¿n nghÃ¡Â»â€¹:** ViÃ¡Â»â€¡c dÃ¡Â»Â±ng lÃ¡ÂºÂ¡i image engine **KHÃƒâ€NG CÃ¡ÂºÂ¤P BÃƒÂCH**, cÃƒÂ³ thÃ¡Â»Æ’ thÃ¡Â»Â±c hiÃ¡Â»â€¡n kÃ¡ÂºÂ¿t hÃ¡Â»Â£p trong Ã„â€˜Ã¡Â»Â£t bÃ¡ÂºÂ£o trÃƒÂ¬ hÃ¡Â»â€¡ thÃ¡Â»â€˜ng tiÃ¡ÂºÂ¿p theo.
+### 6.3. KÃƒÂ¡Ã‚ÂºÃ‚Â¿t luÃƒÂ¡Ã‚ÂºÃ‚Â­n
+- **KhÃƒÆ’Ã‚Â¡c vÃƒÂ¡Ã‚Â»Ã‚Â hash nhÃƒâ€ Ã‚Â°ng KHÃƒÆ’Ã¢â‚¬ÂNG KHÃƒÆ’Ã‚ÂC VÃƒÂ¡Ã‚Â»Ã¢â€šÂ¬ MÃƒÂ¡Ã‚ÂºÃ‚Â¶T HÃƒÆ’Ã¢â€šÂ¬NH VI.**
+- **LÃƒÆ’Ã‚Â½ do:** KÃƒÂ¡Ã‚Â»Ã†â€™ tÃƒÂ¡Ã‚Â»Ã‚Â« thÃƒÂ¡Ã‚Â»Ã‚Âi Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m build image engine (`11/09/2026 19:44 VN`), toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ cÃƒÆ’Ã‚Â¡c thay Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i trong repo chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° nÃƒÂ¡Ã‚ÂºÃ‚Â±m ÃƒÂ¡Ã‚Â»Ã…Â¸ container `collector`, cÃƒÆ’Ã‚Â¡c script nghiÃƒÆ’Ã‚Âªn cÃƒÂ¡Ã‚Â»Ã‚Â©u offline crypto (`perp_backtest.py`, `indicators.py`, `feature_panel.py`) vÃƒÆ’Ã‚Â  test suite. ThÃƒâ€ Ã‚Â° mÃƒÂ¡Ã‚Â»Ã‚Â¥c `trading/engine/` cÃƒÆ’Ã‚Â¹ng toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ logic giao dÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch cÃƒâ€ Ã‚Â¡ sÃƒÂ¡Ã‚Â»Ã…Â¸ (`OctopusPullbackStrategy`, `models.py`, `storage/db.py`, `bus/`) khÃƒÆ’Ã‚Â´ng hÃƒÂ¡Ã‚Â»Ã‚Â bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ thay Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t dÃƒÆ’Ã‚Â²ng mÃƒÆ’Ã‚Â£ nÃƒÆ’Ã‚Â o.
+- **KhuyÃƒÂ¡Ã‚ÂºÃ‚Â¿n nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹:** ViÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡c dÃƒÂ¡Ã‚Â»Ã‚Â±ng lÃƒÂ¡Ã‚ÂºÃ‚Â¡i image engine **KHÃƒÆ’Ã¢â‚¬ÂNG CÃƒÂ¡Ã‚ÂºÃ‚Â¤P BÃƒÆ’Ã‚ÂCH**, cÃƒÆ’Ã‚Â³ thÃƒÂ¡Ã‚Â»Ã†â€™ thÃƒÂ¡Ã‚Â»Ã‚Â±c hiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n kÃƒÂ¡Ã‚ÂºÃ‚Â¿t hÃƒÂ¡Ã‚Â»Ã‚Â£p trong Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t bÃƒÂ¡Ã‚ÂºÃ‚Â£o trÃƒÆ’Ã‚Â¬ hÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ thÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœng tiÃƒÂ¡Ã‚ÂºÃ‚Â¿p theo.
 
 ---
 
-## 7. Ba dÃƒÂ²ng kiÃ¡Â»Æ’m Ã„â€˜Ã¡Â»â€¹nh chÃ¡ÂºÂ¥t lÃ†Â°Ã¡Â»Â£ng toÃƒÂ n diÃ¡Â»â€¡n
+## 7. Ba dÃƒÆ’Ã‚Â²ng kiÃƒÂ¡Ã‚Â»Ã†â€™m Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh chÃƒÂ¡Ã‚ÂºÃ‚Â¥t lÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£ng toÃƒÆ’Ã‚Â n diÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n
 
-1. **Test suite:** **774 passed** in 38.65s (`uv run pytest -q`, mÃ¡Â»â€˜c cÃ…Â© 771 + 3 test mÃ¡Â»â€ºi).
+1. **Test suite:** **774 passed** in 38.65s (`uv run pytest -q`, mÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœc cÃƒâ€¦Ã‚Â© 771 + 3 test mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi).
 2. **Linter:** `uv run ruff check trading tests scripts` -> **All checks passed!** (clean 100%).
-3. **CÃ¡Â»â€¢ng cÃ¡Â»Â©ng VN:** `uv run python scripts/measure_strategy.py --strategy octopus_pullback --exclude-file exclusions.txt` -> **KhÃ¡Â»â€ºp tuyÃ¡Â»â€¡t Ã„â€˜Ã¡Â»â€˜i 4 con sÃ¡Â»â€˜:**
+3. **CÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng cÃƒÂ¡Ã‚Â»Ã‚Â©ng VN:** `uv run python scripts/measure_strategy.py --strategy octopus_pullback --exclude-file exclusions.txt` -> **KhÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp tuyÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi 4 con sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ:**
    ```text
-   TÃ¡Â»â€NG: strat -1,615,319,902 | BH 1,897,587,481,903 | diff -1,899,202,801,806 | lÃ¡Â»â€¡nh 1,514 | mÃƒÂ£ sinh lÃ¡Â»â€¡nh 439 | mÃƒÂ£ Ã„â€˜Ã¡Â»Â§ thanh khoÃ¡ÂºÂ£n 748 | dÃƒÂ²ng bÃ¡ÂºÂ©n 10,459
+   TÃƒÂ¡Ã‚Â»Ã¢â‚¬ÂNG: strat -1,615,319,902 | BH 1,897,587,481,903 | diff -1,899,202,801,806 | lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh 1,514 | mÃƒÆ’Ã‚Â£ sinh lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh 439 | mÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ thanh khoÃƒÂ¡Ã‚ÂºÃ‚Â£n 748 | dÃƒÆ’Ã‚Â²ng bÃƒÂ¡Ã‚ÂºÃ‚Â©n 10,459
    ```
 
-*(TuÃƒÂ¢n thÃ¡Â»Â§ cam kÃ¡ÂºÂ¿t: KhÃƒÂ´ng commit, khÃƒÂ´ng push, bÃ¡ÂºÂ£o vÃ¡Â»â€¡ an toÃƒÂ n toÃƒÂ n vÃ¡ÂºÂ¹n hÃ¡Â»â€¡ thÃ¡Â»â€˜ng).*
+*(TuÃƒÆ’Ã‚Â¢n thÃƒÂ¡Ã‚Â»Ã‚Â§ cam kÃƒÂ¡Ã‚ÂºÃ‚Â¿t: KhÃƒÆ’Ã‚Â´ng commit, khÃƒÆ’Ã‚Â´ng push, bÃƒÂ¡Ã‚ÂºÃ‚Â£o vÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ an toÃƒÆ’Ã‚Â n toÃƒÆ’Ã‚Â n vÃƒÂ¡Ã‚ÂºÃ‚Â¹n hÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ thÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœng).*
 
 ---
 
-## PhÃ¡Â»Â¥ lÃ¡Â»Â¥c Ã¢â‚¬â€ ghi chÃƒÂº cÃ¡Â»Â§a Claude (auditor), 18/09/2026 tÃ¡Â»â€˜i
+## PhÃƒÂ¡Ã‚Â»Ã‚Â¥ lÃƒÂ¡Ã‚Â»Ã‚Â¥c ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ghi chÃƒÆ’Ã‚Âº cÃƒÂ¡Ã‚Â»Ã‚Â§a Claude (auditor), 18/09/2026 tÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi
 
-TÃƒÂ´i kiÃ¡Â»Æ’m chÃ¡Â»Â©ng Ã„â€˜Ã¡Â»â„¢c lÃ¡ÂºÂ­p toÃƒÂ n bÃ¡Â»â„¢ bÃƒÂ¡o cÃƒÂ¡o. **Ba task Ã„â€˜Ã¡ÂºÂ¡t, mÃ¡Â»â„¢t task dÃ¡Â»Â«ng Ã„â€˜ÃƒÂºng chÃ¡Â»â€”.** Ba Ã„â€˜iÃ¡Â»Âu cÃ¡ÂºÂ§n
-ghi lÃ¡ÂºÂ¡i.
+TÃƒÆ’Ã‚Â´i kiÃƒÂ¡Ã‚Â»Ã†â€™m chÃƒÂ¡Ã‚Â»Ã‚Â©ng Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c lÃƒÂ¡Ã‚ÂºÃ‚Â­p toÃƒÆ’Ã‚Â n bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ bÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o. **Ba task Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â¡t, mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t task dÃƒÂ¡Ã‚Â»Ã‚Â«ng Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng chÃƒÂ¡Ã‚Â»Ã¢â‚¬â€.** Ba Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã‚Âu cÃƒÂ¡Ã‚ÂºÃ‚Â§n
+ghi lÃƒÂ¡Ã‚ÂºÃ‚Â¡i.
 
-### A. TÃƒÂ´i Ã„â€˜ÃƒÂ£ sÃ¡Â»Â­a mÃ¡Â»â„¢t dÃƒÂ²ng: `getattr(cfg, "holidays", frozenset())` quay lÃ¡ÂºÂ¡i
+### A. TÃƒÆ’Ã‚Â´i Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ sÃƒÂ¡Ã‚Â»Ã‚Â­a mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t dÃƒÆ’Ã‚Â²ng: `getattr(cfg, "holidays", frozenset())` quay lÃƒÂ¡Ã‚ÂºÃ‚Â¡i
 
-`scripts/daily_data_check.py:140` viÃ¡ÂºÂ¿t:
+`scripts/daily_data_check.py:140` viÃƒÂ¡Ã‚ÂºÃ‚Â¿t:
 
 ```python
 holidays = getattr(cfg, "holidays", frozenset())
 ```
 
-Ã„ÂÃƒÂºng mÃ¡Â»â„¢t Ã„â€˜Ã¡Â»Â£t trÃ†Â°Ã¡Â»â€ºc, Ã„â€˜Ã¡Â»Â£t 49 Ã„â€˜ÃƒÂ£ xoÃƒÂ¡ mÃ¡ÂºÂ«u nÃƒÂ y khÃ¡Â»Âi `trading/collector/main.py` vÃƒÂ  ghi trong
-thÃƒÂ´ng Ã„â€˜iÃ¡Â»â€¡p commit: *"Config.holidays la field bat buoc nen day la nhanh chet, lan thu tu cua
+Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Âºng mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºc, Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t 49 Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ xoÃƒÆ’Ã‚Â¡ mÃƒÂ¡Ã‚ÂºÃ‚Â«u nÃƒÆ’Ã‚Â y khÃƒÂ¡Ã‚Â»Ã‚Âi `trading/collector/main.py` vÃƒÆ’Ã‚Â  ghi trong
+thÃƒÆ’Ã‚Â´ng Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡p commit: *"Config.holidays la field bat buoc nen day la nhanh chet, lan thu tu cua
 mau nay. grep -rn 'getattr(cfg' trading/ gio RONG."*
 
-`trading/config.py:14` khai bÃƒÂ¡o `holidays: set[date]` Ã¢â‚¬â€ **field bÃ¡ÂºÂ¯t buÃ¡Â»â„¢c**, vÃƒÂ  dÃƒÂ²ng 38 luÃƒÂ´n gÃƒÂ¡n
-nÃƒÂ³. NhÃƒÂ¡nh mÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh `frozenset()` khÃƒÂ´ng bao giÃ¡Â»Â chÃ¡ÂºÂ¡y Ã„â€˜Ã†Â°Ã¡Â»Â£c. Ã„ÂÃƒÂ¢y lÃƒÂ  **lÃ¡ÂºÂ§n thÃ¡Â»Â© nÃ„Æ’m** cÃ¡Â»Â§a cÃƒÂ¹ng mÃ¡Â»â„¢t
-mÃ¡ÂºÂ«u, vÃƒÂ  sau khi tÃƒÂ´i sÃ¡Â»Â­a thÃƒÂ¬:
+`trading/config.py:14` khai bÃƒÆ’Ã‚Â¡o `holidays: set[date]` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â **field bÃƒÂ¡Ã‚ÂºÃ‚Â¯t buÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c**, vÃƒÆ’Ã‚Â  dÃƒÆ’Ã‚Â²ng 38 luÃƒÆ’Ã‚Â´n gÃƒÆ’Ã‚Â¡n
+nÃƒÆ’Ã‚Â³. NhÃƒÆ’Ã‚Â¡nh mÃƒÂ¡Ã‚ÂºÃ‚Â·c Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh `frozenset()` khÃƒÆ’Ã‚Â´ng bao giÃƒÂ¡Ã‚Â»Ã‚Â chÃƒÂ¡Ã‚ÂºÃ‚Â¡y Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c. Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â¢y lÃƒÆ’Ã‚Â  **lÃƒÂ¡Ã‚ÂºÃ‚Â§n thÃƒÂ¡Ã‚Â»Ã‚Â© nÃƒâ€žÃ†â€™m** cÃƒÂ¡Ã‚Â»Ã‚Â§a cÃƒÆ’Ã‚Â¹ng mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t
+mÃƒÂ¡Ã‚ÂºÃ‚Â«u, vÃƒÆ’Ã‚Â  sau khi tÃƒÆ’Ã‚Â´i sÃƒÂ¡Ã‚Â»Ã‚Â­a thÃƒÆ’Ã‚Â¬:
 
 ```
 $ Select-String trading/*.py trading/**/*.py scripts/*.py -Pattern "getattr\(cfg"
 (rong)
 ```
 
-SÃ¡Â»Â­a mÃ¡Â»â„¢t dÃƒÂ²ng, `21 thÃƒÂªm / 7 xoÃƒÂ¡` tÃ¡Â»â€¢ng cho cÃ¡ÂºÂ£ file (diff cÃ¡Â»Â§a agent lÃƒÂ  `20/7`). TÃƒÂ¡m test
-`test_daily_data_check.py` vÃ¡ÂºÂ«n pass, nhÃƒÂ¡nh ngÃƒÂ y nghÃ¡Â»â€° vÃ¡ÂºÂ«n `exit 0`.
+SÃƒÂ¡Ã‚Â»Ã‚Â­a mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t dÃƒÆ’Ã‚Â²ng, `21 thÃƒÆ’Ã‚Âªm / 7 xoÃƒÆ’Ã‚Â¡` tÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng cho cÃƒÂ¡Ã‚ÂºÃ‚Â£ file (diff cÃƒÂ¡Ã‚Â»Ã‚Â§a agent lÃƒÆ’Ã‚Â  `20/7`). TÃƒÆ’Ã‚Â¡m test
+`test_daily_data_check.py` vÃƒÂ¡Ã‚ÂºÃ‚Â«n pass, nhÃƒÆ’Ã‚Â¡nh ngÃƒÆ’Ã‚Â y nghÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° vÃƒÂ¡Ã‚ÂºÃ‚Â«n `exit 0`.
 
-### B. KÃ¡ÂºÂ¿t luÃ¡ÂºÂ­n Task 4 Ã„â€˜ÃƒÂºng, nhÃ†Â°ng lÃ¡ÂºÂ­p luÃ¡ÂºÂ­n chÃ†Â°a Ã„â€˜Ã¡Â»Â§ Ã„â€˜Ã¡Â»Æ’ chÃ¡Â»Â©ng minh nÃƒÂ³
+### B. KÃƒÂ¡Ã‚ÂºÃ‚Â¿t luÃƒÂ¡Ã‚ÂºÃ‚Â­n Task 4 Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng, nhÃƒâ€ Ã‚Â°ng lÃƒÂ¡Ã‚ÂºÃ‚Â­p luÃƒÂ¡Ã‚ÂºÃ‚Â­n chÃƒâ€ Ã‚Â°a Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ chÃƒÂ¡Ã‚Â»Ã‚Â©ng minh nÃƒÆ’Ã‚Â³
 
-Agent chÃ¡ÂºÂ¡y `git log --since=... -- trading/engine/`, thÃ¡ÂºÂ¥y rÃ¡Â»â€”ng, rÃ¡Â»â€œi kÃ¡ÂºÂ¿t luÃ¡ÂºÂ­n engine khÃƒÂ´ng khÃƒÂ¡c
-hÃƒÂ nh vi. **RÃ¡Â»â€”ng Ã¡Â»Å¸ `trading/engine/` khÃƒÂ´ng chÃ¡Â»Â©ng minh Ã„â€˜Ã†Â°Ã¡Â»Â£c Ã„â€˜iÃ¡Â»Âu Ã„â€˜ÃƒÂ³**, vÃƒÂ¬ engine import ra ngoÃƒÂ i
-thÃ†Â° mÃ¡Â»Â¥c Ã¡ÂºÂ¥y:
+Agent chÃƒÂ¡Ã‚ÂºÃ‚Â¡y `git log --since=... -- trading/engine/`, thÃƒÂ¡Ã‚ÂºÃ‚Â¥y rÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng, rÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“i kÃƒÂ¡Ã‚ÂºÃ‚Â¿t luÃƒÂ¡Ã‚ÂºÃ‚Â­n engine khÃƒÆ’Ã‚Â´ng khÃƒÆ’Ã‚Â¡c
+hÃƒÆ’Ã‚Â nh vi. **RÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng ÃƒÂ¡Ã‚Â»Ã…Â¸ `trading/engine/` khÃƒÆ’Ã‚Â´ng chÃƒÂ¡Ã‚Â»Ã‚Â©ng minh Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã‚Âu Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³**, vÃƒÆ’Ã‚Â¬ engine import ra ngoÃƒÆ’Ã‚Â i
+thÃƒâ€ Ã‚Â° mÃƒÂ¡Ã‚Â»Ã‚Â¥c ÃƒÂ¡Ã‚ÂºÃ‚Â¥y:
 
 ```
 trading/engine/logic.py:6   from trading.calendar_vn import TZ
@@ -356,7 +356,7 @@ trading/engine/main.py:19   from trading.strategies.octopus_pullback import Octo
 trading/strategies/octopus_pullback.py:  from trading.indicators import AtrCalculator, EmaCalculator, MacdCalculator
 ```
 
-CÃ¡ÂºÂ£ `calendar_vn.py` lÃ¡ÂºÂ«n `indicators.py` **Ã„â€˜Ã¡Â»Âu Ã„â€˜ÃƒÂ£ Ã„â€˜Ã¡Â»â€¢i** tÃ¡Â»Â« khi image engine Ã„â€˜Ã†Â°Ã¡Â»Â£c build:
+CÃƒÂ¡Ã‚ÂºÃ‚Â£ `calendar_vn.py` lÃƒÂ¡Ã‚ÂºÃ‚Â«n `indicators.py` **Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Âu Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i** tÃƒÂ¡Ã‚Â»Ã‚Â« khi image engine Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c build:
 
 ```
 $ git log --since="2026-09-11T12:44:25Z" --numstat -- trading/
@@ -364,24 +364,24 @@ $ git log --since="2026-09-11T12:44:25Z" --numstat -- trading/
 195   0   trading/indicators.py
 ```
 
-ChÃ¡Â»Â©ng minh Ã„â€˜ÃƒÂºng lÃƒÂ  Ã¡Â»Å¸ **cÃ¡Â»â„¢t thÃ¡Â»Â© hai**: `0` xoÃƒÂ¡. CÃ¡ÂºÂ£ hai file thuÃ¡ÂºÂ§n bÃ¡Â»â€¢ sung Ã¢â‚¬â€ `calendar_vn` thÃƒÂªm
-`CONTINUOUS_SESSIONS` + `is_continuous_matching` (Ã„â€˜Ã¡Â»Â£t 46), `indicators` thÃƒÂªm `Donchian`,
-`Bollinger`, `Adx` (Ã„â€˜Ã¡Â»Â£t 37) Ã¢â‚¬â€ vÃƒÂ  **khÃƒÂ´ng kÃƒÂ½ hiÃ¡Â»â€¡u mÃ¡Â»â€ºi nÃƒÂ o nÃ¡ÂºÂ±m trong Ã„â€˜Ã†Â°Ã¡Â»Âng import cÃ¡Â»Â§a engine**.
-`AtrCalculator`, `EmaCalculator`, `MacdCalculator`, `TZ` khÃƒÂ´ng bÃ¡Â»â€¹ chÃ¡ÂºÂ¡m.
+ChÃƒÂ¡Ã‚Â»Ã‚Â©ng minh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng lÃƒÆ’Ã‚Â  ÃƒÂ¡Ã‚Â»Ã…Â¸ **cÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t thÃƒÂ¡Ã‚Â»Ã‚Â© hai**: `0` xoÃƒÆ’Ã‚Â¡. CÃƒÂ¡Ã‚ÂºÃ‚Â£ hai file thuÃƒÂ¡Ã‚ÂºÃ‚Â§n bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ sung ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `calendar_vn` thÃƒÆ’Ã‚Âªm
+`CONTINUOUS_SESSIONS` + `is_continuous_matching` (Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t 46), `indicators` thÃƒÆ’Ã‚Âªm `Donchian`,
+`Bollinger`, `Adx` (Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t 37) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â vÃƒÆ’Ã‚Â  **khÃƒÆ’Ã‚Â´ng kÃƒÆ’Ã‚Â½ hiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi nÃƒÆ’Ã‚Â o nÃƒÂ¡Ã‚ÂºÃ‚Â±m trong Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âng import cÃƒÂ¡Ã‚Â»Ã‚Â§a engine**.
+`AtrCalculator`, `EmaCalculator`, `MacdCalculator`, `TZ` khÃƒÆ’Ã‚Â´ng bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ chÃƒÂ¡Ã‚ÂºÃ‚Â¡m.
 
-NÃƒÂªn kÃ¡ÂºÂ¿t luÃ¡ÂºÂ­n giÃ¡Â»Â¯ nguyÃƒÂªn: **engine khÃƒÂ¡c hash, khÃƒÂ´ng khÃƒÂ¡c hÃƒÂ nh vi.** NhÃ†Â°ng nÃƒÂ³ Ã„â€˜Ã¡Â»Â©ng Ã„â€˜Ã†Â°Ã¡Â»Â£c lÃƒÂ  nhÃ¡Â»Â
-kÃ¡Â»Â· luÃ¡ÂºÂ­t chÃ¡Â»â€°-thÃƒÂªm cÃ¡Â»Â§a cÃƒÂ¡c Ã„â€˜Ã¡Â»Â£t trÃ†Â°Ã¡Â»â€ºc, khÃƒÂ´ng phÃ¡ÂºÂ£i nhÃ¡Â»Â `trading/engine/` rÃ¡Â»â€”ng. LÃ¡ÂºÂ§n sau muÃ¡Â»â€˜n trÃ¡ÂºÂ£ lÃ¡Â»Âi
-cÃƒÂ¢u nÃƒÂ y thÃƒÂ¬ tÃƒÂ­nh **bao Ã„â€˜ÃƒÂ³ng import**, rÃ¡Â»â€œi kiÃ¡Â»Æ’m cÃ¡Â»â„¢t xoÃƒÂ¡.
+NÃƒÆ’Ã‚Âªn kÃƒÂ¡Ã‚ÂºÃ‚Â¿t luÃƒÂ¡Ã‚ÂºÃ‚Â­n giÃƒÂ¡Ã‚Â»Ã‚Â¯ nguyÃƒÆ’Ã‚Âªn: **engine khÃƒÆ’Ã‚Â¡c hash, khÃƒÆ’Ã‚Â´ng khÃƒÆ’Ã‚Â¡c hÃƒÆ’Ã‚Â nh vi.** NhÃƒâ€ Ã‚Â°ng nÃƒÆ’Ã‚Â³ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â©ng Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c lÃƒÆ’Ã‚Â  nhÃƒÂ¡Ã‚Â»Ã‚Â
+kÃƒÂ¡Ã‚Â»Ã‚Â· luÃƒÂ¡Ã‚ÂºÃ‚Â­t chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â°-thÃƒÆ’Ã‚Âªm cÃƒÂ¡Ã‚Â»Ã‚Â§a cÃƒÆ’Ã‚Â¡c Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t trÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºc, khÃƒÆ’Ã‚Â´ng phÃƒÂ¡Ã‚ÂºÃ‚Â£i nhÃƒÂ¡Ã‚Â»Ã‚Â `trading/engine/` rÃƒÂ¡Ã‚Â»Ã¢â‚¬â€ng. LÃƒÂ¡Ã‚ÂºÃ‚Â§n sau muÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœn trÃƒÂ¡Ã‚ÂºÃ‚Â£ lÃƒÂ¡Ã‚Â»Ã‚Âi
+cÃƒÆ’Ã‚Â¢u nÃƒÆ’Ã‚Â y thÃƒÆ’Ã‚Â¬ tÃƒÆ’Ã‚Â­nh **bao Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³ng import**, rÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“i kiÃƒÂ¡Ã‚Â»Ã†â€™m cÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t xoÃƒÆ’Ã‚Â¡.
 
-### C. LÃ¡Â»â€”i thiÃ¡ÂºÂ¿t kÃ¡ÂºÂ¿ cÃ¡Â»Â§a chÃƒÂ­nh brief 51 Ã¢â‚¬â€ lÃƒÂ  lÃ¡Â»â€”i cÃ¡Â»Â§a tÃƒÂ´i
+### C. LÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i thiÃƒÂ¡Ã‚ÂºÃ‚Â¿t kÃƒÂ¡Ã‚ÂºÃ‚Â¿ cÃƒÂ¡Ã‚Â»Ã‚Â§a chÃƒÆ’Ã‚Â­nh brief 51 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â lÃƒÆ’Ã‚Â  lÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i cÃƒÂ¡Ã‚Â»Ã‚Â§a tÃƒÆ’Ã‚Â´i
 
-Brief Ã‚Â§2.2 bÃ¡ÂºÂ£o agent kiÃ¡Â»Æ’m `--date 2026-09-18` phÃ¡ÂºÂ£i ra **`exit 1`, 8/175 mÃƒÂ£**. Agent bÃƒÂ¡o
-**175/175, `exit 0`**. ThoÃ¡ÂºÂ¡t nhÃƒÂ¬n lÃƒÂ  lÃ¡Â»â€¡ch, vÃƒÂ  brief bÃ¡ÂºÂ£o "lÃ¡Â»â€¡ch Ã¢â€ â€™ dÃ¡Â»Â«ng, bÃƒÂ¡o cÃƒÂ¡o".
+Brief Ãƒâ€šÃ‚Â§2.2 bÃƒÂ¡Ã‚ÂºÃ‚Â£o agent kiÃƒÂ¡Ã‚Â»Ã†â€™m `--date 2026-09-18` phÃƒÂ¡Ã‚ÂºÃ‚Â£i ra **`exit 1`, 8/175 mÃƒÆ’Ã‚Â£**. Agent bÃƒÆ’Ã‚Â¡o
+**175/175, `exit 0`**. ThoÃƒÂ¡Ã‚ÂºÃ‚Â¡t nhÃƒÆ’Ã‚Â¬n lÃƒÆ’Ã‚Â  lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ch, vÃƒÆ’Ã‚Â  brief bÃƒÂ¡Ã‚ÂºÃ‚Â£o "lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡ch ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ dÃƒÂ¡Ã‚Â»Ã‚Â«ng, bÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o".
 
-Agent Ã„â€˜ÃƒÂºng, brief sai. **Task 3 cÃ¡Â»Â§a chÃƒÂ­nh brief nÃƒÂ y ra lÃ¡Â»â€¡nh nÃ¡ÂºÂ¡p bÃƒÂ¹ 16Ã¢â‚¬â€œ18/09**, nÃƒÂªn Ã„â€˜Ã¡ÂºÂ¿n lÃƒÂºc
-chÃ¡ÂºÂ¡y Task 2 thÃƒÂ¬ con sÃ¡Â»â€˜ kÃ¡Â»Â³ vÃ¡Â»Âng Ã„â€˜ÃƒÂ£ bÃ¡Â»â€¹ Task 3 xoÃƒÂ¡ sÃ¡Â»â€¢. TÃƒÂ´i Ã„â€˜Ã¡ÂºÂ·t sÃ¡Â»â€˜ kiÃ¡Â»Æ’m chÃ¡Â»Â©ng cÃ¡Â»Â§a mÃ¡Â»â„¢t task lÃƒÂªn
-dÃ¡Â»Â¯ liÃ¡Â»â€¡u mÃƒÂ  mÃ¡Â»â„¢t task khÃƒÂ¡c trong cÃƒÂ¹ng brief Ã„â€˜Ã†Â°Ã¡Â»Â£c lÃ¡Â»â€¡nh thay Ã„â€˜Ã¡Â»â€¢i. TÃƒÂ´i tÃ¡Â»Â± kiÃ¡Â»Æ’m lÃ¡ÂºÂ¡i vÃƒÂ  dÃ¡Â»Â¯ liÃ¡Â»â€¡u khÃ¡Â»â€ºp
-vÃ¡Â»â€ºi lÃ¡Â»Âi giÃ¡ÂºÂ£i thÃƒÂ­ch Ã„â€˜ÃƒÂ³:
+Agent Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng, brief sai. **Task 3 cÃƒÂ¡Ã‚Â»Ã‚Â§a chÃƒÆ’Ã‚Â­nh brief nÃƒÆ’Ã‚Â y ra lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh nÃƒÂ¡Ã‚ÂºÃ‚Â¡p bÃƒÆ’Ã‚Â¹ 16ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“18/09**, nÃƒÆ’Ã‚Âªn Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â¿n lÃƒÆ’Ã‚Âºc
+chÃƒÂ¡Ã‚ÂºÃ‚Â¡y Task 2 thÃƒÆ’Ã‚Â¬ con sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ kÃƒÂ¡Ã‚Â»Ã‚Â³ vÃƒÂ¡Ã‚Â»Ã‚Âng Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ Task 3 xoÃƒÆ’Ã‚Â¡ sÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢. TÃƒÆ’Ã‚Â´i Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚ÂºÃ‚Â·t sÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœ kiÃƒÂ¡Ã‚Â»Ã†â€™m chÃƒÂ¡Ã‚Â»Ã‚Â©ng cÃƒÂ¡Ã‚Â»Ã‚Â§a mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t task lÃƒÆ’Ã‚Âªn
+dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u mÃƒÆ’Ã‚Â  mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t task khÃƒÆ’Ã‚Â¡c trong cÃƒÆ’Ã‚Â¹ng brief Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡nh thay Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i. TÃƒÆ’Ã‚Â´i tÃƒÂ¡Ã‚Â»Ã‚Â± kiÃƒÂ¡Ã‚Â»Ã†â€™m lÃƒÂ¡Ã‚ÂºÃ‚Â¡i vÃƒÆ’Ã‚Â  dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u khÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp
+vÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi lÃƒÂ¡Ã‚Â»Ã‚Âi giÃƒÂ¡Ã‚ÂºÃ‚Â£i thÃƒÆ’Ã‚Â­ch Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³:
 
 ```
  2026-09-16 |   174   (truoc: 8)
@@ -389,10 +389,10 @@ vÃ¡Â»â€ºi lÃ¡Â»Âi giÃ¡ÂºÂ£i thÃƒÂ­ch Ã„â€˜ÃƒÂ
  2026-09-18 |   175   (truoc: 8)
 ```
 
-BÃƒÂ i hÃ¡Â»Âc cho brief sau: **task thay Ã„â€˜Ã¡Â»â€¢i dÃ¡Â»Â¯ liÃ¡Â»â€¡u phÃ¡ÂºÂ£i Ã„â€˜Ã¡Â»Â©ng sau mÃ¡Â»Âi task lÃ¡ÂºÂ¥y dÃ¡Â»Â¯ liÃ¡Â»â€¡u Ã„â€˜ÃƒÂ³ lÃƒÂ m mÃ¡Â»â€˜c,
-vÃƒÂ  mÃ¡Â»â€˜c phÃ¡ÂºÂ£i nÃƒÂ³i rÃƒÂµ nÃƒÂ³ Ã„â€˜Ã†Â°Ã¡Â»Â£c Ã„â€˜o Ã¡Â»Å¸ thÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m nÃƒÂ o.**
+BÃƒÆ’Ã‚Â i hÃƒÂ¡Ã‚Â»Ã‚Âc cho brief sau: **task thay Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u phÃƒÂ¡Ã‚ÂºÃ‚Â£i Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â©ng sau mÃƒÂ¡Ã‚Â»Ã‚Âi task lÃƒÂ¡Ã‚ÂºÃ‚Â¥y dÃƒÂ¡Ã‚Â»Ã‚Â¯ liÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡u Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³ lÃƒÆ’Ã‚Â m mÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœc,
+vÃƒÆ’Ã‚Â  mÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœc phÃƒÂ¡Ã‚ÂºÃ‚Â£i nÃƒÆ’Ã‚Â³i rÃƒÆ’Ã‚Âµ nÃƒÆ’Ã‚Â³ Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c Ãƒâ€žÃ¢â‚¬Ëœo ÃƒÂ¡Ã‚Â»Ã…Â¸ thÃƒÂ¡Ã‚Â»Ã‚Âi Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m nÃƒÆ’Ã‚Â o.**
 
-### D. NhÃ¡Â»Â¯ng gÃƒÂ¬ tÃƒÂ´i tÃ¡Â»Â± chÃ¡ÂºÂ¡y lÃ¡ÂºÂ¡i
+### D. NhÃƒÂ¡Ã‚Â»Ã‚Â¯ng gÃƒÆ’Ã‚Â¬ tÃƒÆ’Ã‚Â´i tÃƒÂ¡Ã‚Â»Ã‚Â± chÃƒÂ¡Ã‚ÂºÃ‚Â¡y lÃƒÂ¡Ã‚ÂºÃ‚Â¡i
 
 ```
 774 passed in 42.12s
@@ -406,43 +406,73 @@ TONG: strat -1,615,319,902 | BH 1,897,587,481,903 | lenh 1,514 | ma sinh lenh 43
 docker inspect collector --format "{{json .Mounts}}"  ->  []     <- Task 1 dung khi DUNG LAI
 ```
 
-TÃƒÂ´i gÃ¡Â»Â­i thÃƒÂªm **mÃ¡Â»â„¢t** tin Telegram khi kiÃ¡Â»Æ’m nhÃƒÂ¡nh 21/09. CÃ¡Â»â„¢ng 2 tin cÃ¡Â»Â§a agent vÃƒÂ  2 tin tÃƒÂ´i gÃƒÂ¢y ra
-chiÃ¡Â»Âu nay lÃƒÂ  **nÃ„Æ’m** tin trong ngÃƒÂ y. NÃ¡ÂºÂ¿u chÃ¡Â»Â§ dÃ¡Â»Â± ÃƒÂ¡n khÃƒÂ´ng thÃ¡ÂºÂ¥y Ã„â€˜Ã¡Â»Â§ nÃ„Æ’m tin thÃƒÂ¬ chuÃ¡Â»â€”i cÃ¡ÂºÂ£nh bÃƒÂ¡o Ã„â€˜Ã¡Â»Â©t
-Ã¡Â»Å¸ Ã„â€˜oÃ¡ÂºÂ¡n cuÃ¡Â»â€˜i Ã¢â‚¬â€ Ã„â€˜ÃƒÂ³ mÃ¡Â»â€ºi lÃƒÂ  cÃƒÂ¢u hÃ¡Â»Âi cÃ¡ÂºÂ¥p bÃƒÂ¡ch nhÃ¡ÂºÂ¥t, hÃ†Â¡n cÃ¡ÂºÂ£ Q-1.
+TÃƒÆ’Ã‚Â´i gÃƒÂ¡Ã‚Â»Ã‚Â­i thÃƒÆ’Ã‚Âªm **mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t** tin Telegram khi kiÃƒÂ¡Ã‚Â»Ã†â€™m nhÃƒÆ’Ã‚Â¡nh 21/09. CÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ng 2 tin cÃƒÂ¡Ã‚Â»Ã‚Â§a agent vÃƒÆ’Ã‚Â  2 tin tÃƒÆ’Ã‚Â´i gÃƒÆ’Ã‚Â¢y ra
+chiÃƒÂ¡Ã‚Â»Ã‚Âu nay lÃƒÆ’Ã‚Â  **nÃƒâ€žÃ†â€™m** tin trong ngÃƒÆ’Ã‚Â y. NÃƒÂ¡Ã‚ÂºÃ‚Â¿u chÃƒÂ¡Ã‚Â»Ã‚Â§ dÃƒÂ¡Ã‚Â»Ã‚Â± ÃƒÆ’Ã‚Â¡n khÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚ÂºÃ‚Â¥y Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â§ nÃƒâ€žÃ†â€™m tin thÃƒÆ’Ã‚Â¬ chuÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i cÃƒÂ¡Ã‚ÂºÃ‚Â£nh bÃƒÆ’Ã‚Â¡o Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â©t
+ÃƒÂ¡Ã‚Â»Ã…Â¸ Ãƒâ€žÃ¢â‚¬ËœoÃƒÂ¡Ã‚ÂºÃ‚Â¡n cuÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â³ mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi lÃƒÆ’Ã‚Â  cÃƒÆ’Ã‚Â¢u hÃƒÂ¡Ã‚Â»Ã‚Âi cÃƒÂ¡Ã‚ÂºÃ‚Â¥p bÃƒÆ’Ã‚Â¡ch nhÃƒÂ¡Ã‚ÂºÃ‚Â¥t, hÃƒâ€ Ã‚Â¡n cÃƒÂ¡Ã‚ÂºÃ‚Â£ Q-1.
 
-### E. Task 1 dÃ¡Â»Â«ng Ã„â€˜ÃƒÂºng
+### E. Task 1 dÃƒÂ¡Ã‚Â»Ã‚Â«ng Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng
 
-KhÃƒÂ´ng cÃƒÂ³ volume nÃƒÂ o mount vÃƒÂ o collector, nÃƒÂªn file bÃ¡ÂºÂ±ng chÃ¡Â»Â©ng ghi Ã¡Â»Å¸ Ã„â€˜ÃƒÂ¢u cÃ…Â©ng bÃ¡Â»â€¹ xoÃƒÂ¡ cÃƒÂ¹ng
-container Ã¢â‚¬â€ Ã„â€˜ÃƒÂºng thÃ¡Â»Â© Ã„â€˜Ã¡Â»Â£t nÃƒÂ y sinh ra Ã„â€˜Ã¡Â»Æ’ chÃ¡Â»Â¯a. Agent dÃ¡Â»Â«ng vÃƒÂ  bÃƒÂ¡o cÃƒÂ¡o thay vÃƒÂ¬ sÃ¡Â»Â­a
-`docker-compose.yml`, Ã„â€˜ÃƒÂºng Ã‚Â§1.2 mÃ¡Â»Â¥c 3 vÃƒÂ  Ã„â€˜ÃƒÂºng Ã‚Â§3. Ã„ÂÃƒÂ¢y lÃƒÂ  quyÃ¡ÂºÂ¿t Ã„â€˜Ã¡Â»â€¹nh tÃ¡Â»â€˜t: thÃƒÂªm volume lÃƒÂ  Ã„â€˜Ã¡Â»â€¢i
-compose + dÃ¡Â»Â±ng lÃ¡ÂºÂ¡i container, phÃ¡ÂºÂ£i cÃƒÂ³ brief riÃƒÂªng.
+KhÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ volume nÃƒÆ’Ã‚Â o mount vÃƒÆ’Ã‚Â o collector, nÃƒÆ’Ã‚Âªn file bÃƒÂ¡Ã‚ÂºÃ‚Â±ng chÃƒÂ¡Ã‚Â»Ã‚Â©ng ghi ÃƒÂ¡Ã‚Â»Ã…Â¸ Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â¢u cÃƒâ€¦Ã‚Â©ng bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ xoÃƒÆ’Ã‚Â¡ cÃƒÆ’Ã‚Â¹ng
+container ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng thÃƒÂ¡Ã‚Â»Ã‚Â© Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã‚Â£t nÃƒÆ’Ã‚Â y sinh ra Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã†â€™ chÃƒÂ¡Ã‚Â»Ã‚Â¯a. Agent dÃƒÂ¡Ã‚Â»Ã‚Â«ng vÃƒÆ’Ã‚Â  bÃƒÆ’Ã‚Â¡o cÃƒÆ’Ã‚Â¡o thay vÃƒÆ’Ã‚Â¬ sÃƒÂ¡Ã‚Â»Ã‚Â­a
+`docker-compose.yml`, Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng Ãƒâ€šÃ‚Â§1.2 mÃƒÂ¡Ã‚Â»Ã‚Â¥c 3 vÃƒÆ’Ã‚Â  Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Âºng Ãƒâ€šÃ‚Â§3. Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â¢y lÃƒÆ’Ã‚Â  quyÃƒÂ¡Ã‚ÂºÃ‚Â¿t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh tÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœt: thÃƒÆ’Ã‚Âªm volume lÃƒÆ’Ã‚Â  Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i
+compose + dÃƒÂ¡Ã‚Â»Ã‚Â±ng lÃƒÂ¡Ã‚ÂºÃ‚Â¡i container, phÃƒÂ¡Ã‚ÂºÃ‚Â£i cÃƒÆ’Ã‚Â³ brief riÃƒÆ’Ã‚Âªng.
 
-### F. Tôi rút lại chẩn đoán §0.3 của brief 51 — PT10M không phải nguyên nhân
+### F. TÃ´i rÃºt láº¡i cháº©n Ä‘oÃ¡n Â§0.3 cá»§a brief 51 â€” PT10M khÃ´ng pháº£i nguyÃªn nhÃ¢n
 
-Brief tôi viết: *"Chạy lúc 20:30, chết lúc 20:40:45 — đúng mười phút. Task Scheduler giết nó."*
-**Sai.** Hai chỗ sai:
+Brief tÃ´i viáº¿t: *"Cháº¡y lÃºc 20:30, cháº¿t lÃºc 20:40:45 â€” Ä‘Ãºng mÆ°á»i phÃºt. Task Scheduler giáº¿t nÃ³."*
+**Sai.** Hai chá»— sai:
 
-1. **`LastRunTime` là giờ BẮT ĐẦU, không phải giờ chết.** Trigger là `20:30:00`, `LastRunTime`
-   là `20:40:45` — nghĩa là task **khởi động muộn 10 phút 45 giây**, chứ không phải chạy 10 phút
-   rồi bị giết. Tôi đọc nhầm một trường.
-2. **Backfill không hề chậm.** Lượt nạp bù ba ngày chiều nay mất **74 giây** cho 175 mã
-   (`ok=175 skip=0 err=0`). Cách xa giới hạn mười phút.
+1. **`LastRunTime` lÃ  giá» Báº®T Äáº¦U, khÃ´ng pháº£i giá» cháº¿t.** Trigger lÃ  `20:30:00`, `LastRunTime`
+   lÃ  `20:40:45` â€” nghÄ©a lÃ  task **khá»Ÿi Ä‘á»™ng muá»™n 10 phÃºt 45 giÃ¢y**, chá»© khÃ´ng pháº£i cháº¡y 10 phÃºt
+   rá»“i bá»‹ giáº¿t. TÃ´i Ä‘á»c nháº§m má»™t trÆ°á»ng.
+2. **Backfill khÃ´ng há» cháº­m.** LÆ°á»£t náº¡p bÃ¹ ba ngÃ y chiá»u nay máº¥t **74 giÃ¢y** cho 175 mÃ£
+   (`ok=175 skip=0 err=0`). CÃ¡ch xa giá»›i háº¡n mÆ°á»i phÃºt.
 
-Và `logs/backfill.log` **không đo được thời lượng**: `run_if_docker_up.sh` chỉ ghi mốc `start`
-rồi `EXIT=$RC`, không có mốc kết thúc. Nên con số "~93 giây" cho lượt 15/09 trong báo cáo là
-**suy ra, không phải đo** — tôi không dùng nó làm căn cứ.
+VÃ  `logs/backfill.log` **khÃ´ng Ä‘o Ä‘Æ°á»£c thá»i lÆ°á»£ng**: `run_if_docker_up.sh` chá»‰ ghi má»‘c `start`
+rá»“i `EXIT=$RC`, khÃ´ng cÃ³ má»‘c káº¿t thÃºc. NÃªn con sá»‘ "~93 giÃ¢y" cho lÆ°á»£t 15/09 trong bÃ¡o cÃ¡o lÃ 
+**suy ra, khÃ´ng pháº£i Ä‘o** â€” tÃ´i khÃ´ng dÃ¹ng nÃ³ lÃ m cÄƒn cá»©.
 
-Vậy cái gì giết nó? `1073807364` = `0x40010004` chỉ nói tiến trình **bị chấm dứt**, không nói ai
-chấm dứt. Cộng với `StartWhenAvailable = False`, `NumberOfMissedRuns = 0`, và khởi động muộn
-gần 11 phút, giả thuyết khớp nhất là **máy ngủ**: task lỡ giờ trigger, chạy khi máy tỉnh, rồi
-bị cắt khi máy ngủ tiếp. Cùng nguyên nhân với hai dòng `SKIP: docker chua chay` (14/09, 16/09).
+Váº­y cÃ¡i gÃ¬ giáº¿t nÃ³? `1073807364` = `0x40010004` chá»‰ nÃ³i tiáº¿n trÃ¬nh **bá»‹ cháº¥m dá»©t**, khÃ´ng nÃ³i ai
+cháº¥m dá»©t. Cá»™ng vá»›i `StartWhenAvailable = False`, `NumberOfMissedRuns = 0`, vÃ  khá»Ÿi Ä‘á»™ng muá»™n
+gáº§n 11 phÃºt, giáº£ thuyáº¿t khá»›p nháº¥t lÃ  **mÃ¡y ngá»§**: task lá»¡ giá» trigger, cháº¡y khi mÃ¡y tá»‰nh, rá»“i
+bá»‹ cáº¯t khi mÃ¡y ngá»§ tiáº¿p. CÃ¹ng nguyÃªn nhÃ¢n vá»›i hai dÃ²ng `SKIP: docker chua chay` (14/09, 16/09).
 
-**Chưa chứng minh được.** Nó là giả thuyết, tôi ghi vào đây như giả thuyết.
+**ChÆ°a chá»©ng minh Ä‘Æ°á»£c.** NÃ³ lÃ  giáº£ thuyáº¿t, tÃ´i ghi vÃ o Ä‘Ã¢y nhÆ° giáº£ thuyáº¿t.
 
-Hệ quả thực tế:
-- Nới `PT10M` → `PT30M` vẫn nên làm — rẻ, vô hại, bỏ được một biến. Nhưng **đừng trông nó chữa
-  được gì**: đó không phải bệnh.
-- Bệnh thật nhiều khả năng là **nguồn điện / máy ngủ**, tức `powercfg /change standby-timeout-dc 0`
-  và chuyển VPS — hai việc đang nằm ở mục "việc của chủ dự án" suốt mấy đợt.
-- Việc còn thiếu để chứng minh: đọc **Task Scheduler Operational log** (`Event ID 4102/203/329`)
-  cho task đó đêm 17/09. Đợt sau.
+Há»‡ quáº£ thá»±c táº¿:
+- Ná»›i `PT10M` â†’ `PT30M` váº«n nÃªn lÃ m â€” ráº», vÃ´ háº¡i, bá» Ä‘Æ°á»£c má»™t biáº¿n. NhÆ°ng **Ä‘á»«ng trÃ´ng nÃ³ chá»¯a
+  Ä‘Æ°á»£c gÃ¬**: Ä‘Ã³ khÃ´ng pháº£i bá»‡nh.
+- Bá»‡nh tháº­t nhiá»u kháº£ nÄƒng lÃ  **nguá»“n Ä‘iá»‡n / mÃ¡y ngá»§**, tá»©c `powercfg /change standby-timeout-dc 0`
+  vÃ  chuyá»ƒn VPS â€” hai viá»‡c Ä‘ang náº±m á»Ÿ má»¥c "viá»‡c cá»§a chá»§ dá»± Ã¡n" suá»‘t máº¥y Ä‘á»£t.
+- Viá»‡c cÃ²n thiáº¿u Ä‘á»ƒ chá»©ng minh: Ä‘á»c **Task Scheduler Operational log** (`Event ID 4102/203/329`)
+  cho task Ä‘Ã³ Ä‘Ãªm 17/09. Äá»£t sau.
+### G. Tự soát sau khi commit: "ngày giao dịch" giờ có ba chỗ định nghĩa
+
+Tôi rà lại mọi nơi đọc `holidays`. Hai điều.
+
+**Tính nhất quán thì đạt.** Chỉ còn ba chỗ đọc thuộc tính trực tiếp
+(`collector/main.py:235`, `:426`, `daily_data_check.py:140`), không còn `getattr`
+nào; mọi test double khác đều dựng `Config` thật với `holidays=`, nên không chỗ nào
+vỡ theo. 774 pass xác nhận.
+
+**Nhưng có một trùng lặp mới, và nó không phải lỗi của agent.** Đợt này thêm vào
+`daily_data_check.py`:
+
+```python
+ts_mid = datetime.combine(target_date, time(10, 0), tzinfo=TZ)
+trading_day = is_trading_time(ts_mid, holidays)
+```
+
+Hỏi `is_trading_time` tại mốc 10:00 để suy ra "hôm nay có phải ngày giao dịch không".
+Mẹo đó **đã có sẵn trong repo từ trước**, ở `scripts/docker_down_alert.py:64`, tên là
+`_is_trading_day`, kèm docstring giải thích đúng cùng một lý lẽ ("gio do LUON nam trong
+CHECK_SESSIONS... nen ket qua chi con phu thuoc phan NGAY").
+
+Nên bây giờ **một công thức nằm ở hai chỗ** — đúng thứ `4ea4c8d` dạy là sớm muộn sẽ lệch.
+`trading/calendar_vn.py` có `is_trading_time` và `is_continuous_matching` nhưng **không có
+vị từ cấp NGÀY**; thiếu chỗ đó nên ai cần cũng tự chế lại.
+
+**Tôi không sửa trong đợt này**, và nói rõ vì sao: gom lại phải chạm
+`scripts/heartbeat_check.py` — file nằm trong danh sách cấm sửa — và `docker_down_alert.py`
+không được brief 51 cho phép. Đây là việc của một brief riêng: đưa `is_trading_day(d, holidays)`
+vào `calendar_vn.py`, rồi cho cả ba chỗ gọi nó. Thuần bổ sung, và có sẵn test đối chiếu.
