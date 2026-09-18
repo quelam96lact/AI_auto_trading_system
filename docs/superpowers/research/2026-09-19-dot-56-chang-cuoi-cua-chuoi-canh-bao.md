@@ -440,3 +440,36 @@ cho tới khi đi đọc từng dòng.
 2. **`engine_consumer_check` khoá miệng sau khi gửi trượt** (mục E).
 3. **Che `chat_id` trong probe** (mục C) và **đổi tên tham số** (mục D).
 4. **Phiên 22/09** — giao thức bốn bước ở báo cáo đợt 55.
+
+
+### G. Tự soát: `is_trading_day` vừa sinh ra — còn chỗ nào nên dùng nó?
+
+Đếm mọi nơi tự viết lại cùng một vị từ:
+
+```
+trading/calendar_vn.py:10    if ts.weekday() >= 5 or ts.date() in holidays        (is_trading_time)
+trading/calendar_vn.py:39    if d.weekday() < 5 and d not in holidays             (trading_days_between)
+trading/calendar_vn.py:72    if day.weekday() < 5 and day not in holidays         (market_minutes_between)
+trading/calendar_vn.py:91    if ts.weekday() >= 5 or ts.date() in holidays        (is_continuous_matching)
+scripts/stream_health_check.py:171  if now_vn.weekday() in (5, 6) or current_date in check_holidays
+scripts/stream_health_check.py:179  while prev_date.weekday() in (5, 6) or prev_date in check_holidays
+scripts/heartbeat_check.py:80, :145, :241                                        (CAM SUA)
+```
+
+**Mười chỗ.** Sáu chỗ trong tầm với (bốn ngay trong `calendar_vn.py`, hai trong
+`stream_health_check.py`), ba chỗ trong file cấm sửa. Dòng 39 và 72 **chính là thân của
+`is_trading_day`**, chép nguyên văn.
+
+Nghĩa là đợt 56 mới gom được *người dùng*, chưa gom *chính ngôi nhà*: `calendar_vn` có vị từ
+chuẩn nhưng bốn hàm của nó vẫn tự viết lại vị từ đó.
+
+Và một chi tiết đáng chú ý: `docker_down_alert.py:72` có comment ghi *"không chép lại điều kiện
+`weekday() >= 5 or date in holidays`"* — tức là đợt 8 đã **nhìn thấy** vấn đề này và né nó bằng
+cách hỏi lại `heartbeat_check`. Bây giờ đã có vị từ chuẩn, cách né đó không còn là cách duy nhất.
+
+**Không làm tối nay, và lý do là thứ tự chứ không phải ngại:** `calendar_vn` được **collector
+import** (`is_continuous_matching` là chuông im lặng trong phiên). Thứ Hai 22/09 là phép đo quyết
+định của đợt 52 — sửa module ấy đêm nay là thêm một biến vào phép đo, đổi lấy **0 thay đổi hành
+vi**. Việc đúng là đo xong đã.
+
+Ghi vào brief sau, **sau** việc `engine_consumer_check` ở mục E.
