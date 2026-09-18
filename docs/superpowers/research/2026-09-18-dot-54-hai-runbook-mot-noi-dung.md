@@ -343,3 +343,48 @@ biến"** — nó là tiếng ồn, và nó tạo cảm giác đã làm gì đó
 2. **Cơ chế `:previous`** — viết vào `DEPLOYMENT.md` như một bước bắt buộc của quy trình triển
    khai, để thói quen tag không phụ thuộc trí nhớ ai cả.
 3. **`powercfg`** — việc thật, và giờ là việc duy nhất còn lại trong nhóm "backfill chết đêm".
+
+
+### H. Tự soát: bảy task khớp từng trường — nhưng hai nền thì không
+
+Tôi vừa đồng bộ **một** task (mục D). Nếu dừng ở đó thì tôi chỉ sửa chỗ tình cờ biết, nên tôi đối
+chiếu nốt cả bảy, từng trường một:
+
+```
+trading-heartbeat-check      08:00  rep=PT5M/PT7H     dow=62
+trading-deploy-drift         08:00  rep=-             dow=62
+trading-engine-consumer      09:00  rep=PT5M/PT6H10M  dow=62
+trading-stream-health        15:10  rep=-             dow=62
+trading-engine-cam           15:15  rep=-             dow=62
+trading-backfill-universe    20:30  rep=-             dow=62
+trading-daily-data-check     21:00  rep=-             dow=62
+```
+
+`dow=62` = T2+T3+T4+T5+T6. **Cả bảy khớp bảng trong `DEPLOYMENT.md:272-278`**, kể cả hai con số
+lặp mà tài liệu ghi là "lặp 7h" và "lặp 6h10m". Bảng Windows giờ chính xác từng trường.
+
+**Nhưng phần cron Ubuntu trong cùng tài liệu lại không khớp với phần Windows:**
+
+| Job | Ubuntu cron | Windows task | Lệch |
+|---|---|---|---|
+| `heartbeat` | `*/5 8-15` → 08:00–**15:55** | `PT5M/PT7H` → 08:00–**15:00** | Ubuntu chạy thêm 55 phút |
+| `engine-consumer` | `*/5 9-15` → 09:00–**15:55** | `PT5M/PT6H10M` → 09:00–**15:10** | Ubuntu chạy thêm 45 phút |
+
+Năm job còn lại chạy một lần nên khớp tuyệt đối.
+
+Tài liệu khẳng định *"Cả bảy gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh`"*.
+Câu đó đúng về **lệnh** và sai về **nhịp**: bảng job dùng chung, còn lịch thì hai bản, và hai bản
+đã lệch. Đúng hình dạng "một công thức hai chỗ" mà brief 54 sinh ra để diệt — chỉ là nó lẻn vào
+qua tầng lịch chứ không qua tầng lệnh.
+
+**Tác hại thực tế: nhỏ.** Cả hai script tự chặn theo giờ — `engine_consumer_check.py` chỉ cảnh báo
+trong `is_trading_time`, ngoài phiên thì `exit 0`. Nên các lượt chạy thừa sau 15:00 chỉ thêm dòng
+log, không đẻ báo động giả.
+
+**Không sửa tối nay**, và nói rõ vì sao: đổi `Repetition.Duration` của Windows là đổi hành vi một
+hệ giám sát đang chạy lúc 22:00 đêm; còn cron Ubuntu thì viết cho một máy **chưa tồn tại**. Sửa
+mù một trong hai bên chỉ là đoán xem bên nào đúng.
+
+Câu hỏi thật cho brief sau: **nhịp chạy nên sống ở đâu?** Nếu nó nằm trong `sched.sh` (nơi đã giữ
+"job X chạy lệnh gì") thì cả hai nền đọc cùng một chỗ, và chuyện này không tái diễn. Nếu cố ý để
+khác nhau thì phải ghi rõ **vì sao khác** — hiện tài liệu nói chúng giống nhau, mà chúng không.
