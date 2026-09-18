@@ -67,3 +67,35 @@ def test_qua_15_ma_thieu_thi_message_co_phan_cut():
     assert code == 1
     assert len(missing) == 19
     assert "... (+4 mã nữa)" in msg  # 19 - 15 = 4
+
+
+def test_ngay_giao_dich_present_rong_thi_exit_2():
+    """Brief 51 Task 2: Ngày giao dịch mà 0 mã nào có bar -> exit 2 (lỗi dữ liệu / feed chết)."""
+    active = ["AAA", "HPG", "IJC"]
+    present = set()
+    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=True)
+    assert code == 2
+    assert missing == {"AAA", "HPG", "IJC"}
+    assert "SỰ CỐ DỮ LIỆU" in msg
+    assert "0 mã nào có bar" in msg
+
+
+def test_ngay_nghi_present_rong_thi_exit_0():
+    """Brief 51 Task 2: Ngày nghỉ (thứ Bảy / CN / Lễ) mà 0 mã nào có bar -> exit 0 (nhường 2A)."""
+    active = ["AAA", "HPG", "IJC"]
+    present = set()
+    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=False)
+    assert code == 0
+    assert missing == set()
+    assert "Heartbeat 2A" in msg
+
+
+def test_present_thieu_mot_phan_exit_1():
+    """Brief 51 Task 2: Có bar nhưng thiếu một phần -> exit 1 như cũ."""
+    active = ["AAA", "HPG", "IJC"]
+    present = {"AAA", "HPG"}
+    code, missing, msg = evaluate_daily_completeness(active, present, is_trading_day=True)
+    assert code == 1
+    assert missing == {"IJC"}
+    assert "CẢNH BÁO: Sót bar daily" in msg
+

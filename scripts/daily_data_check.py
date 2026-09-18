@@ -16,7 +16,7 @@ CLI:
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
 # Đảm bảo import được _db_common và trading
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _db_common import resolve_dsn
 
 from trading.alerts import _print_safe
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, is_trading_time
 from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
@@ -53,18 +53,26 @@ def parse_args() -> argparse.Namespace:
 def evaluate_daily_completeness(
     active_symbols: list[str],
     present_symbols: set[str],
+    is_trading_day: bool = False,
 ) -> tuple[int, set[str], str]:
     """Hàm thuần đánh giá trạng thái bar daily của các mã active.
 
     Trả về: (exit_code, missing_symbols, message)
-    - exit_code 0: Không có lỗi cần cảnh báo (hoặc cả feed không có bar -> nhường 2A).
+    - exit_code 0: Đầy đủ bar, HOẶC ngày nghỉ không có bar (nhường 2A).
     - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác.
+    - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar (lỗi dữ liệu / feed chết toàn diện).
     """
     if not active_symbols:
         return 0, set(), "Không có mã active nào trong symbol_universe."
 
-    # Nếu toàn bộ thị trường 0 có bar nào: ngày nghỉ hoặc feed chết toàn diện (việc của 2A)
+    # Nếu toàn bộ thị trường 0 có bar nào:
     if not present_symbols:
+        if is_trading_day:
+            msg = (
+                f"🚨 [AI Trading] SỰ CỐ DỮ LIỆU: Ngày giao dịch nhưng 0 mã nào có bar daily trong DB "
+                f"(toàn bộ {len(active_symbols)} mã active thiếu bar)!"
+            )
+            return 2, set(active_symbols), msg
         return (
             0,
             set(),
@@ -128,17 +136,23 @@ def main() -> None:
         _print_safe(f"LỖI TRUY VẤN DB: {e}")
         sys.exit(2)
 
-    code, _missing, msg = evaluate_daily_completeness(active_symbols, present_symbols)
+    ts_mid = datetime.combine(target_date, time(10, 0), tzinfo=TZ)
+    holidays = cfg.holidays
+    trading_day = is_trading_time(ts_mid, holidays)
+
+    code, _missing, msg = evaluate_daily_completeness(
+        active_symbols, present_symbols, is_trading_day=trading_day
+    )
 
     _print_safe(f"[{target_date}] {msg}")
 
-    if code == 1:
+    if code in (1, 2):
         try:
             send_telegram(f"[{target_date}] {msg}")
             _print_safe("-> Đã gửi cảnh báo qua Telegram.")
         except Exception as e:
             _print_safe(f"Lỗi khi gửi Telegram: {e}")
-        sys.exit(1)
+        sys.exit(code)
 
     sys.exit(0)
 
