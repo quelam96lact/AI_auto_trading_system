@@ -57,3 +57,23 @@ def test_gui_hong_khong_lam_chet_script(tmp_path, capsys):
     assert "gui Telegram loi" in out  # dau vet CU THE cua loi gui, khong phai
     # loi chung chung — neu bo try/except trong, exception bi lop ngoai cung
     # bat va chi in "loi khong lo truoc" => test nay do
+
+
+def test_gui_telegram_that_bai_khong_ghi_dau_stamp(tmp_path, capsys):
+    """Brief 57 Task 2: send_telegram trả False -> KHÔNG ghi dấu stamp, để lần sau còn thử lại."""
+    now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
+    stamp = tmp_path / "stamp"
+    rc = run_alert(now, frozenset(), send=lambda text: False, stamp_file=str(stamp))
+    assert rc == 0
+    assert not stamp.exists()
+    out = capsys.readouterr().out
+    assert "gui Telegram that bai" in out
+
+
+def test_gui_telegram_thanh_cong_ghi_dau_stamp(tmp_path):
+    """Brief 57 Task 2: send_telegram trả True -> CÓ ghi dấu stamp chống spam."""
+    now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
+    stamp = tmp_path / "stamp"
+    rc = run_alert(now, frozenset(), send=lambda text: True, stamp_file=str(stamp))
+    assert rc == 0
+    assert stamp.exists()

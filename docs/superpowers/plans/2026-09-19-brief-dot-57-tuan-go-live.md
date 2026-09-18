@@ -74,7 +74,7 @@ Mỗi ngày có một **cổng**. Không qua cổng thì **không sang ngày sau
 |---|---|---|---|
 | **T7–CN 19–21/09** | `holidays` vào config; `powercfg`; agent làm Task 1–3 | Chủ dự án + agent | `powercfg` xong trước 20:00 CN |
 | **T2 22/09** | Phép đo đợt 52 (giao thức 4 bước ở báo cáo đợt 55) | Claude + chủ dự án | `bars_closed.log` có dòng `bars closed` thật; độ phủ ≥ 90% |
-| **T3 23/09 (ngoài phiên)** | Chạy `spike_ssi_sdk_place_order.py` | **Chủ dự án bấm nút**, Claude giám sát | Đặt được **và** huỷ được; `.spike_cancel_order.json` có kết quả |
+| **T3 23/09, 09:30–10:30 (TRONG phiên)** | Chạy `spike_ssi_sdk_place_order.py --symbol AAA` | **Chủ dự án bấm nút**, Claude giám sát | Đặt được **và** huỷ được; `.spike_cancel_order.json` có kết quả |
 | **T4 24/09** | Diễn tập cửa xác nhận trên `trading_test`, **bấm giờ** | Chủ dự án | Hoàn tất dưới **15 phút** kể từ lúc tin Telegram tới |
 | **T5 25/09** | Bật `real_trading_enabled: true`, tài khoản `0434221` | Chủ dự án | Mọi lá chắn `ĐẠT` lúc 08:45 |
 | **T6 26/09** | Đánh giá, giữ hoặc tắt | Chủ dự án | — |
@@ -330,3 +330,13 @@ có đủ không?** Nếu không đủ, nói ra trước T5 — đổi TTL dễ 
 
 **Còn mở, không chặn tuần này:** Q-1 (chiến lược có lợi thế không), `README.md` 253 dòng,
 `DELETE` dòng `TEST` trong `orders`.
+
+
+---
+
+## 6. Đính chính sau khi thực hiện (19/09)
+
+**Ô lịch T3 ở §1 ban đầu tôi ghi "ngoài phiên". Sai.** Báo cáo đợt 57 Task 1 chỉ ra: lệnh chỉ huỷ
+được trong phiên khớp lệnh liên tục — sàn **cấm huỷ/sửa trong ATO/ATC**, và một lệnh đặt ngoài
+giờ thì không huỷ kịp. Khung đúng là **09:30–10:30 hoặc 13:15–14:00**, và mã đúng là **AAA**
+(không phải `VCB` mặc định của script). Bảng đã sửa.

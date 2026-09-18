@@ -173,8 +173,8 @@ def run_check(
         _print_safe(alert_msg)
 
         if cooldown_elapsed >= ALERT_COOLDOWN_SECONDS:
-            send_telegram(alert_msg)
-            new_state["last_alert_ts"] = now.timestamp()
+            if send_telegram(alert_msg):
+                new_state["last_alert_ts"] = now.timestamp()
         else:
             _print_safe(f"[engine-consumer] Đang trong thời gian chống spam ({cooldown_elapsed:.0f}s < {ALERT_COOLDOWN_SECONDS}s), chưa gửi lại.")
 

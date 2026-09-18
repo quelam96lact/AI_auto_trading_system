@@ -131,11 +131,15 @@ def run_alert(
         # thi van con ban ghi o log (khuon heartbeat_check).
         _print_safe(msg)
         try:
-            send(msg)
+            ok = send(msg)
+            if ok is not False:
+                _write_last_alert(now, stamp_file)
+            else:
+                _print_safe("[docker-down-alert] gui Telegram that bai: send tra ve False")
+                return 0
         except Exception as e:
             _print_safe(f"[docker-down-alert] gui Telegram loi: {type(e).__name__}: {e}")
             return 0
-        _write_last_alert(now, stamp_file)
         return 0
     except Exception as e:
         # Lop ngoai cung: loi khong lo truoc (vi du load config hong) cung

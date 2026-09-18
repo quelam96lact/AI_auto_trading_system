@@ -194,3 +194,41 @@ def test_both_stream_and_consumer_advance_healthy_returns_zero(monkeypatch, tmp_
     assert len(sent_alerts) == 0
 
 
+def test_send_telegram_failure_does_not_update_last_alert_ts(monkeypatch, tmp_path):
+    """Brief 57 Task 2: Khi send_telegram trả False -> last_alert_ts KHÔNG được cập nhật."""
+    state_file = tmp_path / ".state.json"
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    ecc.save_state({"stream_seq": 100, "last_seq": 100, "ts": 1000.0, "last_alert_ts": 0.0})
+
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 130)))
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: False)
+
+    code = ecc.run_check(pending_threshold=20)
+    assert code == 1
+
+    new_state = ecc.load_state()
+    assert new_state.get("last_alert_ts") == 0.0, "last_alert_ts không được cập nhật khi gửi thất bại"
+
+
+def test_send_telegram_success_updates_last_alert_ts(monkeypatch, tmp_path):
+    """Brief 57 Task 2: Khi send_telegram trả True -> last_alert_ts CÓ được cập nhật."""
+    state_file = tmp_path / ".state.json"
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    ecc.save_state({"stream_seq": 100, "last_seq": 100, "ts": 1000.0, "last_alert_ts": 0.0})
+
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 130)))
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: True)
+
+    code = ecc.run_check(pending_threshold=20)
+    assert code == 1
+
+    new_state = ecc.load_state()
+    assert new_state.get("last_alert_ts") > 0.0, "last_alert_ts phải được cập nhật khi gửi thành công"
+
+
