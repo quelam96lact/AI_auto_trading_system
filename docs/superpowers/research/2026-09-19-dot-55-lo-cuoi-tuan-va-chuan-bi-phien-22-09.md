@@ -528,3 +528,37 @@ Ghi lại đây để câu mô tả sai không sống tiếp trong tài liệu.
    này là thứ **duy nhất** chặn báo động giả ngày lễ giữa tuần — và nó đang rỗng về tương lai.
    Chỉ chủ dự án sửa được.
 3. **Phiên 22/09** — giao thức đã sẵn, chạy theo đúng bốn bước.
+
+
+### G. Tự soát: có chỗ nào khác phụ thuộc thứ vừa đổi không?
+
+Câu này tôi kiểm chứ không đoán, vì cả tuần đã hai lần "đúng chỗ tôi tình cờ biết" hoá ra chưa đủ.
+
+**Người phụ thuộc `stream_health_check`: chỉ có test.** Mười dòng `import` từ nó đều nằm trong
+`tests/test_stream_health_check.py`, không một script hay module production nào. Nên đổi cửa
+trong `main()` không ảnh hưởng ai khác.
+
+**Hai script anh em cũng nhận `--date` và cũng không có cửa ngày nghỉ:**
+
+```
+scripts/replay_stream_check.py            0 tham chieu holidays/is_trading_time
+scripts/measure_session_stream_metrics.py 0 tham chieu holidays/is_trading_time
+```
+
+Thoạt nhìn là cùng một lỗ. **Không phải** — và chỗ khác biệt mới là chỗ quyết định:
+
+```
+co nam trong sched.sh khong                    -> 0 (ca hai deu khong duoc len lich)
+co sys.exit(1)/sys.exit(2)/send_telegram khong -> 0 (ca hai)
+```
+
+Cả hai là **công cụ báo cáo chạy tay**, không kêu được. Chạy chúng vào ngày lễ cho ra một báo cáo
+rỗng — đó là **kết quả đúng**, không phải báo động giả. Lỗ ngày nghỉ chỉ có hại với thứ **biết
+kêu**, và cả hai thì không.
+
+Nên: **không có chỗ nào khác cần sửa.** Thay đổi của đợt 55 là trọn vẹn và khu trú.
+
+Một điều rút ra để dùng lại: khi hỏi "chỗ khác có cùng lỗ không", câu hỏi phân loại không phải
+*"nó có thiếu cửa không"* mà *"nó có khả năng kêu không"*. Thiếu cửa ở một công cụ câm là vô hại;
+thiếu cửa ở một chuông là sự cố. Ba chuông mù của đợt 51 sinh ra đúng từ chỗ không phân biệt được
+hai thứ đó.
