@@ -179,6 +179,40 @@ không có tham số thêm. Giữ `"$@"` ở cuối để vẫn ghi đè đượ
 
 ---
 
+
+### 2.6. BỔ SUNG 18/09 — phiên mặc định phải tường minh
+
+Tôi đăng ký Scheduled Task `trading-stream-health` lúc 12:14 và kích hoạt thử. Kết quả:
+
+```
+2026-09-18 12:14:36 stream-health start
+dung: phien chieu ngay 2026-09-18 khong co dong 'bars closed' nao tu luong thoi gian thuc (0 nen)
+EXIT=2
+```
+
+Chạy lúc 12:14 (nghỉ trưa), công cụ tự chọn **phiên chiều** — phiên chưa diễn ra — nên 0 nến và
+kêu CRITICAL. Ở 15:10 thì đúng, nhưng **bất kỳ lượt chạy bù nào cũng sẽ báo động giả**, và đó
+chính là bệnh đợt 46 vừa chữa.
+
+Vì vậy tôi đã **tắt `StartWhenAvailable`** trên task, khớp đúng bốn task đang chạy được. Cái
+giá: máy ngủ lúc 15:10 thì mất luôn lượt kiểm hôm đó.
+
+**Việc cần làm trong Task 2:** làm phiên mặc định **an toàn với lượt chạy muộn**. Quy tắc:
+
+- Nếu `--session` không được truyền, chọn **phiên gần nhất ĐÃ KẾT THÚC** tại thời điểm chạy,
+  không phải phiên theo mốc giờ hiện tại.
+- Chạy trước `11:30` → phiên chiều **hôm trước**. Chạy `11:30`–`15:05` → phiên sáng hôm nay.
+  Chạy sau `15:05` → phiên chiều hôm nay.
+- **Không bao giờ** chọn một phiên chưa kết thúc. Nếu không có phiên nào đã kết thúc trong
+  vòng 24 giờ (cuối tuần, ngày lễ) → in một dòng `bo qua: ...` và **`exit 0`**, không phải
+  `exit 2`. Cuối tuần không có luồng là bình thường.
+
+Test bắt buộc: giả mốc `12:14` thứ Sáu → chọn **phiên sáng thứ Sáu**, không phải phiên chiều.
+Giả mốc `10:00` thứ Bảy → `exit 0` với thông điệp bỏ qua.
+
+Sau khi Task 2 xong, tôi sẽ bật lại `StartWhenAvailable`.
+---
+
 ## Task 3 — Nhánh chết và vệ sinh bảng `orders`
 
 ### 3.1. Bỏ `getattr` ở `main.py:235`
