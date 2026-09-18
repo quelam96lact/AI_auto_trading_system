@@ -70,6 +70,46 @@ chọn phiên**, còn `is_session_ended` (dòng 174) chỉ trả lời "đã k�
 
 Đây đúng hình dạng cái lỗ đợt 50 đã bịt cho nhánh "chưa kết thúc" — cùng chỗ, khác nhánh.
 
+### 1.1b. Và một lỗ nặng hơn mà tôi chỉ thấy khi soát lại brief này
+
+Tôi viết ở trên rằng đường mặc định "đã im đúng". **Đúng với cuối tuần, sai với ngày lễ.**
+
+```python
+# scripts/stream_health_check.py:131-133
+def resolve_target_session(now_vn: datetime, holidays: set[date] | None = None) -> ...
+# :145
+    check_holidays = holidays or set()
+# :148
+    if now_vn.weekday() in (5, 6) or current_date in check_holidays:
+
+# nhung cho goi, dong 367:
+    resolved = resolve_target_session(now_vn)        # <- KHONG truyen holidays
+```
+
+`holidays` **không bao giờ được truyền vào**, nên `check_holidays` luôn rỗng và vế
+`current_date in check_holidays` **không bao giờ đúng**. Nhánh ngày lễ là **code chết** — lần
+thứ sáu của mẫu này trong repo.
+
+Hậu quả cụ thể: một ngày lễ rơi vào **ngày thường** (ví dụ 02/09 Quốc khánh), Scheduled Task chạy
+lúc 15:10 sẽ đi lọt qua cửa cuối tuần (vì là thứ Ba/thứ Tư), `is_session_ended` bảo "đã qua
+15:05", rồi đo và thấy 0 nến → **`exit 2`, CRITICAL, Telegram**. Một báo động giả **được bảo đảm**
+vào mọi ngày lễ giữa tuần.
+
+Và còn một lớp thứ hai: `config/config.yaml` hiện chỉ liệt kê
+`holidays: ['2026-08-31', '2026-09-01', '2026-09-02']` — **toàn ngày đã qua**. Nên kể cả sau khi
+nối dây xong, sẽ không có ngày lễ tương lai nào được bảo vệ. Phần đó là **việc của chủ dự án**
+(không sửa `config.yaml`), nhưng báo cáo phải nêu.
+
+**Task 1 vì vậy gồm hai việc, không phải một:**
+
+| | Việc |
+|---|---|
+| (a) | Nối dây `holidays` từ config vào `resolve_target_session` — chữa nhánh chết |
+| (b) | Thêm cửa "ngày nghỉ" cho đường tham số tường minh — lỗ ở §1.1 |
+
+Cả hai dùng **cùng một nguồn ngày lễ**. Nếu bạn thấy mình đọc config ở hai chỗ khác nhau, đó là
+dấu hiệu làm sai.
+
 ### 1.2. Luật
 
 Sau khi đã xác định `(ngày, phiên)` — **dù tường minh hay mặc định** — hỏi thêm: **ngày đó có
@@ -91,7 +131,9 @@ ba**, hãy nói ra (xem Task 3, cùng một bệnh).
 ### 1.3. Kiểm chứng
 
 1. Suite đầy đủ pass (mốc **782**), ruff sạch.
-2. Ba test mới, **không sửa một `assert` nào** của 15 test cũ:
+2. **Bốn** test mới, **không sửa một `assert` nào** của 15 test cũ:
+   - `resolve_target_session` **nhận được** ngày lễ: gọi nó với `holidays` chứa `now_vn.date()`
+     → trả `None`. Test này canh nhánh chết ở §1.1b; nếu ai gỡ việc nối dây, nó phải đổ.
    - `--date <thứ Bảy đã qua> --session sang` → `bo qua`, **exit 0**
    - `--date 2026-09-01 --session sang` → `bo qua`, **exit 0**
      (ngày lễ có thật trong `config/config.yaml`: `['2026-08-31', '2026-09-01', '2026-09-02']`;
@@ -272,13 +314,18 @@ Với mỗi bước: **lệnh chính xác**, **kỳ vọng**, và **ngưỡng đ
 
 ## 4. Việc của chủ dự án
 
-1. **`powercfg /change standby-timeout-dc 0`.** Đây giờ là việc duy nhất còn lại trong nhóm
+1. **`config/config.yaml: holidays` chỉ còn ngày đã qua** — `['2026-08-31', '2026-09-01',
+   '2026-09-02']`. Sau khi Task 1 nối dây xong, danh sách này là thứ duy nhất chặn báo động giả
+   vào ngày lễ giữa tuần, và nó đang **rỗng về tương lai**. Cần ông bổ sung lịch nghỉ còn lại của
+   2026 và của 2027 (Tết Dương lịch, Tết Nguyên đán, Giỗ Tổ, 30/4, 1/5, 2/9). Agent **không được
+   sửa `config.yaml`**, nên việc này chỉ ông làm được.
+2. **`powercfg /change standby-timeout-dc 0`.** Đây giờ là việc duy nhất còn lại trong nhóm
    "backfill chết đêm", và nguyên nhân đã được chứng minh bằng Kernel-Power ở đợt 52 — không còn
    là giả thuyết. Nếu máy ngủ tối Chủ nhật thì backfill 20:30 lại chết và thứ Hai lại thiếu dữ
    liệu.
-2. **`README.md` 253 dòng đổi** — xác nhận đúng ý ông rồi tôi commit.
-3. **Diễn tập cửa xác nhận** (`scripts/rehearse_confirm_gate.py`, sẵn từ đợt 52). Vẫn là cái chặn
+3. **`README.md` 253 dòng đổi** — xác nhận đúng ý ông rồi tôi commit.
+4. **Diễn tập cửa xác nhận** (`scripts/rehearse_confirm_gate.py`, sẵn từ đợt 52). Vẫn là cái chặn
    go-live kỹ thuật duy nhất còn lại.
-4. **Ông có nhận được cảnh báo Telegram không?** Hỏi lần thứ sáu. Nếu chuỗi đứt ở đoạn cuối thì
+5. **Ông có nhận được cảnh báo Telegram không?** Hỏi lần thứ sáu. Nếu chuỗi đứt ở đoạn cuối thì
    toàn bộ đợt 46–55 không cứu được gì.
-5. **Q-1** và **`DELETE` dòng `TEST`** trong `orders`.
+6. **Q-1** và **`DELETE` dòng `TEST`** trong `orders`.
