@@ -9,7 +9,7 @@
 ' khong can elevated.
 '
 ' Dung: wscript.exe //B //Nologo run_hidden.vbs <job>
-'   voi <job> = heartbeat | daily-check | backfill | deploy-drift | engine-cam | engine-consumer
+'   voi <job> = heartbeat | daily-check | backfill | deploy-drift | engine-cam | engine-consumer | stream-health
 
 Option Explicit
 

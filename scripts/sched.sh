@@ -9,6 +9,7 @@
 #   scripts/sched.sh deploy-drift
 #   scripts/sched.sh engine-cam
 #   scripts/sched.sh engine-consumer
+#   scripts/sched.sh stream-health
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -69,8 +70,13 @@ case "${1:-}" in
     exec "$RUN" engine-consumer.log engine-consumer \
       uv run python scripts/engine_consumer_check.py
     ;;
+  stream-health)
+    shift || true
+    exec "$RUN" stream-health.log stream-health \
+      uv run python scripts/stream_health_check.py "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health}" >&2
     exit 2
     ;;
 esac
