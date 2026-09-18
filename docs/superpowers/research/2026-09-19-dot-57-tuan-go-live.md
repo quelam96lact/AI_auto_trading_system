@@ -308,3 +308,49 @@ là việc phải **đo**.
 1. **Hai việc của chủ dự án trước 20:00 Chủ nhật:** `powercfg` và `holidays`. Không đổi.
 2. **T3 chạy trong phiên 09:30–10:30 với `--symbol AAA`** — đã sửa vào brief.
 3. Siết `is not False` thành `if ok:` (mục E) — sau tuần go-live.
+
+
+### H. Tự soát: cảnh báo của đợt 56 **không tới được nơi bền** khi chạy trong container
+
+Câu hỏi "đủ hay chỉ vừa đủ cho test xanh" chỉ đúng một chỗ.
+
+Đợt 56 thêm `logger.warning(...)` vào `send_telegram` để việc gửi trượt **thôi im lặng**. Đợt 52
+làm log bền bằng cách gắn `RotatingFileHandler` vào một logger. Nhưng hai đợt gắn vào **hai
+logger khác nhau**:
+
+```
+trading/collector/main.py:526   alerts_logger = logging.getLogger("trading.alerts")   <- handler ben
+trading/telegram.py:7           logger = logging.getLogger(__name__)  # = "trading.telegram"
+```
+
+Trong cây logger của Python, `trading.telegram` và `trading.alerts` là **anh em**, không phải cha
+con — bản ghi của cái này **không** chảy qua handler của cái kia. Kiểm trong container:
+
+```
+telegram la con cua alerts?  ->  False
+```
+
+Hệ quả, chia theo nơi chạy:
+
+| Chạy ở đâu | Cảnh báo gửi trượt đi đâu | Bền không |
+|---|---|---|
+| Script trên host (`daily-check`, `engine-consumer`, `docker-down-alert`) | `logs/*.log` qua `run_if_docker_up.sh` | **Bền** |
+| **Trong container** (collector, engine) | stderr → `docker logs` | **Mất khi dựng lại** |
+
+Và container bị dựng lại **bốn lần trong hai ngày**. Nên đúng cái dòng cảnh báo mà đợt 56 sinh ra
+để ta thấy được, khi nó xảy ra trong collector, sẽ biến mất ở lần triển khai kế tiếp.
+
+**Chưa cắn ai** — `docker-compose.yml` truyền `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` vào cả hai
+container, nên nhánh "thiếu biến" không chạy; và 16 dòng trong `bars_closed.log` hiện đều là
+alert bình thường. Nhưng nhánh "lỗi mạng" thì **đã chạy thật** hai lần (14/09, 16/09), và nếu nó
+chạy trong container thì ta mất dấu.
+
+**Cách chữa nhỏ hơn vẻ ngoài:** gắn handler vào logger `"trading"` thay vì `"trading.alerts"` —
+một chuỗi, và cả hai logger con đều được phủ. Nhưng nó **đổi thứ chảy vào file** (mọi logger dưới
+`trading.` chứ không riêng alerts), nên phải cân nhắc khối lượng và xoay vòng trước khi làm.
+Đủ lớn để cần một brief, đủ nhỏ để không gấp.
+
+**Không làm tối nay:** `trading/collector/main.py` là file collector đang chạy, và thứ Hai 22/09
+là phép đo quyết định của đợt 52. Cùng lý do đã hoãn việc gom `is_trading_day` — đo xong đã.
+
+Ghi vào việc của brief sau, **sau** phép đo T2.
