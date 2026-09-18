@@ -443,3 +443,50 @@ các máy.
 5. **Viết quy ước `scripts/` xuống.** Brief gợi ý `scripts/README.md` hoặc `AGENTS.md`; báo cáo
    soạn nội dung cho `README.md` gốc. Tôi nghiêng về `scripts/README.md` — quy ước về thư mục nào
    thì nên nằm trong thư mục đó.
+
+
+### G. Tự soát sau khi commit: `DEPLOYMENT.md` — bản runbook ĐÃ COMMIT — cũng lệch
+
+Đợt 53 chỉ soi `docs/README_VPS_UBUNTU.md` vì nó nằm trong danh sách file bẩn. Nhưng bản runbook
+**đã commit và đang là nguồn chính thức** là `DEPLOYMENT.md`, và nó lệch đúng những chỗ ấy:
+
+```
+$ Select-String DEPLOYMENT.md -Pattern "logs:/app/logs|mkdir -p logs|volumes"
+(rong)
+
+$ so lan nhac ten tung job cua sched.sh trong DEPLOYMENT.md
+heartbeat       14
+backfill        10
+deploy-drift     6
+engine-cam       4
+daily-check      2
+engine-consumer  0     <-
+stream-health    0     <-
+
+DEPLOYMENT.md:234   30 15 * * 1-5  .../sched.sh daily-check
+DEPLOYMENT.md:249   | trading-daily-data-check | 15:30 T2-T6 | ...
+```
+
+Ba chỗ lệch, và cả ba đều đã được chứng minh có hậu quả thật trong tuần này:
+
+1. **Không có bước tạo `logs/`, cũng không nhắc volume mount.** `docker-compose.yml` đã có
+   `./logs:/app/logs` từ đợt 52. Ai deploy theo tài liệu này lên một máy Linux sạch sẽ gặp đúng
+   cái bẫy Task 1 chỉ ra: thư mục thuộc `root`, tiến trình chạy `uid 10001`, handler **nuốt lỗi
+   và chạy tiếp im lặng** — mất bằng chứng luồng mà không chuông nào kêu.
+2. **Thiếu hẳn hai job.** `stream-health` và `engine-consumer` không xuất hiện một lần nào, dù cả
+   hai đã có Scheduled Task và đã được chứng minh chạy (đợt 50). Deploy theo tài liệu này lên VPS
+   là mất hai chuông.
+3. **`daily-check` vẫn ghi 15:30** ở cả dòng cron lẫn bảng task — đúng cái nhịp mà đợt 51 chứng
+   minh là **chạy sớm hơn dữ liệu nó kiểm năm tiếng**, khiến nó chưa từng một lần có khả năng
+   kêu. Tài liệu đang dạy người ta tái tạo lại lỗi đó trên máy mới.
+
+**Tôi không sửa `DEPLOYMENT.md` trong đợt này.** Lý do nhất quán với cách tôi xử lý `README.md`:
+nó ngoài phạm vi brief 53 (đợt đọc thuần), và sửa một runbook triển khai giữa đêm, ngoài phạm vi
+được giao, là đúng kiểu thay đổi mà chính các brief này cấm agent làm. Nhưng khác `README.md` ở
+một điểm quan trọng: **ba chỗ lệch này là dữ kiện kiểm chứng được**, không phải chuyện văn phong —
+mount có thật trong `docker-compose.yml`, hai job có thật trong `sched.sh`, và nhịp 21:00 là kết
+luận đã đo của đợt 51.
+
+Nên đây là **việc đầu tiên của brief sau**, và nó là việc chặn go-live trên VPS: cả
+`DEPLOYMENT.md` lẫn `README_VPS_UBUNTU.md` phải được sửa **cùng nhau, cùng một nội dung**, nếu
+không ta lại có một công thức hai chỗ.
