@@ -1,6 +1,11 @@
 from datetime import date, datetime
 
-from trading.calendar_vn import TZ, is_continuous_matching, is_trading_time
+from trading.calendar_vn import (
+    TZ,
+    is_continuous_matching,
+    is_trading_day,
+    is_trading_time,
+)
 
 
 def dt(h, m, day=15):  # 2026-07-15 là thứ Tư
@@ -64,4 +69,20 @@ def test_is_continuous_matching_weekend_and_holiday():
     holiday_set = frozenset({date(2026, 7, 15)})
     assert is_continuous_matching(dt(9, 15), holidays=holiday_set) is False
     assert is_continuous_matching(dt(10, 0), holidays=holiday_set) is False
-    assert is_continuous_matching(dt(13, 30), holidays=holiday_set) is False
+    assert is_continuous_matching(dt(13, 30), holidays=holiday_set) is False
+
+
+# ============ Brief đợt 56 Task 3: is_trading_day Tests ============
+
+
+def test_is_trading_day_weekend_and_holiday():
+    """Brief 56 Task 3: is_trading_day kiểm tra cấp ngày: T7, CN, ngày lễ -> False, ngày thường -> True."""
+    # Thứ Bảy: 2026-07-18
+    assert is_trading_day(date(2026, 7, 18)) is False
+    # Chủ Nhật: 2026-07-19
+    assert is_trading_day(date(2026, 7, 19)) is False
+    # Ngày lễ trong danh sách (2026-07-15 thứ Tư)
+    assert is_trading_day(date(2026, 7, 15), holidays={date(2026, 7, 15)}) is False
+    # Ngày thường không lễ
+    assert is_trading_day(date(2026, 7, 15), holidays=set()) is True
+    assert is_trading_day(date(2026, 7, 15)) is True

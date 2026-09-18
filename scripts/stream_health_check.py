@@ -38,7 +38,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from trading.calendar_vn import is_trading_time
+from trading.calendar_vn import is_trading_day
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -402,8 +402,7 @@ def main() -> None:
     # 1. ngay nghi?        -> bo qua, exit 0
     # 2. phien chua xong?  -> bo qua, exit 0     (dot 50)
     # 3. do do phu luong                          (dot 47/49)
-    ts_mid = datetime.combine(check_date, time(10, 0), tzinfo=TZ_VN)
-    if not is_trading_time(ts_mid, holidays=holidays):
+    if not is_trading_day(check_date, holidays=holidays):
         print(f"bo qua: {check_date.isoformat()} la ngay nghi")
         sys.exit(0)
 

@@ -529,3 +529,47 @@ def test_get_status_str_cause_tags():
     assert (
         get_status_str(mixed) == "COLLECTION_ERROR+NO_TRADING+MISSING_TAIL+DIRTY_BARS"
     )
+
+
+def test_daily_data_check_khong_noi_doi_khi_gui_telegram_that_bai(monkeypatch, capsys):
+    """Brief 56: doan gui Telegram truoc day in "Da gui" VO DIEU KIEN.
+
+    Tuc la khi thieu bien moi truong hoac mang hong, script van khang dinh da gui -
+    dung kieu noi doi ma bao cao dot 56 Task 2 tu neu ra. Sau khi send_telegram doi
+    hop dong sang tra bool (FEE-ALARM-2), doan nay phai noi that.
+    """
+    import scripts.daily_data_check as ddc
+
+    class FakeStorage:
+        def read_active_universe(self):
+            return ["VCB", "SSI"]
+
+        def read_must_price_symbols(self, accounts, extra):
+            return ["CAP"]
+
+        def read_symbols_with_bar_on_date(self, d):
+            return {"VCB", "SSI"}
+
+    class FakeCfg:
+        ssi_equity_accounts: ClassVar[list[str]] = ["CAP"]
+        symbols: ClassVar[list[str]] = []
+        holidays: ClassVar[set] = set()
+
+    monkeypatch.setattr(ddc, "load_config", lambda path: FakeCfg())
+    monkeypatch.setattr(ddc, "Storage", lambda dsn: FakeStorage())
+    monkeypatch.setattr(ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x")
+    monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "2026-09-01"])
+
+    # (a) gui THAT BAI -> khong duoc khang dinh da gui
+    monkeypatch.setattr(ddc, "send_telegram", lambda msg: False)
+    with pytest.raises(SystemExit):
+        ddc.main()
+    out = capsys.readouterr().out
+    assert "KHÔNG gửi được" in out, f"gui hong ma van bao da gui: {out!r}"
+
+    # (b) gui THANH CONG -> phai khang dinh da gui
+    monkeypatch.setattr(ddc, "send_telegram", lambda msg: True)
+    with pytest.raises(SystemExit):
+        ddc.main()
+    out = capsys.readouterr().out
+    assert "Đã gửi cảnh báo qua Telegram" in out, f"gui duoc ma khong bao: {out!r}"

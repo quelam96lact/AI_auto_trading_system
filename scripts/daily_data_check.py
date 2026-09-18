@@ -16,7 +16,7 @@ CLI:
 
 import argparse
 import sys
-from datetime import datetime, time
+from datetime import datetime
 from pathlib import Path
 
 # Đảm bảo import được _db_common và trading
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _db_common import resolve_dsn
 
 from trading.alerts import _print_safe
-from trading.calendar_vn import TZ, is_trading_time
+from trading.calendar_vn import TZ, is_trading_day
 from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
@@ -136,9 +136,8 @@ def main() -> None:
         _print_safe(f"LỖI TRUY VẤN DB: {e}")
         sys.exit(2)
 
-    ts_mid = datetime.combine(target_date, time(10, 0), tzinfo=TZ)
     holidays = cfg.holidays
-    trading_day = is_trading_time(ts_mid, holidays)
+    trading_day = is_trading_day(target_date, holidays)
 
     code, _missing, msg = evaluate_daily_completeness(
         active_symbols, present_symbols, is_trading_day=trading_day
@@ -147,11 +146,15 @@ def main() -> None:
     _print_safe(f"[{target_date}] {msg}")
 
     if code in (1, 2):
-        try:
-            send_telegram(f"[{target_date}] {msg}")
+        # Brief 56: send_telegram khong con nem (FEE-ALARM-2) va tra bool. Truoc day
+        # doan nay in "Da gui" VO DIEU KIEN — tuc la noi doi khi thieu bien moi
+        # truong hoac mang hong. Bao cao dot 56 Task 2 tu neu ra lo nay.
+        if send_telegram(f"[{target_date}] {msg}"):
             _print_safe("-> Đã gửi cảnh báo qua Telegram.")
-        except Exception as e:
-            _print_safe(f"Lỗi khi gửi Telegram: {e}")
+        else:
+            _print_safe(
+                "-> KHÔNG gửi được cảnh báo qua Telegram (xem log để biết lý do)."
+            )
         sys.exit(code)
 
     sys.exit(0)

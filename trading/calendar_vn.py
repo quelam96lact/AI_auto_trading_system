@@ -13,6 +13,11 @@ def is_trading_time(ts: datetime, holidays: set[date] = frozenset()) -> bool:
     return any(start <= t <= end for start, end in SESSIONS)
 
 
+def is_trading_day(d: date, holidays: set[date] | frozenset = frozenset()) -> bool:
+    """Kiểm tra một ngày có phải ngày giao dịch VN (T2-T6, không phải ngày lễ)."""
+    return d.weekday() < 5 and d not in holidays
+
+
 def trading_days_between(
     start: datetime, end: datetime, holidays: frozenset = frozenset()
 ) -> int:
