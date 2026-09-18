@@ -49,16 +49,18 @@ def send_telegram(text: str) -> None:
 hệ cảnh báo**, và nó không phát ra tiếng nào. Trên VPS, nếu cron không nạp `.env`, mọi chuông của
 đợt 46–55 biến mất mà `exit 0` vẫn đẹp.
 
-**(B) Ném lỗi ra ngoài.** Bảy nơi gọi thẳng `send_telegram`:
+**(B) Ném lỗi ra ngoài.** Tám nơi gọi `send_telegram`, **bảy nơi không bọc `try`**:
 
 ```
 scripts/daily_data_check.py:151
 scripts/engine_consumer_check.py:132, :147, :176
 scripts/heartbeat_check.py:231, :261, :347
+scripts/docker_down_alert.py:120        <- noi DUY NHAT lam dung, xem §1.2b
 ```
 
-Không nơi nào bọc `try`. Mạng trục trặc → **script sập**, đúng như 14/09. Một chuông chết vì
-không gọi được điện thoại.
+Mạng trục trặc → **script sập**. Tôi kiểm chứng điều đó chứ không suy đoán: sau traceback
+14/09 14:25, `logs/heartbeat.log` ghi `EXIT=1`; lượt 14:30 sau đó mới `EXIT=0`. Cảnh báo lúc
+14:25 **không tới ai**, và vết duy nhất nó để lại là một cú sập.
 
 **(C) Không đọc phản hồi.** `urlopen` trả về response rồi bị vứt. Telegram trả `{"ok": false, ...}`
 trong vài trường hợp mà HTTP vẫn 200. Nên ngay cả probe hiện có (`scripts/.probe_dead_man_switch.py`)
@@ -119,8 +121,8 @@ def send_telegram(text: str) -> bool:
 
 Ba điều **bắt buộc**:
 
-1. **Không bao giờ ném.** Bảy nơi gọi thẳng nó, không nơi nào bọc `try` — hôm 14/09 điều đó làm
-   sập `heartbeat_check`. Hàm này bắt mọi exception, trả `False`.
+1. **Không bao giờ ném.** Bảy trong tám nơi gọi không bọc `try` — hôm 14/09 điều đó làm sập
+   `heartbeat_check` (`EXIT=1`). Hàm này bắt mọi exception, trả `False`.
 2. **Thiếu token/chat_id → ghi log mức cảnh báo rồi trả `False`**, không im lặng trả về. Đây là
    thay đổi quan trọng nhất của cả task.
 3. **Đọc phản hồi và kiểm `ok`.** Telegram trả JSON có trường `ok`. `ok != true` → `False`.
@@ -136,6 +138,45 @@ collector đã chảy ra `/app/logs/bars_closed.log`, nên một dòng `logging`
 
 **Và không in token.** Khi báo thiếu biến, nói *tên biến nào thiếu*, không nói giá trị, không
 nói cả bốn ký tự cuối.
+
+### 1.2b. Khuôn đã có sẵn trong repo — chép hình dạng, đừng tự nghĩ
+
+`scripts/docker_down_alert.py:116-140` đã giải đúng bài này từ đợt 8, kèm tên nguyên tắc:
+
+```python
+def run_alert(now, holidays, send=send_telegram, stamp_file=SPAM_GUARD_FILE) -> int:
+    """Mot lan kiem: quyet dinh, keu neu can. KHONG BAO GIO nem — chuong bao
+    chet cam con te hon khong co chuong bao (FEE-ALARM-2). Tra 0 luon."""
+    try:
+        ...
+        # In ly do ra stdout TRUOC khi gui — neu send_telegram nem exception
+        # thi van con ban ghi o log (khuon heartbeat_check).
+        _print_safe(msg)
+        try:
+            send(msg)
+        except Exception as e:
+            _print_safe(f"[docker-down-alert] gui Telegram loi: {type(e).__name__}: {e}")
+            return 0
+        ...
+    except Exception as e:      # lop ngoai cung
+        ...
+```
+
+Bốn điều nó làm đúng, và bạn phải giữ đủ bốn:
+
+1. **Nguyên tắc có tên: `FEE-ALARM-2` — "chuông báo chết câm còn tệ hơn không có chuông báo".**
+   Dùng lại đúng tên đó trong docstring của `send_telegram` để hai chỗ tra được về nhau.
+2. **Ghi lý do TRƯỚC khi gửi.** Nếu việc gửi nổ thì bản ghi vẫn còn. Đây là thứ đã cứu ta hôm
+   14/09 — không có nó thì cảnh báo 14:25 biến mất không dấu vết.
+3. **`try` trong (quanh việc gửi) và `try` ngoài (lớp cuối).**
+4. **`send=send_telegram` là tham số tiêm được**, nên test được mà không chạm mạng.
+
+Đây cũng là lý do `docker_down_alert` là nơi **duy nhất** trong tám nơi để lại dòng
+`"gui Telegram loi: URLError: ..."` trong log thay vì sập. Nó đã chứng minh khuôn này hoạt động
+trên sự cố thật.
+
+**Task 1 không thay thế khuôn đó** — nó bổ sung ở tầng dưới: `send_telegram` thôi ném, nên **bảy
+nơi còn lại** được chữa một lượt mà không phải sửa bảy file (phần lớn nằm trong danh sách cấm).
 
 ### 1.3. Blast radius — làm trước khi sửa
 
