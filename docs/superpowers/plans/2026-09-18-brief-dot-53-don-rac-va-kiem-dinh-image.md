@@ -194,10 +194,38 @@ tag rollback. **Không đề xuất lệnh đó.**
 `scripts/sched.sh`, `tests/`, `trading/`, `docs/`, và các script khác.
 
 Trả về **một bảng**: tên file → số tham chiếu → nguồn tham chiếu → xếp loại
-(`ĐANG DÙNG` / `MỒ CÔI` / `CẦN NGƯỜI QUYẾT`).
+(`ĐANG DÙNG` / `CÔNG CỤ GIỮ CÓ CHỦ Ý` / `CẦN NGƯỜI QUYẾT`).
 
-Tôi đã đếm được **10 tham chiếu tới `spike_`** từ `sched.sh` và `tests/` — nên **danh sách mồ côi
-chắc chắn ngắn hơn bạn tưởng**. Nếu bảng của bạn cho ra "tất cả đều mồ côi", bạn đã đếm sai.
+Tôi đã đếm được **10 tham chiếu tới `spike_`** từ `sched.sh` và `tests/` — nên **danh sách "không
+ai gọi" chắc chắn ngắn hơn bạn tưởng**. Nếu bảng của bạn cho ra "tất cả đều mồ côi", bạn đã đếm sai.
+
+**Và đây là chỗ tôi phải sửa chính mình.** Bản nháp đầu của brief này có ô xếp loại `MỒ CÔI`, với
+ngụ ý ngầm rằng 0 tham chiếu = bỏ đi được. **Sai**, và tôi tự đâm vào nó: hôm nay tôi thêm
+`scripts/.fix_mojibake.py` và `scripts/.scan_mojibake.py` (gỡ và phát hiện lỗi mã ký tự). Cả hai
+có **0 tham chiếu** từ mọi nơi, và cả hai **phải giữ**.
+
+Nhìn lại thì `scripts/` có một quy ước đặt tên sẵn có, dù **chưa ai viết nó xuống** — không có
+`scripts/README.md`:
+
+| Tiền tố | Số file | Ý nghĩa tôi đọc ra |
+|---|---|---|
+| `.probe_*` | 8 | Dò một câu hỏi vận hành một lần, giữ lại để lặp lại được phép đo |
+| `.spike_*` | 12 | Thử nghiệm nghiên cứu, giữ lại làm bằng chứng cho một kết luận |
+| `.repro_*` | 1 | Tái hiện một lỗi cụ thể (`nats_flake`) |
+| `.fix_` / `.scan_` | 2 | Công cụ bảo trì — mới hôm nay |
+
+**Dấu chấm đầu tên chính là tín hiệu "giữ có chủ ý, không nối vào gì cả".** Nếu đúng vậy thì
+"0 tham chiếu" với nhóm này **không** có nghĩa là rác, và bảng phân loại phải phản ánh điều đó.
+
+Ba việc, theo thứ tự:
+
+1. **Kiểm chứng cách đọc của tôi** bằng cách mở vài file mỗi nhóm. Tôi suy ra từ tên, không từ
+   nội dung — nếu nội dung nói khác, **cách đọc của tôi sai và hãy nói thẳng**.
+2. Nếu quy ước đúng: **đề xuất viết nó xuống** (`scripts/README.md` một bảng ngắn, hoặc một đoạn
+   trong `AGENTS.md`). Một quy ước chỉ sống trong đầu người ta thì đợt sau lại có người gọi nó là
+   rác — lần này suýt là tôi. **Soạn nội dung đề xuất, đừng tạo file.**
+3. Chỉ xếp vào `CẦN NGƯỜI QUYẾT` những file mà **cả tên lẫn nội dung đều không nói được nó còn
+   dùng để làm gì**. Đó mới là danh sách đáng cho tôi xem.
 
 ### 4.2. Module nghiên cứu trong `trading/`
 
