@@ -418,3 +418,74 @@ def test_15_persistent_file_without_evidence_falls_back_to_log(tmp_path, monkeyp
     out = capsys.readouterr().out
     assert "co 2 lan chot nen" in out
     assert "[nguon: log]" in out
+
+
+def test_16_resolve_target_session_receives_holidays():
+    """16. Brief 55 Task 1.1b: resolve_target_session nhận holidays và bỏ qua ngày lễ giữa tuần."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from scripts.stream_health_check import resolve_target_session
+
+    tz_vn = ZoneInfo("Asia/Ho_Chi_Minh")
+    # Ngày 02/09/2026 là thứ Tư (ngày thường trong tuần)
+    dt_holiday_noon = datetime(2026, 9, 2, 12, 0, 0, tzinfo=tz_vn)
+    holidays = {date(2026, 9, 2)}
+
+    # Gọi với holidays chứa ngày đó -> phải trả về None
+    res = resolve_target_session(dt_holiday_noon, holidays=holidays)
+    assert res is None, f"Kỳ vọng None vì là ngày lễ giữa tuần, nhận: {res}"
+
+    # Gọi không có holidays -> trả về phiên sáng (lỗi cũ trước khi sửa)
+    res_no_holidays = resolve_target_session(dt_holiday_noon, holidays=None)
+    assert res_no_holidays == (date(2026, 9, 2), "sang")
+
+
+def test_17_explicit_date_past_saturday_ignored(monkeypatch, capsys):
+    """17. Brief 55 Task 1.1: Truyền tường minh một thứ Bảy đã qua -> bỏ qua, exit 0."""
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-12",
+        "--session", "sang",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "bo qua: 2026-09-12 la ngay nghi" in out
+
+
+def test_18_explicit_date_weekday_holiday_ignored(monkeypatch, capsys):
+    """18. Brief 55 Task 1.1: Truyền tường minh ngày lễ giữa tuần (01/09 thứ Ba) -> bỏ qua, exit 0."""
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-01",
+        "--session", "sang",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "bo qua: 2026-09-01 la ngay nghi" in out
+
+
+def test_19_explicit_date_past_trading_day_not_ignored(monkeypatch, capsys, tmp_path):
+    """19. Brief 55 Task 1.3: Truyền ngày giao dịch đã qua (17/09 thứ Năm) -> đo bình thường, không bỏ qua."""
+    dummy_log = tmp_path / "dummy.log"
+    dummy_log.write_text(
+        '2026-09-17T06:10:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--log-file", str(dummy_log),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert not out.startswith("bo qua:")
+    assert "co 1 lan chot nen" in out
+

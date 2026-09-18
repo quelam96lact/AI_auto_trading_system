@@ -38,6 +38,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from trading.calendar_vn import is_trading_time
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -126,6 +128,27 @@ def fetch_docker_collector_logs() -> str:
         if res_fb.returncode == 0 and res_fb.stdout:
             return res_fb.stdout
     return res.stdout or ""
+
+
+def load_holidays(config_path: str = "config/config.yaml") -> set[date]:
+    """Đọc danh sách ngày lễ từ config/config.yaml (Brief 55 Task 1).
+
+    An toàn, không yêu cầu biến môi trường DB/SSI như load_config.
+    """
+    p = Path(config_path)
+    if not p.is_file():
+        repo_root = Path(__file__).resolve().parents[1]
+        p = repo_root / config_path
+    if not p.is_file():
+        return set()
+    try:
+        import yaml
+
+        with open(p, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        return {date.fromisoformat(str(h)) for h in raw.get("holidays", [])}
+    except Exception:
+        return set()
 
 
 def resolve_target_session(
@@ -353,6 +376,7 @@ def main() -> None:
 
     args = parser.parse_args()
     now_vn = datetime.now(TZ_VN)
+    holidays = load_holidays()
 
     # 3 tổ hợp tham số theo Brief 49 §2.6
     if args.date and args.session:
@@ -364,8 +388,8 @@ def main() -> None:
         session = None
         target_name = "ca ngay"
     else:
-        # Cả hai đều thiếu: chọn phiên gần nhất ĐÃ KẾT THÚC
-        resolved = resolve_target_session(now_vn)
+        # Cả hai đều thiếu: chọn phiên gần nhất ĐÃ KẾT THÚC (Brief 55 Task 1.1b: nối dây holidays)
+        resolved = resolve_target_session(now_vn, holidays=holidays)
         if resolved is None:
             print(
                 "bo qua: khong co phien giao dich nao ket thuc trong vong 24 gio (ngay nghi/cuoi tuan)"
@@ -374,7 +398,16 @@ def main() -> None:
         check_date, session = resolved
         target_name = f"phien {session}"
 
-    # Bổ sung Brief 50 Task 1: Phiên chưa kết thúc thì bỏ qua, không kêu
+    # Brief 55 Task 1.2: Ba cửa kiểm tra theo thứ tự:
+    # 1. ngay nghi?        -> bo qua, exit 0
+    # 2. phien chua xong?  -> bo qua, exit 0     (dot 50)
+    # 3. do do phu luong                          (dot 47/49)
+    ts_mid = datetime.combine(check_date, time(10, 0), tzinfo=TZ_VN)
+    if not is_trading_time(ts_mid, holidays=holidays):
+        print(f"bo qua: {check_date.isoformat()} la ngay nghi")
+        sys.exit(0)
+
+    # 2. Phiên chưa kết thúc thì bỏ qua, không kêu (Brief 50 Task 1)
     if not is_session_ended(check_date, session, now_vn):
         print(
             f"bo qua: {target_name} ngay {check_date.isoformat()} chua ket thuc tai thoi diem kiem tra"

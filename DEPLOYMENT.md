@@ -394,33 +394,52 @@ từ 15/08/2026 tới 01/09/2026 chưa từng chạy vì không ai dựng lại 
 kiểm "sửa đã hoạt động" trên container vẫn chạy image cũ → kết luận sai).
 
 Sau khi commit sửa code, dựng lại (chỉ 2 service — không `down`, không đụng
-postgres/nats/grafana, không xoá volume):
+postgres/nats/grafana, không xoá volume).
+
+**Quy tắc bắt buộc:** Gắn tag cuốn chiếu `:previous` TRƯỚC KHI BUILD để luôn có một điểm lui an toàn:
 
 ```bash
-docker compose up -d --build collector engine
-```
+# 1. BẮT BUỘC TRƯỚC KHI BUILD: lưu ảnh hiện tại thành :previous
+docker tag ai_auto_trading_system-collector:latest ai_auto_trading_system-collector:previous 2>/dev/null || true
+docker tag ai_auto_trading_system-engine:latest    ai_auto_trading_system-engine:previous    2>/dev/null || true
 
-**Cảnh báo đã đo (01/09):** lệnh trên **cũng tạo lại `nats` và `postgres`**,
-dù không nêu tên chúng — `docker compose up` đồng bộ toàn bộ project. Lần đó
-dữ liệu an toàn (đã kiểm `max(ts)` và số dòng `bars`/`bars_daily` trước–sau,
-không đổi), nhưng đừng trông vào may. Muốn chắc chắn chỉ đụng hai service:
-
-```bash
+# 2. Build và khởi động lại chỉ 2 service (không đụng nats/postgres)
 docker compose build collector engine
 docker compose up -d --no-deps collector engine
 ```
 
-Kiểm chứng code MỚI thật sự nằm trong container — cả ba phải **> 0**, nếu còn
-0 thì build không lấy source mới, **dừng lại** và tìm hiểu trước khi restart:
+### Quy trình quay về (Rollback khi bản mới lỗi)
+
+Nếu bản triển khai mới gặp sự cố (crash loop, lỗi logic, báo động Telegram):
 
 ```bash
-# Dùng docker compose exec để tự động tìm đúng container collector theo project:
+# Hoàn nguyên tag :previous thành :latest và restart
+docker tag ai_auto_trading_system-collector:previous ai_auto_trading_system-collector:latest
+docker tag ai_auto_trading_system-engine:previous    ai_auto_trading_system-engine:latest
+docker compose up -d --no-deps collector engine
+```
+
+*Lưu ý quan trọng về Rollback:*
+- Quay về ảnh `:previous` **không** đổi `docker-compose.yml`, nên volume mount `./logs:/app/logs` **vẫn còn nguyên** (không mất log, không mất dữ liệu DB).
+- Thứ mất đi (hoàn nguyên) chỉ là phần **mã nguồn** của lần triển khai vừa rồi.
+
+### Phép kiểm sau mỗi lần triển khai (bài học 18/09)
+
+Sau khi deploy, kiểm tra 2 lớp:
+
+1. **Khớp image ID giữa container và tag image:**
+```bash
+docker inspect -f "{{.Image}}" ai_auto_trading_system-collector-1
+docker image inspect ai_auto_trading_system-collector --format "{{.Id}}"
+# Hai chuỗi hash phải HOÀN TOÀN BẰNG NHAU.
+```
+
+2. **Grep chuỗi đặc trưng của chính bản vá bên trong container:**
+Hai hash bằng nhau chỉ chứng minh container đang chạy đúng image tag `:latest`, **KHÔNG** chứng minh tag khớp với mã nguồn mới nhất (ngày 18/09 đã dính bẫy: hash khớp nhưng code bên trong container là bản cũ). Do đó, **bắt buộc** phải grep chuỗi đặc trưng vừa thêm:
+
+```bash
 docker compose exec collector sh -c \
-  'grep -c _connected $(python -c "import trading.collector.feed as m; print(m.__file__)")'
-docker compose exec collector sh -c \
-  'grep -c _restart_feed_and_alert $(python -c "import trading.collector.main as m; print(m.__file__)")'
-docker compose exec collector sh -c \
-  'grep -c backoff_cap_429 $(python -c "import trading.collector.feed as m; print(m.__file__)")'
+  'grep -n "chuoi_dac_trung_vua_sua" $(python -c "import trading.collector.main as m; print(m.__file__)")'
 ```
 
 Ba con số này là chữ ký của code mới (`_connected` + backoff 429 trong
