@@ -93,6 +93,8 @@ chứng minh tới bước đặt/huỷ thật, chưa chứng minh tới bước
 
 | File | Trạng thái | Task |
 |---|---|---|
+| `scripts/docker_down_alert.py` | có sẵn — **gỡ cấm riêng cho Task 2** | 2 |
+| `tests/test_docker_down_alert.py` | có sẵn | 2 — **chỉ thêm** |
 | `scripts/engine_consumer_check.py` | có sẵn — **gỡ cấm riêng cho Task 2** | 2 |
 | `tests/test_engine_consumer_check.py` | có sẵn | 2 — **chỉ thêm** |
 | `scripts/check_golive_gate.py` | **mới** | 3 |
@@ -101,7 +103,7 @@ chứng minh tới bước đặt/huỷ thật, chưa chứng minh tới bước
 
 **Task 1 không sửa file nào** — đọc và soạn.
 
-**Không đụng:** `scripts/heartbeat_check.py`, `scripts/docker_down_alert.py`,
+**Không đụng:** `scripts/heartbeat_check.py`,
 `scripts/spike_ssi_sdk_place_order.py` (**tuyệt đối không sửa — nó sắp đặt lệnh thật**),
 `scripts/confirm_real_order.py`, `trading/real_orders.py`, `trading/alerts.py`,
 `trading/calendar_vn.py`, `PaperBroker`, `trading/risk.py`, `trading/strategies/*`,
@@ -141,9 +143,43 @@ Kết luận một trong hai: **CHẠY ĐƯỢC Ở T3** (kèm lệnh chính xá
 
 ---
 
-## Task 2 — Chuông tự khoá miệng sau khi gửi trượt
+## Task 2 — Chuông tự khoá miệng sau khi gửi trượt (HAI file)
 
-**Đây là lý do tôi gỡ cấm `engine_consumer_check.py` cho riêng task này.**
+**Đây là lý do tôi gỡ cấm `engine_consumer_check.py` và `docker_down_alert.py` cho riêng task này.**
+
+### 2.0. Và một hồi quy do chính đợt 56 gây ra — cái này gấp hơn
+
+Tôi tìm ra khi tự soát brief này, không phải từ báo cáo nào.
+
+`docker_down_alert.py:128-139` viết từ đợt 8 và **từng đúng**:
+
+```python
+_print_safe(msg)
+try:
+    send(msg)
+except Exception as e:                                    # <- nhanh nay
+    _print_safe(f"[docker-down-alert] gui Telegram loi: ...")
+    return 0                                              # <- thoat TRUOC khi ghi dau
+_write_last_alert(now, stamp_file)                        # <- chi ghi khi gui xong
+```
+
+Nó cố tình `return 0` **trước** `_write_last_alert` khi gửi hỏng — đúng luật "chỉ ghi dấu khi đã
+gửi được". Bằng chứng nó từng chạy: dòng `[docker-down-alert] gui Telegram loi: URLError` trong
+`logs/heartbeat.log` ngày 16/09.
+
+**Đợt 56 làm `send_telegram` thôi ném và trả `False`.** Hệ quả không ai để ý:
+
+1. Nhánh `except` thành **code chết** — không bao giờ chạy nữa.
+2. `_write_last_alert` giờ chạy **kể cả khi gửi trượt**.
+3. Dòng `"gui Telegram loi: ..."` từ nay **không bao giờ xuất hiện nữa**.
+
+Tức là bản vá đợt 56 — thứ sinh ra để chuông thôi hỏng câm — vừa **làm câm đi một chuông đã đúng**.
+Và nó là chuông **"Docker chết"**, cái mà thông điệp của nó tự nói: *"đây là tin nhắn DUY NHẤT
+bạn sẽ nhận"*. Gửi trượt mà vẫn đóng dấu thì tin duy nhất ấy mất, và hàng rào chặn luôn lần thử lại.
+
+Đây là cái giá của việc đổi hợp đồng một hàm có tám nơi gọi: tôi đã kiểm "không nơi nào **dùng**
+giá trị trả về" và kết luận tương thích ngược. Đúng về giá trị trả về, **sai về hành vi ném**. Một
+nơi đang dựa vào việc nó **ném**.
 
 Báo cáo đợt 56 Task 2 tìm ra: script cập nhật `last_alert_ts` **kể cả khi `send_telegram` trả
 `False`**. Hệ quả: mạng hỏng đúng lúc chuông định kêu → tin không đi → **và chuông tự khoá miệng
@@ -152,14 +188,24 @@ Báo cáo đợt 56 Task 2 tìm ra: script cập nhật `last_alert_ts` **kể c
 Điều này đã có tiền lệ thật: ngày 14/09 và 16/09, `send_telegram` hỏng vì DNS (`getaddrinfo
 failed`) — đúng loại sự cố xảy ra khi máy vừa ngủ dậy, tức là **đúng lúc ta cần chuông nhất**.
 
-### 2.1. Luật
+### 2.1. Luật, áp cho cả hai file
 
-**Chỉ ghi dấu chống spam khi đã gửi được.** `send_telegram` giờ trả `bool` (đợt 56), nên:
+**Chỉ ghi dấu chống spam khi đã gửi được.** `send_telegram` giờ trả `bool`, nên:
 
 ```
-gui duoc   -> cap nhat last_alert_ts, im 15 phut (nhu cu)
-gui khong duoc -> KHONG cap nhat, de lan sau con thu lai
+gui duoc       -> ghi dau, im theo chu ky chong spam (nhu cu)
+gui khong duoc -> KHONG ghi dau, de lan sau con thu lai
 ```
+
+| File | Chỗ sửa | Việc |
+|---|---|---|
+| `docker_down_alert.py` | `:134-138` | `if send(msg): _write_last_alert(...)`; **bỏ nhánh `except` đã chết**, hoặc giữ lại và nói rõ vì sao |
+| `engine_consumer_check.py` | `:174-177` | `if send_telegram(alert_msg): new_state["last_alert_ts"] = ...` |
+
+**Thứ tự: sửa `docker_down_alert` trước** — nó là hồi quy vừa gây ra, còn cái kia là lỗi có sẵn.
+
+Lưu ý `docker_down_alert.run_alert` nhận `send=send_telegram` làm tham số, nên test được bằng
+cách truyền hàm giả trả `True`/`False`. Đừng monkeypatch, dùng đúng tham số đã có.
 
 ### 2.2. Ràng buộc phẫu thuật
 
