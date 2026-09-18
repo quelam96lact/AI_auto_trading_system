@@ -476,3 +476,71 @@ vị từ cấp NGÀY**; thiếu chỗ đó nên ai cần cũng tự chế lại
 `scripts/heartbeat_check.py` — file nằm trong danh sách cấm sửa — và `docker_down_alert.py`
 không được brief 51 cho phép. Đây là việc của một brief riêng: đưa `is_trading_day(d, holidays)`
 vào `calendar_vn.py`, rồi cho cả ba chỗ gọi nó. Thuần bổ sung, và có sẵn test đối chiếu.
+### H. Dựng lại image 18/09 17:51 — và một bẫy `docker compose up` suýt lọt
+
+Chủ dự án yêu cầu build image mới. Làm lúc **17:51**, phiên đã đóng từ 15:05, nên không vi phạm
+ràng buộc "không dựng lại container trong phiên". Cây làm việc sạch ở mọi đầu vào build
+(`trading/`, `config/`, `Dockerfile`, `docker-compose.yml`, `pyproject.toml`, `uv.lock`), nên
+image khớp đúng commit `d59b3fb`.
+
+Lệnh theo đúng khuyến nghị mà `deploy-drift` tự in ra:
+
+```
+docker compose build collector engine
+docker compose up -d --no-deps collector engine
+```
+
+**Engine được dựng lại. Collector thì không** — compose in ` Container ... collector-1 Running `
+và bỏ qua, mặc dù image vừa đổi. Kiểm lại thì thấy:
+
+```
+tag_collector = sha256:7e2b9ae9...      <- image vua build
+run_collector = sha256:d927cbb0...      <- container dang chay
+$ docker inspect -f "{{.Created}}" sha256:d927cbb0...
+error: no such object
+```
+
+Container vẫn chạy trên một image **đã không còn tồn tại**. Nếu tôi dừng ở đây và báo "đã build
+image mới" thì câu đó **sai một nửa**, và cái nửa sai là nửa quan trọng — collector là thành phần
+đang mang `grace = 20`.
+
+Thứ bắt được nó là `deploy-drift`, ngay lần chạy kiểm tra sau khi build:
+
+```
+[deploy-drift] collector: KHÔNG đọc được image build — container không chạy hoặc không có image
+EXIT=1
+```
+
+Chữa bằng `docker compose up -d --no-deps --force-recreate collector`. Sau đó:
+
+```
+run_collector = tag_collector = sha256:7e2b9ae9...
+deploy-drift: OK: khong lech trien khai — image cua collector va engine moi hon commit gan nhat
+EXIT=0
+```
+
+Ba điều rút ra:
+
+1. **`docker compose up -d` sau `build` không đảm bảo container chạy image mới.** Ở máy này nó
+   đã bỏ qua một lần. Luôn đối chiếu `docker inspect -f "{{.Image}}" <container>` với
+   `docker image inspect <tag> --format "{{.Id}}"`, đừng tin dòng chữ compose in ra.
+2. **Thông điệp của `deploy-drift` đang gây hiểu nhầm.** Nó nói "container không chạy hoặc không
+   có image", trong khi sự thật là "container **đang** chạy, nhưng image của nó đã bị xoá".
+   Hai tình huống rất khác nhau và cách xử lý cũng khác. Đáng sửa lời trong một đợt sau; chuông
+   vẫn kêu đúng lúc nên không gấp.
+3. Đây là **lần thứ hai trong ngày** chuông này kêu đúng. Sáng 08:00 nó báo engine cũ bảy ngày
+   và không ai hành động; chiều nó bắt được cú lọt triển khai ngay khi vừa sinh ra.
+
+Trạng thái sau khi dựng lại, đã kiểm chứng:
+
+```
+collector : Up, grace_seconds=20 trong /app/trading/collector/main.py:399
+engine    : Up, khoi phuc trang thai sach
+            cash=94.367.687, positions IJC 400 / AAA 400 (khop DB)
+            warm-up 201 bar moi ma, NAV 0434221 = 5.021.712
+heartbeat : collector 17:52:23 | engine 17:52:30
+backfill khoi dong: counts HPG/IJC/AAA = 0 (du lieu da day du, dung ky vong)
+```
+
+Engine giờ chạy đúng code hiện tại — mục 6.3 và mục B ở trên khép lại: nó vốn đã không khác
+hành vi, và giờ không còn khác cả hash.
