@@ -69,7 +69,18 @@ def fetch_collector_logs_since(since: str = "4h") -> str:
         errors="replace",
         check=False,
     )
-    return res.stdout or ""
+    logs = (res.stdout or "") + (("\n" + res.stderr) if res.stderr else "")
+    if not logs.strip():
+        res_fb = subprocess.run(
+            ["docker", "logs", "-t", "--since", since, "ai_auto_trading_system-collector-1"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        logs = (res_fb.stdout or "") + (("\n" + res_fb.stderr) if res_fb.stderr else "")
+    return logs
 
 
 def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connection):
@@ -95,11 +106,15 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
     bars_closed_events = []
     late_snapshots = []
     total_snapshots_count = 0
+    silence_alerts = []
 
     for line in lines:
         ts_vn = parse_timestamp_vn(line)
         if ts_vn is None or not (start_session <= ts_vn <= end_session):
             continue
+
+        if "khong nhan snapshot nao" in line:
+            silence_alerts.append(ts_vn)
 
         if "late snapshot" in line:
             # Parse late snapshot JSON
@@ -123,6 +138,7 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
                         "n": data.get("n", 1),
                         "symbols": data.get("symbols", []),
                         "lag_ms": float(data.get("lag_ms", 0.0)),
+                        "snapshots": data.get("snapshots", []),
                     })
             except Exception:
                 pass
@@ -136,6 +152,8 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
 
     print(f"=== KẾT QUẢ ĐO ĐẠC PHIÊN CHIỀU NGÀY {check_date.isoformat()} (GIỜ VN) ===")
     print(f"Số lần chốt nến ('bars closed'): {len(bars_closed_events)}")
+    stream_bars_total = sum(e.get("n", 1) for e in bars_closed_events)
+    print(f"Số nến chốt từ luồng: {stream_bars_total}")
 
     # 4. Tiêu chí B & C từ DB
     sql_bars = """
@@ -150,15 +168,18 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
     db_end = datetime.combine(check_date, time(14, 45, 0), tzinfo=TZ_VN)
 
     with conn.cursor() as cur:
+        cur.execute("SET TimeZone='Asia/Ho_Chi_Minh';")
         cur.execute(sql_bars, (db_start, db_end))
         db_rows = cur.fetchall()
 
     db_counts_by_symbol = {"HPG": 0, "AAA": 0, "IJC": 0}
     c_1445_symbols = set()
+    db_distinct_slots = set()
 
     for r in db_rows:
         sym = r[0]
         b_ts = r[1].astimezone(TZ_VN)
+        db_distinct_slots.add(b_ts.strftime("%H:%M"))
         if sym in db_counts_by_symbol:
             db_counts_by_symbol[sym] += 1
         if b_ts.hour == 14 and b_ts.minute == 45:
@@ -166,7 +187,20 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
 
     print("\n--- TIÊU CHÍ B (SỐ NẾN DUY NHẤT PHIÊN CHIỀU) ---")
     print(f"DB bars (13:00 -> 14:45): {db_counts_by_symbol}")
-    print(f"Tổng số nến trong DB: {sum(db_counts_by_symbol.values())} nến")
+    print(f"Tổng số nến trong DB: {sum(db_counts_by_symbol.values())} nến (so với luồng: {stream_bars_total} nến)")
+
+    STANDARD_SLOTS_AFTERNOON = [
+        "13:00", "13:05", "13:10", "13:15", "13:20", "13:25", "13:30", "13:35", "13:40", "13:45",
+        "13:50", "13:55", "14:00", "14:05", "14:10", "14:15", "14:20", "14:25", "14:45"
+    ]
+    missing_slots = [s for s in STANDARD_SLOTS_AFTERNOON if s not in db_distinct_slots]
+    print(f"Khung nến có mặt trong DB: {len(db_distinct_slots)}/19 khung")
+    print(f"Khung nến thiếu so với chuẩn phiên chiều: {missing_slots if missing_slots else 'Không thiếu khung nào'}")
+
+    print("\n--- CHUÔNG IM LẶNG (120S) TRONG PHIÊN CHIỀU ---")
+    print(f"Số lần chuông im lặng phát: {len(silence_alerts)} lần")
+    for s_ts in silence_alerts:
+        print(f"  + {s_ts.strftime('%H:%M:%S')} (Giờ VN)")
 
     print("\n--- TIÊU CHÍ C (KHUNG 14:45 GIỜ VN) ---")
     print(f"Các mã có nến 14:45: {sorted(c_1445_symbols)}")
@@ -182,6 +216,7 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
         p90 = calculate_percentile(lags_sorted, 90.0)
         p95 = calculate_percentile(lags_sorted, 95.0)
         p100 = lags_sorted[-1]
+        over_60s = sum(1 for l in lags_sorted if l > 60000.0)
 
         print(f"Min:      {p0:,.2f} ms")
         print(f"P25:      {p25:,.2f} ms")
@@ -190,19 +225,37 @@ def analyze_afternoon_session(logs: str, check_date: date, conn: psycopg.Connect
         print(f"P90:      {p90:,.2f} ms")
         print(f"P95:      {p95:,.2f} ms  (Mốc so sánh 11/09: 68,822 ms)")
         print(f"Max:      {p100:,.2f} ms")
+        print(f"Số lần lag_ms > 60s: {over_60s}/{len(lags_sorted)} ({over_60s / len(lags_sorted) * 100:.1f}%)")
     else:
         print("Không có bản ghi lag_ms nào.")
+
+    print("\n--- PHÂN BỐ SNAPSHOTS MỖI NẾN ---")
+    all_snapshots = []
+    for e in bars_closed_events:
+        all_snapshots.extend(e.get("snapshots", []))
+    if all_snapshots:
+        all_snapshots.sort()
+        s_min = all_snapshots[0]
+        s_med = calculate_percentile(all_snapshots, 50.0)
+        s_max = all_snapshots[-1]
+        c_ones = sum(1 for s in all_snapshots if s == 1)
+        print(f"Min:      {s_min}")
+        print(f"Trung vị: {s_med:.1f}")
+        print(f"Max:      {s_max}")
+        print(f"Số nến chỉ có 1 snapshot: {c_ones}/{len(all_snapshots)} ({c_ones / len(all_snapshots) * 100:.1f}%)")
+    else:
+        print("Không có dữ liệu snapshots.")
 
     print("\n--- PHÂN BỐ LATE_MS VÀ TỶ LỆ SNAPSHOT ĐẾN MUỘN ---")
     if late_snapshots:
         late_sorted = sorted(late_snapshots)
         lp50 = calculate_percentile(late_sorted, 50.0)
-        lp95 = calculate_percentile(late_sorted, 95.0)
+        lp90 = calculate_percentile(late_sorted, 90.0)
         lmax = late_sorted[-1]
         late_pct = (len(late_snapshots) / max(total_snapshots_count, len(late_snapshots))) * 100.0
         print(f"Số dòng late snapshot: {len(late_snapshots)}")
         print(f"Trung vị: {lp50:,.2f} ms")
-        print(f"P95:      {lp95:,.2f} ms")
+        print(f"P90:      {lp90:,.2f} ms")
         print(f"Max:      {lmax:,.2f} ms")
         print(f"Tỷ lệ snapshot đến muộn: {late_pct:.2f}% ({len(late_snapshots)}/{max(total_snapshots_count, len(late_snapshots))})")
     else:
@@ -225,6 +278,7 @@ def main():
     parser = argparse.ArgumentParser(description="Đo đạc chỉ số chốt nến thời gian thực phiên chiều.")
     parser.add_argument("--date", default=None, help="Ngày kiểm tra (YYYY-MM-DD), mặc định hôm nay")
     parser.add_argument("--since", default="4h", help="Thời gian log cần lấy (mặc định 4h)")
+    parser.add_argument("--log-file", default=None, help="Đường dẫn file log để đọc trực tiếp (tùy chọn)")
     parser.add_argument("--dsn", default=None, help="Database DSN override")
     args = parser.parse_args()
 
@@ -232,7 +286,11 @@ def main():
     check_date = date.fromisoformat(args.date) if args.date else now_vn.date()
 
     conn = psycopg.connect(resolve_dsn(args.dsn))
-    logs = fetch_collector_logs_since(args.since)
+    if args.log_file:
+        with open(args.log_file, encoding="utf-8", errors="replace") as f:
+            logs = f.read()
+    else:
+        logs = fetch_collector_logs_since(args.since)
     analyze_afternoon_session(logs, check_date, conn)
     conn.close()
 

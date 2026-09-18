@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
-from trading.calendar_vn import TZ, is_trading_time
+from trading.calendar_vn import TZ, is_continuous_matching, is_trading_time
 from trading.collector.account_sync import sync_account_data
 from trading.collector.backfill import SSIRestClient, run_backfill
 from trading.collector.derivative_sync import sync_derivative_data
@@ -253,7 +253,8 @@ async def housekeeping_tick(
     state.last_monotonic = cur_mono
     state.last_wall = now
 
-    if in_session and latch is not None:
+    in_continuous = is_continuous_matching(now, holidays)
+    if in_continuous and latch is not None:
         if latch.total_snapshots_received > state.last_seen_snapshot_count:
             state.warned_stream_silent = False
             state.last_seen_snapshot_count = latch.total_snapshots_received
@@ -395,7 +396,7 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
     persist_tasks: set[asyncio.Task] = set()
     latch = BarLatch(
         interval_seconds=cfg.bar_interval_minutes * 60,
-        grace_seconds=60,
+        grace_seconds=20,
     )
 
     alert("INFO", "backfill start")

@@ -72,3 +72,19 @@ def market_minutes_between(
                     total += (seg_end - seg_start).total_seconds() / 60.0
         day += timedelta(days=1)
     return total
+
+
+CONTINUOUS_SESSIONS = [(time(9, 15), time(11, 30)), (time(13, 0), time(14, 30))]
+
+
+def is_continuous_matching(ts: datetime, holidays: set[date] | frozenset = frozenset()) -> bool:
+    """Đúng khi thị trường đang KHỚP LỆNH LIÊN TỤC — loại ATO (09:00-09:15) và ATC (14:30-14:45).
+
+    Dùng lại phép kiểm ngày nghỉ/cuối tuần của is_trading_time.
+    """
+    ts = ts.astimezone(TZ)
+    if ts.weekday() >= 5 or ts.date() in holidays:
+        return False
+    t = ts.time()
+    return any(start <= t <= end for start, end in CONTINUOUS_SESSIONS)
+

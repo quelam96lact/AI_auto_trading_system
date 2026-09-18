@@ -506,3 +506,111 @@ async def test_silence_alarm_in_trading_hours_and_outside(monkeypatch):
         if lvl == "WARN" and "khong nhan snapshot nao" in msg
     ]
     assert len(silent_warns) == 2, "Ngoai gio giao dich KHONG duoc phat chuong im lang"
+
+
+# ============ Brief đợt 46 Task 2: Silence Alarm Continuous Matching Tests ============
+
+
+async def test_silence_alarm_only_fires_in_continuous_matching(monkeypatch):
+    """Brief 46 Task 2 §2.3 Tiêu chí 3:
+
+    Chuông im lặng 120s:
+    - Lúc 09:02 (ATO) -> KHÔNG phát
+    - Lúc 14:32 (ATC) -> KHÔNG phát
+    - Lúc 10:00 (khớp lệnh liên tục) -> phát đúng một lần
+    """
+    import time
+    from unittest.mock import MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.collector.main import HousekeepingState, housekeeping_tick
+    from trading.config import Config
+
+    cfg = Config(
+        symbols=["HPG"],
+        indices=[],
+        bar_interval_minutes=5,
+        ssi_equity_accounts=[],
+        holidays=set(),
+        db_dsn="postgresql://fake",
+        nats_url="nats://fake",
+        nats_stream="BARS",
+        watchdog_stale_seconds=180,
+        watchdog_max_failures=3,
+        ssi_consumer_id="c",
+        ssi_consumer_secret="s",
+        ssi_api_key="k",
+        ssi_api_secret="a",
+        ssi_private_key="pk",
+        real_trading_enabled=False,
+        real_order_account="ACC",
+    )
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main,
+        "alert",
+        lambda level, msg, **kwargs: alerts_seen.append((level, msg, kwargs)),
+    )
+
+    storage = MagicMock()
+    wd = MagicMock()
+    latch = BarLatch(interval_seconds=300, grace_seconds=20)
+    state = HousekeepingState()
+
+    fake_mono = 1000.0
+    monkeypatch.setattr(time, "monotonic", lambda: fake_mono)
+
+    class _FrozenDt:
+        def __init__(self, dt_val):
+            self._dt = dt_val
+
+        def now(self, tz=None):
+            return self._dt
+
+    # 1. Kịch bản ATO lúc 09:02:00 (Thứ 5 2026-09-10)
+    frozen_dt = _FrozenDt(datetime(2026, 9, 10, 9, 2, 0, tzinfo=TZ))
+    monkeypatch.setattr(collector_main, "datetime", frozen_dt)
+
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+    # Trôi qua 120s (09:04:00 - vẫn trong ATO)
+    fake_mono += 120.0
+    frozen_dt._dt = datetime(2026, 9, 10, 9, 4, 0, tzinfo=TZ)
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+
+    silent_warns = [
+        (lvl, msg, kw)
+        for lvl, msg, kw in alerts_seen
+        if lvl == "WARN" and "khong nhan snapshot nao" in msg
+    ]
+    assert len(silent_warns) == 0, "Luc 09:02 (ATO) chuong im lang KHONG duoc phat"
+
+    # 2. Kịch bản ATC lúc 14:32:00 (Thứ 5 2026-09-10)
+    frozen_dt._dt = datetime(2026, 9, 10, 14, 32, 0, tzinfo=TZ)
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+    fake_mono += 120.0
+    frozen_dt._dt = datetime(2026, 9, 10, 14, 34, 0, tzinfo=TZ)
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+
+    silent_warns = [
+        (lvl, msg, kw)
+        for lvl, msg, kw in alerts_seen
+        if lvl == "WARN" and "khong nhan snapshot nao" in msg
+    ]
+    assert len(silent_warns) == 0, "Luc 14:32 (ATC) chuong im lang KHONG duoc phat"
+
+    # 3. Kịch bản trong giờ khớp lệnh liên tục lúc 10:00:00
+    frozen_dt._dt = datetime(2026, 9, 10, 10, 0, 0, tzinfo=TZ)
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+    fake_mono += 120.0
+    frozen_dt._dt = datetime(2026, 9, 10, 10, 2, 0, tzinfo=TZ)
+    await housekeeping_tick(cfg, storage, wd, state, latch=latch)
+
+    silent_warns = [
+        (lvl, msg, kw)
+        for lvl, msg, kw in alerts_seen
+        if lvl == "WARN" and "khong nhan snapshot nao" in msg
+    ]
+    assert len(silent_warns) == 1, "Luc 10:00 (khop lenh lien tuc) chuong im lang phai phat dung 1 lan"
+    assert silent_warns[0][2]["seconds"] == 120
+
