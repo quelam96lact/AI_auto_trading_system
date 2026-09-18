@@ -383,4 +383,38 @@ def test_14_both_sources_exist_prefers_persistent_file(tmp_path, monkeypatch, ca
     assert "[nguon: file]" in out
 
 
+def test_15_persistent_file_without_evidence_falls_back_to_log(tmp_path, monkeypatch, capsys):
+    """15. Hoi quy 18/09: file ben TON TAI nhung khong chua dong 'bars closed' nao.
 
+    That su da xay ra: nhanh du phong ghi vao Path("logs") tren host khien pytest
+    do 559 dong alert TEST (SYM_B, ENGT) vao dung file ma stream_health_check lay
+    lam nguon uu tien. Ket qua: phien sang 15/09 von 93,8% bi bao "0 nen / exit 2".
+
+    Luat dung: file ben chi duoc uu tien khi no THUC SU chua bang chung chot nen.
+    Khong thi roi ve log container.
+    """
+    from scripts import stream_health_check
+
+    p_file = tmp_path / "bars_closed.log"
+    p_file.write_text(
+        '2026-09-17T06:00:00.000000Z {"level": "INFO", "msg": "backfill done"}\n'
+        '2026-09-17T06:05:00.000000Z {"level": "CRITICAL", "msg": "khong co dong vi the", "symbol": "ENGT"}\n',
+        encoding="utf-8",
+    )
+    docker_log = (
+        '2026-09-17T06:10:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+        '2026-09-17T06:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 1}\n'
+    )
+    monkeypatch.setattr(stream_health_check, "fetch_docker_collector_logs", lambda: docker_log)
+    monkeypatch.setattr("sys.argv", [
+        "stream_health_check.py",
+        "--date", "2026-09-17",
+        "--session", "chieu",
+        "--persistent-log", str(p_file),
+    ])
+    with pytest.raises(SystemExit) as exc:
+        stream_health_check.main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "co 2 lan chot nen" in out
+    assert "[nguon: log]" in out
