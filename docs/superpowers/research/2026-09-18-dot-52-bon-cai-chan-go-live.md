@@ -807,3 +807,49 @@ logs/bars_closed.log sau khi chay ca suite: KHONG ton tai   <- bang chung ban va
    `bars closed` thật, Task 1 mới coi là xong. Hôm nay mới chứng minh được cơ chế, chưa chứng
    minh được nội dung.
 3. Lỗ ở mục C, cho brief sau.
+
+
+### I. Triển khai bản vá — và phép so image ID hoá ra CHƯA ĐỦ
+
+Dựng lại collector với bản vá ở mục A. Lần đầu, phép kiểm tôi tự viết vào brief 52 §1.4.4 **báo
+đạt trong khi thực tế hỏng**:
+
+```
+run = sha256:ecd45bbe...
+tag = sha256:ecd45bbe...      <- BANG NHAU, tuong la dat
+
+$ docker exec ...-collector-1 grep -c "trading-alerts-file" /app/trading/collector/main.py
+0                              <- ma trong container van la ban CU
+```
+
+Hai chuỗi bằng nhau chỉ chứng minh **container khớp tag**. Nó **không** chứng minh **tag khớp mã
+nguồn**. Lần build đó không nhặt thay đổi của tôi, tag vẫn trỏ ảnh cũ, container khớp ảnh cũ —
+và phép kiểm hài lòng.
+
+Build lại lần nữa thì mới ra ảnh mới (`4dcbd464...`), và lúc đó:
+
+```
+grep -c "trading-alerts-file"  -> 2      (co ban va)
+grep -c "log_dir = Path"       -> 1      (mot nhanh, da bo du phong host)
+run = tag = sha256:4dcbd464...
+```
+
+**Sửa lại luật cho brief sau:** so image ID là điều kiện cần, không phải điều kiện đủ. Phép kiểm
+đủ là **grep một chuỗi đặc trưng của chính thay đổi vừa làm, bên trong container đang chạy**.
+Chuỗi đó phải là thứ chỉ tồn tại sau bản vá — ở đây là `trading-alerts-file`.
+
+Trạng thái cuối, đã kiểm chứng:
+
+```
+logs/bars_closed.log : 6 dong, KHONG lap, toan alert that cua collector
+  2026-09-18T12:54:49Z {"level": "INFO", "msg": "backfill start"}
+  2026-09-18T12:54:54Z {"level": "INFO", "msg": "backfill done", ...}
+  2026-09-18T12:55:47Z {"level": "INFO", "msg": "eod backfill done", ...}
+
+collector : run = tag = 4dcbd464  | ma trong container co ban va
+engine    : run = tag = d6133ff8  | dung lai theo vi commit cham trading/
+deploy_drift_check.py -> OK: khong lech trien khai, exit 0
+```
+
+Không còn dòng lặp — hàng rào chống gắn trùng handler hoạt động. Và file chỉ chứa alert thật của
+collector, không còn một dòng test nào.
