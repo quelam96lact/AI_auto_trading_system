@@ -486,7 +486,7 @@ async def run(
 
 def _configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    attach_durable_alert_handler()
+    attach_durable_alert_handler(filename="engine_alerts.log")
 
 
 def main() -> None:

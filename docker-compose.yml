@@ -61,6 +61,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: 1.0
+    volumes:
+      - ./logs:/app/logs
   collector:
     build: .
     command: python -m trading.collector.main --config config/config.yaml

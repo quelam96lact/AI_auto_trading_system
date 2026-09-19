@@ -75,10 +75,11 @@ cp .env.example .env
 chmod 600 .env
 
 # TẠO THƯ MỤC LOGS VÀ CHOWN (BẮT BUỘC TRƯỚC KHI DỰNG DOCKER):
-# docker-compose.yml mount ./logs:/app/logs cho collector. Tiến trình trong container
+# docker-compose.yml mount ./logs:/app/logs cho collector và engine. Collector ghi
+# logs/bars_closed.log, engine ghi logs/engine_alerts.log. Tiến trình trong container
 # chạy với uid 10001 (appuser). Nếu không tạo trước, Docker daemon sẽ tự tạo thư mục
-# thuộc root:root (755), collector sẽ bị PermissionError khi ghi bars_closed.log,
-# nuốt ngoại lệ và chạy tiếp im lặng làm mất toàn bộ bằng chứng chốt nến luồng!
+# thuộc root:root (755), tiến trình sẽ bị PermissionError khi ghi log,
+# nuốt ngoại lệ và chạy tiếp im lặng làm mất toàn bộ bằng chứng chốt nến luồng và cảnh báo engine!
 mkdir -p logs && sudo chown 10001:10001 logs
 
 uv sync --frozen

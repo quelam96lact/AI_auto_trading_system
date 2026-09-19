@@ -22,10 +22,11 @@ cp .env.example .env
 chmod 600 .env
 
 # Tạo thư mục logs trên host và phân quyền cho appuser (uid 10001 trong Dockerfile)
-# BẮT BUỘC: docker-compose.yml gắn mount ./logs:/app/logs cho collector. Nếu không
-# tạo trước, Docker daemon sẽ tự tạo thư mục thuộc root:root, collector (chạy uid 10001)
-# sẽ bị PermissionError khi ghi bars_closed.log, nuốt lỗi và chạy tiếp im lặng
-# làm mất toàn bộ bằng chứng chốt nến luồng mà không có cảnh báo nào!
+# BẮT BUỘC: docker-compose.yml gắn mount ./logs:/app/logs cho collector và engine.
+# Collector ghi logs/bars_closed.log, engine ghi logs/engine_alerts.log. Nếu không
+# tạo trước, Docker daemon sẽ tự tạo thư mục thuộc root:root, tiến trình (chạy uid 10001)
+# sẽ bị PermissionError khi ghi log, nuốt lỗi và chạy tiếp im lặng
+# làm mất toàn bộ bằng chứng chốt nến luồng và cảnh báo engine!
 mkdir -p logs && sudo chown 10001:10001 logs
 ```
 
