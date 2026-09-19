@@ -10,8 +10,9 @@ ssi_equity_accounts: ["0434221", "0434226"]
 ssi_derivative_account: "0434228"
 # 31/08 va 01/09 KHONG phai suy doan: bars_daily co 850-980 ma moi ngay lam viec
 # khac, rieng hai ngay nay 0 ma — va backfill goi SSI cung tra ve rong.
-# Danh sach nay CHUA day du cho phan con lai cua 2026 (chua tra lich nghi le).
-holidays: ['2026-08-31', '2026-09-01', '2026-09-02']
+# Con thieu Tet Nguyen dan 2027 va Gio To Hung Vuong 2027, phai lay tu thong bao
+# chinh thuc cua Chinh phu, chu du an bo sung truoc 31/12/2026.
+holidays: ['2026-08-31', '2026-09-01', '2026-09-02', '2027-01-01', '2027-04-30', '2027-05-01', '2027-09-02']
 real_trading_enabled: false
 real_order_account: "0434221"
 nats: {url: 'nats://localhost:4222', stream: BARS}
