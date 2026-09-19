@@ -7,7 +7,7 @@ SESSIONS = [(time(9, 0), time(11, 30)), (time(13, 0), time(14, 45))]
 
 def is_trading_time(ts: datetime, holidays: set[date] = frozenset()) -> bool:
     ts = ts.astimezone(TZ)
-    if ts.weekday() >= 5 or ts.date() in holidays:
+    if not is_trading_day(ts.date(), holidays):
         return False
     t = ts.time()
     return any(start <= t <= end for start, end in SESSIONS)
@@ -36,7 +36,7 @@ def trading_days_between(
     n = 0
     d = s + timedelta(days=1)
     while d <= e:
-        if d.weekday() < 5 and d not in holidays:
+        if is_trading_day(d, holidays):
             n += 1
         d += timedelta(days=1)
     return n
@@ -69,7 +69,7 @@ def market_minutes_between(
     total = 0.0
     day = s.date()
     while day <= e.date():
-        if day.weekday() < 5 and day not in holidays:
+        if is_trading_day(day, holidays):
             for sess_start, sess_end in sessions:
                 seg_start = max(s, datetime.combine(day, sess_start, tzinfo=TZ))
                 seg_end = min(e, datetime.combine(day, sess_end, tzinfo=TZ))
@@ -88,7 +88,7 @@ def is_continuous_matching(ts: datetime, holidays: set[date] | frozenset = froze
     Dùng lại phép kiểm ngày nghỉ/cuối tuần của is_trading_time.
     """
     ts = ts.astimezone(TZ)
-    if ts.weekday() >= 5 or ts.date() in holidays:
+    if not is_trading_day(ts.date(), holidays):
         return False
     t = ts.time()
     return any(start <= t <= end for start, end in CONTINUOUS_SESSIONS)

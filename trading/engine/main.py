@@ -13,6 +13,7 @@ from trading.alerts import alert
 from trading.calendar_vn import TZ
 from trading.config import Config, load_config
 from trading.engine.logic import bar_from_payload, process_bar
+from trading.logging_setup import attach_durable_alert_handler
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
@@ -483,11 +484,16 @@ async def run(
         await nc.close()
 
 
+def _configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    attach_durable_alert_handler()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    _configure_logging()
     asyncio.run(run(load_config(args.config)))
 
 

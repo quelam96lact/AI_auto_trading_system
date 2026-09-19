@@ -21,7 +21,12 @@ import psycopg
 import yaml
 
 from trading.alerts import _print_safe
-from trading.calendar_vn import TZ, is_trading_time, market_minutes_between
+from trading.calendar_vn import (
+    TZ,
+    is_trading_day,
+    is_trading_time,
+    market_minutes_between,
+)
 
 # LEDGER-1: import hang so tu trading/ —
 # da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
@@ -77,7 +82,7 @@ def stale_services(rows, now, max_age_seconds, expected=SERVICES) -> list[str]:
 def in_bar_check_window(ts: datetime, holidays: frozenset = frozenset()) -> bool:
     """Trong cửa sổ kiểm tra bar 2A (9:00-11:30 / 13:00-14:30, ngày giao dịch)?"""
     ts = ts.astimezone(TZ)
-    if ts.weekday() >= 5 or ts.date() in holidays:
+    if not is_trading_day(ts.date(), holidays):
         return False
     t = ts.time()
     return any(start <= t <= end for start, end in CHECK_SESSIONS)
@@ -140,10 +145,8 @@ def token_expiry_status(refresh_expires_at, now,
     """
     now_tz = now.astimezone(TZ)
     t = now_tz.time()
-    pre_market = (
-        time(8, 0) <= t < time(9, 0)
-        and now_tz.weekday() < 5
-        and now_tz.date() not in holidays
+    pre_market = time(8, 0) <= t < time(9, 0) and is_trading_day(
+        now_tz.date(), holidays
     )
     if not (is_trading_time(now, holidays) or pre_market):
         return None
@@ -236,10 +239,8 @@ def main() -> int:
     # Chỉ cảnh báo trong giờ giao dịch: cả 2 service đều đập 24/7, nhưng ngoài
     # phiên thì service chết không gây hại ngay — tránh spam đêm/cuối tuần/ngày lễ.
     now_tz = now.astimezone(TZ)
-    pre_market = (
-        time(8, 0) <= now_tz.time() < time(9, 0)
-        and now_tz.weekday() < 5
-        and now_tz.date() not in holidays
+    pre_market = time(8, 0) <= now_tz.time() < time(9, 0) and is_trading_day(
+        now_tz.date(), holidays
     )
     if not is_trading_time(now, holidays) and not pre_market:
         return 0

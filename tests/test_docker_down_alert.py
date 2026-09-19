@@ -10,11 +10,18 @@ from scripts.docker_down_alert import load_holidays, run_alert
 from trading.calendar_vn import TZ
 
 
+def _fake_send(sent):
+    def _send(msg):
+        sent.append(msg)
+        return True
+    return _send
+
+
 def test_gio_giao_dich_docker_chet_thi_keu(tmp_path):
     """Khung 08:00-15:00, ngay giao dich, chua tung gui -> CO gui."""
     sent = []
     now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)  # thu 5, khong ngay le
-    rc = run_alert(now, frozenset(), send=sent.append, stamp_file=str(tmp_path / "stamp"))
+    rc = run_alert(now, frozenset(), send=_fake_send(sent), stamp_file=str(tmp_path / "stamp"))
     assert rc == 0
     assert len(sent) == 1
     assert "Docker khong chay" in sent[0]
@@ -28,7 +35,7 @@ def test_ngay_le_thi_im(tmp_path):
     assert date(2026, 9, 2) in holidays  # neu sua config.yaml thi sua test
     sent = []
     now = datetime(2026, 9, 2, 9, 15, tzinfo=TZ)
-    rc = run_alert(now, holidays, send=sent.append, stamp_file=str(tmp_path / "stamp"))
+    rc = run_alert(now, holidays, send=_fake_send(sent), stamp_file=str(tmp_path / "stamp"))
     assert rc == 0
     assert sent == []
 
@@ -39,7 +46,7 @@ def test_da_gui_trong_30_phut_thi_im(tmp_path):
     stamp = tmp_path / "stamp"
     stamp.write_text(str(int(now.timestamp()) - 60))  # 60 giay truoc
     sent = []
-    rc = run_alert(now, frozenset(), send=sent.append, stamp_file=str(stamp))
+    rc = run_alert(now, frozenset(), send=_fake_send(sent), stamp_file=str(stamp))
     assert rc == 0
     assert sent == []
 
@@ -77,3 +84,13 @@ def test_gui_telegram_thanh_cong_ghi_dau_stamp(tmp_path):
     rc = run_alert(now, frozenset(), send=lambda text: True, stamp_file=str(stamp))
     assert rc == 0
     assert stamp.exists()
+
+
+def test_send_tra_none_bi_coi_la_that_bai(tmp_path):
+    """Brief 63 Task 2.4: send trả None (như list.append cũ) bị coi là THẤT BẠI, KHÔNG ghi stamp."""
+    now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
+    stamp = tmp_path / "stamp"
+    rc = run_alert(now, frozenset(), send=lambda text: None, stamp_file=str(stamp))
+    assert rc == 0
+    assert not stamp.exists()
+

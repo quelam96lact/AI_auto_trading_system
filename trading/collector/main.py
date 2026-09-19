@@ -4,9 +4,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
+from datetime import date, datetime, timedelta
 
 from trading.alerts import alert
 from trading.bus.publisher import BarPublisher
@@ -19,6 +17,7 @@ from trading.collector.latch import BarLatch
 from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
 from trading.config import load_config
+from trading.logging_setup import attach_durable_alert_handler
 from trading.storage.db import Storage
 
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
@@ -491,47 +490,8 @@ def _configure_logging() -> None:
     # "Token refreshed successfully", hữu ích và không chứa secret.
     logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)
 
-    # Brief 52 Task 1: Gắn RotatingFileHandler vào logger "trading.alerts" để ghi bằng chứng
-    # nến chốt (và mọi alert collector) bền vững ra volume mount (/app/logs/bars_closed.log).
-    # 1. Gắn tại đây (khởi tạo logging collector), không gắn ở alerts.py để tránh sinh file rác khi test/script.
-    # 2. Không bao giờ được ném: try/except toàn bộ để collector vẫn chạy nếu không có thư mục hoặc thiếu quyền.
-    # 3. Xoay vòng RotatingFileHandler: maxBytes=5MB, backupCount=5 (~30MB tối đa, đủ lưu nhiều năm).
-    # 4. Formatter: ISO-8601 UTC kết thúc bằng Z giống định dạng docker logs -t để stream_health_check đọc tự nhiên.
-    # 5. CHI gan khi dang chay trong container (/app/logs la volume mount). Ban dau co
-    #    nhanh du phong ve Path("logs") tren host — bo di: moi lan chay pytest tu goc repo
-    #    deu goi ham nay va do 559 dong alert TEST (SYM_B, ENGT) vao dung file ma
-    #    stream_health_check lay lam nguon uu tien, bien mot phien lanh 93,8% thanh
-    #    "0 nen / exit 2". Nguon bang chung phai chi do tien trinh that ghi.
-    try:
-        log_dir = Path("/app/logs")
-        if log_dir.is_dir():
-            log_file = log_dir / "bars_closed.log"
-
-            class AlertUtcIsoFormatter(logging.Formatter):
-                def format(self, record: logging.LogRecord) -> str:
-                    ts = datetime.fromtimestamp(record.created, tz=UTC).strftime(
-                        "%Y-%m-%dT%H:%M:%S.%fZ"
-                    )
-                    return f"{ts} {record.getMessage()}"
-
-            handler = RotatingFileHandler(
-                str(log_file),
-                maxBytes=5 * 1024 * 1024,
-                backupCount=5,
-                encoding="utf-8",
-            )
-            handler.setFormatter(AlertUtcIsoFormatter())
-            handler.setLevel(logging.INFO)
-            handler.set_name("trading-alerts-file")
-            alerts_logger = logging.getLogger("trading.alerts")
-            # Goi ham nay hai lan thi them hai handler -> moi alert ghi hai dong.
-            # Da thay that trong file 18/09: moi dong lap dung hai lan.
-            if not any(
-                h.get_name() == "trading-alerts-file" for h in alerts_logger.handlers
-            ):
-                alerts_logger.addHandler(handler)
-    except Exception:
-        pass
+    # Brief 52 / Brief 63: Gắn RotatingFileHandler vào logger "trading.alerts"
+    attach_durable_alert_handler()
 
 
 def main() -> None:

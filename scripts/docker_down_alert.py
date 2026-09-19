@@ -92,7 +92,9 @@ def _write_last_alert(now: datetime, stamp_file: str) -> None:
         pass  # ghi hong khong duoc lam chet chuong — lan sau co the keu lai
 
 
-def should_alert(now: datetime, holidays: frozenset, last_alert_epoch: int | None) -> bool:
+def should_alert(
+    now: datetime, holidays: frozenset, last_alert_epoch: int | None
+) -> bool:
     """Quyet dinh co keu khong, theo bang cua brief dot 8:
     - trong khung 08:00-15:00 ngay giao dich (T2-T6, khong le)  => KEU
     - ngoai khung / T7-CN / ngay le                              => im
@@ -103,7 +105,10 @@ def should_alert(now: datetime, holidays: frozenset, last_alert_epoch: int | Non
         return False
     if not _is_trading_day(now, holidays):
         return False
-    return not (last_alert_epoch is not None and now.timestamp() - last_alert_epoch < SPAM_GUARD_SECONDS)
+    return not (
+        last_alert_epoch is not None
+        and now.timestamp() - last_alert_epoch < SPAM_GUARD_SECONDS
+    )
 
 
 def _message(now: datetime) -> str:
@@ -114,6 +119,8 @@ def _message(now: datetime) -> str:
         "Collector/engine deu dung. Khong co bar moi, khong co lenh.\n"
         "Cac job giam sat dang bi bo qua — day la tin nhan DUY NHAT ban se nhan."
     )
+
+
 def run_alert(
     now: datetime,
     holidays: frozenset,
@@ -132,13 +139,17 @@ def run_alert(
         _print_safe(msg)
         try:
             ok = send(msg)
-            if ok is not False:
+            if ok:
                 _write_last_alert(now, stamp_file)
             else:
-                _print_safe("[docker-down-alert] gui Telegram that bai: send tra ve False")
+                _print_safe(
+                    "[docker-down-alert] gui Telegram that bai: send tra ve False hoac None"
+                )
                 return 0
         except Exception as e:
-            _print_safe(f"[docker-down-alert] gui Telegram loi: {type(e).__name__}: {e}")
+            _print_safe(
+                f"[docker-down-alert] gui Telegram loi: {type(e).__name__}: {e}"
+            )
             return 0
         return 0
     except Exception as e:
