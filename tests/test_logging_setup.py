@@ -16,28 +16,31 @@ from trading.logging_setup import (
 @pytest.fixture(autouse=True)
 def _cleanup_alert_handlers():
     """Đảm bảo dọn sạch handler sau mỗi test để không ảnh hưởng lẫn nhau."""
-    alerts_logger = logging.getLogger("trading.alerts")
-    to_remove = [h for h in alerts_logger.handlers if h.get_name() == HANDLER_NAME]
-    for h in to_remove:
-        h.close()
-        alerts_logger.removeHandler(h)
+    for name in ("trading", "trading.alerts"):
+        logger = logging.getLogger(name)
+        to_remove = [h for h in logger.handlers if h.get_name() == HANDLER_NAME]
+        for h in to_remove:
+            h.close()
+            logger.removeHandler(h)
     yield
-    to_remove = [h for h in alerts_logger.handlers if h.get_name() == HANDLER_NAME]
-    for h in to_remove:
-        h.close()
-        alerts_logger.removeHandler(h)
+    for name in ("trading", "trading.alerts"):
+        logger = logging.getLogger(name)
+        to_remove = [h for h in logger.handlers if h.get_name() == HANDLER_NAME]
+        for h in to_remove:
+            h.close()
+            logger.removeHandler(h)
 
 
 def test_attach_durable_alert_handler_idempotent(tmp_path: Path):
-    """1. Test idempotency: gọi attach_durable_alert_handler 2 lần chỉ tạo đúng 1 handler."""
-    alerts_logger = logging.getLogger("trading.alerts")
+    """1. Test idempotency: gọi attach_durable_alert_handler 2 lần chỉ tạo đúng 1 handler trên logger trading."""
+    trading_logger = logging.getLogger("trading")
 
     # Gọi lần 1
     attach_durable_alert_handler(log_dir=tmp_path)
     # Gọi lần 2
     attach_durable_alert_handler(log_dir=tmp_path)
 
-    named_handlers = [h for h in alerts_logger.handlers if h.get_name() == HANDLER_NAME]
+    named_handlers = [h for h in trading_logger.handlers if h.get_name() == HANDLER_NAME]
     assert len(named_handlers) == 1
 
 
@@ -81,14 +84,40 @@ def test_attach_durable_alert_handler_custom_filename(tmp_path: Path):
 
 def test_attach_durable_alert_handler_idempotent_custom_filename(tmp_path: Path):
     """4. Test idempotent với tên file khác (Brief 65 Task 2.2):
-    Gọi hàm 2 lần với filename='engine_alerts.log', khẳng định logger 'trading.alerts'
+    Gọi hàm 2 lần với filename='engine_alerts.log', khẳng định logger 'trading'
     vẫn chỉ có đúng một handler tên HANDLER_NAME ('trading-alerts-file').
     """
-    alerts_logger = logging.getLogger("trading.alerts")
+    trading_logger = logging.getLogger("trading")
 
     attach_durable_alert_handler(log_dir=tmp_path, filename="engine_alerts.log")
     attach_durable_alert_handler(log_dir=tmp_path, filename="engine_alerts.log")
 
-    named_handlers = [h for h in alerts_logger.handlers if h.get_name() == HANDLER_NAME]
+    named_handlers = [h for h in trading_logger.handlers if h.get_name() == HANDLER_NAME]
     assert len(named_handlers) == 1
+
+
+def test_ba_duong_log_va_loc_on(tmp_path: Path):
+    """5. Test ba đường log và lọc ồn (Brief 66 Task 3):
+    - Ba đường log đều vào file bền:
+      + trading.alerts.critical
+      + trading.telegram.warning (đường Telegram gửi trượt được cứu)
+      + trading.engine.real_orders.warning
+    - Lọc ồn:
+      + trading.collector.main.info bị chặn bởi filter, không có trong file.
+    """
+    attach_durable_alert_handler(log_dir=tmp_path, filename="bars_closed.log")
+
+    logging.getLogger("trading.alerts").critical("critical alert from alerts")
+    logging.getLogger("trading.telegram").warning("warning telegram send failed")
+    logging.getLogger("trading.engine.real_orders").warning("warning real orders risk check")
+    logging.getLogger("trading.collector.main").info("noisy collector info message")
+
+    log_file = tmp_path / "bars_closed.log"
+    assert log_file.exists()
+
+    content = log_file.read_text(encoding="utf-8")
+    assert "critical alert from alerts" in content
+    assert "warning telegram send failed" in content
+    assert "warning real orders risk check" in content
+    assert "noisy collector info message" not in content
 

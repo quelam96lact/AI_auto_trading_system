@@ -1,7 +1,7 @@
 """Module thiết lập logging dùng chung cho collector và engine.
 
 Cung cấp hàm attach_durable_alert_handler để gắn RotatingFileHandler vào
-logger "trading.alerts", ghi log ra volume mount /app/logs một cách bền vững.
+logger cha "trading", ghi log ra volume mount /app/logs một cách bền vững.
 """
 
 import logging
@@ -26,11 +26,23 @@ class AlertUtcIsoFormatter(logging.Formatter):
         return f"{ts} {record.getMessage()}"
 
 
+class DurableAlertFilter(logging.Filter):
+    """Filter cho phép:
+    - Mọi bản ghi từ logger trading.alerts (bất kể mức log).
+    - Bản ghi mức WARNING trở lên từ các logger khác trong cây trading.*.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.startswith("trading.alerts"):
+            return True
+        return record.levelno >= logging.WARNING
+
+
 def attach_durable_alert_handler(
     log_dir: str | Path = DEFAULT_LOG_DIR,
     filename: str = DEFAULT_LOG_FILE,
 ) -> None:
-    """Gắn RotatingFileHandler vào logger "trading.alerts" nếu thư mục log_dir tồn tại.
+    """Gắn RotatingFileHandler vào logger "trading" nếu thư mục log_dir tồn tại.
 
     - Chỉ gắn khi log_dir là thư mục thực sự (thường là volume mount trong container).
     - Idempotent: không gắn trùng nếu handler "trading-alerts-file" đã tồn tại.
@@ -42,8 +54,8 @@ def attach_durable_alert_handler(
         if not path.is_dir():
             return
 
-        alerts_logger = logging.getLogger("trading.alerts")
-        if any(h.get_name() == HANDLER_NAME for h in alerts_logger.handlers):
+        trading_logger = logging.getLogger("trading")
+        if any(h.get_name() == HANDLER_NAME for h in trading_logger.handlers):
             return
 
         log_file = path / filename
@@ -54,8 +66,9 @@ def attach_durable_alert_handler(
             encoding="utf-8",
         )
         handler.setFormatter(AlertUtcIsoFormatter())
+        handler.addFilter(DurableAlertFilter())
         handler.setLevel(logging.INFO)
         handler.set_name(HANDLER_NAME)
-        alerts_logger.addHandler(handler)
+        trading_logger.addHandler(handler)
     except Exception:
         pass

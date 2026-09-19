@@ -490,7 +490,7 @@ def _configure_logging() -> None:
     # "Token refreshed successfully", hữu ích và không chứa secret.
     logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)
 
-    # Brief 52 / Brief 63: Gắn RotatingFileHandler vào logger "trading.alerts"
+    # Brief 52 / Brief 63 / Brief 66: Gắn RotatingFileHandler vào logger cha "trading"
     attach_durable_alert_handler()
 
 
