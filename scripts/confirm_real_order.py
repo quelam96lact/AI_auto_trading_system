@@ -135,7 +135,7 @@ async def confirm(
                 f"({available}) < số lượng lệnh ({order['quantity']}). KHÔNG đặt lệnh."
             )
             storage.update_pending_order_status(order_id, "failed")
-            alert(
+            t = alert(
                 "CRITICAL",
                 "real order aborted - insufficient real buying/selling power at confirm time",
                 id=order_id,
@@ -144,6 +144,8 @@ async def confirm(
                 requested_qty=order["quantity"],
                 available_qty=available,
             )
+            if t is not None:
+                t.join(timeout=6)
             sys.exit(1)
 
         side = OrderSide.BUY if order["side"] == "BUY" else OrderSide.SELL
@@ -192,7 +194,7 @@ async def confirm(
             f"Đã đặt lệnh THẬT: order_id={placed.order_id}, "
             f"client_request_id={placed.client_request_id}, status={placed.status}"
         )
-        alert(
+        t = alert(
             "WARN",
             "REAL order placed",
             id=order_id,
@@ -203,10 +205,14 @@ async def confirm(
             ssi_order_id=placed.order_id,
             status=placed.status,
         )
+        if t is not None:
+            t.join(timeout=6)
     except Exception as exc:
         storage.update_pending_order_status(order_id, "failed")
         traceback.print_exc()
-        alert("CRITICAL", "real order placement FAILED", id=order_id, error=str(exc))
+        t = alert("CRITICAL", "real order placement FAILED", id=order_id, error=str(exc))
+        if t is not None:
+            t.join(timeout=6)
         sys.exit(1)
     finally:
         if auth is not None:

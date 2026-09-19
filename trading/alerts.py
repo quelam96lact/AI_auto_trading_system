@@ -30,8 +30,11 @@ def _print_safe(text: str) -> None:
         pass
 
 
-def alert(level: str, msg: str, **fields) -> None:
+def alert(level: str, msg: str, **fields) -> threading.Thread | None:
     _log.log(_LEVELS[level], json.dumps({"level": level, "msg": msg, **fields}, ensure_ascii=False))
     if level in _NOTIFY_LEVELS:
         text = f"[{level}] {msg}" + (f" {fields}" if fields else "")
-        threading.Thread(target=send_telegram, args=(text,), daemon=True).start()
+        t = threading.Thread(target=send_telegram, args=(text,), daemon=True)
+        t.start()
+        return t
+    return None

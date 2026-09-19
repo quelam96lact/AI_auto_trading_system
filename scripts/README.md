@@ -20,7 +20,7 @@ Tài liệu này ghi nhận quy ước đặt tên và cách sử dụng các sc
 
 > **"0 tham chiếu" KHÔNG có nghĩa là bỏ đi được.**
 >
-> 1. **Dấu chấm đầu tên chính là tín hiệu: "giữ có chủ ý, không nối tự động vào pipeline".** Các công cụ `.probe_*` hay `.fix_*` được thiết kế để người vận hành chạy thủ công khi cần chẩn đoán sự cố, không phải để `import` trong code.
+> 1. **Dấu chấm đầu tên mang hai ý nghĩa bắt buộc: "giữ có chủ ý cho môi trường dev, không nối vào pipeline" VÀ "không ship vào git / không đưa lên VPS production"** (được tự động loại trừ bởi `.gitignore`). Mọi công cụ chẩn đoán hoặc vận hành cần thiết trên môi trường VPS PHẢI là script chính thức không mang dấu chấm đầu tên (ví dụ `scripts/probe_dead_man_switch.py`, hoặc được mở ngoại lệ tường minh `!` trong `.gitignore`). Các công cụ mang dấu chấm được thiết kế để người vận hành chạy thủ công khi cần chẩn đoán sự cố tại máy dev, không phải để `import` trong code.
 > 2. Phần lớn tham chiếu tới nhóm script này là **chuỗi thông báo hướng dẫn người vận hành** (nằm trong docstring, log hoặc thông báo lỗi) bảo người vận hành phải chạy lệnh gì. Công cụ phân tích mã tĩnh sẽ không thấy `import` nào.
 > 3. Nhiều script và file dữ liệu đi kèm có quan hệ chéo: ví dụ `scripts/backfill_universe.py` đọc trực tiếp file dữ liệu `scripts/.spike_all_symbols_classified.json`, trong khi script sinh ra file đó (`spike_ssi_symbols_classify.py`) chỉ xuất hiện trong câu hướng dẫn.
 
