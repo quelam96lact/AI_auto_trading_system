@@ -274,6 +274,7 @@ def run_regime_hold_benchmark(
     total_bh_pnl = 0.0
     total_buy_trades = 0
     total_sell_trades = 0
+    total_skipped_buys = 0
 
     # Lấy tập hợp tất cả các ngày giao dịch có trong kỳ
     all_dates_set: set[date] = set()
@@ -291,6 +292,7 @@ def run_regime_hold_benchmark(
         total_bh_pnl += res["bh_pnl"]
         total_buy_trades += res["buy_trades"]
         total_sell_trades += res["sell_trades"]
+        total_skipped_buys += res["skipped_buys"]
 
         # Gộp equity hàng ngày
         for d, val in res["daily_equity"].items():
@@ -333,8 +335,27 @@ def run_regime_hold_benchmark(
         "bh_mdd": bh_mdd,
         "total_buy_trades": total_buy_trades,
         "total_sell_trades": total_sell_trades,
+        "skipped_buys": total_skipped_buys,
         "regime_stats": regime_stats,
     }
+
+
+def get_year_ranges(
+    start_year: int = 2016, end_year: int = 2026
+) -> list[tuple[int, datetime, datetime]]:
+    """Tạo danh sách các khoảng thời gian theo từng năm dương lịch (Brief 64).
+
+    - 2016 đến 2025: trọn năm [YYYY-01-01, YYYY-12-31 23:59:59] (giờ TZ).
+    - 2026: cắt tại 28/08/2026 [2026-01-01, 2026-08-28 23:59:59] khớp ranh giới out_to.
+    """
+    ranges = []
+    for y in range(start_year, end_year + 1):
+        if y == 2026:
+            end_dt = datetime(2026, 8, 28, 23, 59, 59, tzinfo=TZ)
+        else:
+            end_dt = datetime(y, 12, 31, 23, 59, 59, tzinfo=TZ)
+        ranges.append((y, datetime(y, 1, 1, tzinfo=TZ), end_dt))
+    return ranges
 
 
 def main() -> None:
@@ -348,7 +369,11 @@ def main() -> None:
         default="docs/superpowers/research/2026-09-02-breadth-daily.csv",
     )
     ap.add_argument("--capital", type=float, default=DEFAULT_CAPITAL)
-    ap.add_argument("--task", choices=["in-sample", "out-sample", "all"], default="all")
+    ap.add_argument(
+        "--task",
+        choices=["in-sample", "out-sample", "all", "by-year"],
+        default="all",
+    )
     args = ap.parse_args()
 
     dsn = resolve_dsn(args.dsn)
@@ -450,6 +475,55 @@ def main() -> None:
         )
         print(f"  Max Drawdown có nhịp     : {out_res['strat_mdd']:>18.2%}")
         print(f"  Max Drawdown B&H thuần   : {out_res['bh_mdd']:>18.2%}")
+
+    # 3. KIỂM ĐỊNH THEO TỪNG NĂM: 2016 -> 2026 (Brief 64)
+    if args.task in ["by-year"]:
+        year_ranges = get_year_ranges(2016, 2026)
+
+        print("\n" + "=" * 135)
+        print("BẢNG KIỂM ĐỊNH THEO TỪNG NĂM: BUY-AND-HOLD CÓ NHỊP VS B&H THUẦN")
+        print("=" * 135)
+        header = (
+            f"{'Năm':<5} | {'%ngày HOLD':<11} | {'Số lần đổi trạng thái':<22} | "
+            f"{'PnL có nhịp (tỷ)':<18} | {'PnL B&H thuần (tỷ)':<19} | "
+            f"{'Chênh lệch (tỷ)':<16} | {'MDD có nhịp':<12} | {'MDD B&H':<10} | {'skipped_buys':<12}"
+        )
+        print(header)
+        print("-" * len(header))
+
+        wins = 0
+        losses = 0
+        for y, y_frm, y_to in year_ranges:
+            y_res = run_regime_hold_benchmark(
+                storage, symbols, y_frm, y_to, prior_regime_by_date, args.capital
+            )
+            st = y_res["regime_stats"]
+            hold_pct = f"{st['hold_ratio']:.1%}"
+            switches = (
+                f"{st['switches']} ({st['buy_switches']}M/{st['sell_switches']}B)"
+            )
+            strat_pnl_ty = y_res["strat_pnl"] / 1e9
+            bh_pnl_ty = y_res["bh_pnl"] / 1e9
+            diff_ty = y_res["diff_bh"] / 1e9
+            strat_mdd = f"{y_res['strat_mdd']:.2%}"
+            bh_mdd = f"{y_res['bh_mdd']:.2%}"
+            skipped = y_res.get("skipped_buys", 0)
+
+            if y_res["strat_pnl"] > y_res["bh_pnl"]:
+                wins += 1
+            else:
+                losses += 1
+
+            print(
+                f"{y:<5} | {hold_pct:<11} | {switches:<22} | "
+                f"{strat_pnl_ty:>+18.2f} | {bh_pnl_ty:>+19.2f} | "
+                f"{diff_ty:>+16.2f} | {strat_mdd:>12} | {bh_mdd:>10} | {skipped:>12}"
+            )
+
+        print("-" * len(header))
+        total_years = len(year_ranges)
+        print(f"thắng B&H {wins}/{total_years} năm, thua {losses}/{total_years} năm")
+        print("=" * 135)
 
 
 if __name__ == "__main__":
