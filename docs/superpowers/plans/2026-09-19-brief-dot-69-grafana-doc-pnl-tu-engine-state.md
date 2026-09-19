@@ -28,7 +28,8 @@ phải PnL luỹ kế của tài khoản.
 
 - **Không sửa dữ liệu**: không `UPDATE`/`INSERT`/`DELETE` vào `pnl_daily`, `orders`, `engine_state`.
   Chỉ sửa file JSON của dashboard.
-- **Không đụng code Python** (`trading/`, `scripts/`, `tests/`).
+- **Không đụng code Python trong `trading/` và `scripts/`.** Riêng `tests/` được sửa **đúng một
+  file** cho Task 4 (`tests/test_dashboard_queries.py`), chỉ **thêm** test, không sửa test cũ.
 - Không restart/build container (Grafana tự nạp lại dashboard provisioned).
 - Không commit, không push.
 
@@ -104,6 +105,37 @@ Viết một đoạn kiểm (chạy một lần, không cần giữ lại trong 
 
 ---
 
+## Task 4 — Test canh truy vấn panel mới (bổ sung sau khi tôi tự soát brief)
+
+`tests/test_dashboard_queries.py` có **đúng một test cho mỗi panel** của dashboard — 7 test cho
+7 panel hiện có (`test_price_panel_query`, `test_pnl_panel_query`, …). Đó là quy ước cố ý: mọi
+truy vấn dashboard đều được chạy thật vào DB để nếu ai đó đổi tên cột thì test đỏ chứ không phải
+đợi người vận hành phát hiện bảng trống.
+
+Panel thứ 8 phải theo đúng quy ước đó. Thêm `test_pnl_luy_ke_panel_query`:
+
+1. Ghi dữ liệu bằng `storage.write_engine_state(cash, realized_pnl)` (xem `trading/storage/db.py`
+   và chỗ gọi ở `trading/engine/main.py:312`) — **dùng hàm có sẵn, không `INSERT` tay**.
+2. Chạy **đúng nguyên văn** câu SQL của panel mới ở mục 1.2 (copy y hệt, để test canh đúng chuỗi
+   dashboard dùng — giống cách `test_pnl_panel_query` chép nguyên câu của panel `id=2`).
+3. Khẳng định trả về **một** dòng, `realized_pnl` và `cash` đúng giá trị vừa ghi, và
+   `"So ngay truoc"` bằng `0` (vừa ghi xong).
+4. Giữ nguyên style file: `pytestmark = pytest.mark.integration`, dùng fixture `storage` sẵn có.
+   Nếu cần dọn dẹp trước test thì thêm vào fixture theo đúng khuôn các dòng `DELETE` đang có.
+
+**Lưu ý khi chạy:** cả file này là `integration`, nên `pytest -m "not integration"` **sẽ không**
+chạy nó. Muốn kiểm phải dùng suite đầy đủ với DB/NATS riêng cho test (xem `CLAUDE.md`):
+
+```bash
+docker compose --profile test up -d nats-test
+uv run pytest -q
+```
+
+Test chạy trên `TEST_DSN` (DB `trading_test`), **không** đụng `engine_state` của hệ thống thật —
+xác nhận lại điều này trong báo cáo.
+
+---
+
 ## 4. Không làm
 
 - **Không sửa `pnl_daily`, `orders`, `engine_state`** (dù chỉ một dòng).
@@ -119,5 +151,8 @@ Viết một đoạn kiểm (chạy một lần, không cần giữ lại trong 
 
 1. `git diff grafana/provisioning/dashboards/trading.json`.
 2. Kết quả 5 mục kiểm chứng ở Task 3, dán nguyên văn.
-3. Xác nhận không đụng DB và không đụng code Python (`git status --short`,
-   `git diff --stat -- trading/ scripts/ tests/` phải rỗng).
+3. `git diff tests/test_dashboard_queries.py` và kết quả chạy `test_pnl_luy_ke_panel_query`
+   (Task 4), dán nguyên văn.
+4. Xác nhận không đụng dữ liệu DB thật và không đụng code trong `trading/` hay `scripts/`
+   (`git diff --stat -- trading/ scripts/` phải rỗng — riêng `tests/` thì có thay đổi hợp lệ của
+   Task 4).
