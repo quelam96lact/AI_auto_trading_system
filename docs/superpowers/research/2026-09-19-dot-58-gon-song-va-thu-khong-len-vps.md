@@ -298,3 +298,46 @@ TONG: strat -1,615,319,902 | BH 1,897,587,481,903 | lenh 1,514 | ma sinh lenh 43
 3. `.probe_dead_man_switch.py` → cân nhắc bỏ dấu chấm, thành script thường (mục B).
 4. Hai file tôi thêm sai luật (`.fix_mojibake.py`, `.scan_mojibake.py`) — `git rm --cached` hoặc
    giữ nguyên có chủ ý, chủ dự án quyết.
+
+
+### F. Tự soát: phạm vi mục C hẹp hơn thực tế — không phải chỉ 14 cảnh báo của `real_orders.py`
+
+Mục C ở trên viết như thể lỗ "engine không có log bền" chỉ ảnh hưởng đường lệnh thật. Đếm lại
+toàn bộ `alert()` chạy trong container engine:
+
+```
+trading/real_orders.py    14 loi goi   (WARN)
+trading/engine/main.py    20 loi goi   (INFO/WARN/CRITICAL)
+trading/engine/logic.py    1 loi goi
+                          --
+                          35 loi goi TRONG CUNG MOT CONTAINER khong co RotatingFileHandler nao
+```
+
+Bốn trong số 20 dòng của `engine/main.py` là **CRITICAL**, và ít nhất một dòng nghiêm trọng thật:
+
+```python
+# trading/engine/main.py:190-195
+alert(
+    "CRITICAL",
+    "khong doc duoc NAV (account_nav_snapshot khong co dong cho tai khoan nay) "
+    "— real capital = 0, MOI lenh that bi tu choi (fail-safe, khong roi ve "
+    "account_balance_snapshot)",
+    ...
+)
+```
+
+Đây là lá chắn NAV — đúng cơ chế `check_golive_gate.py` (đợt 57) vừa đo. Nếu nó kêu và Telegram
+trượt đúng lúc, không chỉ mất "cơ hội hành động" như với đơn chờ xác nhận — nó mất luôn **bằng
+chứng vì sao mọi lệnh thật bị từ chối**, không ai debug lại được sau khi container dựng lại.
+
+Và dòng `engine/main.py:332` chính là cảnh báo *"real pending orders expired without
+confirmation"* — cảnh báo mà brief 57 Task 2 vừa chữa lỗi đóng dấu chống spam cho nó
+(`engine_consumer_check.py` là job khác, không phải nguồn phát cảnh báo này; nguồn phát nằm ở
+đây, trong engine). Việc chữa lỗi đóng dấu không giúp gì nếu bản thân tiến trình phát ra nó
+không có nơi ghi bền.
+
+**Kết luận không đổi, phạm vi thì có:** việc vá log bền cho engine (đã ghi ở mục C, và mục H đợt
+57) không phải "vá thêm cho đường lệnh thật" — nó là vá cho **toàn bộ 35 điểm cảnh báo của
+engine**, kể cả những cảnh báo không liên quan gì tới tiền thật. Không đổi mức ưu tiên (vẫn sau
+phép đo thứ Hai), nhưng khi viết brief cho việc đó, phạm vi phải ghi đúng là "container engine",
+không phải "đường lệnh thật".
