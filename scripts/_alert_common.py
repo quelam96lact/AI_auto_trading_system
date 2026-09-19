@@ -30,7 +30,9 @@ def alert_and_fail(
     text = "\n".join(messages)
     _print_safe(text)
     try:
-        send(text)
+        ok = send(text)
+        if ok is False:
+            _print_safe(f"{prefix} GUI TELEGRAM HONG: send tra ve False")
     except Exception as e:
         _print_safe(f"{prefix} GUI TELEGRAM HONG: {type(e).__name__}: {e}")
     return 1
