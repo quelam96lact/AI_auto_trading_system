@@ -170,6 +170,34 @@ Lần này hỏi cả hai, và **trả lời trong báo cáo**:
 
    Dán cả hai kết quả. Không chứng minh được cặp này thì Task 1 **chưa xong**, dù test xanh.
 
+### 1.5. Vì sao mục 1.4.4 không phải cầu toàn — nó là phép kiểm DUY NHẤT có
+
+Tôi đã tưởng diễn tập T4 sẽ kiểm hộ bản vá này. **Không.**
+
+`scripts/rehearse_confirm_gate.py:26` import `confirm` từ chính `confirm_real_order.py`, nên T4
+chạy đúng hàm sẽ đặt lệnh thật ở T5 — nghe thì yên tâm. Nhưng T4 chạy với
+`real_trading_enabled=false`, và cửa dry-run nằm **trước** cả ba chỗ được vá:
+
+```python
+# scripts/confirm_real_order.py:98-105
+if not cfg.real_trading_enabled:
+    print("[DRY-RUN] SE dat lenh: ...")
+    storage.update_pending_order_status(order_id, "confirmed")
+    alert("INFO", "real order dry-run confirmed", ...)     # <- muc INFO, khong gui Telegram
+    ...                                                     # <- roi TRA VE
+# :138 :195 :209 nam SAU day — dry-run khong bao gio cham toi
+```
+
+Nghĩa là:
+
+| Bước | Có chạm `:138` / `:195` / `:209` không |
+|---|---|
+| T4 diễn tập (dry-run) | **Không** — chỉ chạm `:105`, mức `INFO`, không sinh luồng nào |
+| T5 lệnh thật đầu tiên | **Có** — và đó là lần đầu tiên, với tiền thật |
+
+Nên **không có bước diễn tập nào kiểm hộ bản vá này**. Phép thử ở mục 1.4.4 và bộ test ở 1.4.2
+là toàn bộ bằng chứng ta sẽ có trước khi tiền thật đi qua đường đó. Làm cho đủ.
+
 ---
 
 ## Task 2 — Đưa công cụ diễn tập lên được VPS, và sửa câu mô tả sai
