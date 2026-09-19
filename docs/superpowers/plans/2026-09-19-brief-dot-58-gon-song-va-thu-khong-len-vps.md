@@ -96,6 +96,40 @@ Có **hai họ tên gần giống nhau**, khác hẳn về việc ship:
 
 Đợt 53 đếm "10 tham chiếu tới `spike_`" — toàn bộ thuộc họ **thứ nhất**. Đừng lẫn hai họ.
 
+### 2.2b. Nói cho công bằng: chính sách này **có chủ ý**, không phải sơ suất
+
+Tôi soát rộng ra xem còn thứ gì khác không lên được VPS. Kết quả: **không có**.
+
+```
+exclusions.txt              tren dia=True  trong git=True   <- cong cung VN doc file nay
+config/config.yaml          True  True
+uv.lock / pyproject.toml    True  True
+docker-compose.yml          True  True
+sched.sh / run_if_docker_up.sh / run_hidden.vbs   True  True
+```
+
+Mọi thứ runbook và lịch cần đều có trong git. Lỗ duy nhất là họ dấu chấm.
+
+Và nhìn kỹ `.gitignore` thì thấy người viết **đã nghĩ đúng bài này**:
+
+```
+.gitignore:16   scripts/.spike_*.json
+.gitignore:18   !scripts/.spike_derivative_ohlc_5m_2m_sample.json
+.gitignore:20   !scripts/.spike_all_symbols_classified.json
+```
+
+Hai dòng `!` là ngoại lệ mở riêng cho **đúng hai file dữ liệu mà production đọc** — trong đó
+`.spike_all_symbols_classified.json` là file `backfill_universe.py:49` đọc thật. Tức là chính
+sách "dấu chấm = không ship" là **cố ý**, và cơ chế mở ngoại lệ **đã có sẵn và đã được dùng đúng**.
+
+Vậy câu hỏi của Task 2 hẹp lại, và đó là câu dễ trả lời hơn nhiều:
+
+> Không phải *"chính sách có sai không"* — mà *"`.probe_dead_man_switch.py` có đáng là ngoại lệ
+> thứ ba không?"*
+
+Hãy trả lời theo hướng đó. Nếu kết luận là "không đáng, nên chuyển thành script thường không dấu
+chấm", đó cũng là câu trả lời tốt — nói rõ lý do.
+
 ### 2.3. Việc
 
 **Không xoá, không thêm vào git, không sửa `.gitignore` trong đợt này.** Trả lời để chủ dự án
