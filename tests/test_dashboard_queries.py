@@ -29,6 +29,7 @@ def storage():
         c.execute(
             "DELETE FROM derivative_margin_snapshot WHERE account_no = 'DASH_ACC'"
         )
+        c.execute("DELETE FROM engine_state WHERE id = 1")
     return s
 
 
@@ -167,3 +168,23 @@ def test_derivative_margin_panel_query(storage):
             "WHERE account_no = b.account_no) AND b.account_no = 'DASH_ACC'"
         ).fetchall()
     assert rows == [("DASH_ACC", ts, 100000.0, 500.0, 500.0, False, 40.0, 35.0)]
+
+
+def test_pnl_luy_ke_panel_query(storage):
+    cash = 95_000_000.0
+    realized_pnl = 150_000.0
+    storage.write_engine_state(cash, realized_pnl)
+    with storage.conn() as c:
+        rows = c.execute(
+            'SELECT realized_pnl AS "Realized PnL luy ke", '
+            'cash AS "Tien mat", '
+            'updated_at AS "Cap nhat luc", '
+            'round(extract(epoch FROM (now() - updated_at)) / 86400) AS "So ngay truoc" '
+            "FROM engine_state WHERE id = 1"
+        ).fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row[0] == realized_pnl
+    assert row[1] == cash
+    assert row[2] is not None
+    assert row[3] == 0  # vừa ghi xong
