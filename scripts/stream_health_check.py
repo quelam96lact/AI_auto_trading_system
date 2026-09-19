@@ -31,11 +31,13 @@ Quy tắc chọn phiên mặc định (Brief 49 §2.6):
 """
 
 import argparse
+import json
 import re
 import subprocess
 import sys
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from trading.calendar_vn import is_trading_day
@@ -82,13 +84,19 @@ def parse_log_timestamp(line: str) -> datetime | None:
         return None
 
 
+class StreamBarsCount(NamedTuple):
+    bars: int
+    lines: int
+    fallback_lines: int = 0
+
+
 def count_stream_bars_closed(
     log_content: str,
     session: str,
     check_date: date,
     tz: ZoneInfo = TZ_VN,
-) -> int:
-    """Đếm số dòng 'bars closed' rơi trong phiên giao dịch chỉ định."""
+) -> StreamBarsCount:
+    """Đếm số nến chốt (bars) và số dòng log (lines) rơi trong phiên giao dịch chỉ định."""
     if session not in SESSION_HOURS:
         raise ValueError(f"Phiên '{session}' không hợp lệ. Chọn 'sang' hoặc 'chieu'.")
 
@@ -96,14 +104,40 @@ def count_stream_bars_closed(
     start_dt = datetime.combine(check_date, t_start, tzinfo=tz)
     end_dt = datetime.combine(check_date, t_end, tzinfo=tz)
 
-    count = 0
+    bars_total = 0
+    lines_total = 0
+    fallback_lines = 0
+
     for line in log_content.splitlines():
         if "bars closed" not in line:
             continue
         ts_vn = parse_log_timestamp(line)
         if ts_vn is not None and start_dt <= ts_vn <= end_dt:
-            count += 1
-    return count
+            lines_total += 1
+            n_val = None
+            try:
+                brace_idx = line.find("{")
+                if brace_idx != -1:
+                    data = json.loads(line[brace_idx:])
+                    n_candidate = data.get("n")
+                    if (
+                        isinstance(n_candidate, int)
+                        and not isinstance(n_candidate, bool)
+                        and n_candidate > 0
+                    ):
+                        n_val = n_candidate
+            except Exception:
+                pass
+
+            if n_val is not None:
+                bars_total += n_val
+            else:
+                bars_total += 1
+                fallback_lines += 1
+
+    return StreamBarsCount(
+        bars=bars_total, lines=lines_total, fallback_lines=fallback_lines
+    )
 
 
 def fetch_docker_collector_logs() -> str:
@@ -448,11 +482,16 @@ def main() -> None:
 
     # Tính tử số: số nến chốt từ luồng
     if session is None:
-        count = count_stream_bars_closed(
-            logs, "sang", check_date
-        ) + count_stream_bars_closed(logs, "chieu", check_date)
+        res_sang = count_stream_bars_closed(logs, "sang", check_date)
+        res_chieu = count_stream_bars_closed(logs, "chieu", check_date)
+        count = res_sang.bars + res_chieu.bars
+        lines_count = res_sang.lines + res_chieu.lines
+        fallback_count = res_sang.fallback_lines + res_chieu.fallback_lines
     else:
-        count = count_stream_bars_closed(logs, session, check_date)
+        res = count_stream_bars_closed(logs, session, check_date)
+        count = res.bars
+        lines_count = res.lines
+        fallback_count = res.fallback_lines
 
     # Tính mẫu số nếu bật kiểm tra độ phủ
     denom = None
@@ -473,6 +512,14 @@ def main() -> None:
         count, denom, args.min_coverage_warn, args.min_coverage_crit
     )
 
+    detail_suffix = (
+        f"({count}/{denom} nen, tu {lines_count} dong log)"
+        if (denom and denom > 0)
+        else f"({count} nen, tu {lines_count} dong log)"
+    )
+    if fallback_count > 0:
+        detail_suffix += f" ({fallback_count} dong khong doc duoc n, tinh 1 nen/dong)"
+
     if code == 2:
         if count == 0:
             sys.stderr.write(
@@ -485,7 +532,7 @@ def main() -> None:
             )
             sys.stderr.write(
                 f"dung: do phu luong {target_name} ngay {check_date.isoformat()} chi dat {cov_str} "
-                f"({count}/{denom} nen), duoi nguong nghiem trong {crit_val:.0%} [nguon: {source}]\n"
+                f"{detail_suffix}, duoi nguong nghiem trong {crit_val:.0%} [nguon: {source}]\n"
             )
         sys.exit(2)
     elif code == 1:
@@ -495,18 +542,23 @@ def main() -> None:
         )
         print(
             f"WARN: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} "
-            f"({count}/{denom} nen), duoi nguong canh bao {warn_val:.0%} [nguon: {source}]"
+            f"{detail_suffix}, duoi nguong canh bao {warn_val:.0%} [nguon: {source}]"
         )
         sys.exit(1)
     else:
         if denom and denom > 0 and has_coverage_check:
             cov_str = f"{count / denom:.1%}"
             print(
-                f"OK: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} ({count}/{denom} nen tu luong thoi gian thuc) [nguon: {source}]."
+                f"OK: do phu luong {target_name} ngay {check_date.isoformat()} dat {cov_str} {detail_suffix} tu luong thoi gian thuc [nguon: {source}]."
             )
         else:
+            nen_detail = f"{lines_count} lan chot nen ({count} nen)"
+            if fallback_count > 0:
+                nen_detail += (
+                    f" ({fallback_count} dong khong doc duoc n, tinh 1 nen/dong)"
+                )
             print(
-                f"OK: {target_name} ngay {check_date.isoformat()} co {count} lan chot nen tu luong thoi gian thuc [nguon: {source}]."
+                f"OK: {target_name} ngay {check_date.isoformat()} co {nen_detail} tu luong thoi gian thuc [nguon: {source}]."
             )
         sys.exit(0)
 

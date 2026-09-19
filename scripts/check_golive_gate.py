@@ -78,25 +78,42 @@ def read_config_info(config_path: str = "config/config.yaml") -> dict:
         return {}
 
 
-def read_latest_stream_coverage(log_path: str = "logs/stream-health.log") -> tuple[float | None, str]:
+def read_latest_stream_coverage(
+    log_path: str = "logs/stream-health.log",
+) -> tuple[float | None, str, datetime | None]:
     p = Path(log_path)
     if not p.is_file():
         p = REPO_ROOT / log_path
     if not p.is_file():
-        return None, "File log không tồn tại"
+        return None, "File log không tồn tại", None
 
     try:
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        for line in reversed(lines):
+        for i in range(len(lines) - 1, -1, -1):
+            line = lines[i]
             # Tìm dòng có chứa tỷ lệ phần trăm nến chốt (ví dụ: dat 89.5% hoặc 93,8%)
             m = re.search(r"(\d+(?:[.,]\d+)?)%", line)
             if m:
                 val_str = m.group(1).replace(",", ".")
                 cov = float(val_str) / 100.0
-                return cov, line.strip()
-        return None, "Chưa có dòng đo độ phủ nến nào trong log"
+
+                measured_at = None
+                # Tìm dòng stream-health start gần nhất phía trước dòng i
+                for j in range(i - 1, -1, -1):
+                    start_line = lines[j]
+                    if "stream-health start" in start_line:
+                        m_ts = re.match(r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)", start_line)
+                        if m_ts:
+                            try:
+                                dt_raw = datetime.fromisoformat(m_ts.group(1))
+                                measured_at = dt_raw.replace(tzinfo=TZ)
+                            except Exception:
+                                pass
+                        break
+                return cov, line.strip(), measured_at
+        return None, "Chưa có dòng đo độ phủ nến nào trong log", None
     except Exception as e:
-        return None, f"Lỗi đọc log: {e}"
+        return None, f"Lỗi đọc log: {e}", None
 
 
 def check_telegram_configured() -> bool:
@@ -140,6 +157,8 @@ def evaluate_golive_gate(
     deploy_drift_msg: str,
     real_fills_count: int,
     symbols: list[str],
+    stream_measured_at: datetime | None = None,
+    stream_age_sec: float | None = None,
 ) -> tuple[int, list[GateItem]]:
     """Hàm thuần đánh giá các tiêu chí cổng go-live, không phụ thuộc I/O."""
     items: list[GateItem] = []
@@ -252,12 +271,26 @@ def evaluate_golive_gate(
     # 6. Độ phủ luồng phiên gần nhất
     if stream_coverage is not None:
         cov_pct_str = f"{stream_coverage * 100:.1f}%"
+        if stream_measured_at is not None and stream_age_sec is not None:
+            time_str = stream_measured_at.strftime("%d/%m %H:%M")
+            if stream_age_sec >= 86400:
+                age_str = f"{round(stream_age_sec / 86400)} ngay truoc"
+            elif stream_age_sec >= 3600:
+                age_str = f"{round(stream_age_sec / 3600)} gio truoc"
+            elif stream_age_sec >= 60:
+                age_str = f"{round(stream_age_sec / 60)} phut truoc"
+            else:
+                age_str = f"{round(stream_age_sec)}s truoc"
+            measured_val_str = f"{cov_pct_str} (do luc {time_str}, {age_str})"
+        else:
+            measured_val_str = cov_pct_str
+
         if stream_coverage >= 0.90:
             items.append(
                 GateItem(
                     name="Độ phủ luồng phiên gần nhất",
                     requirement=">= 90% số nến chốt",
-                    measured_value=cov_pct_str,
+                    measured_value=measured_val_str,
                     status="PASS",
                     note=stream_coverage_summary,
                 )
@@ -267,7 +300,7 @@ def evaluate_golive_gate(
                 GateItem(
                     name="Độ phủ luồng phiên gần nhất",
                     requirement=">= 90% số nến chốt",
-                    measured_value=cov_pct_str,
+                    measured_value=measured_val_str,
                     status="WARN",
                     note=f"Hơi thấp (< 90%): {stream_coverage_summary}",
                 )
@@ -277,7 +310,7 @@ def evaluate_golive_gate(
                 GateItem(
                     name="Độ phủ luồng phiên gần nhất",
                     requirement=">= 90% số nến chốt",
-                    measured_value=cov_pct_str,
+                    measured_value=measured_val_str,
                     status="FAIL",
                     note=f"Quá thấp (< 50%): {stream_coverage_summary}",
                 )
@@ -429,7 +462,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
         return 2
 
     # Đọc stream coverage
-    stream_coverage, stream_summary = read_latest_stream_coverage()
+    stream_coverage, stream_summary, stream_measured_at = read_latest_stream_coverage()
+    stream_age_sec = (now_vn - stream_measured_at).total_seconds() if stream_measured_at else None
 
     # Đọc telegram config
     telegram_ok = check_telegram_configured()
@@ -452,6 +486,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
         deploy_drift_msg=drift_msg,
         real_fills_count=real_fills_count,
         symbols=symbols,
+        stream_measured_at=stream_measured_at,
+        stream_age_sec=stream_age_sec,
     )
 
     # In bảng báo cáo

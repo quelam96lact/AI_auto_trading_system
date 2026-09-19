@@ -19,25 +19,28 @@ TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def test_1_stream_bars_closed_inside_session():
-    """1. Log có 3 dòng 'bars closed' trong khoảng phiên sáng -> đếm đúng 3."""
+    """1. Log có 3 dòng 'bars closed' trong khoảng phiên sáng, mỗi dòng n=3 -> đếm đúng 9 nến, 3 dòng."""
     # 09:20 VN = 02:20 UTC, 09:25 VN = 02:25 UTC, 10:00 VN = 03:00 UTC
     sample_log = """
 collector-1  | 2026-09-14T02:20:00.123456Z {"level": "INFO", "msg": "bars closed", "n": 3, "symbols": ["HPG", "IJC", "AAA"], "lag_ms": 14.5}
 collector-1  | 2026-09-14T02:25:01.234567Z {"level": "INFO", "msg": "bars closed", "n": 3, "symbols": ["HPG", "IJC", "AAA"], "lag_ms": 12.1}
 collector-1  | 2026-09-14T03:00:00.345678Z {"level": "INFO", "msg": "bars closed", "n": 3, "symbols": ["HPG", "IJC", "AAA"], "lag_ms": 15.0}
 """
-    cnt = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
-    assert cnt == 3
+    res = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res.bars == 9
+    assert res.lines == 3
+    assert res.fallback_lines == 0
 
 
 def test_2_stream_bars_closed_empty_session():
-    """2. Log không có dòng nào trong khoảng phiên -> count = 0."""
+    """2. Log không có dòng nào trong khoảng phiên -> bars = 0, lines = 0."""
     sample_log = """
 collector-1  | 2026-09-14T02:00:00.000000Z Token refreshed successfully
 collector-1  | 2026-09-14T02:05:00.000000Z HTTP Request: GET https://api.ssi.com.vn/api/v3/trading/position "HTTP/1.1 200 OK"
 """
-    cnt = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
-    assert cnt == 0
+    res = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res.bars == 0
+    assert res.lines == 0
 
 
 def test_3_stream_bars_closed_outside_session_ignored():
@@ -48,10 +51,10 @@ def test_3_stream_bars_closed_outside_session_ignored():
 collector-1  | 2026-09-14T05:05:00.123456Z {"level": "INFO", "msg": "bars closed", "n": 3, "lag_ms": 10.0}
 collector-1  | 2026-09-14T13:00:00.123456Z {"level": "INFO", "msg": "bars closed", "n": 3, "lag_ms": 10.0}
 """
-    cnt_sang = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
-    assert cnt_sang == 0
-    cnt_chieu = count_stream_bars_closed(sample_log, session="chieu", check_date=date(2026, 9, 14), tz=TZ_VN)
-    assert cnt_chieu == 0
+    res_sang = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res_sang.bars == 0 and res_sang.lines == 0
+    res_chieu = count_stream_bars_closed(sample_log, session="chieu", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res_chieu.bars == 0 and res_chieu.lines == 0
 
 
 def test_4_only_backfill_done_results_in_zero():
@@ -60,8 +63,8 @@ def test_4_only_backfill_done_results_in_zero():
 collector-1  | 2026-09-14T04:30:00.000000Z {"level": "INFO", "msg": "backfill start"}
 collector-1  | 2026-09-14T04:30:05.000000Z {"level": "INFO", "msg": "backfill done", "counts": {"HPG": 27, "IJC": 27, "AAA": 27}}
 """
-    cnt = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
-    assert cnt == 0
+    res = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res.bars == 0 and res.lines == 0
 
 
 def test_5_cli_exit_codes_and_messages(tmp_path, monkeypatch, capsys):
@@ -91,7 +94,7 @@ def test_5_cli_exit_codes_and_messages(tmp_path, monkeypatch, capsys):
         main()
     assert exc1.value.code == 0
     captured1 = capsys.readouterr()
-    assert "OK: phien sang ngay 2026-09-14 co 1 lan chot nen" in captured1.out
+    assert "1 lan chot nen (3 nen)" in captured1.out
 
     # Trường hợp 2: Không có nến -> exit 2, message mở đầu bằng "dung:"
     monkeypatch.setattr("sys.argv", [
@@ -489,3 +492,24 @@ def test_19_explicit_date_past_trading_day_not_ignored(monkeypatch, capsys, tmp_
     assert not out.startswith("bo qua:")
     assert "co 1 lan chot nen" in out
 
+
+def test_20_batch_aggregation_single_line_multiple_bars():
+    """20. Brief 70 Task 3.2.1: Gộp lô: 1 dòng duy nhất 'n': 3 -> bars=3 nến, lines=1 dòng log."""
+    sample_log = 'collector-1  | 2026-09-14T02:20:00.123456Z {"level": "INFO", "msg": "bars closed", "n": 3, "symbols": ["HPG", "IJC", "AAA"]}\n'
+    res = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res.bars == 3
+    assert res.lines == 1
+    assert res.fallback_lines == 0
+
+
+def test_21_fallback_when_n_missing_or_invalid():
+    """21. Brief 70 Task 3.2.2: Dự phòng khi thiếu n hoặc không đọc được JSON -> tính 1 nến/dòng và đếm fallback."""
+    sample_log = """
+collector-1  | 2026-09-14T02:20:00.000000Z {"level": "INFO", "msg": "bars closed"}
+collector-1  | 2026-09-14T02:25:00.000000Z {"level": "INFO", "msg": "bars closed", "n": "invalid"}
+collector-1  | 2026-09-14T02:30:00.000000Z collector-1 | 2026-09-14T02:30:00Z bars closed non-json text
+"""
+    res = count_stream_bars_closed(sample_log, session="sang", check_date=date(2026, 9, 14), tz=TZ_VN)
+    assert res.bars == 3
+    assert res.lines == 3
+    assert res.fallback_lines == 3

@@ -118,3 +118,33 @@ def test_golive_gate_missing_telegram_returns_two():
     assert exit_code == 2
     statuses = {it.name: it.status for it in items}
     assert statuses["Đường truyền Telegram"] == "FAIL"
+
+
+def test_golive_gate_stream_coverage_measured_value_with_timestamp_and_age():
+    """Brief 70 Task 2: Item 6 hiển thị thời điểm đo và độ tuổi."""
+    from datetime import datetime
+
+    from trading.calendar_vn import TZ
+
+    measured_at = datetime(2026, 9, 18, 15, 10, tzinfo=TZ)
+    age_sec = 2 * 86400.0  # 2 ngày
+    _exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=5_000_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=0.895,
+        stream_coverage_summary="89.5% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        stream_measured_at=measured_at,
+        stream_age_sec=age_sec,
+    )
+    item6 = next(it for it in items if it.name == "Độ phủ luồng phiên gần nhất")
+    assert item6.measured_value == "89.5% (do luc 18/09 15:10, 2 ngay truoc)"
+
