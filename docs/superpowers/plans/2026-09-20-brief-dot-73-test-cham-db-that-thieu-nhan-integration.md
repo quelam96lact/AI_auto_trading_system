@@ -138,6 +138,26 @@ Với mỗi test/file được xác định ở Task 1:
 
 ---
 
+## Task 4 — Nêu ý kiến về chống tái phát (chỉ nêu, KHÔNG làm trong đợt này)
+
+Ba Task trên sửa **triệu chứng**: hai test đang thiếu nhãn sẽ được gắn nhãn. Nhưng **không có gì
+ngăn test tiếp theo** được viết ra mà quên nhãn — và lỗi y hệt sẽ quay lại, cũng vào đúng một lúc
+tệ như sáng nay (Docker chết + cần push gấp).
+
+Trong báo cáo, nêu ý kiến ngắn: nên chặn tái phát bằng cách nào? Vài hướng để bạn cân nhắc, không
+phải để làm ngay:
+
+- một test canh: trong suite mặc định, bọc `psycopg.connect` để nó **ném lỗi**, rồi khẳng định cả
+  suite vẫn xanh — tức chứng minh không test không-integration nào mở kết nối thật;
+- hoặc một `conftest` hook đếm số lần kết nối thật trong suite mặc định và báo đỏ nếu > 0;
+- hoặc chấp nhận rủi ro và chỉ ghi vào tài liệu.
+
+**Không triển khai hướng nào trong đợt 73.** Lý do: sáng mai có phiên giao dịch và là phép đo
+quyết định; thêm một cơ chế mới vào đường chạy test ngay lúc này là thêm biến số không cần thiết.
+Tôi sẽ quyết sau phiên, dựa trên ý kiến của bạn.
+
+---
+
 ## 4. Không làm
 
 - Không sửa pre-push hook, không thêm `--continue-on-error`, không `-p no:cacheprovider` để né.
@@ -152,3 +172,4 @@ Với mỗi test/file được xác định ở Task 1:
 2. `git diff tests/` — chỉ có dòng nhãn, không có dòng logic.
 3. Ba kết quả kiểm chứng ở Task 3, kèm **thời gian chạy** của mục 1.
 4. Với mỗi file gắn nhãn cấp module: xác nhận file đó **không** còn test nào không cần DB.
+5. Ý kiến về chống tái phát (Task 4) — nêu, không làm.
