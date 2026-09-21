@@ -1,7 +1,9 @@
 # Brief đợt 72 — Gộp hai công cụ đo rò rỉ thành một, sửa lỗi lập kế hoạch của tôi
 
-Ngày giao: 20/09/2026.
-Base: main hiện tại (`5ae3573`).
+Ngày giao: 20/09/2026, cập nhật 21/09/2026.
+Base: main `563743a` (đã qua đợt 73/74/75 — không đụng gì tới
+`scripts/leakage_audit.py` hay `scripts/probe_timestamp_semantics.py`, đã kiểm bằng `git log`
+trước khi cập nhật brief này; nội dung nhiệm vụ dưới đây không đổi).
 Người giao: Claude (planner/auditor).
 Người thực thi: **Gemini Flash 3.8**.
 
@@ -118,7 +120,10 @@ Gộp hai bộ test hiện có, giữ **mọi** hành vi đã được kiểm:
    **cùng** `rho_truoc`/`rho_sau`. Đây là test chứng minh việc gộp thật sự cho một kết quả duy
    nhất, chứ không phải hai nhánh song song đội lốt.
 
-`uv run pytest -m "not integration" -q` (hiện **715**) và `uv run ruff check trading tests scripts`.
+`uv run pytest -m "not integration" -q` (hiện **717 passed, 118 deselected** — số này đã đổi hai
+lần từ lúc brief viết, đừng dùng nó làm mốc so sánh cứng, chỉ dùng để biết bạn đứng ở baseline
+nào; **con số đúng để báo cáo là con số bạn đọc được trên màn hình sau khi gộp**, không phải số
+này) và `uv run ruff check trading tests scripts`.
 
 ---
 
