@@ -102,6 +102,15 @@ Dán cả ba kết quả, kèm **tên** test đã đỏ ở bước 2.
   1 nến, và **không bao giờ báo động giả**. Lệch về phía im lặng ở đây là đánh đổi có chủ ý; đổi nó
   sẽ mở đường cho báo động giả, mà báo động giả giết chuông nhanh hơn cả không có chuông.
 - Không đụng `tests/test_logging_setup.py` — đã trở về nguyên trạng, đúng như nó nên có.
+- **Không "hợp nhất" GAP-1 với `fetch_expected_bars_from_db()`** trong
+  `scripts/stream_health_check.py`. Tôi đã kiểm: chúng **không** trùng công thức. Hàm kia lấy mẫu
+  số **từ chính dữ liệu** (đếm số khung nến khác nhau có trong bảng `bars`, Brief 49 §2.2), còn
+  GAP-1 tính **từ lịch phiên**. Hai cái trả lời hai câu khác nhau: một đo **luồng dữ liệu**, một đo
+  **cửa sổ của engine**.
+
+  Chúng **được phép mâu thuẫn**, và sáng nay đúng là mâu thuẫn: DB có đủ 27/27 nến (stream health
+  100%), trong khi cửa sổ engine thiếu 3 nến. Đó **không phải lỗi** — đó là hai phép đo khác nhau
+  cùng đúng. Đừng ai đi "hòa giải" hai con số này.
 - Không tự vá lỗ warm-up (vẫn chỉ báo hiệu). Hướng xử lý thứ tự khởi động là việc của chủ dự án.
 - Không rebuild, không deploy, không commit, không push.
 
