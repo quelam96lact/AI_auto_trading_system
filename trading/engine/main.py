@@ -10,7 +10,7 @@ from nats.js.api import ConsumerConfig, DeliverPolicy
 
 from trading import real_orders
 from trading.alerts import alert
-from trading.calendar_vn import TZ
+from trading.calendar_vn import CONTINUOUS_SESSIONS, TZ, market_minutes_between
 from trading.config import Config, load_config
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.logging_setup import attach_durable_alert_handler
@@ -87,6 +87,34 @@ def _default_strategy() -> Strategy:
     docs/superpowers/research/2026-09-06-master-audit-report-dot-6.md).
     """
     return OctopusPullbackStrategy()
+
+
+def count_warmup_gap(
+    warmed_until: datetime,
+    first_live_ts: datetime,
+    bar_interval_minutes: int,
+    holidays: frozenset,
+) -> int:
+    """Đếm số nến bị nhảy cóc giữa mốc warm-up và nến live đầu tiên.
+
+    Dùng CONTINUOUS_SESSIONS (09:15-11:30, 13:00-14:30) để bỏ qua nghỉ trưa,
+    cuối tuần, ngày lễ, và đặc biệt nến ATC (14:45 nằm ngoài CONTINUOUS_SESSIONS).
+
+    Công thức: market_minutes_between(warmed_until + step, first_live_ts) / step
+    - Nếu warmed_until là nến ATC (14:45), warmed_until+step = 14:50 nằm sau
+      14:30 kết thúc CONTINUOUS — phần thứ Sáu = 0, tính đúng từ 09:15 thứ Hai.
+    - Nếu liền mạch (ví dụ 11:20 → 11:25), trả về 0 (không báo động giả).
+
+    Trả về: số nguyên nến thiếu (0 = liền mạch, >= 1 = có lỗ).
+    """
+    step = timedelta(minutes=bar_interval_minutes)
+    mins = market_minutes_between(
+        warmed_until + step,
+        first_live_ts,
+        holidays=holidays,
+        sessions=CONTINUOUS_SESSIONS,
+    )
+    return round(mins / bar_interval_minutes)
 
 
 async def run(
@@ -296,6 +324,10 @@ async def run(
     marks: dict[str, float] = {}
     day_state: dict = {}
     last_processed_ts: dict[str, datetime] = dict(warmed_until)
+    # GAP-1: theo doi ma nao da duoc kiem cua so warm-up — chi kiem 1 lan cho
+    # moi ma (nen live dau tien). Tu nen thu hai tro di cua so da lien mach,
+    # kiem tiep chi la nhieu.
+    _warmup_gap_checked: set[str] = set()
 
     nc = await nats.connect(cfg.nats_url)
     js = nc.jetstream()
@@ -413,6 +445,32 @@ async def run(
                         await msg.ack()
                         processed += 1
                         continue
+                # GAP-1 (Brief 74 Task 1): nen live DAU TIEN — goi count_warmup_gap().
+                # Chi kiem 1 lan/ma; tu nen thu hai tro di cua so da lien mach.
+                # Ma chua warm-up duoc (khong co khoa trong warmed_until) da co
+                # WARN rieng o phan warm-up tren — khong canh bao them.
+                if bar.symbol not in _warmup_gap_checked:
+                    _warmup_gap_checked.add(bar.symbol)
+                    wu = warmed_until.get(bar.symbol)
+                    if wu is not None:
+                        missing = count_warmup_gap(
+                            wu,
+                            bar.ts,
+                            cfg.bar_interval_minutes,
+                            frozenset(cfg.holidays),
+                        )
+                        if missing >= 1:
+                            alert(
+                                "WARN",
+                                f"GAP-1 cua so warm-up co lo: {bar.symbol} nhan coc "
+                                f"{missing} nen (warm-up den {wu.isoformat()}, "
+                                f"nen live dau={bar.ts.isoformat()}) — chi bao hieu, "
+                                f"khong tu dong bu",
+                                symbol=bar.symbol,
+                                warmed_until=wu.isoformat(),
+                                first_live_ts=bar.ts.isoformat(),
+                                missing_bars=missing,
+                            )
                 was_halted = risk.halted_date
                 was_real_halted = real_risk.halted_date
                 fills = process_bar(
