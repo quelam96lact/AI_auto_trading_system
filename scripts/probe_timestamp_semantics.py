@@ -1,29 +1,15 @@
-"""Phép đo hướng ngữ nghĩa timestamp của các cột dữ liệu phi giá (Brief đợt 42 Task 1).
+"""Lớp vỏ tương thích ngược cho phép đo hướng ngữ nghĩa timestamp (Brief đợt 72).
 
-Mục tiêu:
-Xác định một chuỗi giá trị gán nhãn thời gian T mô tả khoảng TRƯỚC hay SAU T.
-- r_truoc(T) = lợi suất nến 1h KẾT THÚC tại T = (close - open) / open của nến [T-1h, T)
-- r_sau(T)   = lợi suất nến 1h BẮT ĐẦU tại T  = (close - open) / open của nến [T, T+1h)
-
-Chỉ xét các mốc T rơi đúng đầu giờ (phút = 0).
-Loại bỏ các dòng có sum_open_interest = 0 trước khi tính.
-
-Phân loại:
-- bat_doi_xung = |corr_sau| - |corr_truoc|
-- NHIN_VE_TUONG_LAI  khi bat_doi_xung >  0.03
-- NHIN_VE_QUA_KHU    khi bat_doi_xung < -0.03
-- BIEN_MUC           khi |bat_doi_xung| <= 0.03
-
-Mốc hiệu chuẩn đối chứng: delta của ta (lấy delta của nến vừa đóng tại T [T-1h, T)).
-Phải ra NHIN_VE_QUA_KHU với corr_truoc ≈ +0.75.
+Đợt 72 đã gộp probe_timestamp_semantics.py vào scripts/leakage_audit.py:
+- Một lõi đo thống nhất: Spearman (thay Pearson) và hoán vị khối P95 (thay ±0.03 cố định).
+- Quy tắc gắn cờ thống nhất: NGHI_VAN khi rho_sau > rho_truoc và |rho_sau| > threshold; ngược lại SACH.
+- File này giữ vai trò lớp vỏ (thin wrapper) gọi đường vào cột thô từ DB qua audit_raw_columns.
+- Lệnh tương đương: python scripts/leakage_audit.py --mode raw
 """
 
 import argparse
 import sys
-from datetime import datetime, timedelta
-
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+from datetime import UTC, datetime
 
 import psycopg
 
@@ -32,9 +18,30 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
+try:
+    from leakage_audit import (
+        RAW_FEATURE_NAMES,
+        audit_raw_columns,
+        print_results_table,
+    )
+except ImportError:
+    from scripts.leakage_audit import (
+        RAW_FEATURE_NAMES,
+        audit_raw_columns,
+        print_results_table,
+    )
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def pearson_correlation(x: list[float], y: list[float]) -> float:
-    """Tính tương quan Pearson giữa 2 chuỗi float cùng độ dài."""
+    """Hàm Pearson cũ (giữ lại để tương thích ngược nếu có mã import).
+
+    LƯU Ý: Phép đo chính thức từ đợt 72 đã chuyển sang Spearman (fast_spearman_rank_correlation)
+    trong scripts/leakage_audit.py.
+    """
     n = len(x)
     if n < 2:
         return 0.0
@@ -48,160 +55,68 @@ def pearson_correlation(x: list[float], y: list[float]) -> float:
     return cov / ((var_x * var_y) ** 0.5)
 
 
-def run_probe(conn: psycopg.Connection, symbol: str = "BTCUSDT") -> list[dict]:
-    """Chạy phép đo hướng trên 6 cột theo §1.3."""
-    # 1. Lấy nến 1h: ts là thời điểm mở nến [ts, ts+1h)
-    # Lợi suất của nến [ts, ts+1h) = (close - open) / open
-    sql_klines = """
-        SELECT ts, open, close
-        FROM binance_klines
-        WHERE symbol = %s AND interval = '1h'
-        ORDER BY ts;
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql_klines, (symbol,))
-        k_rows = cur.fetchall()
-
-    # ret_bar[ts] là lợi suất của nến bắt đầu tại ts
-    ret_by_ts: dict[datetime, float] = {}
-    for r in k_rows:
-        ts = r[0]
-        o, c = float(r[1]), float(r[2])
-        if o > 0:
-            ret_by_ts[ts] = (c - o) / o
-
-    # 2. Lấy orderflow 1h: nến [ts, ts+1h) có delta.
-    # Tại mốc đầu giờ T: delta vừa kết thúc tại T là delta của nến ts = T - 1h.
-    sql_of = """
-        SELECT ts, delta
-        FROM binance_orderflow_1h
-        WHERE symbol = %s
-        ORDER BY ts;
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql_of, (symbol,))
-        of_rows = cur.fetchall()
-
-    # of_delta_ended_at[T] = delta của nến [T-1h, T)
-    of_delta_ended_at: dict[datetime, float] = {
-        r[0] + timedelta(hours=1): float(r[1])
-        for r in of_rows
-    }
-
-    # 3. Lấy metrics: chỉ lấy các mốc đúng đầu giờ (phút = 0), loại sum_open_interest = 0
-    sql_metrics = """
-        SELECT ts, sum_open_interest, count_long_short_ratio,
-               count_toptrader_long_short_ratio, sum_toptrader_long_short_ratio,
-               sum_taker_long_short_vol_ratio
-        FROM binance_metrics
-        WHERE symbol = %s
-          AND EXTRACT(MINUTE FROM ts) = 0
-          AND sum_open_interest > 0
-          AND sum_open_interest_value > 0
-        ORDER BY ts;
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql_metrics, (symbol,))
-        m_rows = cur.fetchall()
-
-    metrics_by_ts: dict[datetime, dict] = {}
-    for r in m_rows:
-        metrics_by_ts[r[0]] = {
-            "sum_open_interest": float(r[1]) if r[1] is not None else None,
-            "count_long_short_ratio": float(r[2]) if r[2] is not None else None,
-            "count_toptrader_long_short_ratio": float(r[3]) if r[3] is not None else None,
-            "sum_toptrader_long_short_ratio": float(r[4]) if r[4] is not None else None,
-            "sum_taker_long_short_vol_ratio": float(r[5]) if r[5] is not None else None,
-        }
-
-    # 4. Danh sách các cột cần đo
-    # Cột 1: delta (đối chứng, delta đã chốt tại T)
-    # Cột 2-6: các cột từ metrics tại T
-    columns_to_test = [
-        "delta (của ta, đối chứng)",
-        "sum_open_interest",
-        "count_long_short_ratio",
-        "count_toptrader_long_short_ratio",
-        "sum_toptrader_long_short_ratio",
-        "sum_taker_long_short_vol_ratio",
-    ]
-
-    results = []
-
-    for col in columns_to_test:
-        x_vals = []
-        r_truoc_vals = []
-        r_sau_vals = []
-
-        if col == "delta (của ta, đối chứng)":
-            # Duyệt các mốc T trong of_delta_ended_at
-            for T, val in of_delta_ended_at.items():
-                r_truoc = ret_by_ts.get(T - timedelta(hours=1))  # nến [T-1h, T)
-                r_sau = ret_by_ts.get(T)                         # nến [T, T+1h)
-                if r_truoc is not None and r_sau is not None and val is not None:
-                    x_vals.append(val)
-                    r_truoc_vals.append(r_truoc)
-                    r_sau_vals.append(r_sau)
-        else:
-            # Duyệt các mốc T trong metrics_by_ts
-            for T, m_dict in metrics_by_ts.items():
-                val = m_dict.get(col)
-                r_truoc = ret_by_ts.get(T - timedelta(hours=1))  # nến [T-1h, T)
-                r_sau = ret_by_ts.get(T)                         # nến [T, T+1h)
-                if r_truoc is not None and r_sau is not None and val is not None:
-                    x_vals.append(val)
-                    r_truoc_vals.append(r_truoc)
-                    r_sau_vals.append(r_sau)
-
-        n = len(x_vals)
-        if n < 10:
-            corr_truoc = 0.0
-            corr_sau = 0.0
-        else:
-            corr_truoc = pearson_correlation(x_vals, r_truoc_vals)
-            corr_sau = pearson_correlation(x_vals, r_sau_vals)
-
-        bat_doi_xung = abs(corr_sau) - abs(corr_truoc)
-
-        if bat_doi_xung > 0.03:
-            label = "NHIN_VE_TUONG_LAI"
-        elif bat_doi_xung < -0.03:
-            label = "NHIN_VE_QUA_KHU"
-        else:
-            label = "BIEN_MUC"
-
-        results.append({
-            "column": col,
-            "n": n,
-            "corr_truoc": corr_truoc,
-            "corr_sau": corr_sau,
-            "bat_doi_xung": bat_doi_xung,
-            "label": label,
-        })
-
-    return results
+def run_probe(
+    conn: psycopg.Connection,
+    symbol: str = "BTCUSDT",
+    is_start: datetime = datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+    is_end: datetime = datetime(2025, 12, 31, 23, 0, tzinfo=UTC),
+    raw_columns: list[str] = RAW_FEATURE_NAMES,
+    n_permutations: int = 500,
+    seed: int = 42,
+) -> list[dict]:
+    """Chạy phép đo hướng ngữ nghĩa trên các cột thô từ DB qua lõi đo thống nhất."""
+    return audit_raw_columns(
+        conn,
+        symbol=symbol,
+        is_start=is_start,
+        is_end=is_end,
+        raw_columns=raw_columns,
+        n_permutations=n_permutations,
+        seed=seed,
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Đo hướng ngữ nghĩa timestamp của các cột dữ liệu phi giá.")
+    parser = argparse.ArgumentParser(
+        description="Đo hướng ngữ nghĩa timestamp của các cột dữ liệu phi giá (gọi lõi thống nhất leakage_audit)."
+    )
     parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--is-start", default="2024-01-01")
+    parser.add_argument("--is-end", default="2025-12-31")
+    parser.add_argument(
+        "--permutations",
+        type=int,
+        default=500,
+        help="Số lần hoán vị khối (mặc định 500; dùng 1000 cho độ chính xác cao nhất)",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--raw-columns",
+        nargs="+",
+        default=RAW_FEATURE_NAMES,
+        help="Danh sách cột thô cần đo (mặc định 6 cột chuẩn)",
+    )
     parser.add_argument("--dsn", default=None, help="Database DSN override")
 
     args = parser.parse_args()
 
+    is_start_dt = datetime.fromisoformat(args.is_start).replace(tzinfo=UTC)
+    is_end_dt = datetime.fromisoformat(args.is_end).replace(hour=23, minute=0, second=0, tzinfo=UTC)
+
     conn = psycopg.connect(resolve_dsn(args.dsn))
-    results = run_probe(conn, symbol=args.symbol)
+    print(f"=== KẾT QUẢ PHÉP ĐO HƯỚNG NGỮ NGHĨA TIMESTAMP (LÕI THỐNG NHẤT) — {args.symbol} ===")
+    print(f"Khoảng In-Sample (IS): {is_start_dt} -> {is_end_dt} UTC (Năm 2026 NIÊM PHONG)")
+    results = run_probe(
+        conn,
+        symbol=args.symbol,
+        is_start=is_start_dt,
+        is_end=is_end_dt,
+        raw_columns=args.raw_columns,
+        n_permutations=args.permutations,
+        seed=args.seed,
+    )
     conn.close()
-
-    print("=== KẾT QUẢ PHÉP ĐO HƯỚNG NGỮ NGHĨA TIMESTAMP (TASK 1) ===")
-    print(f"{'Cột':<35} | {'N':<6} | {'corr_truoc':<12} | {'corr_sau':<12} | {'Bất đối xứng':<14} | {'Phân loại':<18}")
-    print("-" * 105)
-
-    for r in results:
-        print(
-            f"{r['column']:<35} | {r['n']:<6} | {r['corr_truoc']:+.4f}      | "
-            f"{r['corr_sau']:+.4f}    | {r['bat_doi_xung']:+.4f}         | {r['label']:<18}"
-        )
+    print_results_table(results, label="Cot tho tu DB (mode raw)")
 
 
 if __name__ == "__main__":

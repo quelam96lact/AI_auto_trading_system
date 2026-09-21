@@ -14,6 +14,7 @@ import pytest
 from scripts.leakage_audit import (
     CONTROL_MIN_RHO_TRUOC,
     add_past_return_to_panel,
+    align_raw_series_to_returns,
     check_control_variable,
     classify_leakage,
     compute_leakage_pair,
@@ -205,3 +206,134 @@ def test_add_past_return_to_panel() -> None:
     # Hàng 2: close[2]/close[1] - 1
     expected2 = (raw_panel[2]["close"] / raw_panel[1]["close"]) - 1.0
     assert abs(enriched[2]["ret_past_1h"] - expected2) < 1e-10
+
+
+def test_align_raw_series_to_returns() -> None:
+    """Kiểm tra hàm align_raw_series_to_returns căn giờ T với lợi suất quá khứ/tương lai."""
+    from datetime import UTC, datetime, timedelta
+
+    base = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    # close_by_t[T]: giá đóng tại T
+    close_by_t = {base + timedelta(hours=i): 100.0 * (1.02 ** i) for i in range(5)}
+    raw_series = {"raw_metric": {base + timedelta(hours=i): float(i * 10) for i in range(5)}}
+
+    rows = align_raw_series_to_returns(close_by_t, raw_series)
+
+    # Hàng 0: không có T-1h -> ret_past = None
+    assert rows[0]["ret_past_1h"] is None
+    assert abs(rows[0]["fwd_ret_1h"] - 0.02) < 1e-10
+    assert rows[0]["raw_metric"] == 0.0
+
+    # Hàng 1: có cả T-1h và T+1h
+    assert abs(rows[1]["ret_past_1h"] - 0.02) < 1e-10
+    assert abs(rows[1]["fwd_ret_1h"] - 0.02) < 1e-10
+    assert rows[1]["raw_metric"] == 10.0
+
+    # Hàng cuối: không có T+1h -> fwd_ret = None
+    assert abs(rows[-1]["ret_past_1h"] - 0.02) < 1e-10
+    assert rows[-1]["fwd_ret_1h"] is None
+    assert rows[-1]["raw_metric"] == 40.0
+
+
+def test_raw_mode_control_variable_delta() -> None:
+    """Kiểm tra chốt an toàn hoạt động với biến đối chứng 'delta' trong mode raw."""
+    panel = _make_panel(n=200, seed=10)
+    # Đổi tên delta_norm -> delta
+    raw_rows = []
+    for r in panel:
+        row = dict(r)
+        row["delta"] = row.pop("delta_norm")
+        raw_rows.append(row)
+
+    # Chốt an toàn phải nhận diện 'delta' và pass
+    rho_ctrl, ok = check_control_variable(raw_rows, control_feature="delta")
+    assert ok, f"delta hop le phai dat chot an toan, got rho={rho_ctrl:.4f}"
+    assert rho_ctrl > CONTROL_MIN_RHO_TRUOC
+
+    # Khi delta bị hỏng -> raise RuntimeError
+    rng = random.Random(11)
+    broken_rows = [dict(r, delta=rng.gauss(0, 1.0)) for r in raw_rows]
+    with pytest.raises(RuntimeError, match="CHOT AN TOAN THAT BAI"):
+        run_leakage_audit(broken_rows, feature_names=["delta"], control_feature="delta", n_permutations=10)
+
+
+def test_dual_input_paths_produce_identical_correlations() -> None:
+    """Brief đợt 72 Task 3.3: Cùng một chuỗi dữ liệu đưa qua cả hai đường vào
+    (cột thô và feature panel) phải ra cùng rho_truoc và rho_sau.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from trading.feature_panel import build_feature_panel
+    from trading.models import Bar
+
+    rng = random.Random(72)
+    base = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    n_hours = 120
+
+    klines = []
+    metrics = []
+    orderflow = []
+
+    close = 40_000.0
+    for i in range(n_hours):
+        t_open = base + timedelta(hours=i)
+        t_close = t_open + timedelta(hours=1)
+        close *= 1.0 + rng.gauss(0, 0.01)
+
+        klines.append(Bar("BTCUSDT", t_open, close * 0.99, close * 1.01, close * 0.98, close, 1000.0))
+        # Metric được ghi nhận tại mốc đóng nến t_close
+        metrics.append({
+            "ts": t_close,
+            "sum_open_interest": 1000.0,
+            "sum_open_interest_value": 1000.0 * close,
+            "sum_taker_long_short_vol_ratio": 1.2 + rng.gauss(0, 0.15),
+        })
+        orderflow.append({
+            "ts": t_open,
+            "delta": rng.gauss(0, 20.0),
+            "taker_buy_volume": 500.0,
+            "taker_sell_volume": 500.0,
+            "buy_ratio": 0.5,
+            "trade_count": 100,
+        })
+
+    # Đường vào 1: Feature Panel (với metric_lag_minutes=0 để metric tại T được lấy tại đúng T)
+    panel = build_feature_panel(klines, [], metrics, orderflow, metric_lag_minutes=0)
+    panel = add_past_return_to_panel(panel)
+
+    feat_vals_panel = [r.get("taker_ls_vol_ratio") for r in panel]
+    past_vals_panel = [r.get("ret_past_1h") for r in panel]
+    fut_vals_panel = [r.get("fwd_ret_1h") for r in panel]
+
+    rho_t_panel, rho_s_panel, n_t_panel, n_s_panel = compute_leakage_pair(
+        feat_vals_panel, past_vals_panel, fut_vals_panel
+    )
+
+    # Đường vào 2: Cột thô từ DB (align_raw_series_to_returns)
+    close_by_t = {b.ts + timedelta(hours=1): b.close for b in klines}
+    raw_series = {
+        "sum_taker_long_short_vol_ratio": {m["ts"]: m["sum_taker_long_short_vol_ratio"] for m in metrics}
+    }
+    raw_rows = align_raw_series_to_returns(close_by_t, raw_series)
+
+    feat_vals_raw = [r.get("sum_taker_long_short_vol_ratio") for r in raw_rows]
+    past_vals_raw = [r.get("ret_past_1h") for r in raw_rows]
+    fut_vals_raw = [r.get("fwd_ret_1h") for r in raw_rows]
+
+    rho_t_raw, rho_s_raw, n_t_raw, n_s_raw = compute_leakage_pair(
+        feat_vals_raw, past_vals_raw, fut_vals_raw
+    )
+
+    # Khẳng định số hàng hợp lệ bằng nhau
+    assert n_t_panel == n_t_raw
+    assert n_s_panel == n_s_raw
+    assert n_t_panel > 10
+
+    # Khẳng định cả hai đường vào cho cùng rho_truoc và rho_sau chính xác
+    assert abs(rho_t_panel - rho_t_raw) < 1e-12, (
+        f"rho_truoc khong khop: panel={rho_t_panel}, raw={rho_t_raw}"
+    )
+    assert abs(rho_s_panel - rho_s_raw) < 1e-12, (
+        f"rho_sau khong khop: panel={rho_s_panel}, raw={rho_s_raw}"
+    )
+
