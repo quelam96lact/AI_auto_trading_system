@@ -1,3 +1,64 @@
+> **ĐÍNH CHÍNH TOÀN BỘ — 2026-09-21, cập nhật bởi Claude (auditor).** Tài liệu bên dưới dừng lại ở
+> 14/08. Từ đó tới nay (đợt 18 → đợt 76, hơn 40 lượt giao việc) gần như mọi mục "Cần làm" đã đóng.
+> **Đừng đọc phần thân bên dưới như hiện trạng** — chỉ đọc để hiểu lịch sử. Hiện trạng thật:
+>
+> **1. Công cụ đọc trạng thái go-live giờ đã tự động hoá — chạy nó, đừng đọc tài liệu này để suy
+> đoán.** `uv run python scripts/check_golive_gate.py` (đợt 57, 19/09) là cổng kiểm định sống,
+> đọc thẳng DB/log hiện tại — 9 tiêu chí (NAV, sức mua, độ tươi vị thế/sức mua, độ phủ luồng, lệch
+> triển khai, Telegram, cờ chính). Chạy lúc 21/09 18:37: **EXIT 0 — ĐỦ ĐIỀU KIỆN GO-LIVE** (mọi lá
+> chắn an toàn đạt, kể cả độ phủ luồng 100% với nguồn dữ liệu là file bền, không phải log tạm).
+>
+> **2. Mọi rủi ro kỹ thuật liệt kê trong tài liệu gốc bên dưới đã đóng:**
+> - Chặn 1 (vốn), Chặn 2 (position snapshot rỗng): đóng từ 13/08, xác nhận lại còn đúng.
+> - Rủi ro 3 (stop-loss lệnh thật): nối `ff3a26b`, còn nguyên — không phải cắt lỗ tự động, có ý
+>   thức.
+> - Rủi ro 4 (mất trailing stop khi restart): đóng `7b5d6aa`.
+> - Rủi ro 5 (mù ~1h45' sau restart): đóng `2665d48`, và đợt 74 (`2702d20`) đi xa hơn — engine giờ
+>   **phát hiện và cảnh báo** (GAP-1) khi cửa sổ warm-up có lỗ do khởi động giữa phiên, không chỉ
+>   nạp lại mà còn biết mình có nạp thiếu hay không.
+> - `save_account_positions` bỏ qua danh mục rỗng: đóng `55df5dd`.
+> - Rổ mã: đổi từ `[HII, IJC, AAA]` sang `[HPG, IJC, AAA]` (HII bị loại — thanh khoản không ổn
+>   định, xem `config/config.yaml` dòng 1-5); `real_order_account` chốt `0434221`.
+> - Chiến lược: đổi từ `sma_cross` sang `octopus_pullback` (04/09). Bug đơn vị thanh khoản (ngưỡng
+>   2 tỷ tính theo N bar 5 phút thay vì N ngày, khiến engine gần như câm) đã sửa phần lớn ở gói K
+>   (06/09) — `scripts/check_silent_engine.py` xác nhận lại 21/09: HPG 6 bull, IJC 6 bull, AAA 10
+>   bull, 0 bear, không mã nào câm.
+> - Logger `trading.alerts`/`trading.telegram` là anh em không phải cha con (đợt 57 mục H phát
+>   hiện) — đã sửa đợt 63/66: handler bền gắn vào logger cha `"trading"`, phủ cả hai.
+>
+> **3. Câu hỏi thật sự còn treo KHÔNG phải kỹ thuật nữa — là biên lợi thế, và câu trả lời đã có,
+> bốn lần độc lập, đều âm:**
+> - `octopus_pullback` trên diện rộng (439 mã, loại rác, sau khi gói K sửa bug đơn vị, đợt 57,
+>   19/09): **1.514 lệnh** — PnL chiến lược **−1.615.319.902**, PnL mua-và-giữ **+1.897.587.481.903**
+>   (chênh **−1.899 tỷ**). Mẫu đủ lớn để không phải "cỡ mẫu nhỏ".
+>   `uv run python scripts/measure_strategy.py --strategy octopus_pullback --exclude-file exclusions.txt`
+> - `sma_cross` (chiến lược cũ, đã bỏ 15/08): lỗ ở cả 4 cấu hình, kể cả trước phí. Xem phần thân
+>   bên dưới, mục "Backtest sau khi gỡ bế tắc".
+> - Buy-and-hold-có-nhịp theo độ rộng thị trường (đợt 61→64, 19/09): thua buy-and-hold thuần
+>   **10/11 năm** sau khi sửa lỗi đòn vay ảo. Xem
+>   `docs/superpowers/research/2026-09-19-dot-64-kiem-dinh-theo-nam-chong-overfit.md`.
+> - Sàng lọc 6 đặc trưng kỹ thuật (mom, RSI, vol_ratio, dist_from_sma, realized_vol) cho đúng
+>   HPG/IJC/AAA (đợt 76, 21/09): **18/18 cặp KHÔNG TÍN HIỆU** sau hoán vị khối + hiệu chỉnh FWER.
+>   Xem `docs/superpowers/plans/2026-09-21-brief-dot-76-sang-loc-tin-hieu-truoc-khi-dua-ml-vao.md`.
+>
+> Bốn phép đo độc lập, bốn kết luận âm. **Bật `real_trading_enabled: true` bây giờ là an toàn về
+> mặt kỹ thuật (cổng go-live xanh), nhưng đưa vốn thật vào một chiến lược đã đo có biên lợi thế
+> ÂM so với đứng yên.** Đây là quyết định của chủ dự án, không phải quyết định kỹ thuật.
+>
+> **4. Việc còn treo, không phải lỗi code:**
+> - T3 (đặt + huỷ một lệnh thật để nghiệm thu kết nối SSI Core) và T4 (diễn tập go-live) — cần
+>   phiên giao dịch thật, chỉ chủ dự án làm được, agent không tự động hoá được việc đặt lệnh thật.
+> - Docker Desktop tự tắt qua đêm hai lần liên tiếp (19→20, 20→21/09) — đã ghi nhận, chủ dự án chọn
+>   bỏ qua (21/09).
+> - Đã rà: không còn `TODO`/`FIXME` nào trong `trading/`, suite 731 passed (mặc định) / 849 (đầy
+>   đủ), `ruff` sạch, không có bug đã biết nào chưa đóng.
+>
+> Tài liệu gốc bên dưới **giữ nguyên**, không xoá — theo đúng nguyên tắc chính tài liệu này đặt ra:
+> "một audit khẳng định sai còn nguy hiểm hơn không có audit". Đọc để hiểu lịch sử, không dùng để
+> quyết định hôm nay.
+
+---
+
 # Audit go-live — 2026-08-13
 
 Kiểm tra toàn tuyến: **lấy dữ liệu → sinh tín hiệu → đẩy lệnh lên sàn**.
