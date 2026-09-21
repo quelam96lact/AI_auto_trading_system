@@ -1,11 +1,19 @@
 # Brief đợt 75 — Phần nối dây của GAP-1 chưa có một test nào
 
 Ngày giao: 21/09/2026 (thứ Hai, sau phiên).
-Base: main `2702d20`.
+Base: main `47f9c89`.
 Người giao: Claude (planner/auditor).
 Người thực thi: **Gemini Flash 3.8**.
 
 > **Thứ tự: đợt 75 → rồi đợt 72.** Đợt 75 nhỏ (một test), làm trước cho gọn.
+
+> **Cập nhật vận hành (không phải việc của bạn, chỉ để bạn biết bối cảnh):** Sau khi phiên đóng
+> 14:45 hôm nay, tôi đã tự dựng lại image `collector`/`engine` để đưa GAP-1 (`2702d20`) vào chạy
+> thật — job `deploy-drift` tự động lúc 08:00 sáng nay bị SKIP vì Docker chưa lên, nên bản vá chưa
+> từng được triển khai cho tới giờ. Đã xác nhận hai lớp: image ID khớp bản build mới, và
+> `hasattr(trading.engine.main, "count_warmup_gap")` trả `True` **bên trong** container đang chạy.
+> Rollback tag `:previous` đã gắn sẵn. Việc này không đổi gì trong brief — chỉ để bạn không ngạc
+> nhiên nếu thấy engine đã restart.
 
 ---
 
