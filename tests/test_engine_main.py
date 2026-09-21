@@ -1317,6 +1317,128 @@ async def test_engine_warmup_does_not_generate_orders(storage, monkeypatch):
     assert n == 0, f"warm-up KHONG duoc sinh lenh, thuc te orders={n}"
 
 
+# ============ Brief 75: phần nối dây GAP-1 trong run() ============
+
+
+async def test_gap1_warns_when_warmup_window_has_gap(storage, monkeypatch):
+    """GAP-1 A: có lỗ thì kêu — 3 khẳng định theo brief 75 §1.2.
+
+    Kịch bản: warm-up 21 bar bước 5 phút bắt đầu 09:15 (warmed_until = 10:55).
+    Nến live đầu tiên nhảy cóc đến 11:05 (bỏ qua 11:00) → 1 nến thiếu.
+    Hai nến tiếp theo liền mạch (11:10, 11:15) → tổng WARN GAP-1 phải = 1.
+
+    Khẳng định 1 (có lỗ thì kêu): phát đúng một WARN có missing_bars.
+    Khẳng định 2 (giá trị đúng): WARN mang symbol, warmed_until, first_live_ts, missing_bars.
+    Khẳng định 3 (chỉ một lần): 2 nến kế tiếp không phát thêm WARN GAP-1.
+    """
+    import dataclasses
+
+    import trading.engine.main as engine_main
+
+    alerts_seen: list[tuple] = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
+    )
+
+    # bar_interval_minutes=5 để count_warmup_gap tính đúng (bước nến = 5 phút)
+    cfg = dataclasses.replace(make_cfg(), bar_interval_minutes=5)
+
+    # Seed 21 bar warm-up bước 5 phút từ 09:15 (ngày giao dịch)
+    ts0 = datetime(2026, 9, 21, 9, 15, tzinfo=TZ)  # thứ Hai, không lễ
+    warm = [
+        Bar("ENGT", ts0 + timedelta(minutes=5 * i), 10.0, 10.0, 10.0, 10.0, 1000)
+        for i in range(21)
+    ]  # bar cuối: ts0 + 100 phút = 10:55
+    storage.write_bars(warm)
+    warmed_until_expected = warm[-1].ts  # 10:55
+
+    # Nến live: nhảy cóc qua 11:00 đến 11:05, rồi liền mạch 11:10 và 11:15
+    live_ts_gap = warmed_until_expected + timedelta(minutes=10)   # 11:05 — CÓ LỖ
+    live_ts_2 = warmed_until_expected + timedelta(minutes=15)     # 11:10 — liền sau
+    live_ts_3 = warmed_until_expected + timedelta(minutes=20)     # 11:15 — liền sau
+
+    live_bars = [
+        Bar("ENGT", live_ts_gap, 10.0, 10.0, 10.0, 10.0, 1000),
+        Bar("ENGT", live_ts_2, 10.0, 10.0, 10.0, 10.0, 1000),
+        Bar("ENGT", live_ts_3, 10.0, 10.0, 10.0, 10.0, 1000),
+    ]
+    await _publish(cfg, live_bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=3)
+
+    # Lọc chỉ lấy alert GAP-1 (nhận ra qua khóa 'missing_bars')
+    gap1_warns = [
+        (lvl, msg, f)
+        for lvl, msg, f in alerts_seen
+        if lvl == "WARN" and "missing_bars" in f
+    ]
+
+    # Khẳng định 1: đúng một WARN GAP-1
+    assert len(gap1_warns) == 1, (
+        f"Phai co dung 1 WARN GAP-1 (missing_bars), thuc te = {len(gap1_warns)}: {gap1_warns}"
+    )
+
+    # Khẳng định 2: giá trị đúng
+    _, _, fields = gap1_warns[0]
+    assert fields["symbol"] == "ENGT", f"symbol sai: {fields['symbol']}"
+    assert fields["missing_bars"] == 1, f"missing_bars phai = 1, got {fields['missing_bars']}"
+    # warmed_until và first_live_ts trong fields là isoformat UTC (DB đọc ra UTC),
+    # so sánh theo UTC thay vì chuỗi raw để tránh mismatch timezone display.
+    wu_parsed = datetime.fromisoformat(fields["warmed_until"])
+    lt_parsed = datetime.fromisoformat(fields["first_live_ts"])
+    assert wu_parsed == warmed_until_expected.astimezone(wu_parsed.tzinfo), (
+        f"warmed_until sai: {fields['warmed_until']} != {warmed_until_expected}"
+    )
+    assert lt_parsed == live_ts_gap.astimezone(lt_parsed.tzinfo), (
+        f"first_live_ts sai: {fields['first_live_ts']} != {live_ts_gap}"
+    )
+
+    # Khẳng định 3: chỉ 1 lần (nến 2 và 3 không phát thêm)
+    # (đã kiểm qua len(gap1_warns) == 1 ở trên — _warmup_gap_checked giữ yên)
+
+
+async def test_gap1_silent_when_warmup_window_is_contiguous(storage, monkeypatch):
+    """GAP-1 B: liền mạch thì im — §1.2 khẳng định 2 (ca phủ định).
+
+    Nến live đầu tiên = warmed_until + 5 phút (liền kề) → count_warmup_gap = 0
+    → không WARN GAP-1 nào.
+    """
+    import dataclasses
+
+    import trading.engine.main as engine_main
+
+    alerts_seen: list[tuple] = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: alerts_seen.append((level, msg, f)),
+    )
+
+    cfg = dataclasses.replace(make_cfg(), bar_interval_minutes=5)
+
+    ts0 = datetime(2026, 9, 21, 9, 15, tzinfo=TZ)
+    warm = [
+        Bar("ENGT", ts0 + timedelta(minutes=5 * i), 10.0, 10.0, 10.0, 10.0, 1000)
+        for i in range(21)
+    ]  # warmed_until = 10:55
+    storage.write_bars(warm)
+
+    # Nến live ngay liền kề: 11:00 = warmed_until + 5 phút
+    live_ts_next = warm[-1].ts + timedelta(minutes=5)  # 11:00
+    await _publish(cfg, [Bar("ENGT", live_ts_next, 10.0, 10.0, 10.0, 10.0, 1000)])
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+
+    gap1_warns = [
+        (lvl, msg, f)
+        for lvl, msg, f in alerts_seen
+        if lvl == "WARN" and "missing_bars" in f
+    ]
+    assert len(gap1_warns) == 0, (
+        f"Lien mach phai im lang — khong WARN GAP-1, thuc te: {gap1_warns}"
+    )
+
+
 # ============ Plan 2026-09-01 T2-B1: GUARD-3 cong bo quyen ban ============
 
 
