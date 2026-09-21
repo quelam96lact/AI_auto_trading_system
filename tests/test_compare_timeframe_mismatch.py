@@ -10,6 +10,7 @@ Kiểm chứng:
 from datetime import datetime, timedelta
 
 import psycopg
+import pytest
 
 from scripts._db_common import resolve_dsn
 from scripts.compare_timeframe_mismatch import (
@@ -71,6 +72,7 @@ def test_2_condition_diagnosis_logic_on_synthetic_data():
     assert strat._liquidity_ok(sym) is True
 
 
+@pytest.mark.integration
 def test_3_deterministic_reproducibility_on_real_db():
     """3. Chạy hai lần trên DB cho kết quả giống hệt 100%."""
     conn = psycopg.connect(resolve_dsn(None))
@@ -93,6 +95,7 @@ def test_3_deterministic_reproducibility_on_real_db():
         conn.close()
 
 
+@pytest.mark.integration
 def test_4_direct_db_counts_match_comparison_counts():
     """4. Số nến và lệnh đọc được trong comparison khớp tuyệt đối với query count(*) trực tiếp."""
     conn = psycopg.connect(resolve_dsn(None))
