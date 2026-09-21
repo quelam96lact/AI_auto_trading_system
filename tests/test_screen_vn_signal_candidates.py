@@ -266,3 +266,107 @@ def test_no_lookahead_in_candidate_features_and_sabotage() -> None:
     leaky_val_orig = bars[t_idx + 1]["close"] / bars[t_idx]["close"] - 1.0
     leaky_val_mut = bars_mutated[t_idx + 1]["close"] / bars_mutated[t_idx]["close"] - 1.0
     assert leaky_val_orig != leaky_val_mut, "Phép phá hoại phải thay đổi giá trị đặc trưng rò rỉ"
+
+
+# ==============================================================================
+# 5. Test hàm binomial và summarize_results — Brief đợt 77 Task 4.2
+# ==============================================================================
+
+
+from scripts.screen_batch_vn_stocks import (
+    binomial_p_value,
+    is_hit_rate_abnormal,
+    summarize_results,
+)
+
+
+def test_binomial_p_value_null_rate_is_not_abnormal() -> None:
+    """100 mã giả với 5 lần trúng (đúng tỷ lệ 5%) → KHÔNG bất thường.
+
+    Brief đợt 77 §3.2: 'dựng 100 mã giả với xác suất trúng đúng 5% theo thiết kế,
+    xác nhận hàm không báo bất thường'.
+    """
+    n = 100
+    # 5/100 = đúng xác suất null 5% → p-value cao (không bất thường)
+    observed = 5
+    pv = binomial_p_value(observed, n, p=0.05)
+    assert pv > 0.05, (
+        f"5/100 trúng không được báo bất thường (p-value phải > 0.05, got {pv:.4f})"
+    )
+    assert not is_hit_rate_abnormal(observed, n, p=0.05), (
+        "5/100 trúng không được báo bất thường"
+    )
+
+
+def test_binomial_p_value_high_rate_is_abnormal() -> None:
+    """100 mã giả với 30 lần trúng (30%) → BẤT THƯỜNG so với ngẫu nhiên 5%.
+
+    Brief đợt 77 §3.2: 'dựng 100 mã giả với 30% trúng, xác nhận hàm báo bất thường'.
+    """
+    n = 100
+    observed = 30  # 30% >> 5%
+    pv = binomial_p_value(observed, n, p=0.05)
+    # Với B(100, 0.05), P(X >= 30) là cực kỳ nhỏ
+    assert pv < 1e-10, (
+        f"30/100 trúng phải báo bất thường (p-value phải < 1e-10, got {pv:.2e})"
+    )
+    assert is_hit_rate_abnormal(observed, n, p=0.05), (
+        "30/100 trúng phải báo bất thường"
+    )
+
+
+def test_binomial_p_value_zero_hits() -> None:
+    """0 lần trúng → p-value = 1.0 (không bất thường)."""
+    pv = binomial_p_value(0, 50, p=0.05)
+    assert pv == 1.0, f"0 lần trúng phải có p-value=1.0, got {pv}"
+    assert not is_hit_rate_abnormal(0, 50, p=0.05), "0 trúng không được báo bất thường"
+
+
+def test_summarize_results_counts_correctly() -> None:
+    """summarize_results đếm đúng số CO_TIN_HIEU per đặc trưng.
+
+    Kiểm với dữ liệu tổng hợp có đáp số biết trước: 3/4 mã giả trúng cho feature[0],
+    0/4 mã trúng cho feature[1..5] → summarize trả đúng số đó.
+    """
+    feat0 = FEATURE_NAMES[0]
+    feat1 = FEATURE_NAMES[1]
+
+    def _make_fake_res(symbol: str, hit_feat0: bool) -> dict:
+        """Tạo kết quả giả của screen_symbol()."""
+        results = []
+        for feat in FEATURE_NAMES:
+            if feat == feat0 and hit_feat0:
+                flag = "CO_TIN_HIEU"
+            else:
+                flag = "KHONG_TIN_HIEU"
+            results.append({
+                "feature": feat,
+                "rho_truoc": 0.0,
+                "rho_sau": 0.1 if flag == "CO_TIN_HIEU" else 0.0,
+                "n_truoc": 100,
+                "n_sau": 100,
+                "threshold": 0.05,
+                "flag": flag,
+            })
+        return {"symbol": symbol, "n_bars": 100, "rho_control": 0.8, "threshold_p95": 0.05, "results": results}
+
+    fake_all = [
+        _make_fake_res("A", hit_feat0=True),
+        _make_fake_res("B", hit_feat0=True),
+        _make_fake_res("C", hit_feat0=True),
+        _make_fake_res("D", hit_feat0=False),
+    ]
+    summary = summarize_results(fake_all, n_total=4)
+
+    # feat0: 3 lần trúng
+    row0 = next(r for r in summary if r["feature"] == feat0)
+    assert row0["n_hit"] == 3, f"feat0 phải 3 lần trúng, got {row0['n_hit']}"
+    assert row0["n_total"] == 4
+
+    # feat1: 0 lần trúng
+    row1 = next(r for r in summary if r["feature"] == feat1)
+    assert row1["n_hit"] == 0, f"feat1 phải 0 lần trúng, got {row1['n_hit']}"
+
+    # Kỳ vọng ngẫu nhiên = 0.05 * 4 = 0.2
+    assert abs(row0["expected_random"] - 0.2) < 1e-10
+
