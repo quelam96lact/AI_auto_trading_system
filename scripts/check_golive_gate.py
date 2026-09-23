@@ -38,6 +38,10 @@ from trading.real_orders import (
 # Brief 79 Task 2: Ngưỡng tuổi NAV cảnh báo (khớp ngưỡng > 24h trong trading/engine/main.py:229)
 NAV_MAX_AGE_HOURS = 24
 
+# Brief 80 Task 3: Tiêu chí 6 chỉ coi phiên là "hoàn tất" sau khi job đo độ phủ đã có cơ hội chạy.
+# Tác vụ Windows `trading-stream-health` chạy 15:10:00 +07; cộng thêm biên an toàn 15 phút.
+STREAM_COVERAGE_READY_TIME = time(15, 25)
+
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -151,16 +155,16 @@ def get_latest_completed_trading_day(
     now: datetime,
     holidays: set[date] | frozenset = frozenset(),
 ) -> date:
-    """Xác định ngày của phiên giao dịch hoàn tất gần nhất (Brief 79 Task 1).
+    """Xác định ngày của phiên giao dịch hoàn tất gần nhất (Brief 79 Task 1 & Brief 80 Task 3).
 
     Quy tắc:
     Lùi dần từng ngày từ ngày hiện tại. Ngày đầu tiên thỏa is_trading_day()
-    VÀ đã qua 14:45 VN (nếu là hôm nay thì giờ >= 14:45 VN; nếu là ngày trong
-    quá khứ thì phiên đó đương nhiên đã đóng cửa hoàn tất).
+    VÀ đã qua STREAM_COVERAGE_READY_TIME VN (nếu là hôm nay thì giờ >= STREAM_COVERAGE_READY_TIME;
+    nếu là ngày trong quá khứ thì phiên đó đương nhiên đã đóng cửa hoàn tất).
     """
     now_vn = now.astimezone(TZ)
     cur_date = now_vn.date()
-    if is_trading_day(cur_date, holidays) and now_vn.time() >= time(14, 45):
+    if is_trading_day(cur_date, holidays) and now_vn.time() >= STREAM_COVERAGE_READY_TIME:
         return cur_date
 
     cur_date -= timedelta(days=1)
@@ -205,8 +209,33 @@ def evaluate_golive_gate(
         )
     )
 
-    # 2. Tài khoản và NAV (Brief 79 Task 2: Lá chắn độ tươi NAV)
-    if nav is not None:
+    # 2. Tài khoản và NAV (Brief 79 Task 2 & Brief 80 Task 4)
+    # Thứ tự ưu tiên kiểm tra:
+    # 1) nav is None -> FAIL
+    # 2) nav <= 0 -> FAIL (số liệu tài khoản không dùng được để tính rủi ro)
+    # 3) nav cũ hơn 24h -> WARN
+    # 4) Còn lại -> PASS
+    if nav is None:
+        items.append(
+            GateItem(
+                name="Tài khoản & NAV",
+                requirement=f"Tài khoản {real_account} có snapshot NAV > 0",
+                measured_value="Không có dữ liệu",
+                status="FAIL",
+                note="Chưa có bản ghi nào trong account_nav_snapshot",
+            )
+        )
+    elif nav <= 0:
+        items.append(
+            GateItem(
+                name="Tài khoản & NAV",
+                requirement=f"Tài khoản {real_account} có snapshot NAV > 0",
+                measured_value=format_currency(nav),
+                status="FAIL",
+                note="NAV <= 0 — số liệu tài khoản không dùng được để tính rủi ro (không thể xác định vốn thật)",
+            )
+        )
+    else:
         nav_max_sec = NAV_MAX_AGE_HOURS * 3600.0
         if nav_age_sec is not None and nav_age_sec > nav_max_sec:
             age_h = nav_age_sec / 3600.0
@@ -229,16 +258,6 @@ def evaluate_golive_gate(
                     note=f"Tài khoản cấu hình: {real_account}",
                 )
             )
-    else:
-        items.append(
-            GateItem(
-                name="Tài khoản & NAV",
-                requirement=f"Tài khoản {real_account} có snapshot NAV",
-                measured_value="Không có dữ liệu",
-                status="FAIL",
-                note="Chưa có bản ghi nào trong account_nav_snapshot",
-            )
-        )
 
 
     # 3. Sức mua từng mã trong danh mục

@@ -323,3 +323,122 @@ def test_golive_gate_nav_boundary_24h():
     assert item2.status == "PASS"
 
 
+# ==============================================================================
+# Brief 80: Task 3 (Bịt khung 14:45-15:25 tiêu chí 6) & Task 4 (NAV <= 0 FAIL)
+# ==============================================================================
+
+
+def test_golive_gate_stream_coverage_before_ready_time_passes():
+    """Brief 80 Task 3: Chạy lúc 14:50 (trước 15:25), phiên hôm nay chưa hoàn tất -> số đo hôm qua vẫn PASS."""
+    from datetime import datetime
+
+    from trading.calendar_vn import TZ
+
+    # Ngày 22/09 đo luồng (hôm qua), chạy cổng 23/09 lúc 14:50 VN (phiên 23/09 chưa chạm 15:25)
+    measured_at = datetime(2026, 9, 22, 15, 10, tzinfo=TZ)
+    now_run = datetime(2026, 9, 23, 14, 50, tzinfo=TZ)
+
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=5_000_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=1.0,
+        stream_coverage_summary="100.0% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        stream_measured_at=measured_at,
+        stream_age_sec=(now_run - measured_at).total_seconds(),
+        now=now_run,
+    )
+    assert exit_code == 0
+    item6 = next(it for it in items if it.name == "Độ phủ luồng phiên gần nhất")
+    assert item6.status == "PASS"
+
+
+def test_golive_gate_stream_coverage_after_ready_time_fails():
+    """Brief 80 Task 3: Chạy lúc 15:30 (sau 15:25), phiên hôm nay đã hoàn tất mà vẫn dùng số đo hôm qua -> FAIL."""
+    from datetime import datetime
+
+    from trading.calendar_vn import TZ
+
+    # Ngày 22/09 đo luồng, chạy cổng 23/09 lúc 15:30 VN (sau 15:25)
+    measured_at = datetime(2026, 9, 22, 15, 10, tzinfo=TZ)
+    now_run = datetime(2026, 9, 23, 15, 30, tzinfo=TZ)
+
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=5_000_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=1.0,
+        stream_coverage_summary="100.0% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        stream_measured_at=measured_at,
+        stream_age_sec=(now_run - measured_at).total_seconds(),
+        now=now_run,
+    )
+    assert exit_code == 2
+    item6 = next(it for it in items if it.name == "Độ phủ luồng phiên gần nhất")
+    assert item6.status == "FAIL"
+
+
+def test_golive_gate_nav_zero_fails():
+    """Brief 80 Task 4: NAV = 0 -> FAIL (exit_code 2), số liệu không dùng được để tính rủi ro."""
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=0.0,  # NAV bằng 0
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=1.0,
+        stream_coverage_summary="100.0% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        nav_age_sec=100.0,  # Rất tươi
+    )
+    assert exit_code == 2
+    item2 = next(it for it in items if it.name == "Tài khoản & NAV")
+    assert item2.status == "FAIL"
+    assert "không dùng được để tính rủi ro" in item2.note
+
+
+def test_golive_gate_nav_negative_fails():
+    """Brief 80 Task 4: NAV âm -> FAIL (exit_code 2)."""
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=-500_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=1.0,
+        stream_coverage_summary="100.0% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        nav_age_sec=100.0,
+    )
+    assert exit_code == 2
+    item2 = next(it for it in items if it.name == "Tài khoản & NAV")
+    assert item2.status == "FAIL"
+
+
+
