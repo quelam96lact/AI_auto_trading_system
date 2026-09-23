@@ -19,7 +19,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import psycopg
@@ -29,11 +29,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, is_trading_day
 from trading.real_orders import (
     BUYING_POWER_MAX_AGE_MINUTES,
     POSITION_MAX_AGE_MINUTES,
 )
+
+# Brief 79 Task 2: Ngưỡng tuổi NAV cảnh báo (khớp ngưỡng > 24h trong trading/engine/main.py:229)
+NAV_MAX_AGE_HOURS = 24
+
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -143,6 +147,29 @@ def check_deploy_drift() -> tuple[bool, str]:
         return False, f"Lỗi kiểm tra deploy drift: {e}"
 
 
+def get_latest_completed_trading_day(
+    now: datetime,
+    holidays: set[date] | frozenset = frozenset(),
+) -> date:
+    """Xác định ngày của phiên giao dịch hoàn tất gần nhất (Brief 79 Task 1).
+
+    Quy tắc:
+    Lùi dần từng ngày từ ngày hiện tại. Ngày đầu tiên thỏa is_trading_day()
+    VÀ đã qua 14:45 VN (nếu là hôm nay thì giờ >= 14:45 VN; nếu là ngày trong
+    quá khứ thì phiên đó đương nhiên đã đóng cửa hoàn tất).
+    """
+    now_vn = now.astimezone(TZ)
+    cur_date = now_vn.date()
+    if is_trading_day(cur_date, holidays) and now_vn.time() >= time(14, 45):
+        return cur_date
+
+    cur_date -= timedelta(days=1)
+    while True:
+        if is_trading_day(cur_date, holidays):
+            return cur_date
+        cur_date -= timedelta(days=1)
+
+
 def evaluate_golive_gate(
     real_trading_enabled: bool,
     real_account: str,
@@ -159,6 +186,8 @@ def evaluate_golive_gate(
     symbols: list[str],
     stream_measured_at: datetime | None = None,
     stream_age_sec: float | None = None,
+    nav_age_sec: float | None = None,
+    now: datetime | None = None,
 ) -> tuple[int, list[GateItem]]:
     """Hàm thuần đánh giá các tiêu chí cổng go-live, không phụ thuộc I/O."""
     items: list[GateItem] = []
@@ -176,17 +205,30 @@ def evaluate_golive_gate(
         )
     )
 
-    # 2. Tài khoản và NAV
+    # 2. Tài khoản và NAV (Brief 79 Task 2: Lá chắn độ tươi NAV)
     if nav is not None:
-        items.append(
-            GateItem(
-                name="Tài khoản & NAV",
-                requirement=f"Tài khoản {real_account} có snapshot NAV",
-                measured_value=format_currency(nav),
-                status="PASS",
-                note=f"Tài khoản cấu hình: {real_account}",
+        nav_max_sec = NAV_MAX_AGE_HOURS * 3600.0
+        if nav_age_sec is not None and nav_age_sec > nav_max_sec:
+            age_h = nav_age_sec / 3600.0
+            items.append(
+                GateItem(
+                    name="Tài khoản & NAV",
+                    requirement=f"Tài khoản {real_account} có snapshot NAV <= {NAV_MAX_AGE_HOURS}h",
+                    measured_value=f"{format_currency(nav)} ({format_age(nav_age_sec)})",
+                    status="WARN",
+                    note=f"NAV cũ hơn {NAV_MAX_AGE_HOURS}h ({age_h:.1f}h) — tài khoản cấu hình: {real_account}",
+                )
             )
-        )
+        else:
+            items.append(
+                GateItem(
+                    name="Tài khoản & NAV",
+                    requirement=f"Tài khoản {real_account} có snapshot NAV",
+                    measured_value=format_currency(nav),
+                    status="PASS",
+                    note=f"Tài khoản cấu hình: {real_account}",
+                )
+            )
     else:
         items.append(
             GateItem(
@@ -197,6 +239,7 @@ def evaluate_golive_gate(
                 note="Chưa có bản ghi nào trong account_nav_snapshot",
             )
         )
+
 
     # 3. Sức mua từng mã trong danh mục
     lacking_symbols = [s for s in symbols if buying_powers.get(s, 0) < 100]
@@ -285,7 +328,25 @@ def evaluate_golive_gate(
         else:
             measured_val_str = cov_pct_str
 
-        if stream_coverage >= 0.90:
+        # Brief 79 Task 1: Tiêu chí 6 phải FAIL nếu số đo không thuộc phiên hoàn tất gần nhất
+        effective_now = now or datetime.now(TZ)
+        latest_completed_day = get_latest_completed_trading_day(effective_now)
+
+        if stream_measured_at is not None and stream_measured_at.date() != latest_completed_day:
+            items.append(
+                GateItem(
+                    name="Độ phủ luồng phiên gần nhất",
+                    requirement=">= 90% số nến chốt",
+                    measured_value=measured_val_str,
+                    status="FAIL",
+                    note=(
+                        f"Số đo từ phiên {stream_measured_at.strftime('%d/%m')} "
+                        f"nhưng phiên hoàn tất gần nhất là {latest_completed_day.strftime('%d/%m')} — "
+                        f"không có dữ liệu luồng cho phiên gần nhất."
+                    ),
+                )
+            )
+        elif stream_coverage >= 0.90:
             items.append(
                 GateItem(
                     name="Độ phủ luồng phiên gần nhất",
@@ -408,6 +469,7 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
 
     # Đọc DB
     nav = None
+    nav_age_sec = None
     buying_powers = {}
     bp_age_sec = None
     pos_age_sec = None
@@ -415,14 +477,17 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
 
     try:
         with psycopg.connect(dsn, connect_timeout=10) as conn, conn.cursor() as cur:
-            # 1. NAV
+            # 1. NAV (Brief 79 Task 2: Đọc kèm timestamp để tính tuổi)
             cur.execute(
-                "SELECT nav FROM account_nav_snapshot WHERE account_no = %s ORDER BY ts DESC LIMIT 1;",
+                "SELECT nav, ts FROM account_nav_snapshot WHERE account_no = %s ORDER BY ts DESC LIMIT 1;",
                 (real_account,),
             )
             r_nav = cur.fetchone()
             if r_nav and r_nav[0] is not None:
                 nav = float(r_nav[0])
+                if r_nav[1]:
+                    nav_ts = r_nav[1].astimezone(TZ)
+                    nav_age_sec = (now_vn - nav_ts).total_seconds()
 
             # 2. Sức mua
             for sym in symbols:
@@ -488,6 +553,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
         symbols=symbols,
         stream_measured_at=stream_measured_at,
         stream_age_sec=stream_age_sec,
+        nav_age_sec=nav_age_sec,
+        now=now_vn,
     )
 
     # In bảng báo cáo
