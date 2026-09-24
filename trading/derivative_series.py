@@ -251,24 +251,80 @@ def stitch_continuous(
         bars = bars_by_symbol.get(sym, [])
 
         for b in bars:
-            # Lọc bỏ nến rác/placeholder Open=0, Volume=0, Close=0 từ SSI API
-            if b.open == 0 and b.volume == 0 and b.close == 0:
+            # Dọn nến hỏng (open=0, low=0) theo quy tắc cấu trúc thị trường
+            cleaned_b = clean_bar(b)
+            if cleaned_b is None:
                 continue
 
-            bar_date = b.ts.astimezone(TZ).date() if b.ts.tzinfo else b.ts.date()
+            bar_date = cleaned_b.ts.astimezone(TZ).date() if cleaned_b.ts.tzinfo else cleaned_b.ts.date()
             if start_d <= bar_date <= end_d:
                 stitched.append(
                     Bar(
                         symbol=continuous_symbol,
-                        ts=b.ts,
-                        open=round(b.open + adj, 4),
-                        high=round(b.high + adj, 4),
-                        low=round(b.low + adj, 4),
-                        close=round(b.close + adj, 4),
-                        volume=b.volume,
-                        source=b.source,
+                        ts=cleaned_b.ts,
+                        open=round(cleaned_b.open + adj, 4),
+                        high=round(cleaned_b.high + adj, 4),
+                        low=round(cleaned_b.low + adj, 4),
+                        close=round(cleaned_b.close + adj, 4),
+                        volume=cleaned_b.volume,
+                        source=cleaned_b.source,
                     )
                 )
 
     stitched.sort(key=lambda b: b.ts)
     return stitched
+
+
+class BarCleanAction:
+    """Các hành động xử lý nến có giá trị 0."""
+
+    KEEP = "keep"
+    FIX_ATC = "fix_atc"
+    REPORT = "report"
+    DELETE = "delete"
+
+
+def classify_bar_for_cleaning(bar: Bar) -> str:
+    """Phân loại nến có giá trị lỗi (open=0, low=0, high=0, hoặc close=0).
+
+    Quy tắc cấu trúc thị trường (Brief 84 Task 2):
+    - Nếu nến bình thường (toàn bộ OHLC > 0): KEEP.
+    - Nếu nến có giá trị <= 0:
+      - Nến 14:45 (phiên ATC - khớp tại một mức giá duy nhất):
+        - Nếu high == close: FIX_ATC (sửa open = low = close).
+        - Nếu high != close: REPORT (báo cáo riêng, không sửa).
+      - Mọi nến khác (bao gồm 09:00 gộp nhiều mức giá): DELETE (xoá bỏ, không đoán giá).
+    """
+    if bar.open > 0 and bar.high > 0 and bar.low > 0 and bar.close > 0:
+        return BarCleanAction.KEEP
+
+    ts_vn = bar.ts.astimezone(TZ) if bar.ts.tzinfo else bar.ts
+    is_atc = (ts_vn.hour == 14 and ts_vn.minute == 45)
+
+    if is_atc:
+        if bar.high == bar.close:
+            return BarCleanAction.FIX_ATC
+        return BarCleanAction.REPORT
+    return BarCleanAction.DELETE
+
+
+def clean_bar(bar: Bar) -> Bar | None:
+    """Áp dụng quy tắc dọn nến: trả về Bar đã sửa, None (nếu xoá), hoặc Bar gốc."""
+    action = classify_bar_for_cleaning(bar)
+    if action == BarCleanAction.KEEP:
+        return bar
+    if action == BarCleanAction.FIX_ATC:
+        return Bar(
+            symbol=bar.symbol,
+            ts=bar.ts,
+            open=bar.close,
+            high=bar.high,
+            low=bar.close,
+            close=bar.close,
+            volume=bar.volume,
+            source=bar.source,
+        )
+    if action == BarCleanAction.DELETE:
+        return None
+    # BarCleanAction.REPORT: giữ nguyên nến gốc để kiểm tra/báo cáo
+    return bar

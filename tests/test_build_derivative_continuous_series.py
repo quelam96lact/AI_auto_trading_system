@@ -54,3 +54,33 @@ def test_front_month_contracts_ordering():
     # Hợp đồng đầu tiên là G4 (tháng 4) và kết thúc là GA (tháng 10)
     assert FRONT_MONTH_CONTRACTS[0].symbol == "41I1G4000"
     assert FRONT_MONTH_CONTRACTS[-1].symbol == "41I1GA000"
+
+
+def test_audit_series_integrity_detects_missing_and_incomplete_sessions():
+    """Kiểm thử phát hiện phiên thiếu và phiên không đủ 49 nến."""
+    from datetime import date
+
+    from scripts.build_derivative_continuous_series import audit_series_integrity
+
+    d1 = date(2026, 7, 3)   # Chuẩn 49 nến
+    d2 = date(2026, 7, 6)   # Thiếu hoàn toàn (0 nến)
+    d3 = date(2026, 7, 7)   # Dị thường (chỉ 1 nến)
+    d4 = date(2026, 7, 8)   # Chuẩn 49 nến
+    today = date(2026, 7, 9)  # Hôm nay dở dang 10 nến
+
+    expected_trading_days = [d1, d2, d3, d4, today]
+    series_dates_map = {
+        d1: 49,
+        # d2 thiếu
+        d3: 1,
+        d4: 49,
+        today: 10,
+    }
+
+    res = audit_series_integrity(series_dates_map, expected_trading_days, today)
+
+    assert res["expected_count"] == 5
+    assert res["full_count"] == 2  # d1 và d4
+    assert res["missing_sessions"] == [d2]
+    assert res["incomplete_sessions"] == [(d3, 1)]
+    assert res["problematic_dates"] == [d2, d3]

@@ -583,3 +583,23 @@ def test_open_fee_cleared_between_rounds():
         f"realized 2 vong phai = {expected}, thuc te: {b.realized_pnl}"
     )
     assert abs((b.cash - b.capital) - b.realized_pnl) < 0.01
+
+
+# ============ Brief 84 Task 4: Tham số CLI --symbol bắt buộc ============
+
+
+def test_parse_args_requires_symbol():
+    """Kiểm thử bắt buộc có tham số --symbol trong CLI."""
+    import pytest
+
+    from trading.derivative_backtest import parse_args
+
+    # Khi có đủ --symbol: thành công
+    args = parse_args(["--symbol", "VN30F1M_CONT", "--from", "2026-09-01", "--to", "2026-09-20"])
+    assert args.symbol == "VN30F1M_CONT"
+    assert args.frm == "2026-09-01"
+    assert args.to == "2026-09-20"
+
+    # Khi thiếu --symbol: báo lỗi argparse SystemExit (code != 0)
+    with pytest.raises(SystemExit):
+        parse_args(["--from", "2026-09-01", "--to", "2026-09-20"])

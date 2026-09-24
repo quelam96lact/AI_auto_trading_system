@@ -14,8 +14,8 @@ from trading.models import Bar
 from trading.storage.db import Storage
 from trading.strategies.sma_cross import SmaCrossStrategy
 
-# VN30F1M front-month - xac nhan that 2026-07-26, dao han 2026-08-20.
-# KHONG tu dong roll - xem spec.
+# DEPRECATED (Brief 84): Hằng số cũ để giữ tương thích import cho các test cũ.
+# CLI và logic nghiệp vụ KHÔNG dùng hằng số này; bắt buộc truyền tham số --symbol.
 DERIVATIVE_SYMBOL = "41I1G8000"
 
 
@@ -162,20 +162,29 @@ def run_derivative_backtest(
     )
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Chạy backtest cho phân hệ phái sinh VN.")
+    ap.add_argument(
+        "--symbol",
+        required=True,
+        help="Mã hợp đồng phái sinh hoặc chuỗi liên tục (bắt buộc, vd: VN30F1M_CONT, 41I1GA000)",
+    )
     ap.add_argument("--from", dest="frm", required=True, help="YYYY-MM-DD")
     ap.add_argument("--to", dest="to", required=True, help="YYYY-MM-DD")
     ap.add_argument("--capital", type=float, default=100_000_000.0)
     ap.add_argument("--config", default="config/config.yaml")
-    args = ap.parse_args()
+    return ap.parse_args(args)
+
+
+def main() -> None:
+    args = parse_args()
 
     cfg = load_config(args.config)
     storage = Storage(cfg.db_dsn)
     frm = datetime.strptime(args.frm, "%Y-%m-%d").replace(tzinfo=TZ)
     to = datetime.strptime(args.to, "%Y-%m-%d").replace(tzinfo=TZ) + timedelta(days=1)
 
-    bars = storage.read_bars(DERIVATIVE_SYMBOL, frm, to)
+    bars = storage.read_derivative_bars(args.symbol, frm, to)
 
     strategy = SmaCrossStrategy(qty=1)
     risk = DerivativeRiskManager(capital=args.capital)

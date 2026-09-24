@@ -109,10 +109,22 @@ class Storage:
     def write_daily(self, bars: list[Bar]) -> None:
         self._write("bars_daily", bars)
 
+    def write_derivative_bars(self, bars: list[Bar]) -> None:
+        self._write("bars_derivative", bars)
+
     def read_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
         with self.conn() as c:
             rows = c.execute(
                 "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
+                "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
+                (symbol, start, end),
+            ).fetchall()
+        return [Bar(*r) for r in rows]
+
+    def read_derivative_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_derivative "
                 "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
                 (symbol, start, end),
             ).fetchall()

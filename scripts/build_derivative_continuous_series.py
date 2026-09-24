@@ -154,7 +154,11 @@ async def fetch_and_store_contract_5m_bars(
             if rows:
                 for r in rows:
                     # Bỏ qua các nến rác ngoài giờ khớp lệnh do SSI API trả về ở phiên gần
-                    if float(r.open_price) == 0 and float(r.volume) == 0 and float(r.close_price) == 0:
+                    if (
+                        float(r.open_price) == 0
+                        and float(r.volume) == 0
+                        and float(r.close_price) == 0
+                    ):
                         continue
                     by_ts[r.trading_date] = r
         except Exception as e:
@@ -163,19 +167,61 @@ async def fetch_and_store_contract_5m_bars(
 
     raw_bars = _ohlc_rows_to_bars(list(by_ts.values()))
     if raw_bars:
-        storage.write_bars(raw_bars)
+        storage.write_derivative_bars(raw_bars)
     return len(raw_bars)
 
 
 def read_all_bars_for_symbol(storage: Storage, symbol: str) -> list[Bar]:
-    """Đọc toàn bộ nến của một symbol từ DB."""
+    """Đọc toàn bộ nến của một symbol từ bảng bars_derivative."""
     with storage.conn() as c:
         rows = c.execute(
-            "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
+            "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_derivative "
             "WHERE symbol = %s ORDER BY ts ASC",
             (symbol,),
         ).fetchall()
     return [Bar(*r) for r in rows]
+
+
+def audit_series_integrity(
+    series_dates_map: dict[date, int],
+    expected_trading_days: list[date],
+    today: date,
+) -> dict[str, Any]:
+    """Kiểm tra tính toàn vẹn của chuỗi dữ liệu nến 5m liên tục.
+
+    Args:
+        series_dates_map: Dict {ngày: số nến 5m}.
+        expected_trading_days: Danh sách ngày giao dịch kỳ vọng từ bars_daily & calendar.
+        today: Ngày hiện tại (phiên đang diễn ra dở dang không tính là lỗi thiếu).
+
+    Returns:
+        Dict tổng hợp các chỉ số toàn vẹn, phiên thiếu và phiên dị thường.
+    """
+    missing_sessions: list[date] = []
+    incomplete_sessions: list[tuple[date, int]] = []
+    full_sessions_count = 0
+
+    for d in expected_trading_days:
+        if d not in series_dates_map:
+            missing_sessions.append(d)
+        else:
+            cnt = series_dates_map[d]
+            if d == today:
+                # Phiên hôm nay đang chạy dở
+                continue
+            if cnt == 49:
+                full_sessions_count += 1
+            else:
+                incomplete_sessions.append((d, cnt))
+
+    problematic_dates = sorted(missing_sessions + [d for d, _ in incomplete_sessions])
+    return {
+        "expected_count": len(expected_trading_days),
+        "full_count": full_sessions_count,
+        "missing_sessions": missing_sessions,
+        "incomplete_sessions": incomplete_sessions,
+        "problematic_dates": problematic_dates,
+    }
 
 
 def _load_dotenv(env_path: str = ".env") -> None:
@@ -193,6 +239,8 @@ async def main_async(args: argparse.Namespace) -> None:
     from ssi_sdk import AsyncAuth, AsyncData
     from ssi_sdk import Config as SsiConfig
 
+    from trading.calendar_vn import is_trading_day
+
     app_cfg = load_config(args.config)
     db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
     storage = Storage(db_dsn)
@@ -203,7 +251,9 @@ async def main_async(args: argparse.Namespace) -> None:
     all_contracts_to_ingest = FRONT_MONTH_CONTRACTS + OTHER_VN30_CONTRACTS
 
     if not args.stitch_only:
-        print("=== BƯỚC 1: NẠP DỮ LIỆU NẾN 5 PHÚT TỪ SSI API CHO TẤT CẢ HỢP ĐỒNG VN30 ===")
+        print(
+            "=== BƯỚC 1: NẠP DỮ LIỆU NẾN 5 PHÚT TỪ SSI API CHO TẤT CẢ HỢP ĐỒNG VN30 ==="
+        )
         api_key = os.environ.get("SSI_API_KEY")
         api_secret = os.environ.get("SSI_API_SECRET")
         if not api_key or not api_secret:
@@ -219,10 +269,14 @@ async def main_async(args: argparse.Namespace) -> None:
             for c in all_contracts_to_ingest:
                 # Dữ liệu 5m trên SSI API bắt đầu khả dụng từ 2026/04/03
                 earliest_possible = date(2026, 4, 3)
-                start_date = max(c.first_trading_date or earliest_possible, earliest_possible)
+                start_date = max(
+                    c.first_trading_date or earliest_possible, earliest_possible
+                )
                 end_date = min(c.last_trading_date, today)
 
-                print(f"Đang nạp nến 5m cho {c.symbol} ({c.name}) từ {start_date} đến {end_date}...")
+                print(
+                    f"Đang nạp nến 5m cho {c.symbol} ({c.name}) từ {start_date} đến {end_date}..."
+                )
                 n_inserted = await fetch_and_store_contract_5m_bars(
                     data, storage, c.symbol, start_date, end_date
                 )
@@ -230,7 +284,9 @@ async def main_async(args: argparse.Namespace) -> None:
         finally:
             await auth.close()
 
-    print("\n=== BƯỚC 2: TỔNG KẾT DỮ LIỆU CÁC HỢP ĐỒNG TRONG DATABASE ===")
+    print(
+        "\n=== BƯỚC 2: TỔNG KẾT DỮ LIỆU CÁC HỢP ĐỒNG TRONG DATABASE (bars_derivative) ==="
+    )
     print(
         f"{'Mã':<12} | {'Tên hợp đồng':<30} | {'Số nến':<8} | {'Số phiên':<8} | {'Ngày đầu':<12} | {'Ngày cuối':<12}"
     )
@@ -260,7 +316,9 @@ async def main_async(args: argparse.Namespace) -> None:
                 f"{c.symbol:<12} | {c.name:<30} | {len(bars):<8} | {sessions:<8} | {d_first.isoformat():<12} | {d_last.isoformat():<12}"
             )
         else:
-            print(f"{c.symbol:<12} | {c.name:<30} | {'0':<8} | {'0':<8} | {'N/A':<12} | {'N/A':<12}")
+            print(
+                f"{c.symbol:<12} | {c.name:<30} | {'0':<8} | {'0':<8} | {'N/A':<12} | {'N/A':<12}"
+            )
 
     print("\n=== BƯỚC 3: XÂY DỰNG LỊCH ROLL & TÍNH TOÁN HIỆU SỐ (PANAMA GAP) ===")
     # Xây dựng lịch roll từ danh sách FRONT_MONTH_CONTRACTS
@@ -282,24 +340,38 @@ async def main_async(args: argparse.Namespace) -> None:
             f"{rg.from_symbol:<10} -> {rg.to_symbol:<10} | {rg.roll_date.isoformat():<10} | {overlap_str:<19} | {rg.from_close:<8.1f} | {rg.to_close:<8.1f} | {rg.gap:<+10.2f} | {rg.cumulative_adjustment:<+15.2f}"
         )
 
-    print("\n=== BƯỚC 4: GHÉP CHUỖI LIÊN TỤC VN30F1M_CONT VÀ GHI VÀO DATABASE ===")
+    print(
+        "\n=== BƯỚC 4: GHÉP CHUỖI LIÊN TỤC VN30F1M_CONT VÀ GHI VÀO bars_derivative ==="
+    )
     stitched_bars = stitch_continuous(
         bars_by_symbol, roll_schedule, continuous_symbol=DEFAULT_CONTINUOUS_SYMBOL
     )
     print(f"Tổng số nến chuỗi liên tục tạo ra: {len(stitched_bars)}")
 
-    # Ghi vào bảng bars
-    storage.write_bars(stitched_bars)
-    print(f"Đã ghi thành công {len(stitched_bars)} nến vào bảng bars với symbol '{DEFAULT_CONTINUOUS_SYMBOL}'.")
+    # Xoá chuỗi liên tục cũ trước khi nạp chuỗi mới đã được dọn sạch
+    with storage.conn() as c:
+        c.execute(
+            "DELETE FROM bars_derivative WHERE symbol = %s",
+            (DEFAULT_CONTINUOUS_SYMBOL,),
+        )
+
+    # Ghi vào bảng bars_derivative
+    storage.write_derivative_bars(stitched_bars)
+    print(
+        f"Đã ghi thành công {len(stitched_bars)} nến vào bảng bars_derivative với symbol '{DEFAULT_CONTINUOUS_SYMBOL}'."
+    )
 
     # Truy vấn đối soát trực tiếp từ DB
     with storage.conn() as c:
         row = c.execute(
-            "SELECT symbol, count(*), min(ts), max(ts) FROM bars WHERE symbol = %s GROUP BY symbol",
+            "SELECT symbol, count(*), min(ts), max(ts) FROM bars_derivative WHERE symbol = %s GROUP BY symbol",
             (DEFAULT_CONTINUOUS_SYMBOL,),
         ).fetchone()
+        # Ngay theo gio VN, KHONG dung date(ts): date() tren timestamptz tinh theo mui gio
+        # cua session Postgres (UTC o day), cung bay ma db.py:read_real_daily_pnl da ghi chu.
         daily_rows = c.execute(
-            "SELECT date(ts), count(*) FROM bars WHERE symbol = %s GROUP BY date(ts) ORDER BY date(ts) ASC",
+            "SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, count(*) FROM bars_derivative "
+            "WHERE symbol = %s GROUP BY 1 ORDER BY 1 ASC",
             (DEFAULT_CONTINUOUS_SYMBOL,),
         ).fetchall()
 
@@ -308,7 +380,7 @@ async def main_async(args: argparse.Namespace) -> None:
     print(f"  Tổng số nến: {row[1]}")
     print(f"  Thời điểm đầu (min_ts): {row[2].astimezone(TZ)}")
     print(f"  Thời điểm cuối (max_ts): {row[3].astimezone(TZ)}")
-    print(f"  Tổng số phiên giao dịch liên tục: {len(daily_rows)} phiên")
+    print(f"  Tổng số phiên giao dịch có dữ liệu: {len(daily_rows)} phiên")
 
     print("\nPhân bố số nến 5m trong 5 phiên đầu và 5 phiên cuối:")
     for d, cnt in daily_rows[:5]:
@@ -316,11 +388,85 @@ async def main_async(args: argparse.Namespace) -> None:
     for d, cnt in daily_rows[-5:]:
         print(f"  [Cuối] {d}: {cnt} nến")
 
+    # === BƯỚC 5: KIỂM TRA TÍNH TOÀN VẸN VÀ TỐ GIÁC LỖ HỔNG (Task 3) ===
+    print(
+        "\n=== BƯỚC 5: KIỂM TRA TÍNH TOÀN VẸN CỦA CHUỖI LIÊN TỤC (INTEGRITY AUDIT) ==="
+    )
+    series_dates_map = {d: cnt for d, cnt in daily_rows}
+    min_date = daily_rows[0][0]
+    max_date = daily_rows[-1][0]
+
+    with storage.conn() as c:
+        # bars_daily luu nen ngay tai 00:00 gio VN = 17:00 UTC NGAY HOM TRUOC. date(ts) theo
+        # UTC dich moi ngay lui mot ngay: moi thu Hai roi vao Chu nhat va bi is_trading_day()
+        # loai, nen ban truoc chi dem 93/118 phien va KHONG BAO GIO kiem thu Sau cua chuoi
+        # (bo sot 14/08 va 28/08, bao gia 27/04 la ngay nghi). Phai quy ve gio VN.
+        rows_daily = c.execute(
+            "SELECT DISTINCT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS d FROM bars_daily "
+            "WHERE (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN %s AND %s ORDER BY d ASC",
+            (min_date, max_date),
+        ).fetchall()
+        expected_trading_days = [
+            r[0] for r in rows_daily if is_trading_day(r[0], app_cfg.holidays)
+        ]
+
+    audit_res = audit_series_integrity(series_dates_map, expected_trading_days, today)
+
+    print(f"Khoảng thời gian khảo sát: {min_date} -> {max_date}")
+    print(
+        f"Tổng số phiên giao dịch thực tế trên thị trường (bars_daily): {audit_res['expected_count']} phiên"
+    )
+    print(f"Số phiên trong chuỗi có đủ chuẩn 49 nến: {audit_res['full_count']} phiên")
+
+    if audit_res["missing_sessions"]:
+        print(
+            f"\n[CẢNH BÁO LỖI] PHÁT HIỆN {len(audit_res['missing_sessions'])} PHIÊN BỊ THIẾU HOÀN TOÀN (0 nến dù thị trường mở cửa):"
+        )
+        for d in audit_res["missing_sessions"]:
+            print(
+                f"  - Ngày {d.isoformat()} (Thứ {d.strftime('%A')}): Thiếu hoàn toàn trong chuỗi phái sinh!"
+            )
+
+    if audit_res["incomplete_sessions"]:
+        print(
+            f"\n[CẢNH BÁO LỖI] PHÁT HIỆN {len(audit_res['incomplete_sessions'])} PHIÊN KHÔNG ĐỦ 49 NẾN:"
+        )
+        for d, cnt in audit_res["incomplete_sessions"]:
+            print(
+                f"  - Ngày {d.isoformat()}: Chỉ có {cnt}/49 nến (thiếu {49 - cnt} nến)!"
+            )
+
+    print("\n--- BẢNG TỔNG KẾT TÍNH TOÀN VẸN ---")
+    print(f"  Tổng phiên kỳ vọng: {audit_res['expected_count']}")
+    print(f"  Số phiên chuẩn (49 nến): {audit_res['full_count']}")
+    print(f"  Số phiên thiếu (0 nến): {len(audit_res['missing_sessions'])}")
+    print(f"  Số phiên dị thường (!= 49 nến): {len(audit_res['incomplete_sessions'])}")
+    print(
+        f"  Danh sách ngày có vấn đề: {[d.isoformat() for d in audit_res['problematic_dates']]}"
+    )
+
+    if audit_res["problematic_dates"] and not args.allow_incomplete:
+        print("\n=> TỐ GIÁC LỖ THÀNH CÔNG: Script phát hiện chuỗi dữ liệu có lỗ hổng!")
+        sys.exit(1)
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Xây dựng chuỗi phái sinh liên tục (Brief 83).")
-    parser.add_argument("--config", default="config/config.yaml", help="Đường dẫn file config")
-    parser.add_argument("--stitch-only", action="store_true", help="Chỉ ghép nến từ DB hiện tại, không gọi SSI API")
+    parser = argparse.ArgumentParser(
+        description="Xây dựng chuỗi phái sinh liên tục (Brief 83 & 84)."
+    )
+    parser.add_argument(
+        "--config", default="config/config.yaml", help="Đường dẫn file config"
+    )
+    parser.add_argument(
+        "--stitch-only",
+        action="store_true",
+        help="Chỉ ghép nến từ DB hiện tại, không gọi SSI API",
+    )
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="Không trả exit code 1 khi phát hiện phiên thiếu/lỗi",
+    )
     args = parser.parse_args()
     asyncio.run(main_async(args))
 

@@ -251,3 +251,76 @@ def test_missing_overlap_raises_clear_error():
 
     with pytest.raises(ValueError, match="Không tìm thấy nến chồng lấn"):
         stitch_continuous(bars_by_symbol, sched)
+
+
+def test_classify_bar_atc_equal_high_close():
+    """Ca 1: 14:45 & H == C -> SỬA (FIX_ATC)."""
+    from trading.derivative_series import (
+        BarCleanAction,
+        classify_bar_for_cleaning,
+        clean_bar,
+    )
+
+    # Nến 14:45 với open=0, low=0, high=1970.0, close=1970.0 (H == C)
+    bad_atc = _make_bar("41I1GA000", "2026-09-18 14:45:00", 0.0, 1970.0, 0.0, 1970.0, 7492)
+    action = classify_bar_for_cleaning(bad_atc)
+    assert action == BarCleanAction.FIX_ATC
+
+    cleaned = clean_bar(bad_atc)
+    assert cleaned is not None
+    assert cleaned.open == 1970.0
+    assert cleaned.high == 1970.0
+    assert cleaned.low == 1970.0
+    assert cleaned.close == 1970.0
+    assert cleaned.volume == 7492
+
+
+def test_classify_bar_atc_unequal_high_close():
+    """Ca 2: 14:45 & H != C -> BÁO CÁO (REPORT, không sửa)."""
+    from trading.derivative_series import (
+        BarCleanAction,
+        classify_bar_for_cleaning,
+        clean_bar,
+    )
+
+    # Nến 14:45 với open=0, low=0, high=1975.0, close=1970.0 (H != C)
+    weird_atc = _make_bar("41I1GA000", "2026-09-18 14:45:00", 0.0, 1975.0, 0.0, 1970.0, 5000)
+    action = classify_bar_for_cleaning(weird_atc)
+    assert action == BarCleanAction.REPORT
+
+    cleaned = clean_bar(weird_atc)
+    # Không tự ý sửa giá trị
+    assert cleaned == weird_atc
+
+
+def test_classify_bar_non_atc_delete():
+    """Ca 3: 09:00 (hoặc giờ khác 14:45) có giá 0 -> XOÁ (DELETE)."""
+    from trading.derivative_series import (
+        BarCleanAction,
+        classify_bar_for_cleaning,
+        clean_bar,
+    )
+
+    # Nến 09:00 với open=0, low=0, high=1977.3, close=1975.9
+    bad_0900 = _make_bar("41I1GA000", "2026-09-21 09:00:00", 0.0, 1977.3, 0.0, 1975.9, 8544)
+    action = classify_bar_for_cleaning(bad_0900)
+    assert action == BarCleanAction.DELETE
+
+    cleaned = clean_bar(bad_0900)
+    assert cleaned is None
+
+
+def test_classify_bar_normal_keep():
+    """Ca 4: Nến bình thường toàn bộ OHLC > 0 -> GIỮ NGUYÊN (KEEP)."""
+    from trading.derivative_series import (
+        BarCleanAction,
+        classify_bar_for_cleaning,
+        clean_bar,
+    )
+
+    normal_bar = _make_bar("41I1GA000", "2026-09-21 09:05:00", 1975.0, 1978.0, 1974.0, 1976.0, 3000)
+    action = classify_bar_for_cleaning(normal_bar)
+    assert action == BarCleanAction.KEEP
+
+    cleaned = clean_bar(normal_bar)
+    assert cleaned == normal_bar
