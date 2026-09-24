@@ -107,6 +107,32 @@ phát hiện (memory `tieu-chi-kiem-cong-cu-phat-hien`):
 
 ---
 
+## Task 0b — 25/09, khoảng 08:30: chạy thử đường ống, TRƯỚC khi phiên mở
+
+**Thêm vào ngày 24/09 sau khi audit Task 0.** Lý do: đường kết nối (xác thực → `AsyncStream` →
+`connect` → ghi `.gz`) **chưa từng chạy thật** — test Task 0 chỉ phủ các hàm thuần. Mà Task 1 diễn ra
+trong phiên và **mỗi ngày chỉ có một cơ hội**. Nếu xác thực hay ghi file lỗi, phải biết trước giờ mở cửa,
+không phải lúc đang mất dữ liệu.
+
+**Vì sao 08:30 an toàn hơn:** phái sinh khớp lệnh định kỳ ATO từ 08:45, liên tục từ 09:00. Trước 08:30
+thị trường chưa chạy, nên **nếu** kết nối thứ hai có đá collector (Rủi ro A) thì cũng không mất nến nào.
+
+1. `Get-Date` — phải trong khoảng **08:20–08:40** ngày 25/09.
+2. Chạy máy ghi **90 giây**: `--symbol 41I1GA000 --until <bây giờ + 90 giây>`.
+3. Xác nhận **bốn** điều — đây là mục đích duy nhất của bước này:
+   - Xác thực thành công, không có traceback.
+   - Kết nối và subscribe thành công (không lỗi).
+   - **File `.gz` được tạo ra và mở đọc lại được.** Ngoài giờ, file gần như **rỗng tin** — đó là **bình
+     thường**, không phải lỗi. Điều cần kiểm là file **tồn tại và đọc được**, không phải là có tin.
+   - Thống kê in ra được, không nổ khi số tin bằng 0 (ca biên dễ sai: chia cho 0, `max()` trên list rỗng).
+4. Kiểm collector như Task 1 bước 3, trong khoảng chạy thử và 5 phút sau.
+
+**Nếu bước này lỗi:** sửa máy ghi ngay, chạy lại, **rồi** mới sang Task 1. Ghi rõ đã sửa gì. Nếu không kịp
+sửa trước 09:00 thì **bỏ Task 1 và Task 2 hôm nay**, báo cáo — mất một phiên dữ liệu còn hơn dành cả phiên
+để gỡ lỗi.
+
+---
+
 ## Task 1 — 25/09, 09:03: thăm dò 2 phút, có giám sát collector
 
 **Điều kiện tiên quyết** (thiếu một cái thì DỪNG): `Get-Date` ≥ 09:03 và ≤ 09:30 ngày 25/09; cả 6 container
@@ -153,7 +179,8 @@ nối lại. Chỉ ghi lại chính xác bao lâu thì nó hồi phục.
 ## 4. Báo cáo cho Claude
 
 1. Task 0: code máy ghi, kết quả test, và output `git check-ignore -v data/orderbook/x.jsonl.gz` sau khi
-   sửa `.gitignore`.
+   sửa `.gitignore`. **(Task 0 đã xong và đã được Claude audit + commit `5a85205` — không làm lại.)**
+1b. Task 0b: bốn xác nhận của bước chạy thử, và đã sửa gì (nếu có).
 2. Task 1: T0, output máy ghi, **mọi** dòng log collector khớp mẫu (hoặc nói rõ "0 dòng"), `lag_ms` các
    nến 09:05–09:15.
 3. Task 2: thống kê cuối phiên (số tin mỗi loại, dung lượng file, mọi khoảng lặng > 10 giây), hai lần kiểm
