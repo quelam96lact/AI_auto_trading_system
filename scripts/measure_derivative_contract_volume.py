@@ -223,7 +223,7 @@ async def fetch_recent_session_volumes(
 async def ingest_5m_bars_for_contract(
     data, storage: Storage, symbol: str, start_date_str: str, end_date: date
 ) -> int:
-    """Nạp nến 5m cho toàn bộ thời gian của hợp đồng vào bảng bars."""
+    """Nạp nến 5m cho toàn bộ thời gian của hợp đồng vào bảng bars_derivative."""
     d_parts = [int(p) for p in start_date_str.replace("-", "/").split("/")]
     frm = date(d_parts[0], d_parts[1], d_parts[2])
 
@@ -244,7 +244,9 @@ async def ingest_5m_bars_for_contract(
 
     bars = _ohlc_rows_to_bars(list(by_ts.values()))
     if bars:
-        storage.write_bars(bars)
+        # Dot 84: nen phai sinh thuoc bang rieng bars_derivative. Ghi vao `bars` se lam
+        # nhiem lai universe co phieu (measure_octopus_5m_universe.py doc DISTINCT symbol).
+        storage.write_derivative_bars(bars)
     return len(bars)
 
 
@@ -336,27 +338,28 @@ async def main_async(args) -> None:
             winner_info = next((c for c in living if c.symbol == winner.symbol), None)
             start_date_str = winner_info.first_trading_date if winner_info else "2026/08/21"
 
-            print(f"Bắt đầu nạp nến 5m từ {start_date_str} đến {today.isoformat()} vào bảng bars...")
+            print(f"Bắt đầu nạp nến 5m từ {start_date_str} đến {today.isoformat()} vào bảng bars_derivative...")
             n_ingested = await ingest_5m_bars_for_contract(
                 data, storage, winner.symbol, start_date_str, today
             )
-            print(f"Đã nạp xong {n_ingested} nến vào bảng bars.")
+            print(f"Đã nạp xong {n_ingested} nến vào bảng bars_derivative.")
 
             # Truy vấn kiểm tra lại từ DB
             with storage.conn() as c:
                 row = c.execute(
-                    "SELECT count(*), min(ts), max(ts) FROM bars WHERE symbol = %s",
+                    "SELECT count(*), min(ts), max(ts) FROM bars_derivative WHERE symbol = %s",
                     (winner.symbol,),
                 ).fetchone()
                 total_in_db, min_ts, max_ts = row
 
                 # Thống kê phân bố số nến theo ngày
                 daily_counts = c.execute(
-                    "SELECT date(ts), count(*) FROM bars WHERE symbol = %s GROUP BY date(ts) ORDER BY date(ts)",
+                    "SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, count(*) FROM bars_derivative "
+                    "WHERE symbol = %s GROUP BY 1 ORDER BY 1",
                     (winner.symbol,),
                 ).fetchall()
 
-            print("\nKết quả truy vấn bảng bars:")
+            print("\nKết quả truy vấn bảng bars_derivative:")
             print(f"  Symbol: {winner.symbol}")
             print(f"  Số nến: {total_in_db}")
             print(f"  Ngày đầu (min_ts): {min_ts}")
