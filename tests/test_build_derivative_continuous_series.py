@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+import pytest
+
 from scripts.build_derivative_continuous_series import (
     FRONT_MONTH_CONTRACTS,
     _ohlc_rows_to_bars,
@@ -84,3 +86,52 @@ def test_audit_series_integrity_detects_missing_and_incomplete_sessions():
     assert res["missing_sessions"] == [d2]
     assert res["incomplete_sessions"] == [(d3, 1)]
     assert res["problematic_dates"] == [d2, d3]
+
+
+@pytest.mark.integration
+def test_load_expected_trading_days_vietnam_midnight_regression():
+    """Test hồi quy bẫy múi giờ UTC cho load_expected_trading_days (Brief 85 Task 1).
+
+    bars_daily lưu nến ngày tại 00:00 giờ VN = 17:00 UTC ngày hôm trước.
+    Hai ngày dễ sai nhất:
+    - Thứ Hai 2026-07-06 00:00 VN = 2026-07-05 17:00 UTC (nếu dùng date(ts) thành Chủ nhật -> bị loại).
+    - Thứ Sáu 2026-07-10 00:00 VN = 2026-07-09 17:00 UTC (nếu dùng date(ts) thành Thứ Năm -> sai nhãn).
+    Kỳ vọng: hàm phải trả về chính xác [date(2026, 7, 6), date(2026, 7, 10)].
+    """
+    from datetime import date
+
+    from scripts.build_derivative_continuous_series import load_expected_trading_days
+    from tests.conftest import TEST_DSN
+    from trading.storage.db import Storage
+
+    storage = Storage(TEST_DSN)
+    storage.init_schema()
+
+    d_mon = date(2026, 7, 6)   # Thứ Hai
+    d_fri = date(2026, 7, 10)  # Thứ Sáu
+    ts_mon = datetime(2026, 7, 6, 0, 0, 0, tzinfo=TZ)
+    ts_fri = datetime(2026, 7, 10, 0, 0, 0, tzinfo=TZ)
+
+    sym = "TEST_INTEG_REGRESSION"
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM bars_daily WHERE symbol = %s", (sym,))
+        c.execute(
+            "INSERT INTO bars_daily (symbol, ts, open, high, low, close, volume, source) VALUES "
+            "(%s, %s, 1000.0, 1005.0, 995.0, 1000.0, 10000, 'test'), "
+            "(%s, %s, 1000.0, 1005.0, 995.0, 1000.0, 10000, 'test')",
+            (sym, ts_mon, sym, ts_fri),
+        )
+
+    try:
+        trading_days = load_expected_trading_days(
+            storage,
+            lo=date(2026, 7, 6),
+            hi=date(2026, 7, 10),
+            holidays=frozenset(),
+        )
+        assert trading_days == [d_mon, d_fri]
+    finally:
+        with storage.conn() as c:
+            c.execute("DELETE FROM bars_daily WHERE symbol = %s", (sym,))
+

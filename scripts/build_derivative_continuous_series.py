@@ -25,7 +25,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, is_trading_day
 from trading.config import load_config
 from trading.derivative_series import (
     DEFAULT_CONTINUOUS_SYMBOL,
@@ -224,6 +224,27 @@ def audit_series_integrity(
     }
 
 
+def load_expected_trading_days(
+    storage: Storage,
+    lo: date,
+    hi: date,
+    holidays: set[date] | frozenset[date] = frozenset(),
+) -> list[date]:
+    """Tải danh sách ngày giao dịch kỳ vọng từ bars_daily trong khoảng [lo, hi].
+
+    bars_daily lưu nến ngày tại 00:00 giờ VN = 17:00 UTC ngày hôm trước.
+    Bắt buộc quy về giờ VN (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+    KHÔNG dùng date(ts) tránh làm thứ Hai thành Chủ nhật và thứ Sáu thành thứ Năm.
+    """
+    with storage.conn() as c:
+        rows_daily = c.execute(
+            "SELECT DISTINCT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS d FROM bars_daily "
+            "WHERE (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN %s AND %s ORDER BY d ASC",
+            (lo, hi),
+        ).fetchall()
+    return [r[0] for r in rows_daily if is_trading_day(r[0], holidays)]
+
+
 def _load_dotenv(env_path: str = ".env") -> None:
     if os.path.exists(env_path):
         with open(env_path, encoding="utf-8") as f:
@@ -238,8 +259,6 @@ async def main_async(args: argparse.Namespace) -> None:
     _load_dotenv()
     from ssi_sdk import AsyncAuth, AsyncData
     from ssi_sdk import Config as SsiConfig
-
-    from trading.calendar_vn import is_trading_day
 
     app_cfg = load_config(args.config)
     db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
@@ -396,19 +415,9 @@ async def main_async(args: argparse.Namespace) -> None:
     min_date = daily_rows[0][0]
     max_date = daily_rows[-1][0]
 
-    with storage.conn() as c:
-        # bars_daily luu nen ngay tai 00:00 gio VN = 17:00 UTC NGAY HOM TRUOC. date(ts) theo
-        # UTC dich moi ngay lui mot ngay: moi thu Hai roi vao Chu nhat va bi is_trading_day()
-        # loai, nen ban truoc chi dem 93/118 phien va KHONG BAO GIO kiem thu Sau cua chuoi
-        # (bo sot 14/08 va 28/08, bao gia 27/04 la ngay nghi). Phai quy ve gio VN.
-        rows_daily = c.execute(
-            "SELECT DISTINCT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS d FROM bars_daily "
-            "WHERE (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN %s AND %s ORDER BY d ASC",
-            (min_date, max_date),
-        ).fetchall()
-        expected_trading_days = [
-            r[0] for r in rows_daily if is_trading_day(r[0], app_cfg.holidays)
-        ]
+    expected_trading_days = load_expected_trading_days(
+        storage, min_date, max_date, app_cfg.holidays
+    )
 
     audit_res = audit_series_integrity(series_dates_map, expected_trading_days, today)
 
