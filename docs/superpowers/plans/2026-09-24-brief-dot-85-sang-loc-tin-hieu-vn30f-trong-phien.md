@@ -125,8 +125,29 @@ khoảng trống qua đêm vào — một hiện tượng khác hẳn.
 **Đối chứng (chốt an toàn) — phải qua trước khi đọc bất cứ số nào:** đặc trưng `intrabar =
 close[t] − open[t]` so với quá khứ `ret_past_1 = close[t] − close[t−1]`. Hai đại lượng này gần như
 cùng một chuyển động, nên `rho_truoc` phải **> 0,50**. Nếu không qua → đường ống bị lệch pha (off-by-one)
-→ **dừng, báo cáo, không in bảng kết quả**. Dùng `compute_leakage_pair` như `check_intraday_control` ở
-đợt 76.
+→ **dừng, báo cáo, không in bảng kết quả**.
+
+**Dùng lại `check_control_variable` từ `scripts/leakage_audit.py` — KHÔNG viết hàm đối chứng mới, KHÔNG
+chép `check_intraday_control` của đợt 76** (hàm đó ghim cứng tên cột `intraday_ret`/`ret_past_1d`, chép
+nó là đẻ ra bản thứ ba của cùng một công thức). Gọi:
+
+```python
+rho_ctrl, ok = check_control_variable(
+    rows,
+    control_feature="intrabar",
+    past_ret_col="ret_past_1",
+    future_ret_col="fwd_1",
+    min_rho=0.50,   # BẮT BUỘC truyền tường minh
+)
+```
+
+**Hai bẫy của hàm này, tôi đã đọc code (`leakage_audit.py:216-243`):**
+1. **Ngưỡng mặc định là 0,3** (`CONTROL_MIN_RHO_TRUOC`), không phải 0,50. Quên truyền `min_rho` là
+   chốt an toàn lỏng hơn thiết kế mà không ai biết. Viết test khẳng định chốt **đỏ** khi `rho` đối
+   chứng = 0,40 — test đó chỉ qua được nếu `min_rho=0,50` thật sự có hiệu lực.
+2. Nếu `control_feature` **không có** trong `rows[0]`, hàm tự rơi về `delta_norm`/`delta` (di sản đợt
+   72). Panel của bạn không có hai cột đó nên sẽ không rơi nhầm — nhưng hãy đảm bảo **mọi** dict hàng
+   đều có khoá `intrabar` (kể cả khi giá trị là `None`), đừng để hàng đầu thiếu khoá.
 
 **Ngưỡng và hiệu chỉnh đa so sánh — đọc kỹ, đây là chỗ dễ sai nhất:**
 - Gọi `run_block_permutation_test` (`scripts/audit_information.py`) **đúng MỘT lần**, với
@@ -153,6 +174,8 @@ cùng một chuyển động, nên `rho_truoc` phải **> 0,50**. Nếu không q
 5. **Đối chứng âm:** đặc trưng nhiễu ngẫu nhiên thuần → phải `KHONG_TIN_HIEU`.
 6. **Kiểm thử phá hoại:** dịch mục tiêu lệch một nến (dùng `close[t+h+1]`) trong test số 1, xác nhận
    test đỏ.
+7. **Ngưỡng đối chứng có hiệu lực:** dữ liệu giả có `rho` đối chứng ≈ 0,40 → chốt phải **đỏ**. Nếu test
+   này xanh, nghĩa là ngưỡng mặc định 0,3 đang được dùng thay vì 0,50.
 
 ### 3.3. Báo cáo — chỉ số, cấm diễn giải
 
@@ -180,7 +203,7 @@ lược, không đề xuất đặc trưng mới, không đọc tập giữ lạ
 
 1. Task 1: tên hàm đã tách, kết quả integration test, dòng test đỏ khi phá hoại.
 2. Task 2: số file quét và số chuỗi SQL kiểm; kết quả ba nhóm test; dòng đỏ khi phá hoại.
-3. Task 3: toàn bộ mục 3.3 nguyên văn, cùng kết quả 6 nhóm test ở 3.2.
+3. Task 3: toàn bộ mục 3.3 nguyên văn, cùng kết quả 7 nhóm test ở 3.2.
 4. `uv run pytest -m "not integration" -q` (nền **775**), suite đầy đủ, `uv run ruff check trading tests
    scripts`.
 5. Bất kỳ điều gì khác thường — nói thẳng.
