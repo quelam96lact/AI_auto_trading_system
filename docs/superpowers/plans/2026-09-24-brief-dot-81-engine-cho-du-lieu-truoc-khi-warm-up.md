@@ -39,6 +39,23 @@ chọn hướng (1). **Nếu hiểu sai, dừng lại và báo — đừng làm 
 - Không thêm dependency.
 - Không commit, không push.
 - Nền hiện tại: **750 passed**, ruff sạch.
+
+### ĐÍNH CHÍNH 24/09 07:45 — ràng buộc bổ sung, đọc trước khi làm bất cứ gì
+
+Brief này chạy **trong lúc phiên 24/09 đang diễn ra**. Đợt 80 đã cho phép bạn `docker compose
+restart engine`; **đợt này KHÔNG.** Cụ thể, cấm tuyệt đối trong suốt đợt 81:
+
+- **Không** `docker compose restart / stop / up / build` bất kỳ service nào — kể cả `engine`, kể cả
+  để "xem vòng chờ chạy thật". Engine đang giữ vị thế IJC 400 / AAA 400 và đang xử lý nến live;
+  restart giữa phiên sẽ tạo đúng cái lỗ warm-up mà brief này được viết ra để vá.
+- **Không** chạy bất cứ gì ghi vào DB thật (`trading`). Test dùng `trading_test` + NATS 4223 như
+  `CLAUDE.md` mô tả — đó là môi trường duy nhất được phép.
+- Toàn bộ kiểm chứng của đợt này là **test**, không phải quan sát hệ thống đang chạy. Nếu bạn thấy
+  cần quan sát thật mới chứng minh được, **báo lại** — đừng tự làm.
+
+Việc triển khai (build image + restart) là của Claude/chủ dự án, làm **sau 15:00 khi phiên đã đóng**.
+Nghĩa là code bạn sửa hôm nay **không** ảnh hưởng phiên đang chạy — và đó là điều tốt, không phải
+thiếu sót.
 - Chạy `gitnexus_impact` trên `run()` trước khi sửa. MCP GitNexus phiên trước **không kết nối
   được**; nếu vẫn vậy, ghi rõ đã thử và không dùng được — **không im lặng bỏ qua**.
 
