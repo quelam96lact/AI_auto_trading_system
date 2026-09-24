@@ -48,9 +48,15 @@ tới ngày đó, và nến trong DB có thể đến từ đợt nạp lại to
 
 **Rủi ro B — Máy ghi làm mới token có làm hỏng token của collector không?** Token SSI nằm ở hai chỗ và
 hay lệch nhau (memory `dev-env-gotchas` mục 7): spike dùng file `scripts/.ssi_sdk_token.json` qua
-`_ssi_spike_common.make_auth()`, còn collector đọc bảng `ssi_auth_state` trong Postgres. Nếu SSI xoay
-vòng refresh token (mỗi token chỉ dùng một lần), máy ghi làm mới token có thể khiến token collector đang
-giữ **mất hiệu lực**. **Chưa biết.**
+`_ssi_spike_common.make_auth()`, còn collector đọc bảng `ssi_auth_state` trong Postgres.
+
+Rủi ro này **đã được giảm bằng thiết kế**, xem Task 0. `trading/collector/ssi_auth.py:ensure_authenticated`
+đọc refresh token từ DB, làm mới, rồi **ghi token mới trở lại DB** (dòng 94–98). Log lúc triển khai đợt
+86 cho thấy collector **vốn đã có ít nhất 5 thành phần** (backfill, đồng bộ tài khoản 0434221 và 0434226,
+phái sinh 0434228, backfill cuối ngày) cùng làm mới token từ **cùng một** token DB, trong khoảng 36 giây,
+và **tất cả đều thành công**. Nếu SSI vô hiệu hoá refresh token cũ sau mỗi lần làm mới, các thành phần
+đó đã phá lẫn nhau từ lâu. Nên nếu máy ghi dùng **đúng đường đó**, nó chỉ là thêm một thành phần như
+năm thành phần đã có. **Vẫn phải giám sát** ở Task 1, vì bằng chứng trên là gián tiếp.
 
 ---
 
@@ -62,6 +68,8 @@ giữ **mất hiệu lực**. **Chưa biết.**
   hạn 20/08**. Chạy nguyên trạng sẽ subscribe vào mã chết, ghi file rỗng, và dẫn tới kết luận sai là
   "không có dữ liệu".
 - **Không** ghi dữ liệu sổ lệnh vào Postgres. Khoảng 500 nghìn tin mỗi phiên, ghi ra file nén.
+  (Ngoại lệ duy nhất, và là việc **đúng**: `ensure_authenticated` tự ghi token mới vào `ssi_auth_state`,
+  y như năm thành phần collector vẫn làm hằng ngày. Đừng chặn hay vòng qua nó.)
 - **Không** gọi bất kỳ method đặt lệnh nào.
 - Không thêm dependency. Không commit, không push.
 - Nền hiện tại: **785 passed**, ruff sạch.
@@ -74,6 +82,13 @@ Viết `scripts/record_vn30f_orderbook.py`:
 
 - Tham số **bắt buộc** `--symbol` (không mặc định, không đọc file `.spike_*`: bài học đợt 84, mọi mã
   hợp đồng ghim cứng đều sẽ hết hạn) và `--until HH:MM` (giờ VN, máy ghi tự dừng).
+- **Xác thực bằng `trading.collector.ssi_auth.ensure_authenticated(cfg, storage)`, đúng đường collector
+  đang dùng (token trong bảng `ssi_auth_state`). CẤM dùng `_ssi_spike_common.make_auth()`.** Hai lý do:
+  (1) `make_auth()` đọc file `scripts/.ssi_sdk_token.json`, mà file này **thường cũ hơn** token trong DB
+  (DB được collector làm mới liên tục, file chỉ đổi khi có người chạy OTP), nên có thể xác thực thất bại
+  hoặc tạo ra một nhánh token thứ hai; (2) dùng chung đường DB thì máy ghi chỉ là thêm một thành phần giống
+  năm thành phần collector đang có (xem Rủi ro B). Tạo stream giống `trading/collector/feed.py`:
+  `AsyncStream(auth)`, gán `on_data`, `connect()`, rồi mới subscribe.
 - Subscribe `subscribe_symbol([symbol])`, như spike đã dùng.
 - Ghi **nguyên văn** mọi tin QUOTE/TRADE ra `data/orderbook/<symbol>/<YYYY-MM-DD>.jsonl.gz`, mỗi dòng
   thêm trường `recv_ts` (giờ máy nhận, có múi giờ).
