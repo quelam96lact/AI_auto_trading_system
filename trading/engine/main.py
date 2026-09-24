@@ -3,14 +3,19 @@ import asyncio
 import json
 import logging
 import signal
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
 
 from trading import real_orders
 from trading.alerts import alert
-from trading.calendar_vn import CONTINUOUS_SESSIONS, TZ, market_minutes_between
+from trading.calendar_vn import (
+    CONTINUOUS_SESSIONS,
+    TZ,
+    is_trading_day,
+    market_minutes_between,
+)
 from trading.config import Config, load_config
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.logging_setup import attach_durable_alert_handler
@@ -117,11 +122,43 @@ def count_warmup_gap(
     return round(mins / bar_interval_minutes)
 
 
+# Nến cuối phiên có ts = 14:45 nhưng chỉ đóng lúc 14:50, và collector cần thêm
+# chút thời gian để ghi. 15:00 là 14:45 + một nến + biên.
+# Không dùng STREAM_COVERAGE_READY_TIME (15:25) của check_golive_gate.py vì con số
+# đó gắn liền với thời điểm job stream-health chạy lúc 15:10, lý do hoàn toàn khác.
+SESSION_DATA_READY_TIME = time(15, 0)
+
+
+def last_session_date_needed(
+    now: datetime, holidays: frozenset = frozenset()
+) -> date:
+    """Ngày của phiên giao dịch gần nhất mà DB PHẢI có nến, tính tại thời điểm now.
+
+    Quy tắc (dùng lại is_trading_day từ trading.calendar_vn):
+    - Nếu hôm nay là ngày giao dịch VN VÀ now >= 15:00 VN: phiên hôm nay đã xong
+      và collector đã có đủ thời gian ghi dữ liệu -> trả về hôm nay.
+    - Ngược lại (chưa tới 15:00, hoặc cuối tuần, hoặc ngày lễ): lùi về ngày giao
+      dịch gần nhất trước đó.
+    """
+    now_vn = now.astimezone(TZ)
+    current_date = now_vn.date()
+    if is_trading_day(current_date, holidays) and now_vn.time() >= SESSION_DATA_READY_TIME:
+        return current_date
+    target = current_date - timedelta(days=1)
+    while not is_trading_day(target, holidays):
+        target -= timedelta(days=1)
+    return target
+
+
 async def run(
     cfg: Config,
     max_messages: int | None = None,
     stop_event: asyncio.Event | None = None,
     strategy: Strategy | None = None,
+    warmup_wait_timeout_sec: float = 600.0,
+    warmup_wait_sleep=asyncio.sleep,
+    warmup_wait_interval_sec: float = 5.0,
+    now: datetime | None = None,
 ) -> None:
     """`strategy=None` (mac dinh) = chien luoc chay THAT, xem _default_strategy().
 
@@ -156,6 +193,41 @@ async def run(
         )
 
     strategy = _default_strategy() if strategy is None else strategy
+    # CHỜ ĐỦ DỮ LIỆU PHIÊN GẦN NHẤT TRƯỚC KHI WARM-UP (Brief 81 Task 2):
+    # Tránh sự cố warm-up trước khi collector backfill xong (tối 23/09).
+    # Chờ cho tới khi mọi mã trong cfg.symbols đều có nến của needed_date trong DB.
+    # So sánh ở mức NGÀY (date >= needed_date), không so ở mức nến để tránh báo động giả
+    # khi mã thiếu nến lẻ do không có giao dịch trong phiên.
+    current_now = now if now is not None else datetime.now(TZ)
+    needed_date = last_session_date_needed(current_now, cfg.holidays)
+    waited_sec = 0.0
+    while True:
+        missing_symbols = []
+        for sym in cfg.symbols:
+            lts = storage.last_bar_ts(sym)
+            if lts is None or lts.astimezone(TZ).date() < needed_date:
+                missing_symbols.append(sym)
+        if not missing_symbols:
+            if waited_sec > 0:
+                alert(
+                    "INFO",
+                    "da co du lieu bars cho phien gan nhat sau khi cho",
+                    needed_date=str(needed_date),
+                    waited_sec=waited_sec,
+                )
+            break
+        if waited_sec >= warmup_wait_timeout_sec:
+            alert(
+                "CRITICAL",
+                "het thoi gian cho du lieu bars truoc warm-up — van chay tiep",
+                missing_symbols=missing_symbols,
+                needed_date=str(needed_date),
+                timeout_sec=warmup_wait_timeout_sec,
+            )
+            break
+        await warmup_wait_sleep(warmup_wait_interval_sec)
+        waited_sec += warmup_wait_interval_sec
+
     # WARM-UP (rui ro 5 GO_LIVE_AUDIT, WARM-1): nap lich su SMA/ATR tu bang
     # bars luc khoi dong. Consumer engine la DURABLE: sau lan chay dau no tiep
     # tuc tu vi tri cu chu khong phat lai tu dau — khong nap thi engine mu

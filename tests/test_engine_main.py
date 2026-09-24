@@ -235,7 +235,7 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
     bars = make_bars(prices)
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     positions = storage.read_positions()
     qty_first_run = positions["ENGT"].qty
@@ -253,7 +253,7 @@ async def test_engine_persists_fill_and_restores_state_on_next_run(storage, capl
 
     await _publish(cfg, make_bars([20], sym="ENGT"))
     with caplog.at_level(logging.INFO):
-        await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+        await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
     assert any("engine restored state" in r.message for r in caplog.records)
     assert storage.read_positions()["ENGT"].qty == qty_first_run
 
@@ -273,7 +273,7 @@ async def test_engine_run_calls_real_orders_handle_crossover_on_crossover(storag
 
     monkeypatch.setattr(real_orders_mod, "handle_crossover", fake_handle_crossover)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert len(calls) == 1
     assert calls[0][0] == "bull"
@@ -306,7 +306,7 @@ async def test_engine_alerts_critical_on_risk_halt(storage, monkeypatch):
     bars = make_bars(prices)
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert ("CRITICAL", "risk halt: max daily loss reached") in alerts_seen
 
@@ -337,7 +337,7 @@ async def test_engine_run_persists_real_risk_halt_on_transition(storage, monkeyp
     bars = make_bars(prices)
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert halt_day is not None
     assert ("CRITICAL", "REAL risk halt: max daily loss reached") in alerts_seen
@@ -358,7 +358,7 @@ async def test_engine_run_expires_stale_pending_real_order(storage):
     bars = make_bars([10])
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
 
     assert storage.get_pending_order(order_id)["status"] == "expired"
 
@@ -381,7 +381,7 @@ async def test_engine_run_restores_real_risk_halt_on_startup(storage, monkeypatc
     bars = make_bars(prices)
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert signals_seen
     for halted_date, crossover, bar in signals_seen:
@@ -410,7 +410,7 @@ async def test_engine_survives_poison_message_and_keeps_processing(
     await _publish(cfg, make_bars([10]))
 
     # Không được ném exception: message hỏng phải bị term(), không được giết engine.
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=2)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=2, warmup_wait_timeout_sec=0)
 
     assert any(
         lvl == "CRITICAL" and "engine failed to process bar" in m
@@ -434,7 +434,7 @@ async def test_engine_exits_cleanly_when_stop_event_set(storage):
     bars = make_bars([10] * 20 + [20] * 5)
     await _publish(cfg, bars[:5])
 
-    task = asyncio.create_task(run(cfg, strategy=SmaCrossStrategy(), stop_event=stop_event))
+    task = asyncio.create_task(run(cfg, strategy=SmaCrossStrategy(), stop_event=stop_event, warmup_wait_timeout_sec=0))
     # chờ engine xử lý được ít nhất 1 message (heartbeat beat — chỉ xảy ra
     # sau khi message đã được xử lý trọn vẹn + ack)
     n = 0
@@ -464,7 +464,7 @@ async def test_engine_stops_within_docker_grace_when_idle(storage):
     cfg = make_cfg()
     stop_event = asyncio.Event()
 
-    task = asyncio.create_task(run(cfg, strategy=SmaCrossStrategy(), stop_event=stop_event))
+    task = asyncio.create_task(run(cfg, strategy=SmaCrossStrategy(), stop_event=stop_event, warmup_wait_timeout_sec=0))
     await asyncio.sleep(0.5)  # engine đã vào vòng lặp, đang block chờ message
     stop_event.set()
 
@@ -484,7 +484,7 @@ async def test_engine_no_stop_waiter_leak_after_run(storage):
     bars = make_bars([10] * 20 + [20] * 5)
     await _publish(cfg, bars)
 
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), stop_event=stop_event)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), stop_event=stop_event, warmup_wait_timeout_sec=0)
 
     assert len(stop_event._waiters) == 0, (
         f"stop waiter bi ro ri: {len(stop_event._waiters)} (phai la 0 sau khi run xong)"
@@ -527,7 +527,7 @@ async def test_engine_restores_trailing_stop_after_restart(storage, monkeypatch)
         Bar("ENGT", datetime(2026, 7, 20, 9, 0, tzinfo=TZ), 21.0, 21.0, 5.0, 21.0, 1000)
     )
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     pos = storage.read_positions().get("ENGT")
     assert pos is None or pos.qty == 0, (
@@ -555,7 +555,7 @@ async def test_engine_alerts_warn_when_trailing_stop_cannot_restore(storage, mon
 
     bars = make_bars([10] * 5)
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert any(
         level == "WARN" and "ENGT" in msg and "trailing stop" in msg
@@ -581,7 +581,7 @@ async def test_engine_alerts_critical_when_real_nav_too_small(storage, monkeypat
 
     bars = make_bars([10])
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert any(
         level == "CRITICAL" and "INERT" in msg and "4,292" in msg and "2,200,000" in msg
@@ -607,7 +607,7 @@ async def test_engine_silent_when_trading_disabled_and_nav_tiny(storage, monkeyp
 
     bars = make_bars([10])
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
         f"trading tat + so du nho la trang thai mong muon -> phai im lang, thuc te: {alerts_seen}"
@@ -631,7 +631,7 @@ async def test_engine_no_critical_alert_when_nav_sufficient(storage, monkeypatch
 
     bars = make_bars([10])
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
         f"so du du lon khong duoc keu INERT, thuc te: {alerts_seen}"
@@ -656,7 +656,7 @@ async def test_engine_skips_guard_silently_when_no_prices(storage, monkeypatch):
 
     bars = make_bars([10])
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert not any(level == "CRITICAL" and "INERT" in msg for level, msg in alerts_seen), (
         f"khong co gia -> khong duoc canh bao INERT, thuc te: {alerts_seen}"
@@ -682,7 +682,7 @@ async def test_engine_informs_real_nav_at_startup(storage, monkeypatch):
     _seed_nav(storage, 5_021_459, ts=ts_nav)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     await _publish(cfg, make_bars([10]))
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
 
     assert any(
         level == "INFO"
@@ -712,7 +712,7 @@ async def test_engine_critical_and_blocks_buy_when_no_nav(storage, monkeypatch):
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     bars = make_bars([10] * 20 + [20] * 5)  # crossover bull o bar 21
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert any(
         level == "CRITICAL" and "khong doc duoc NAV" in msg
@@ -739,7 +739,7 @@ async def test_engine_warns_when_nav_stale(storage, monkeypatch):
     _seed_nav(storage, 5_021_459, ts=stale_ts)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     await _publish(cfg, make_bars([10]))
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
 
     assert any(
         level == "WARN" and "cu hon 24h" in msg and "h)" in msg
@@ -762,7 +762,7 @@ async def test_engine_warns_when_nav_unpriced(storage, monkeypatch):
     _seed_nav(storage, 197_222_417, unpriced=["MIRHCM261"], ts=datetime.now(TZ))
     cfg = make_cfg(real_order_account=RTS_ACCOUNT)
     await _publish(cfg, make_bars([10]))
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
 
     assert any(
         level == "WARN"
@@ -941,7 +941,7 @@ async def test_engine_restores_real_trailing_stop_and_touches_stop(storage, monk
     bars = make_bars([20] * 20 + [21] * 4)
     bars.append(Bar("ENGT", bars[-1].ts + timedelta(minutes=15), 21.0, 21.0, 5.0, 21.0, 1000))
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert _count_pending_sells(storage) == 1, (
         "real_trailing_stop phai duoc tai dung sau restart (dinh 20) va cham "
@@ -969,7 +969,7 @@ async def test_engine_warns_when_real_trailing_stop_cannot_restore(storage, monk
 
     bars = make_bars([10] * 5)
     await _publish(cfg, bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
 
     assert any(
         level == "WARN" and "ENGT" in msg and "khong tai dung duoc trailing stop" in msg
@@ -1229,7 +1229,7 @@ async def test_engine_warmup_enables_immediate_signal(storage, monkeypatch):
         "ENGT", ts0 + timedelta(minutes=5 * 22), 20.0, 20.0, 20.0, 20.0, 1000
     )  # bar 2: broker fill lenh (PaperBroker submit -> fill o bar ke tiep)
     await _publish(cfg, [live, live2])
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=2)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=2, warmup_wait_timeout_sec=0)
     with storage.conn() as c:
         n = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
     assert n == 1, f"warm-up xong phai ban duoc ngay bar dau, thuc te orders={n}, alerts={alerts_seen}"
@@ -1260,7 +1260,7 @@ async def test_engine_warmup_skips_replayed_bars(storage, monkeypatch):
         "ENGT", ts0 + timedelta(minutes=5 * 22), 20.0, 20.0, 20.0, 20.0, 1000
     )  # bar song 2: broker fill (ts cua lenh = T22 = live2.ts)
     await _publish(cfg, [old, live, live2])
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=3)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=3, warmup_wait_timeout_sec=0)
     with storage.conn() as c:
         row = c.execute(
             "SELECT ts FROM orders WHERE symbol = 'ENGT' ORDER BY ts LIMIT 1"
@@ -1285,7 +1285,7 @@ async def test_engine_warmup_warns_when_history_short(storage, monkeypatch):
     ts0 = datetime(2026, 7, 14, 9, 0, tzinfo=TZ)
     storage.write_bars(_warm_bars(5, 10.0, ts0))  # 5 bar — thieu (can 21)
     await _publish(cfg, make_bars([10]))
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
     assert any(
         level == "WARN" and "ENGT" in msg and "thieu lich su" in msg
         for level, msg in alerts_seen
@@ -1311,7 +1311,7 @@ async def test_engine_warmup_does_not_generate_orders(storage, monkeypatch):
         for i, p in enumerate(prices)
     ]
     storage.write_bars(bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0)  # warm-up chay truoc loop, khong co message nao
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0, warmup_wait_timeout_sec=0)  # warm-up chay truoc loop, khong co message nao
     with storage.conn() as c:
         n = c.execute("SELECT count(*) FROM orders WHERE symbol = 'ENGT'").fetchone()[0]
     assert n == 0, f"warm-up KHONG duoc sinh lenh, thuc te orders={n}"
@@ -1365,7 +1365,7 @@ async def test_gap1_warns_when_warmup_window_has_gap(storage, monkeypatch):
         Bar("ENGT", live_ts_3, 10.0, 10.0, 10.0, 10.0, 1000),
     ]
     await _publish(cfg, live_bars)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=3)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=3, warmup_wait_timeout_sec=0)
 
     # Lọc chỉ lấy alert GAP-1 (nhận ra qua khóa 'missing_bars')
     gap1_warns = [
@@ -1427,7 +1427,7 @@ async def test_gap1_silent_when_warmup_window_is_contiguous(storage, monkeypatch
     # Nến live ngay liền kề: 11:00 = warmed_until + 5 phút
     live_ts_next = warm[-1].ts + timedelta(minutes=5)  # 11:00
     await _publish(cfg, [Bar("ENGT", live_ts_next, 10.0, 10.0, 10.0, 10.0, 1000)])
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=1, warmup_wait_timeout_sec=0)
 
     gap1_warns = [
         (lvl, msg, f)
@@ -1453,7 +1453,7 @@ async def test_guard3_silent_when_no_intersection(storage, monkeypatch):
     )
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
     # danh muc that rong — khong seed gi
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0, warmup_wait_timeout_sec=0)
     assert not any(
         level == "WARN" and "quyền bán" in msg for level, msg in alerts_seen
     ), f"giao rong phai im lang, thuc te: {alerts_seen}"
@@ -1470,7 +1470,7 @@ async def test_guard3_alerts_sell_entitlement_when_intersection(storage, monkeyp
     )
     _seed_real_position(storage, qty=1500, sellable=1400)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=True)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0, warmup_wait_timeout_sec=0)
     assert any(
         level == "WARN" and "quyền bán" in msg and "ENGT" in msg and "1500" in msg and "1400" in msg
         for level, msg in alerts_seen
@@ -1488,7 +1488,7 @@ async def test_guard3_silent_when_trading_disabled(storage, monkeypatch):
     )
     _seed_real_position(storage, qty=1500, sellable=1400)
     cfg = make_cfg(real_order_account=RTS_ACCOUNT, real_trading_enabled=False)
-    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=0, warmup_wait_timeout_sec=0)
     assert not any(
         level == "WARN" and "quyền bán" in msg for level, msg in alerts_seen
     ), f"trading tat phai im lang, thuc te: {alerts_seen}"
@@ -1530,7 +1530,7 @@ async def test_engine_same_ts_processed_once_and_second_skipped_with_warn(storag
     await pub.close()
 
     strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
-    await run(cfg, strategy=strat, max_messages=2)
+    await run(cfg, strategy=strat, max_messages=2, warmup_wait_timeout_sec=0)
 
     assert len(process_bar_calls) == 1, f"process_bar chi duoc goi 1 lan, thuc te {len(process_bar_calls)}"
     assert any(
@@ -1572,7 +1572,7 @@ async def test_engine_past_ts_skipped_with_warn(storage, monkeypatch):
     await pub.close()
 
     strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
-    await run(cfg, strategy=strat, max_messages=2)
+    await run(cfg, strategy=strat, max_messages=2, warmup_wait_timeout_sec=0)
 
     assert len(process_bar_calls) == 1, f"chi bar t1 duoc xu ly, thuc te {len(process_bar_calls)}"
     assert any(
@@ -1609,7 +1609,7 @@ async def test_engine_different_symbols_same_ts_both_processed(storage, monkeypa
     await pub.close()
 
     strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
-    await run(cfg, strategy=strat, max_messages=2)
+    await run(cfg, strategy=strat, max_messages=2, warmup_wait_timeout_sec=0)
 
     assert len(process_bar_calls) == 2, f"ca 2 ma deu phai duoc xu ly, thuc te {len(process_bar_calls)}"
     processed_symbols = {b.symbol for b in process_bar_calls}
@@ -1642,7 +1642,7 @@ async def test_engine_emits_lag_ms_on_processed_bar(storage, monkeypatch):
     monkeypatch.setattr(engine_main, "datetime", type("FrozenDT", (), {"now": staticmethod(lambda tz=None: now_fixed)}))
 
     strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
-    await run(cfg, strategy=strat, max_messages=1)
+    await run(cfg, strategy=strat, max_messages=1, warmup_wait_timeout_sec=0)
 
     info_alerts = [
         (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bar processed"
@@ -1675,12 +1675,179 @@ async def test_engine_negative_lag_ms_not_clamped(storage, monkeypatch):
     monkeypatch.setattr(engine_main, "datetime", type("FrozenDT", (), {"now": staticmethod(lambda tz=None: now_fixed)}))
 
     strat = SmaCrossStrategy(fast=2, slow=4, qty=100)
-    await run(cfg, strategy=strat, max_messages=1)
+    await run(cfg, strategy=strat, max_messages=1, warmup_wait_timeout_sec=0)
 
     info_alerts = [
         (lvl, m, f) for lvl, m, f in alerts_seen if lvl == "INFO" and m == "bar processed"
     ]
     assert len(info_alerts) == 1
     assert info_alerts[0][2]["lag_ms"] == -1000.0
+
+
+# ============ Brief 81 Task 2: Vòng chờ trước warm-up ============
+
+
+async def test_engine_waits_for_latest_session_data_before_warmup(storage, monkeypatch):
+    """Brief 81 Task 2 Ca 1: Tái hiện đúng sự cố 23/09.
+
+    DB có nến tới 22/09 14:45, now = 23/09 22:10.
+    Sleep giả: lần gọi đầu tiên chèn thêm nến 23/09 (kết thúc lúc 14:45) vào DB.
+    Kỳ vọng: engine chờ, sleep được gọi, và warm-up kết thúc với 23/09 14:45 (không phải 22/09).
+    """
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    start_22 = datetime(2026, 9, 22, 13, 5, tzinfo=TZ)
+    bars_22 = [
+        Bar("ENGT", start_22 + timedelta(minutes=5 * i), 10.0, 10.0, 10.0, 10.0, 1000)
+        for i in range(21)
+    ]
+    assert bars_22[-1].ts == datetime(2026, 9, 22, 14, 45, tzinfo=TZ)
+    storage.write_bars(bars_22)
+
+    start_23 = datetime(2026, 9, 23, 13, 5, tzinfo=TZ)
+    bars_23 = [
+        Bar("ENGT", start_23 + timedelta(minutes=5 * i), 20.0, 20.0, 20.0, 20.0, 1000)
+        for i in range(21)
+    ]
+    assert bars_23[-1].ts == datetime(2026, 9, 23, 14, 45, tzinfo=TZ)
+
+    sleep_calls = 0
+
+    async def fake_sleep(sec: float):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            storage.write_bars(bars_23)
+
+    now_23 = datetime(2026, 9, 23, 22, 10, tzinfo=TZ)
+
+    await run(
+        cfg,
+        strategy=SmaCrossStrategy(),
+        max_messages=0,
+        warmup_wait_timeout_sec=600.0,
+        warmup_wait_sleep=fake_sleep,
+        warmup_wait_interval_sec=5.0,
+        now=now_23,
+    )
+
+    assert sleep_calls == 1, f"fake_sleep phai duoc goi dung 1 lan, thuc te={sleep_calls}"
+    warmup_alerts = [
+        f for lvl, msg, f in alerts_seen if "warm-up ENGT xong" in msg
+    ]
+    assert len(warmup_alerts) == 1
+    wu_parsed = datetime.fromisoformat(warmup_alerts[0]["until"]).astimezone(TZ)
+    assert wu_parsed == datetime(2026, 9, 23, 14, 45, tzinfo=TZ), (
+        f"warm-up phai dat moc 23/09 14:45 sau khi cho, thuc te until={wu_parsed}"
+    )
+    info_alerts = [
+        (msg, f) for lvl, msg, f in alerts_seen if lvl == "INFO" and "da co du lieu bars" in msg
+    ]
+    assert len(info_alerts) == 1
+    assert info_alerts[0][1]["needed_date"] == "2026-09-23"
+
+
+async def test_engine_warmup_no_wait_when_data_already_present(storage, monkeypatch):
+    """Brief 81 Task 2 Ca 2: DB đã có đủ dữ liệu phiên gần nhất -> không gọi sleep lần nào."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    start_23 = datetime(2026, 9, 23, 13, 5, tzinfo=TZ)
+    bars_23 = [
+        Bar("ENGT", start_23 + timedelta(minutes=5 * i), 20.0, 20.0, 20.0, 20.0, 1000)
+        for i in range(21)
+    ]
+    storage.write_bars(bars_23)
+
+    sleep_calls = 0
+
+    async def fake_sleep(sec: float):
+        nonlocal sleep_calls
+        sleep_calls += 1
+
+    now_23 = datetime(2026, 9, 23, 22, 10, tzinfo=TZ)
+
+    await run(
+        cfg,
+        strategy=SmaCrossStrategy(),
+        max_messages=0,
+        warmup_wait_timeout_sec=600.0,
+        warmup_wait_sleep=fake_sleep,
+        now=now_23,
+    )
+
+    assert sleep_calls == 0, f"DB da du lieu thi sleep khong duoc goi, got {sleep_calls}"
+    warmup_alerts = [
+        f for lvl, msg, f in alerts_seen if "warm-up ENGT xong" in msg
+    ]
+    assert len(warmup_alerts) == 1
+    wu_parsed = datetime.fromisoformat(warmup_alerts[0]["until"]).astimezone(TZ)
+    assert wu_parsed == datetime(2026, 9, 23, 14, 45, tzinfo=TZ)
+    # Không phát sinh alert INFO chờ
+    assert not any("da co du lieu bars" in msg for lvl, msg, f in alerts_seen)
+
+
+async def test_engine_warmup_times_out_and_alerts_critical(storage, monkeypatch):
+    """Brief 81 Task 2 Ca 3: DB không có dữ liệu, hết giờ chờ -> CRITICAL nêu mã thiếu và warm-up vẫn chạy."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    # Chỉ seed 5 nến ngày 22/09, hoàn toàn thiếu ngày 23/09
+    start_22 = datetime(2026, 9, 22, 13, 5, tzinfo=TZ)
+    bars_22 = [
+        Bar("ENGT", start_22 + timedelta(minutes=5 * i), 10.0, 10.0, 10.0, 10.0, 1000)
+        for i in range(5)
+    ]
+    storage.write_bars(bars_22)
+
+    sleep_calls = 0
+
+    async def fake_sleep(sec: float):
+        nonlocal sleep_calls
+        sleep_calls += 1
+
+    now_23 = datetime(2026, 9, 23, 22, 10, tzinfo=TZ)
+
+    await run(
+        cfg,
+        strategy=SmaCrossStrategy(),
+        max_messages=0,
+        warmup_wait_timeout_sec=0.1,
+        warmup_wait_interval_sec=0.1,
+        warmup_wait_sleep=fake_sleep,
+        now=now_23,
+    )
+
+    critical_alerts = [
+        (lvl, msg, f)
+        for lvl, msg, f in alerts_seen
+        if lvl == "CRITICAL" and "het thoi gian cho du lieu bars" in msg
+    ]
+    assert len(critical_alerts) == 1, f"phai co dung 1 alert CRITICAL, got {critical_alerts}"
+    _, msg, fields = critical_alerts[0]
+    assert "het thoi gian cho du lieu bars" in msg
+    assert "ENGT" in fields["missing_symbols"]
+    assert fields["needed_date"] == "2026-09-23"
+
+    # Warm-up vẫn chạy tiếp (thấy cảnh báo thiếu lịch sử từ warm-up)
+    assert any("thieu lich su" in msg for lvl, msg, f in alerts_seen)
+
+
 
 

@@ -13,10 +13,10 @@ Phần nối dây trong run() (_warmup_gap_checked, lời gọi alert) CHƯA có
 — xem brief đợt 75.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from trading.calendar_vn import TZ
-from trading.engine.main import count_warmup_gap
+from trading.engine.main import count_warmup_gap, last_session_date_needed
 
 # Mốc thật từ log 18/09/2026 (thứ Sáu) và 21/09/2026 (thứ Hai)
 FRI_ATC = datetime(2026, 9, 18, 14, 45, tzinfo=TZ)   # nến ATC cuối phiên thứ Sáu
@@ -81,3 +81,43 @@ def test_gap1_ca2_im_lang_lien_mach_trong_phien() -> None:
     assert missing == 0, (
         f"Ca 2c that bai: lien mach trong phien phai 0, thuc te = {missing}"
     )
+
+
+# ============ Brief 81 Task 1: last_session_date_needed ============
+
+
+def test_last_session_date_needed_wed_night_returns_today() -> None:
+    # 1. Thứ Tư 23/09 lúc 22:00 -> trả về 23/09
+    now = datetime(2026, 9, 23, 22, 0, tzinfo=TZ)
+    assert last_session_date_needed(now) == date(2026, 9, 23)
+
+
+def test_last_session_date_needed_wed_before_1500_returns_yesterday() -> None:
+    # 2. Thứ Tư 23/09 lúc 14:50 -> trả về 22/09 (chưa qua 15:00)
+    now = datetime(2026, 9, 23, 14, 50, tzinfo=TZ)
+    assert last_session_date_needed(now) == date(2026, 9, 22)
+
+
+def test_last_session_date_needed_mon_morning_returns_friday() -> None:
+    # 3. Thứ Hai 28/09 lúc 08:30 -> trả về 25/09 (thứ Sáu — nhảy qua cuối tuần)
+    now = datetime(2026, 9, 28, 8, 30, tzinfo=TZ)
+    assert last_session_date_needed(now) == date(2026, 9, 25)
+
+
+def test_last_session_date_needed_saturday_returns_friday() -> None:
+    # 4. Thứ Bảy 26/09 lúc 10:00 -> trả về 25/09
+    now = datetime(2026, 9, 26, 10, 0, tzinfo=TZ)
+    assert last_session_date_needed(now) == date(2026, 9, 25)
+
+
+def test_last_session_date_needed_skips_holiday() -> None:
+    # 5. Một ca có ngày lễ trong holidays -> nhảy qua đúng ngày lễ đó
+    holidays = frozenset({date(2026, 9, 1), date(2026, 9, 2)})
+    # Sáng 03/09 lúc 08:00 (chưa qua 15:00): lùi qua 02/09 và 01/09 (lễ) -> về 31/08
+    now = datetime(2026, 9, 3, 8, 0, tzinfo=TZ)
+    assert last_session_date_needed(now, holidays) == date(2026, 8, 31)
+
+    # Đêm 02/09 lúc 22:00: dù > 15:00 nhưng 02/09 là lễ -> về 31/08
+    now_holiday = datetime(2026, 9, 2, 22, 0, tzinfo=TZ)
+    assert last_session_date_needed(now_holiday, holidays) == date(2026, 8, 31)
+
