@@ -148,7 +148,6 @@ def generate_vn30_candidate_contracts(as_of: date) -> list[ContractInfo]:
 async def resolve_front_month_symbol(
     as_of: date,
     ssi_fetcher: Any = None,
-    allow_fallback: bool = True,
     fallback_generator: Callable[[date], list[ContractInfo]] | None = None,
 ) -> str:
     """Xác định mã hợp đồng front-month VN30F còn sống tại ngày as_of (Brief 91 Task 1).
@@ -162,14 +161,11 @@ async def resolve_front_month_symbol(
 
     if ssi_fetcher is not None:
         try:
-            if callable(ssi_fetcher):
-                res = ssi_fetcher()
-                if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
-                    ssi_contracts = await res
-                else:
-                    ssi_contracts = res
-            elif isinstance(ssi_fetcher, list):
-                ssi_contracts = ssi_fetcher
+            res = ssi_fetcher()
+            if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                ssi_contracts = await res
+            else:
+                ssi_contracts = res
         except Exception as e:
             ssi_error = e
 
@@ -185,11 +181,6 @@ async def resolve_front_month_symbol(
         ssi_error = "SSI trả về danh sách hợp đồng rỗng"
 
     # 2. Đường lùi: Tự tính theo công thức thứ Năm thứ 3
-    if not allow_fallback:
-        raise RuntimeError(
-            f"Không thể xác định hợp đồng front-month từ SSI tại ngày {as_of}: {ssi_error}"
-        )
-
     generator = fallback_generator or generate_vn30_candidate_contracts
     fallback_contracts = generator(as_of)
     fallback_living = filter_living_contracts(fallback_contracts, as_of)
