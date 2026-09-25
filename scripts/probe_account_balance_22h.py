@@ -43,7 +43,7 @@ from trading.config import load_config
 from trading.storage.db import Storage
 
 TARGET_ACCOUNT = "0434221"
-DEFAULT_STOP_TIME = dt_time(23, 0, 0)
+DEFAULT_STOP_TIME = dt_time(23, 30, 0)
 
 
 def _load_dotenv(env_path: str = ".env") -> None:
@@ -105,8 +105,24 @@ async def probe_account_balance(
                     params={"clientId": client_id, "accountNo": account_no},
                 )
             except Exception as e:
-                print(f"[{ts_str}] [LỖI GỌI REST] #{call_count}: {type(e).__name__}: {e}")
-                raw = {"error": f"{type(e).__name__}: {e}"}
+                if "401" in str(e) or "Authentication" in type(e).__name__:
+                    try:
+                        try:
+                            await auth.close()
+                        except Exception:
+                            pass
+                        auth = await ensure_authenticated(cfg, storage)
+                        client_id = decode_client_id(auth.token_manager.access_token)
+                        raw = await auth.rest_client.get(
+                            EP_ACCOUNT_BALANCE,
+                            params={"clientId": client_id, "accountNo": account_no},
+                        )
+                    except Exception as re_err:
+                        print(f"[{ts_str}] [LỖI GỌI REST] #{call_count}: {type(re_err).__name__}: {re_err}")
+                        raw = {"error": f"{type(re_err).__name__}: {re_err}"}
+                else:
+                    print(f"[{ts_str}] [LỖI GỌI REST] #{call_count}: {type(e).__name__}: {e}")
+                    raw = {"error": f"{type(e).__name__}: {e}"}
 
             record: dict[str, Any] = {
                 "recv_ts": cur_vn.isoformat(),
