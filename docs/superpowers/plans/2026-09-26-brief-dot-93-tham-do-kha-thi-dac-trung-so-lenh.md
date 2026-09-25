@@ -52,7 +52,21 @@ Mỗi hàng là một phút, các cột:
 | `ofi` | **toàn bộ** TRADE trong phút | `Σ(qty khi side='B') − Σ(qty khi side='S')` |
 | `trade_qty` | TRADE | tổng `quantity` trong phút |
 
-**Ba quyết định tôi chốt sẵn, đừng tự đổi:**
+**Năm quyết định tôi chốt sẵn, đừng tự đổi:**
+
+0. **Gộp phút theo `trading_time` (giờ của SÀN), KHÔNG theo `recv_ts` (giờ máy ta nhận).** Thêm vào brief
+   ngày 26/09 — bản đầu tôi quên nói, đó là chỗ hở nghiêm trọng nhất.
+   Lý do: `recv_ts` bao gồm độ trễ mạng của ta. Đợt 79 đo độ trễ **trung vị 12 giây, tối đa 61 giây** —
+   tức một tin sinh ra lúc 09:04:58 có thể được nhận lúc 09:05:20 và bị gán vào **phút sau**. Đặc trưng
+   phải khớp **thời gian thị trường**, không khớp chất lượng đường truyền của ta; nếu không, ta đang nướng
+   độ trễ của chính mình vào dữ liệu và mọi phép đo sau này sẽ lệch pha.
+   (`verify_orderbook_file.py` dùng `recv_ts` — điều đó **đúng cho việc của nó**: nó đo xem **máy ghi** có
+   nhận tin liên tục không. Hai mục đích khác nhau nên hai mốc khác nhau; đừng "đồng bộ" chúng.)
+
+0b. **Bắt buộc `from scripts.record_vn30f_orderbook import classify_message`** — dùng lại, **không**
+   viết lại việc phân loại QUOTE/TRADE. `verify_orderbook_file.py` đã dùng lại đúng cách này. Phần
+   `json.loads` + bỏ dòng trống thì tự viết được, không cần tách; nhưng **ngữ nghĩa phân loại** phải có
+   một chỗ duy nhất.
 
 1. **Đơn vị điểm, không phần trăm** — giống đợt 85. Sổ lệnh phái sinh tính theo điểm, mỗi điểm 100.000 VNĐ.
 2. **QUOTE cuối phút, không phải trung bình** — đây là ảnh chụp trạng thái sổ lệnh tại thời điểm quyết định.
@@ -78,6 +92,12 @@ In ra:
    1900–2000 là sai đọc dữ liệu.
 5. **Số hàng dùng được** = hàng có **đủ** `mid_close`, `imb_top5`, `ofi`. Đây là con số quyết định: nhân với
    20 phiên sẽ cho biết mẫu cuối cùng lớn cỡ nào.
+6. **Phân bố `recv_ts − trading_time`** (trung vị / p90 / max, theo giây). Thêm 26/09 cùng quyết định 0.
+   Con số này trả lời hai câu: (a) độ trễ đường truyền của ta ở tầng luồng là bao nhiêu — trước giờ chỉ đo
+   được ở tầng nến (đợt 79: trung vị 12s); (b) việc chọn `trading_time` thay vì `recv_ts` có thực sự quan
+   trọng hay không. Nếu độ trễ luôn dưới vài giây thì hai cách gộp gần như trùng nhau; nếu nó vượt 60 giây
+   thì quyết định 0 vừa cứu ta khỏi một bộ dữ liệu lệch pha.
+   **Chỉ báo cáo con số, không kết luận gì về nguyên nhân độ trễ.**
 
 ---
 
