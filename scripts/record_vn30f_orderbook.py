@@ -91,10 +91,37 @@ def should_reconnect(
         return False
     return not (until_time is not None and current_time >= until_time)
 
+class EarlyStopError(RuntimeError):
+    """Tiến trình máy ghi dừng sớm trước mốc --until trên ngày giao dịch."""
 
 
+def should_alert_early_stop(
+    actual_stop_time: dt_time | datetime,
+    until_time: dt_time | None,
+    is_trading_day: bool,
+    tolerance_seconds: float = 0.0,
+) -> bool:
+    """Hàm thuần (Brief 94 Task 1): Quyết định có nên cảnh báo khi tiến trình dừng sớm hay không.
 
+    Quy tắc:
+    1. Nếu không phải ngày giao dịch (is_trading_day=False) -> KHÔNG báo (False).
+    2. Nếu không có mốc until_time (chạy không giới hạn) -> KHÔNG báo (False).
+    3. Nếu giờ dừng thực tế >= until_time - tolerance_seconds -> KHÔNG báo (False) (đúng giờ hoặc trễ hơn).
+    4. Nếu dừng trước mốc until_time (vượt ngưỡng dung sai tolerance_seconds) -> BÁO CRITICAL (True).
+    """
+    if not is_trading_day or until_time is None:
+        return False
 
+    t_actual = (
+        actual_stop_time.time()
+        if isinstance(actual_stop_time, datetime)
+        else actual_stop_time
+    )
+
+    actual_sec = t_actual.hour * 3600 + t_actual.minute * 60 + t_actual.second
+    until_sec = until_time.hour * 3600 + until_time.minute * 60 + until_time.second
+
+    return actual_sec < (until_sec - tolerance_seconds)
 def compute_reconnect_backoff(
     failure_count: int,
     base_delay: float = 1.0,
@@ -462,268 +489,323 @@ async def record_orderbook_stream(
             "date": today.isoformat(),
         }
 
-    db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
-    storage = Storage(db_dsn)
-
-    # Động xác định mã hợp đồng front-month nếu không chỉ định (Brief 91 Task 1)
-    if not symbol:
-        async def _fetch_from_ssi() -> list[ContractInfo]:
-            auth_ssi = await ensure_authenticated(app_cfg, storage)
-            try:
-                from ssi_sdk import AsyncData
-
-                data_ssi = AsyncData(auth_ssi)
-                return await discover_derivative_contracts(data_ssi)
-            finally:
-                try:
-                    await auth_ssi.close()
-                except Exception:
-                    pass
-
-        symbol = await resolve_front_month_symbol(today, ssi_fetcher=_fetch_from_ssi)
-        print(f"[{now_vn.strftime('%H:%M:%S')}] Tự động xác định hợp đồng front-month VN30F: {symbol}")
-
-    out_path = get_orderbook_filepath(data_dir, symbol, now_vn)
-    print(f"[{now_vn.strftime('%H:%M:%S')}] Khởi động máy ghi sổ lệnh {symbol}")
-    print(f"  File ghi nhận: {out_path}")
-    if until_time:
-        print(f"  Thời điểm tự dừng: {until_time.strftime('%H:%M:%S')} (giờ VN)")
-
-    from ssi_sdk import AsyncStream
-
+    recorded_symbol = symbol or "VN30F"
     counts = {"QUOTE": 0, "TRADE": 0, "OTHER": 0}
-    timestamps: list[datetime] = []
 
-    # Nạp dữ liệu đã ghi trước đó trong ngày (nếu có) để thống kê toàn diện cuối phiên
-    if out_path.exists() and out_path.stat().st_size > 0:
-        try:
-            with gzip.open(out_path, mode="rt", encoding="utf-8") as existing_f:
-                for line in existing_f:
-                    line_s = line.strip()
-                    if not line_s:
-                        continue
-                    m = json.loads(line_s)
-                    c = classify_message(m)
-                    counts[c] = counts.get(c, 0) + 1
-                    r_ts = m.get("recv_ts")
-                    if r_ts:
-                        timestamps.append(datetime.fromisoformat(r_ts))
-            print(f"  Đã nạp {sum(counts.values()):,} tin đã ghi trước đó trong ngày.")
-        except Exception as e:
-            print(f"  Cảnh báo: không thể nạp dữ liệu cũ: {e}")
+    try:
+        db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
+        storage = Storage(db_dsn)
 
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
+        # Động xác định mã hợp đồng front-month nếu không chỉ định (Brief 91 Task 1)
+        if not symbol:
+            async def _fetch_from_ssi() -> list[ContractInfo]:
+                auth_ssi = await ensure_authenticated(app_cfg, storage)
+                try:
+                    from ssi_sdk import AsyncData
 
-    def _handle_signal() -> None:
-        print("\nNhận tín hiệu ngắt (Ctrl+C / SIGTERM), đang dừng an toàn...")
-        stop_event.set()
+                    data_ssi = AsyncData(auth_ssi)
+                    return await discover_derivative_contracts(data_ssi)
+                finally:
+                    try:
+                        await auth_ssi.close()
+                    except Exception:
+                        pass
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _handle_signal)
-        except (NotImplementedError, RuntimeError):
-            # Trên Windows, add_signal_handler có thể không hỗ trợ trong một số loop
-            pass
+            symbol = await resolve_front_month_symbol(today, ssi_fetcher=_fetch_from_ssi)
+            print(f"[{now_vn.strftime('%H:%M:%S')}] Tự động xác định hợp đồng front-month VN30F: {symbol}")
 
-    # Quản lý reconnect (C1) và các quãng downtime (C2)
-    consecutive_failures = 0
-    disconnect_intervals: list[tuple[datetime, datetime]] = []
-    t_disconnect: datetime | None = None
-    recording_start_dt = now_vn
-    rate_alarm_checked = False
+        recorded_symbol = symbol
 
-    # Mở file gzip chế độ append
-    with gzip.open(out_path, mode="at", encoding="utf-8") as gz_file:
+        out_path = get_orderbook_filepath(data_dir, symbol, now_vn)
+        print(f"[{now_vn.strftime('%H:%M:%S')}] Khởi động máy ghi sổ lệnh {symbol}")
+        print(f"  File ghi nhận: {out_path}")
+        if until_time:
+            print(f"  Thời điểm tự dừng: {until_time.strftime('%H:%M:%S')} (giờ VN)")
 
-        def on_message(raw_msg: Any) -> None:
-            recv_dt = datetime.now(TZ)
-            msg_dict = (
-                dataclasses.asdict(raw_msg)
-                if dataclasses.is_dataclass(raw_msg)
-                else raw_msg
-            )
-            if not isinstance(msg_dict, dict):
-                return
+        from ssi_sdk import AsyncStream
 
-            cat = classify_message(msg_dict)
-            counts[cat] = counts.get(cat, 0) + 1
+        timestamps: list[datetime] = []
 
-            if cat in ("QUOTE", "TRADE"):
-                msg_dict["recv_ts"] = recv_dt.isoformat()
-                line = json.dumps(msg_dict, ensure_ascii=False, default=str)
-                gz_file.write(line + "\n")
-                gz_file.flush()
-                timestamps.append(recv_dt)
-
-        while not stop_event.is_set():
-            now_dt = datetime.now(TZ)
-            if not should_reconnect(
-                is_connected=False,
-                current_time=now_dt.time(),
-                until_time=until_time,
-                consecutive_failures=consecutive_failures,
-                max_retries=10,
-            ):
-                if until_time and now_dt.time() >= until_time:
-                    print(
-                        f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
-                    )
-                elif consecutive_failures >= 10:
-                    print(
-                        "\nĐã vượt quá giới hạn 10 lần thử kết nối lại thất bại, dừng an toàn."
-                    )
-                break
-
-            auth = None
-            stream = None
+        # Nạp dữ liệu đã ghi trước đó trong ngày (nếu có) để thống kê toàn diện cuối phiên
+        if out_path.exists() and out_path.stat().st_size > 0:
             try:
-                auth = await ensure_authenticated(app_cfg, storage)
-                stream = AsyncStream(auth)
-                stream.streaming.on_data = on_message
-                now_str = datetime.now(TZ).strftime("%H:%M:%S")
-                print(f"[{now_str}] Đang kết nối WebSocket SSI...")
-                await stream.streaming.connect()
-                print(f"[{now_str}] Đã kết nối, đang đăng ký nhận dữ liệu mã {symbol}...")
-                await stream.streaming.subscribe_symbol([symbol])
-                print(f"[{now_str}] Bắt đầu lắng nghe dữ liệu stream...\n")
+                with gzip.open(out_path, mode="rt", encoding="utf-8") as existing_f:
+                    for line in existing_f:
+                        line_s = line.strip()
+                        if not line_s:
+                            continue
+                        m = json.loads(line_s)
+                        c = classify_message(m)
+                        counts[c] = counts.get(c, 0) + 1
+                        r_ts = m.get("recv_ts")
+                        if r_ts:
+                            timestamps.append(datetime.fromisoformat(r_ts))
+                print(f"  Đã nạp {sum(counts.values()):,} tin đã ghi trước đó trong ngày.")
+            except Exception as e:
+                print(f"  Cảnh báo: không thể nạp dữ liệu cũ: {e}")
 
-                # Nối thành công: ghi nhận quãng gián đoạn nếu có (C2)
-                if t_disconnect is not None:
-                    t_reconnect = datetime.now(TZ)
-                    disconnect_intervals.append((t_disconnect, t_reconnect))
-                    downtime_sec = (t_reconnect - t_disconnect).total_seconds()
-                    print(
-                        f"[{t_reconnect.strftime('%H:%M:%S')}] Đã kết nối lại thành công sau {downtime_sec:.2f}s gián đoạn."
-                    )
-                    t_disconnect = None
-                consecutive_failures = 0
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-                while not stop_event.is_set():
-                    now_dt = datetime.now(TZ)
-                    now_loop = now_dt.time()
-                    if until_time and now_loop >= until_time:
-                        stop_event.set()
+        def _handle_signal() -> None:
+            print("\nNhận tín hiệu ngắt (Ctrl+C / SIGTERM), đang dừng an toàn...")
+            stop_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except (NotImplementedError, RuntimeError):
+                # Trên Windows, add_signal_handler có thể không hỗ trợ trong một số loop
+                pass
+
+        # Quản lý reconnect (C1) và các quãng downtime (C2)
+        consecutive_failures = 0
+        disconnect_intervals: list[tuple[datetime, datetime]] = []
+        t_disconnect: datetime | None = None
+        recording_start_dt = now_vn
+        rate_alarm_checked = False
+
+        # Mở file gzip chế độ append
+        with gzip.open(out_path, mode="at", encoding="utf-8") as gz_file:
+
+            def on_message(raw_msg: Any) -> None:
+                recv_dt = datetime.now(TZ)
+                msg_dict = (
+                    dataclasses.asdict(raw_msg)
+                    if dataclasses.is_dataclass(raw_msg)
+                    else raw_msg
+                )
+                if not isinstance(msg_dict, dict):
+                    return
+
+                cat = classify_message(msg_dict)
+                counts[cat] = counts.get(cat, 0) + 1
+
+                if cat in ("QUOTE", "TRADE"):
+                    msg_dict["recv_ts"] = recv_dt.isoformat()
+                    line = json.dumps(msg_dict, ensure_ascii=False, default=str)
+                    gz_file.write(line + "\n")
+                    gz_file.flush()
+                    timestamps.append(recv_dt)
+
+            while not stop_event.is_set():
+                now_dt = datetime.now(TZ)
+                if not should_reconnect(
+                    is_connected=False,
+                    current_time=now_dt.time(),
+                    until_time=until_time,
+                    consecutive_failures=consecutive_failures,
+                    max_retries=10,
+                ):
+                    if until_time and now_dt.time() >= until_time:
                         print(
                             f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
                         )
-                        break
-
-                    # Kiểm tra lưu lượng tin QUOTE sau 10 phút đầu khớp lệnh liên tục (Brief 91 Task 2)
-                    if not rate_alarm_checked:
-                        elapsed_cont_min = compute_continuous_session_minutes(
-                            now_dt, since_dt=recording_start_dt
-                        )
-                        if elapsed_cont_min >= 10.0:
-                            rate_alarm_checked = True
-                            if check_quote_rate_alarm(counts["QUOTE"], elapsed_cont_min):
-                                warn_msg = (
-                                    f"Cảnh báo lưu lượng thấp bất thường: chỉ nhận được {counts['QUOTE']} tin QUOTE "
-                                    f"sau {elapsed_cont_min:.1f} phút giao dịch liên tục cho mã {symbol}. "
-                                    f"Có thể đang ghi sai mã hợp đồng phái sinh!"
-                                )
-                                print(f"\n[CẢNH BÁO] {warn_msg}\n")
-                                alert(
-                                    "WARN",
-                                    warn_msg,
-                                    symbol=symbol,
-                                    quote_count=counts["QUOTE"],
-                                    elapsed_minutes=elapsed_cont_min,
-                                )
-
-                    # Tự động phát hiện ngắt kết nối từ SSI và nối lại (C1)
-                    ws_client = getattr(stream.streaming, "_ws", None)
-                    if ws_client is not None and not ws_client.is_connected:
-                        t_disconnect = datetime.now(TZ)
+                    elif consecutive_failures >= 10:
                         print(
-                            f"\n[{t_disconnect.strftime('%H:%M:%S')}] WebSocket bị ngắt từ server SSI, chuẩn bị kết nối lại..."
+                            "\nĐã vượt quá giới hạn 10 lần thử kết nối lại thất bại, dừng an toàn."
                         )
-                        break
+                    break
 
-                    await asyncio.sleep(0.5)
+                auth = None
+                stream = None
+                try:
+                    auth = await ensure_authenticated(app_cfg, storage)
+                    stream = AsyncStream(auth)
+                    stream.streaming.on_data = on_message
+                    now_str = datetime.now(TZ).strftime("%H:%M:%S")
+                    print(f"[{now_str}] Đang kết nối WebSocket SSI...")
+                    await stream.streaming.connect()
+                    print(f"[{now_str}] Đã kết nối, đang đăng ký nhận dữ liệu mã {symbol}...")
+                    await stream.streaming.subscribe_symbol([symbol])
+                    print(f"[{now_str}] Bắt đầu lắng nghe dữ liệu stream...\n")
 
-            except KeyboardInterrupt:
-                print("\nNhận ngắt bàn phím (KeyboardInterrupt)...")
-                stop_event.set()
-                break
-            except Exception as e:
-                consecutive_failures += 1
-                if t_disconnect is None:
-                    t_disconnect = datetime.now(TZ)
-                backoff = compute_reconnect_backoff(consecutive_failures)
-                print(
-                    f"\n[{datetime.now(TZ).strftime('%H:%M:%S')}] Lỗi kết nối WebSocket: {e} "
-                    f"(thất bại lần {consecutive_failures}), thử lại sau {backoff:.1f}s..."
-                )
-                await asyncio.sleep(backoff)
-            finally:
-                if stream is not None:
-                    try:
-                        await stream.streaming.disconnect()
-                    except Exception:
-                        pass
-                if auth is not None:
-                    try:
-                        await auth.close()
-                    except Exception:
-                        pass
+                    # Nối thành công: ghi nhận quãng gián đoạn nếu có (C2)
+                    if t_disconnect is not None:
+                        t_reconnect = datetime.now(TZ)
+                        disconnect_intervals.append((t_disconnect, t_reconnect))
+                        downtime_sec = (t_reconnect - t_disconnect).total_seconds()
+                        print(
+                            f"[{t_reconnect.strftime('%H:%M:%S')}] Đã kết nối lại thành công sau {downtime_sec:.2f}s gián đoạn."
+                        )
+                        t_disconnect = None
+                    consecutive_failures = 0
 
-            if not stop_event.is_set() and (not until_time or datetime.now(TZ).time() < until_time):
-                await asyncio.sleep(1.0)
+                    while not stop_event.is_set():
+                        now_dt = datetime.now(TZ)
+                        now_loop = now_dt.time()
+                        if until_time and now_loop >= until_time:
+                            stop_event.set()
+                            print(
+                                f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
+                            )
+                            break
 
-    if t_disconnect is not None:
-        disconnect_intervals.append((t_disconnect, datetime.now(TZ)))
+                        # Kiểm tra lưu lượng tin QUOTE sau 10 phút đầu khớp lệnh liên tục (Brief 91 Task 2)
+                        if not rate_alarm_checked:
+                            elapsed_cont_min = compute_continuous_session_minutes(
+                                now_dt, since_dt=recording_start_dt
+                            )
+                            if elapsed_cont_min >= 10.0:
+                                rate_alarm_checked = True
+                                if check_quote_rate_alarm(counts["QUOTE"], elapsed_cont_min):
+                                    warn_msg = (
+                                        f"Cảnh báo lưu lượng thấp bất thường: chỉ nhận được {counts['QUOTE']} tin QUOTE "
+                                        f"sau {elapsed_cont_min:.1f} phút giao dịch liên tục cho mã {symbol}. "
+                                        f"Có thể đang ghi sai mã hợp đồng phái sinh!"
+                                    )
+                                    print(f"\n[CẢNH BÁO] {warn_msg}\n")
+                                    alert(
+                                        "WARN",
+                                        warn_msg,
+                                        symbol=symbol,
+                                        quote_count=counts["QUOTE"],
+                                        elapsed_minutes=elapsed_cont_min,
+                                    )
 
-    # Thống kê sau phiên ghi (C2: tách bạch downtime máy ghi khỏi market silence)
-    file_size_bytes = out_path.stat().st_size if out_path.exists() else 0
-    file_size_mb = file_size_bytes / (1024 * 1024)
+                        # Tự động phát hiện ngắt kết nối từ SSI và nối lại (C1)
+                        ws_client = getattr(stream.streaming, "_ws", None)
+                        if ws_client is not None and not ws_client.is_connected:
+                            t_disconnect = datetime.now(TZ)
+                            print(
+                                f"\n[{t_disconnect.strftime('%H:%M:%S')}] WebSocket bị ngắt từ server SSI, chuẩn bị kết nối lại..."
+                            )
+                            break
 
-    total_downtime, detailed_intervals = compute_total_downtime_seconds(disconnect_intervals)
-    max_gap, long_gaps, total_considered = detect_silence_gaps(
-        timestamps, min_gap_seconds=10.0, disconnect_intervals=disconnect_intervals
-    )
+                        await asyncio.sleep(0.5)
 
-    print("\n" + "=" * 65)
-    print("=== BÁO CÁO THỐNG KÊ MÁY GHI SỔ LỆNH VN30F (BRIEF 87/90) ===")
-    print("=" * 65)
-    print(f"- Hợp đồng: {symbol}")
-    print(f"- File dữ liệu: {out_path}")
-    print(f"- Dung lượng file: {file_size_bytes:,} bytes ({file_size_mb:.2f} MB)")
-    print(
-        f"- Tổng số tin nhận: {sum(counts.values()):,} "
-        f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})"
-    )
-    print(f"- Tổng số tin QUOTE/TRADE đã xét khoảng lặng: {total_considered:,}")
-    print(
-        f"- Thời gian máy ghi mất kết nối: {total_downtime:.2f} giây ({len(detailed_intervals)} quãng ngắt)"
-    )
-    if detailed_intervals:
-        print("  + Chi tiết các quãng mất kết nối của máy ghi:")
-        for d1, d2, dur in detailed_intervals:
-            print(f"    * Từ {d1.strftime('%H:%M:%S')} đến {d2.strftime('%H:%M:%S')}: {dur:.2f} giây")
-    print(f"- Khoảng lặng thị trường dài nhất (trong các quãng kết nối): {max_gap:.2f} giây")
+                except KeyboardInterrupt:
+                    print("\nNhận ngắt bàn phím (KeyboardInterrupt)...")
+                    stop_event.set()
+                    break
+                except Exception as e:
+                    consecutive_failures += 1
+                    if t_disconnect is None:
+                        t_disconnect = datetime.now(TZ)
+                    backoff = compute_reconnect_backoff(consecutive_failures)
+                    print(
+                        f"\n[{datetime.now(TZ).strftime('%H:%M:%S')}] Lỗi kết nối WebSocket: {e} "
+                        f"(thất bại lần {consecutive_failures}), thử lại sau {backoff:.1f}s..."
+                    )
+                    await asyncio.sleep(backoff)
+                finally:
+                    if stream is not None:
+                        try:
+                            await stream.streaming.disconnect()
+                        except Exception:
+                            pass
+                    if auth is not None:
+                        try:
+                            await auth.close()
+                        except Exception:
+                            pass
 
-    if long_gaps:
-        print(f"- Danh sách {len(long_gaps)} khoảng lặng thị trường > 10.0s trong giờ phiên:")
-        for t1, t2, sec in long_gaps:
-            t1_s = t1.astimezone(TZ).strftime("%H:%M:%S")
-            t2_s = t2.astimezone(TZ).strftime("%H:%M:%S")
-            print(f"  + Từ {t1_s} đến {t2_s}: {sec:.2f} giây")
-    else:
-        print("- Không phát hiện khoảng lặng thị trường nào > 10.0 giây trong giờ giao dịch.")
-    print("=" * 65 + "\n")
+                if not stop_event.is_set() and (not until_time or datetime.now(TZ).time() < until_time):
+                    await asyncio.sleep(1.0)
 
-    return {
-        "symbol": symbol,
-        "file_path": str(out_path),
-        "file_size_bytes": file_size_bytes,
-        "counts": counts,
-        "total_considered": total_considered,
-        "total_downtime_seconds": total_downtime,
-        "disconnect_intervals": detailed_intervals,
-        "max_gap_seconds": max_gap,
-        "long_gaps": long_gaps,
-    }
+        if t_disconnect is not None:
+            disconnect_intervals.append((t_disconnect, datetime.now(TZ)))
+
+        # Thống kê sau phiên ghi (C2: tách bạch downtime máy ghi khỏi market silence)
+        file_size_bytes = out_path.stat().st_size if out_path.exists() else 0
+        file_size_mb = file_size_bytes / (1024 * 1024)
+
+        total_downtime, detailed_intervals = compute_total_downtime_seconds(disconnect_intervals)
+        max_gap, long_gaps, total_considered = detect_silence_gaps(
+            timestamps, min_gap_seconds=10.0, disconnect_intervals=disconnect_intervals
+        )
+
+        print("\n" + "=" * 65)
+        print("=== BÁO CÁO THỐNG KÊ MÁY GHI SỔ LỆNH VN30F (BRIEF 87/90) ===")
+        print("=" * 65)
+        print(f"- Hợp đồng: {symbol}")
+        print(f"- File dữ liệu: {out_path}")
+        print(f"- Dung lượng file: {file_size_bytes:,} bytes ({file_size_mb:.2f} MB)")
+        print(
+            f"- Tổng số tin nhận: {sum(counts.values()):,} "
+            f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})"
+        )
+        print(f"- Tổng số tin QUOTE/TRADE đã xét khoảng lặng: {total_considered:,}")
+        print(
+            f"- Thời gian máy ghi mất kết nối: {total_downtime:.2f} giây ({len(detailed_intervals)} quãng ngắt)"
+        )
+        if detailed_intervals:
+            print("  + Chi tiết các quãng mất kết nối của máy ghi:")
+            for d1, d2, dur in detailed_intervals:
+                print(f"    * Từ {d1.strftime('%H:%M:%S')} đến {d2.strftime('%H:%M:%S')}: {dur:.2f} giây")
+        print(f"- Khoảng lặng thị trường dài nhất (trong các quãng kết nối): {max_gap:.2f} giây")
+
+        if long_gaps:
+            print(f"- Danh sách {len(long_gaps)} khoảng lặng thị trường > 10.0s trong giờ phiên:")
+            for t1, t2, sec in long_gaps:
+                t1_s = t1.astimezone(TZ).strftime("%H:%M:%S")
+                t2_s = t2.astimezone(TZ).strftime("%H:%M:%S")
+                print(f"  + Từ {t1_s} đến {t2_s}: {sec:.2f} giây")
+        else:
+            print("- Không phát hiện khoảng lặng thị trường nào > 10.0 giây trong giờ giao dịch.")
+        print("=" * 65 + "\n")
+
+        # Kiểm tra dừng sớm ngoài ý muốn trên ngày giao dịch (Brief 94 Task 1)
+        now_stop = datetime.now(TZ)
+        # Dung sai 60 giay: vong lap co the thoat ngay truoc moc --until vai phan giay
+        # (lam tron giay, do tre cua stream.wait()). Ca hong that o 25/09 la som 4,75 GIO,
+        # nen 60 giay khong lam giam kha nang phat hien, ma bo duoc bao dong oan.
+        if should_alert_early_stop(
+            now_stop, until_time, is_trading_day=True, tolerance_seconds=60.0
+        ):
+            total_recorded = sum(counts.values())
+            stop_str = now_stop.strftime("%H:%M:%S")
+            until_str = until_time.strftime("%H:%M:%S") if until_time else "N/A"
+            early_msg = (
+                f"Máy ghi {recorded_symbol} dừng sớm ngoài ý muốn lúc {stop_str} (kỳ vọng chạy đến {until_str}). "
+                f"Tổng số tin đã ghi được: {total_recorded:,} "
+                f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})."
+            )
+            print(f"\n[CRITICAL] {early_msg}\n", file=sys.stderr)
+            alert(
+                "CRITICAL",
+                early_msg,
+                symbol=recorded_symbol,
+                actual_stop=stop_str,
+                until_time=until_str,
+                recorded_counts=counts,
+                total_recorded=total_recorded,
+            )
+            raise EarlyStopError(early_msg)
+
+        return {
+            "symbol": symbol,
+            "file_path": str(out_path),
+            "file_size_bytes": file_size_bytes,
+            "counts": counts,
+            "total_considered": total_considered,
+            "total_downtime_seconds": total_downtime,
+            "disconnect_intervals": detailed_intervals,
+            "max_gap_seconds": max_gap,
+            "long_gaps": long_gaps,
+        }
+
+    except EarlyStopError:
+        raise
+    except Exception as e:
+        total_recorded = sum(counts.values())
+        err_type = type(e).__name__
+        crit_msg = (
+            f"Máy ghi {recorded_symbol} gặp lỗi chưa xử lý và dừng đột ngột: [{err_type}] {e}. "
+            f"Tổng số tin đã ghi được tới lúc chết: {total_recorded:,} "
+            f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})."
+        )
+        print(f"\n[CRITICAL] {crit_msg}\n", file=sys.stderr)
+        alert(
+            "CRITICAL",
+            crit_msg,
+            error_type=err_type,
+            error_message=str(e),
+            symbol=recorded_symbol,
+            recorded_counts=counts,
+            total_recorded=total_recorded,
+        )
+        raise
 
 
 def main() -> None:

@@ -11,6 +11,7 @@
 #   scripts/sched.sh engine-consumer
 #   scripts/sched.sh stream-health
 #   scripts/sched.sh orderbook-recorder
+#   scripts/sched.sh orderbook-daily-check
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -86,8 +87,14 @@ case "${1:-}" in
       --until 14:46 \
       "$@"
     ;;
+  orderbook-daily-check)
+    shift || true
+    exec "$RUN" orderbook-daily-check.log orderbook-daily-check \
+      uv run python scripts/check_orderbook_daily.py \
+      "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health|orderbook-recorder}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check}" >&2
     exit 2
     ;;
 esac

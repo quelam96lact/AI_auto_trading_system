@@ -19,6 +19,7 @@ import pytest
 
 from scripts.measure_derivative_contract_volume import ContractInfo
 from scripts.record_vn30f_orderbook import (
+    EarlyStopError,
     _parse_until_time,
     check_quote_rate_alarm,
     classify_message,
@@ -28,7 +29,9 @@ from scripts.record_vn30f_orderbook import (
     compute_total_downtime_seconds,
     detect_silence_gaps,
     get_orderbook_filepath,
+    record_orderbook_stream,
     resolve_front_month_symbol,
+    should_alert_early_stop,
     should_reconnect,
 )
 from trading.calendar_vn import TZ, is_trading_day
@@ -502,3 +505,189 @@ def test_c3_calendar_trading_day_skips_weekends_and_holidays():
     holidays = {date(2026, 9, 2)}
     assert is_trading_day(date(2026, 9, 2), holidays=holidays) is False
 
+
+# =====================================================================
+# Brief 94 Task 1: Máy ghi phải kêu khi nó chết
+# =====================================================================
+
+
+def test_task1_should_alert_early_stop_on_time():
+    """Nhóm 1: Dừng đúng --until (14:46) -> KHÔNG báo."""
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=time(14, 46, 0),
+            until_time=time(14, 46, 0),
+            is_trading_day=True,
+        )
+        is False
+    )
+
+
+def test_task1_should_alert_early_stop_three_hours_early():
+    """Nhóm 2: Dừng trước --until 3 giờ, là ngày giao dịch -> BÁO CRITICAL."""
+    # Dừng lúc 11:46 trong khi đến 14:46 mới hết phiên
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=time(11, 46, 0),
+            until_time=time(14, 46, 0),
+            is_trading_day=True,
+        )
+        is True
+    )
+    # Thử với kiểu datetime
+    dt_early = datetime(2026, 9, 28, 11, 46, 0, tzinfo=TZ)
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=dt_early,
+            until_time=time(14, 46, 0),
+            is_trading_day=True,
+        )
+        is True
+    )
+
+
+def test_task1_should_alert_early_stop_non_trading_day():
+    """Nhóm 3: Không phải ngày giao dịch -> KHÔNG báo, dù dừng "sớm"."""
+    # Chủ nhật hay thứ Bảy chạy kiểm tra, dừng lúc 11:46 -> không báo
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=time(11, 46, 0),
+            until_time=time(14, 46, 0),
+            is_trading_day=False,
+        )
+        is False
+    )
+
+
+def test_task1_should_alert_early_stop_after_until():
+    """Nhóm 4 (Ca biên): Dừng sau --until vài giây (làm tròn/cleanup) -> KHÔNG báo."""
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=time(14, 46, 5),
+            until_time=time(14, 46, 0),
+            is_trading_day=True,
+        )
+        is False
+    )
+    assert (
+        should_alert_early_stop(
+            actual_stop_time=time(14, 47, 0),
+            until_time=time(14, 46, 0),
+            is_trading_day=True,
+        )
+        is False
+    )
+
+
+async def test_task1_unhandled_exception_emits_critical_alert_with_counts(tmp_path: Path):
+    """Nhóm 5: Lỗi chưa xử lý -> có đúng 1 alert CRITICAL, và nêu đúng số tin đã ghi."""
+    # Tạo file dữ liệu có sẵn 3 tin đã ghi trước đó
+    symbol = "41I1GA000"
+    today_str = datetime.now(TZ).strftime("%Y-%m-%d")
+    file_path = tmp_path / symbol / f"{today_str}.jsonl.gz"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    import gzip
+    import json
+
+    with gzip.open(file_path, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"type": "QUOTE", "symbol": symbol, "recv_ts": f"{today_str}T09:00:01+07:00"}) + "\n")
+        gf.write(json.dumps({"type": "QUOTE", "symbol": symbol, "recv_ts": f"{today_str}T09:00:02+07:00"}) + "\n")
+        gf.write(json.dumps({"type": "TRADE", "symbol": symbol, "price": 1950.0, "recv_ts": f"{today_str}T09:00:03+07:00"}) + "\n")
+
+    real_gzip_open = gzip.open
+
+    def mock_gzip_open(filename, mode="rb", **kwargs):
+        if mode == "at":
+            raise OSError("Không còn dung lượng ổ đĩa (Disk full)")
+        return real_gzip_open(filename, mode=mode, **kwargs)
+
+    with (
+        patch("scripts.record_vn30f_orderbook.is_trading_day", return_value=True),
+        patch("scripts.record_vn30f_orderbook.Storage") as mock_storage,
+        patch("scripts.record_vn30f_orderbook.gzip.open", side_effect=mock_gzip_open),
+        patch("scripts.record_vn30f_orderbook.alert") as mock_alert,
+    ):
+        mock_storage.return_value = None
+
+        with pytest.raises(OSError) as exc_info:
+            await record_orderbook_stream(
+                symbol=symbol,
+                until_time=time(14, 46),
+                data_dir=tmp_path,
+            )
+
+        assert "Không còn dung lượng ổ đĩa" in str(exc_info.value)
+
+        # Kiểm tra đúng 1 alert CRITICAL
+        assert mock_alert.call_count == 1
+        call_args, call_kwargs = mock_alert.call_args
+        assert call_args[0] == "CRITICAL"
+        msg = call_args[1]
+
+        # Kiểm tra nội dung alert nêu loại lỗi, thông điệp, mã hợp đồng, và số tin
+        assert "OSError" in msg
+        assert "Không còn dung lượng ổ đĩa (Disk full)" in msg
+        assert symbol in msg
+        assert "3" in msg  # Tổng số tin đã ghi được nạp từ file
+
+        # Kiểm tra kwargs chi tiết
+        assert call_kwargs.get("symbol") == symbol
+        assert call_kwargs.get("error_type") == "OSError"
+        assert call_kwargs.get("total_recorded") == 3
+        counts = call_kwargs.get("recorded_counts")
+        assert counts == {"QUOTE": 2, "TRADE": 1, "OTHER": 0}
+
+
+async def test_task1_early_stop_in_stream_emits_critical_alert(tmp_path: Path):
+    """Tiến trình kết thúc trước --until trên ngày giao dịch -> alert CRITICAL và raise EarlyStopError."""
+    symbol = "41I1GA000"
+
+    with (
+        patch("scripts.record_vn30f_orderbook.is_trading_day", return_value=True),
+        patch("scripts.record_vn30f_orderbook.Storage") as mock_storage,
+        patch("scripts.record_vn30f_orderbook.ensure_authenticated") as mock_auth,
+        patch("scripts.record_vn30f_orderbook.should_reconnect", return_value=False),  # Giả lập vòng kết nối bỏ cuộc
+        patch("scripts.record_vn30f_orderbook.alert") as mock_alert,
+        patch("scripts.record_vn30f_orderbook.should_alert_early_stop", return_value=True),  # Giả lập xác nhận dừng sớm
+    ):
+        mock_storage.return_value = None
+        mock_auth.return_value = None
+
+        with pytest.raises(EarlyStopError) as exc_info:
+            await record_orderbook_stream(
+                symbol=symbol,
+                until_time=time(14, 46),
+                data_dir=tmp_path,
+            )
+
+        assert "dừng sớm ngoài ý muốn" in str(exc_info.value)
+        assert mock_alert.call_count == 1
+        call_args, call_kwargs = mock_alert.call_args
+        assert call_args[0] == "CRITICAL"
+        assert symbol in call_args[1]
+        assert call_kwargs.get("symbol") == symbol
+
+def test_task1_early_stop_tolerance_60s_no_false_alarm():
+    """Dung sai 60 giay: som duoi 60s la BINH THUONG, som nhieu van phai BAO.
+
+    Vong lap may ghi co the thoat ngay truoc moc --until vai phan giay (lam tron
+    giay, do tre stream.wait()). Khong co dung sai thi mot phien hoan toan binh
+    thuong se bi bao CRITICAL oan ngay lan chay tu dong dau tien.
+    """
+    until = time(14, 46, 0)
+    # Som 1 giay va som 59 giay -> KHONG bao (trong dung sai)
+    assert not should_alert_early_stop(
+        time(14, 45, 59), until, is_trading_day=True, tolerance_seconds=60.0
+    )
+    assert not should_alert_early_stop(
+        time(14, 45, 1), until, is_trading_day=True, tolerance_seconds=60.0
+    )
+    # Som 61 giay -> VAN BAO
+    assert should_alert_early_stop(
+        time(14, 44, 59), until, is_trading_day=True, tolerance_seconds=60.0
+    )
+    # Ca hong that 25/09 (som ~4,75 gio) -> VAN BAO
+    assert should_alert_early_stop(
+        time(10, 0, 33), until, is_trading_day=True, tolerance_seconds=60.0
+    )
