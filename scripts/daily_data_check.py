@@ -16,7 +16,7 @@ CLI:
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 # Đảm bảo import được _db_common và trading
@@ -50,17 +50,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
+    """Kiểm tra file log backfill để biết tác vụ backfill-universe cho ngày target_date đã hoàn tất chưa.
+
+    Dấu hiệu hoàn tất:
+    - Log có chứa mốc ngày target_date (ở dòng start hoặc dòng Backfill 1d: ... -> target_date)
+    - Sau đó có dòng 'DONE: ok=...' và 'EXIT=0'
+    """
+    p = Path(log_path)
+    if not p.exists():
+        return False
+
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+
+    target_str = target_date.isoformat()
+    blocks = content.split("backfill start")
+    if len(blocks) <= 1:
+        return False
+
+    # Duyệt từ phiên chạy gần nhất ngược về trước
+    for block in reversed(blocks[1:]):
+        if target_str in block:
+            return bool("DONE:" in block and "EXIT=0" in block)
+
+    return False
+
+
 def evaluate_daily_completeness(
     active_symbols: list[str],
     present_symbols: set[str],
     is_trading_day: bool = False,
+    backfill_done: bool = True,
 ) -> tuple[int, set[str], str]:
     """Hàm thuần đánh giá trạng thái bar daily của các mã active.
 
     Trả về: (exit_code, missing_symbols, message)
     - exit_code 0: Đầy đủ bar, HOẶC ngày nghỉ không có bar (nhường 2A).
-    - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác.
-    - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar (lỗi dữ liệu / feed chết toàn diện).
+    - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác, HOẶC hoãn phán quyết do backfill chưa xong.
+    - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar VÀ backfill đã hoàn tất (sự cố dữ liệu thật).
     """
     if not active_symbols:
         return 0, set(), "Không có mã active nào trong symbol_universe."
@@ -68,6 +98,13 @@ def evaluate_daily_completeness(
     # Nếu toàn bộ thị trường 0 có bar nào:
     if not present_symbols:
         if is_trading_day:
+            if not backfill_done:
+                msg = (
+                    "⚠️ [AI Trading] HOÃN PHÁN QUYẾT: Ngày giao dịch nhưng 0 mã nào có bar daily trong DB, "
+                    "và tác vụ backfill-universe chưa hoàn tất (dữ liệu chưa về). Hoãn phán quyết, không báo đỏ sai."
+                )
+                return 1, set(active_symbols), msg
+
             msg = (
                 f"🚨 [AI Trading] SỰ CỐ DỮ LIỆU: Ngày giao dịch nhưng 0 mã nào có bar daily trong DB "
                 f"(toàn bộ {len(active_symbols)} mã active thiếu bar)!"
@@ -139,8 +176,11 @@ def main() -> None:
     holidays = cfg.holidays
     trading_day = is_trading_day(target_date, holidays)
 
+    backfill_log = Path("logs/backfill.log")
+    backfill_done = check_backfill_completed(backfill_log, target_date)
+
     code, _missing, msg = evaluate_daily_completeness(
-        active_symbols, present_symbols, is_trading_day=trading_day
+        active_symbols, present_symbols, is_trading_day=trading_day, backfill_done=backfill_done
     )
 
     _print_safe(f"[{target_date}] {msg}")
