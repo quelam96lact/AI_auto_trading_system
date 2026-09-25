@@ -53,7 +53,17 @@ from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import load_config
 from trading.storage.db import Storage
 
-# Các mốc giờ phiên giao dịch phái sinh Việt Nam
+# Các mốc giờ phiên giao dịch phái sinh Việt Nam.
+#
+# CỐ Ý ĐỊNH NGHĨA RIÊNG, KHÔNG dùng trading.calendar_vn.SESSIONS, dù hiện tại hai bộ
+# trùng giá trị. Lý do: SESSIONS là phiên CỔ PHIẾU; phiên PHÁI SINH khác thật sự —
+# nó có ATO từ 08:45 (cổ phiếu 09:00) và ATC 14:30-14:45 nằm trong khung dưới đây.
+# Hai bộ phải được phép rẽ nhau khi HNX đổi giờ một sàn. Đừng gộp lại.
+#
+# HẠN CHẾ ĐÃ BIẾT: khung dưới bắt đầu 09:00 nên KHÔNG phủ phiên ATO 08:45-09:00.
+# Máy ghi vẫn NHẬN và GHI tin ATO (nó chạy từ 08:40), nhưng phép đo độ phủ ở
+# scripts/verify_orderbook_file.py không tính khoảng đó vào mẫu số — tức thiếu tin
+# ATO sẽ không bị phát hiện. Chấp nhận được vì ATO không phải khớp lệnh liên tục.
 MORNING_START = dt_time(9, 0, 0)
 MORNING_END = dt_time(11, 30, 0)
 AFTERNOON_START = dt_time(13, 0, 0)
