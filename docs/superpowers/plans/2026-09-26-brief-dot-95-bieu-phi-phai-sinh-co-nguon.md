@@ -83,7 +83,7 @@ Nếu có bất kỳ mục nào `UNRESOLVED`: **dừng, báo cáo Task 1, không
 
 ## Task 2 — Sửa mô hình phí trong `trading/derivative_position.py`
 
-**Chỉ được sửa:** `trading/derivative_position.py`, `tests/test_derivative_position.py`, và các literal phí trong test liệt kê ở mục "Test hiện có" bên dưới.
+**Chỉ được sửa:** `trading/derivative_position.py`, `tests/test_derivative_position.py`, `tests/test_derivative_backtest.py`, `tests/test_momentum_rsi.py`. Ba file test sau cùng chỉ được sửa đúng theo mục "Test hiện có" bên dưới.
 
 **Không được đụng:** `trading/derivative_backtest.py`, `trading/paper_broker.py`, mọi file trong `scripts/`, mọi file khác.
 
@@ -113,17 +113,60 @@ Mọi con số kỳ vọng phải **tính tay từ công thức trích ở Task 
 5. Phí VSD thu **đúng số lần** theo 1b.
 6. `DerivativePaperBroker(capital)` không truyền gì vẫn dùng đúng các hằng số mới.
 
-### Test hiện có dùng literal phí
+### Hàm chi phí một lượt (bắt buộc, để test cũ sửa được mà không đoán)
 
-Các chỗ sau đang ghim số 8.250:
-- `tests/test_derivative_backtest.py:13` (`FEE = 8_250.0`)
-- `tests/test_momentum_rsi.py:130` (`19_081_500.0 - 18 * 8_250.0`)
-- `tests/test_derivative_position.py` (dùng `FEE` truyền tường minh)
+Trong `trading/derivative_position.py`, broker phải tính phí mỗi lượt qua **một hàm thuần duy nhất**, ví dụ:
 
-Với mỗi chỗ:
-- Nếu test truyền phí **tường minh** vào broker thì nó đang test cơ chế, không phải biểu phí. **Giữ nguyên.**
-- Nếu test dựa vào **giá trị mặc định** và hỏng vì biểu phí đổi: được sửa **chỉ con số kỳ vọng**, và phải ghi phép tính tay mới ngay cạnh. Liệt kê từng test đã sửa trong báo cáo, kèm số cũ, số mới, phép tính.
-- **Không** sửa bất kỳ assertion nào khác, không đổi logic test.
+```python
+def derivative_side_cost(price: float, qty: int, opening: bool) -> float:
+    """Tổng chi phí VNĐ của MỘT lượt (mở hoặc đóng) theo biểu phí mặc định."""
+```
+
+`open_long`, `open_short`, `close` đều gọi hàm này. Không tính phí ở chỗ nào khác. Test ở mục dưới dùng chính hàm này, nên công thức phí chỉ nằm ở một chỗ.
+
+### Test hiện có ghim phí 8.250 (Claude đã soát, đây là danh sách đầy đủ)
+
+**1. `tests/test_derivative_position.py`** — truyền `fee_per_contract=FEE` tường minh, trừ dòng 70. Các test này kiểm **cơ chế** broker, không kiểm biểu phí.
+- Nếu thêm tham số mới (VSD, thuế) làm các test này đổi kết quả: truyền tường minh tham số mới về giá trị trung tính (ví dụ thuế 0, VSD 0) **trong lời gọi khởi tạo broker**, để test giữ nguyên ý nghĩa cũ. **Không** sửa assertion.
+- Dòng 70 (`DerivativePaperBroker(capital=CAP)` không truyền phí): báo cáo nó kiểm gì; nếu hỏng thì xử lý như mục 2.
+
+**2. `tests/test_derivative_backtest.py`** — `run_derivative_backtest` **không có tham số phí**, nên toàn bộ file dựa vào biểu phí **mặc định**. Hằng `FEE = 8_250.0` ở dòng 13 được dùng ở hơn 10 assertion, dạng:
+
+```python
+expected_pnl = (giá_đóng - giá_mở) * 1 * DERIVATIVE_CONTRACT_MULTIPLIER - FEE   # trừ phí ĐÓNG
+assert abs(close_fill.pnl - (expected_pnl - FEE)) < 1e-9                          # trừ phí MỞ
+assert abs(report.unrealized_pnl - (... - FEE)) < 1e-9                            # trừ phí MỞ
+```
+
+Các test này ngầm giả định **phí mở = phí đóng = hằng số**. Với mô hình mới, giả định đó không còn đúng: VSD chỉ thu lúc mở, thuế đổi theo giá. Cách sửa **duy nhất được phép**:
+- Thay mỗi `FEE` đóng vai **phí đóng** bằng `derivative_side_cost(giá_đóng, 1, opening=False)`.
+- Thay mỗi `FEE` đóng vai **phí mở** bằng `derivative_side_cost(giá_mở, 1, opening=True)`.
+- Giá mở và giá đóng lấy **đúng các literal đã có sẵn** trong test đó (ví dụ `11.0`, `9.5`).
+- **Phần lãi gộp** `(giá_đóng - giá_mở) * qty * DERIVATIVE_CONTRACT_MULTIPLIER` giữ nguyên từng ký tự.
+- Không đổi dung sai, không đổi cấu trúc assertion, không xoá assertion nào.
+- Nếu một test mà không xác định được `FEE` nào là phí mở, phí nào là phí đóng: **dừng và báo cáo test đó**, không đoán.
+- Xoá hằng `FEE` ở dòng 13 **chỉ khi** sau khi sửa không còn chỗ nào dùng nó.
+
+**3. `tests/test_momentum_rsi.py:130`**
+
+```python
+assert rep.realized_pnl == pytest.approx(19_081_500.0 - 18 * 8_250.0, abs=1.0)
+```
+
+Test này ghim kết quả khớp với spike cũ. Số 19.081.500 của spike **đã trừ** phí đóng 18 × 8.250. Vậy lãi gộp trước mọi phí là `19_081_500 + 18 × 8_250 = 19_230_000`, và **con số này không phụ thuộc biểu phí**. Viết lại assertion để giữ đúng ý nghĩa hồi quy:
+
+```python
+# Lãi gộp trước phí của spike (19_081_500 đã trừ 18 x 8_250 phí đóng) = 19_230_000,
+# không phụ thuộc biểu phí. realized_pnl = lãi gộp - tổng phí của mọi lượt.
+assert rep.realized_pnl + <tổng phí mọi fill đã đóng> == pytest.approx(19_230_000.0, abs=1.0)
+```
+
+- Tổng phí lấy từ `Fill.fee` của các fill trong `rep` (của **cả lượt mở lẫn lượt đóng**). Trước khi viết, kiểm xem `rep` có danh sách fill không. Nếu không có, **dừng và báo cáo**, không sửa `derivative_backtest.py`.
+- Nếu cuối kỳ còn vị thế mở, chỉ cộng phí của các vòng **đã đóng**. Báo cáo cách đã xử lý.
+- **Trước khi sửa**, chạy chứng minh trên code **cũ**: `rep.realized_pnl + tổng phí` phải bằng 19.230.000. Nếu không bằng, lập luận ở trên sai: **dừng và báo cáo**.
+- Hai assertion `rep.trades == 18` và `rep.win_rate ≈ 0.6667` **giữ nguyên**. Phí cao hơn có thể thật sự đổi hành vi: một lệnh lãi mỏng thành lệnh lỗ, và quy tắc "2 lỗi/ngày" chặn lệnh kế tiếp. Nếu một trong hai assertion này đỏ sau khi đổi biểu phí thì đó là **phát hiện, không phải lỗi cần vá**. **Dừng và báo cáo** số lệnh mới, win rate mới, và lệnh nào đổi dấu. Không sửa hai assertion này.
+
+**Báo cáo:** liệt kê từng test đã sửa, và dán diff của `tests/test_derivative_backtest.py` và `tests/test_momentum_rsi.py`.
 
 ### Kiểm thử phá hoại (bắt buộc, báo cáo đủ)
 
