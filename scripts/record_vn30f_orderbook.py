@@ -30,9 +30,9 @@ from typing import Any
 
 # Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
 
 # Ensure repo root is in sys.path
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -206,8 +206,26 @@ async def record_orderbook_stream(
 
     counts = {"QUOTE": 0, "TRADE": 0, "OTHER": 0}
     timestamps: list[datetime] = []
-    stop_event = asyncio.Event()
 
+    # Nạp dữ liệu đã ghi trước đó trong ngày (nếu có) để thống kê toàn diện cuối phiên
+    if out_path.exists() and out_path.stat().st_size > 0:
+        try:
+            with gzip.open(out_path, mode="rt", encoding="utf-8") as existing_f:
+                for line in existing_f:
+                    line_s = line.strip()
+                    if not line_s:
+                        continue
+                    m = json.loads(line_s)
+                    c = classify_message(m)
+                    counts[c] = counts.get(c, 0) + 1
+                    r_ts = m.get("recv_ts")
+                    if r_ts:
+                        timestamps.append(datetime.fromisoformat(r_ts))
+            print(f"  Đã nạp {sum(counts.values()):,} tin đã ghi trước đó trong ngày.")
+        except Exception as e:
+            print(f"  Cảnh báo: không thể nạp dữ liệu cũ: {e}")
+
+    stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def _handle_signal() -> None:
@@ -244,34 +262,65 @@ async def record_orderbook_stream(
                 gz_file.flush()
                 timestamps.append(recv_dt)
 
-        stream.streaming.on_data = on_message
+        while not stop_event.is_set():
+            if until_time and datetime.now(TZ).time() >= until_time:
+                print(
+                    f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
+                )
+                break
 
-        try:
-            print("  Đang kết nối WebSocket SSI...")
-            await stream.streaming.connect()
-            print(f"  Đã kết nối, đang đăng ký nhận dữ liệu mã {symbol}...")
-            await stream.streaming.subscribe_symbol([symbol])
-            print("  Bắt đầu lắng nghe dữ liệu stream...\n")
-
-            while not stop_event.is_set():
-                if until_time and datetime.now(TZ).time() >= until_time:
-                    print(
-                        f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
-                    )
-                    break
-                await asyncio.sleep(0.5)
-
-        except KeyboardInterrupt:
-            print("\nNhận ngắt bàn phím (KeyboardInterrupt)...")
-        finally:
+            auth = None
+            stream = None
             try:
-                await stream.streaming.disconnect()
-            except Exception:
-                pass
-            try:
-                await auth.close()
-            except Exception:
-                pass
+                auth = await ensure_authenticated(app_cfg, storage)
+                stream = AsyncStream(auth)
+                stream.streaming.on_data = on_message
+                now_str = datetime.now(TZ).strftime("%H:%M:%S")
+                print(f"[{now_str}] Đang kết nối WebSocket SSI...")
+                await stream.streaming.connect()
+                print(f"[{now_str}] Đã kết nối, đang đăng ký nhận dữ liệu mã {symbol}...")
+                await stream.streaming.subscribe_symbol([symbol])
+                print(f"[{now_str}] Bắt đầu lắng nghe dữ liệu stream...\n")
+
+                while not stop_event.is_set():
+                    if until_time and datetime.now(TZ).time() >= until_time:
+                        stop_event.set()
+                        print(
+                            f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
+                        )
+                        break
+
+                    # Tự động phát hiện ngắt kết nối từ SSI và nối lại
+                    ws_client = getattr(stream.streaming, "_ws", None)
+                    if ws_client is not None and not ws_client.is_connected:
+                        print(
+                            f"\n[{datetime.now(TZ).strftime('%H:%M:%S')}] WebSocket bị ngắt từ server SSI, chuẩn bị kết nối lại..."
+                        )
+                        break
+
+                    await asyncio.sleep(0.5)
+
+            except KeyboardInterrupt:
+                print("\nNhận ngắt bàn phím (KeyboardInterrupt)...")
+                stop_event.set()
+                break
+            except Exception as e:
+                print(f"\n[{datetime.now(TZ).strftime('%H:%M:%S')}] Lỗi kết nối WebSocket: {e}, thử lại sau 3s...")
+                await asyncio.sleep(3.0)
+            finally:
+                if stream is not None:
+                    try:
+                        await stream.streaming.disconnect()
+                    except Exception:
+                        pass
+                if auth is not None:
+                    try:
+                        await auth.close()
+                    except Exception:
+                        pass
+
+            if not stop_event.is_set() and (not until_time or datetime.now(TZ).time() < until_time):
+                await asyncio.sleep(1.0)
 
     # Thống kê sau phiên ghi
     file_size_bytes = out_path.stat().st_size if out_path.exists() else 0

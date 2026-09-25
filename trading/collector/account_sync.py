@@ -46,6 +46,18 @@ async def sync_account_data(cfg: Config, storage: Storage) -> None:
         await auth.close()
 
 
+REQUIRED_BALANCE_FIELDS = ("accountBalance", "totalDebt", "withdrawable")
+
+
+def _find_missing_balance_fields(equity: dict) -> list[str]:
+    missing = []
+    for f in REQUIRED_BALANCE_FIELDS:
+        val = equity.get(f)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            missing.append(f)
+    return missing
+
+
 async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, storage: Storage) -> None:
     raw = await auth.rest_client.get(
         EP_ACCOUNT_BALANCE,
@@ -54,12 +66,21 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
     equity = raw.get("equity")
     if not equity:
         return
+    missing = _find_missing_balance_fields(equity)
+    if missing:
+        alert(
+            "WARN",
+            f"equity missing required balance fields: {','.join(missing)}",
+            account_no=account_no,
+            missing_fields=missing,
+        )
+        return
     storage.save_account_balance(
         account_no=account_no,
         ts=ts,
-        account_balance=float(equity.get("accountBalance") or 0),
-        total_debt=float(equity.get("totalDebt") or 0),
-        withdrawable=float(equity.get("withdrawable") or 0),
+        account_balance=float(equity["accountBalance"]),
+        total_debt=float(equity["totalDebt"]),
+        withdrawable=float(equity["withdrawable"]),
         buy_unmatched=float(equity.get("buyUnmatched") or 0),
         sell_unmatched=float(equity.get("sellUnmatched") or 0),
     )

@@ -256,3 +256,199 @@ async def test_sync_buying_power_isolates_failing_symbol(monkeypatch):
 
     assert recorded == [("0434226", "HII", 100, 50.0), ("0434226", "AAA", 100, 50.0)], f"thuc te: {recorded}"
     assert ("WARN", "IJC") in alerts, f"phai WARN cho ma loi, thuc te: {alerts}"
+
+
+# =====================================================================
+# Brief 88 Task 2: Va loi so 0 im lang o dong bo tai khoan
+# 7 nhom test
+# =====================================================================
+
+
+async def test_sync_balance_case1_all_fields_present_no_warn(monkeypatch):
+    """Ca 1: equity du ba truong, withdrawable = 5021712 -> ghi dung gia tri, KHONG WARN."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": "2000000",
+                    "withdrawable": "5021712",
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert len(storage.balance_calls) == 1
+    call = storage.balance_calls[0]
+    assert call["account_balance"] == 10000000.0
+    assert call["total_debt"] == 2000000.0
+    assert call["withdrawable"] == 5021712.0
+    assert alerts == []
+
+
+async def test_sync_balance_case2_missing_key_withdrawable(monkeypatch):
+    """Ca 2: equity thieu khoa withdrawable -> KHONG ghi, co dung 1 WARN neu ten withdrawable."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": "2000000",
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert storage.balance_calls == []
+    assert len(alerts) == 1
+    level, msg, fields = alerts[0]
+    assert level == "WARN"
+    assert "withdrawable" in str(fields.get("missing_fields")) or "withdrawable" in msg
+    assert fields.get("account_no") == "0434221"
+
+
+async def test_sync_balance_case3_withdrawable_is_none(monkeypatch):
+    """Ca 3: equity co withdrawable = None -> nhu ca 2 (KHONG ghi, co dung 1 WARN neu ten withdrawable)."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": "2000000",
+                    "withdrawable": None,
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert storage.balance_calls == []
+    assert len(alerts) == 1
+    level, msg, fields = alerts[0]
+    assert level == "WARN"
+    assert "withdrawable" in str(fields.get("missing_fields")) or "withdrawable" in msg
+    assert fields.get("account_no") == "0434221"
+
+
+async def test_sync_balance_case4_withdrawable_is_empty_string(monkeypatch):
+    """Ca 4: equity co withdrawable = "" -> nhu ca 2 (KHONG ghi, co dung 1 WARN neu ten withdrawable)."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": "2000000",
+                    "withdrawable": "",
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert storage.balance_calls == []
+    assert len(alerts) == 1
+    level, msg, fields = alerts[0]
+    assert level == "WARN"
+    assert "withdrawable" in str(fields.get("missing_fields")) or "withdrawable" in msg
+    assert fields.get("account_no") == "0434221"
+
+
+async def test_sync_balance_case5_legitimate_zeros_recorded_no_warn(monkeypatch):
+    """Ca 5 (de sai nhat): withdrawable = 0 va totalDebt = 0 (so 0 THAT) -> ghi binh thuong, KHONG WARN."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": 0,
+                    "withdrawable": 0,
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert len(storage.balance_calls) == 1
+    call = storage.balance_calls[0]
+    assert call["account_balance"] == 10000000.0
+    assert call["total_debt"] == 0.0
+    assert call["withdrawable"] == 0.0
+    assert alerts == []
+
+
+async def test_sync_balance_case6_missing_two_fields_warns_both(monkeypatch):
+    """Ca 6: thieu HAI truong -> WARN neu CA HAI ten."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    # totalDebt missing
+                    "withdrawable": "",  # withdrawable empty string
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert storage.balance_calls == []
+    assert len(alerts) == 1
+    level, msg, fields = alerts[0]
+    assert level == "WARN"
+    missing = str(fields.get("missing_fields")) + " " + msg
+    assert "totalDebt" in missing
+    assert "withdrawable" in missing
+    assert fields.get("account_no") == "0434221"
+
+
+async def test_sync_balance_case7_missing_equity_block_no_op(monkeypatch):
+    """Ca 7: giu nguyen hanh vi cu: raw khong co khoi equity -> khong ghi, khong no."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(rest_client=FakeRestClient({}))
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    await account_sync._sync_balance(auth, "043422", "0434221", ts, storage)
+
+    assert storage.balance_calls == []
+    assert alerts == []
