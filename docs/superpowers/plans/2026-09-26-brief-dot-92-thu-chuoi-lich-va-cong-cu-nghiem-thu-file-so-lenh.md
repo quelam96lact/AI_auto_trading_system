@@ -39,6 +39,7 @@ có công cụ nào trả lời được câu quan trọng nhất: **file này c
 ## 1. Ràng buộc
 
 - Được thêm: `scripts/verify_orderbook_file.py` (**file mới**) + test của nó.
+- Được sửa: `scripts/daily_data_check.py` + `tests/test_daily_data_check.py` (Task 4).
 - Được sửa: **không file nào** trong `trading/`. Nếu thấy cần, dừng và báo.
 - **Không** sửa `record_vn30f_orderbook.py`, `sched.sh`, hay tác vụ hẹn giờ (Task 1 chỉ **chạy thử**, không
   sửa; trừ khi phát hiện lỗi — xem Task 1 mục 4).
@@ -118,6 +119,60 @@ Sau **15:10** thứ Hai 28/09:
 5. `Get-ScheduledTaskInfo` → `LastTaskResult` của lần chạy 08:40.
 
 **Không tự sửa gì trong Task 3.** Đây là nghiệm thu; thấy gì lạ thì báo, tôi quyết.
+
+---
+
+## Task 4 — Chuông báo động đỏ SAI vì hai tác vụ đua nhau (thêm 26/09)
+
+Tôi soát sức khoẻ **cả 8** tác vụ hẹn giờ và thấy `trading-daily-data-check` là tác vụ duy nhất có
+`LastTaskResult = 2`, trong khi 7 tác vụ còn lại đều `0`. Đào tiếp thì ra một báo động đỏ **sai**:
+
+```
+logs/daily-data-check.log:
+2026-09-25 21:42:11 daily-data-check start
+[2026-09-25] 🚨 [AI Trading] SỰ CỐ DỮ LIỆU: Ngày giao dịch nhưng 0 mã nào có bar daily
+             trong DB (toàn bộ 175 mã active thiếu bar)!
+-> Đã gửi cảnh báo qua Telegram.
+EXIT=2
+
+logs/backfill.log:
+2026-09-25 21:42:53  ... [175/175] ok=175 skip=0 err=0
+DONE: ok=175 skip=0 err=0 / 175
+EXIT=0
+```
+
+**Trình kiểm tra chạy trước trình nạp dữ liệu đúng 42 giây.** Nó thấy bảng trống, kết luận "sự cố dữ
+liệu", và **đã bắn Telegram**. Tôi tự kiểm DB hiện tại: `bars_daily` ngày 25/09 có **175 mã** — nhiều
+hơn cả các ngày bình thường (174). **Dữ liệu hoàn toàn không mất; báo động là sai.**
+
+Hai tác vụ này lẽ ra không đua nhau: `backfill-universe` hẹn 20:30, `daily-data-check` hẹn 21:00. Nhưng
+ngày 25/09 cả hai bị trễ và **đảo thứ tự**.
+
+**Vì sao đây là lỗi phải sửa, không phải chuyện nhỏ:** cả dự án này dựng trên nguyên tắc FEE-ALARM-2 —
+chuông chết câm còn tệ hơn không có chuông. **Chuông kêu oan cũng là cùng một bệnh**: vài lần 🚨 sai là
+chủ dự án sẽ thôi đọc Telegram, và khi có sự cố thật thì không ai nhìn.
+
+**Yêu cầu:** trình kiểm tra phải phân biệt **"dữ liệu chưa về"** với **"dữ liệu mất"**.
+
+Cách làm — bạn chọn một, **nói rõ đã chọn cách nào và vì sao**:
+- Đọc dấu hoàn tất của `backfill-universe` (log của nó có dòng `DONE: ok=... EXIT=0`) và **hoãn phán
+  quyết** nếu backfill chưa xong trong ngày hôm đó; hoặc
+- Nếu bảng trống **hoàn toàn** (0/175) thì coi là "chưa về" chứ không phải "mất", vì mất sạch 175 mã cùng
+  lúc gần như luôn là chưa nạp; chỉ báo đỏ khi **thiếu một phần** (như ca POM 1/175 các ngày trước, vốn
+  là báo đúng và hữu ích).
+
+Dù chọn cách nào, khi hoãn phán quyết thì **phải phát WARN nói rõ đã hoãn và vì sao** — không được im
+lặng thoát 0, vì như vậy lại thành chuông chết câm ở chiều ngược lại.
+
+**Kiểm chứng — tách hàm thuần, test không cần DB:**
+1. 0/175 mã, backfill **chưa** xong → **hoãn**, có WARN, **không** báo đỏ.
+2. 0/175 mã, backfill **đã** xong → **báo đỏ** (đây mới là sự cố thật).
+3. 174/175 mã (thiếu POM) → **báo đỏ/cảnh báo như hiện nay** — giữ nguyên hành vi đang đúng.
+4. 175/175 mã → im lặng, exit 0.
+5. **Kiểm thử phá hoại:** bỏ điều kiện "backfill chưa xong", xác nhận **đúng ca 1** đỏ và ca 2, 3, 4 vẫn xanh.
+
+**File cần sửa — tôi đã kiểm, đừng tạo file trùng:** `scripts/daily_data_check.py` và
+`tests/test_daily_data_check.py`. **Cả hai đã tồn tại.**
 
 ---
 
