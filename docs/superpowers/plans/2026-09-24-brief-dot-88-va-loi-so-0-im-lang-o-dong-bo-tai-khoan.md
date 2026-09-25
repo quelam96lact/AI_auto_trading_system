@@ -60,8 +60,19 @@ tính NAV → NAV = 0; và NAV là **vốn rủi ro của đường lệnh thậ
 
 ## Task 1 — GẤP, trước 22:05: bắt tận tay phản hồi thật trong khung 22h
 
-Khung lỗi quan sát được: **22:06 → 22:51**. Các mốc đã ghi nhận: 22:06, 22:11, 22:16, 22:20, 22:36,
-22:39, 22:44, 22:49, 22:51.
+### ĐÍNH CHÍNH 25/09 — khung rộng hơn tôi tưởng, chạy tới 23:30
+
+Khi audit 25/09 tôi đếm lại và ra **12 dòng, không phải 11**. Không phải ai sửa DB: dòng thứ 12 sinh ra
+**24/09 lúc 23:04:27**, tức lỗi **tái diễn đêm qua** (bản vá chưa triển khai nên collector vẫn chạy code cũ).
+
+**Nó rơi vào giờ 23, ngoài khung tôi từng khẳng định.** Khẳng định "cả 11/11 đều ở giờ 22" đúng với mẫu 11
+nhưng khung thật rộng hơn. Nếu tối nay chỉ chạy tới 23:00 như bản brief đầu thì sẽ **trượt một sự kiện
+kiểu 23:04 đúng 4 phút**.
+
+**Vì vậy: chạy từ lúc bắt đầu tới 23:30**, không phải 23:00. Mọi chỗ ghi "23:00" bên dưới đọc thành "23:30".
+
+Khung lỗi quan sát được (12 mốc): 22:06, 22:11, 22:16, 22:20, 22:36, 22:39, 22:44, 22:49, 22:51, và
+**23:04**.
 
 Viết `scripts/probe_account_balance_22h.py` — **chỉ đọc, không ghi DB**:
 
