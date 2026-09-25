@@ -13,12 +13,16 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from scripts.measure_derivative_contract_volume import ContractInfo
 from scripts.record_vn30f_orderbook import (
     _parse_until_time,
+    check_quote_rate_alarm,
     classify_message,
+    compute_continuous_session_minutes,
     compute_market_silence_seconds,
     compute_reconnect_backoff,
     compute_total_downtime_seconds,
@@ -308,15 +312,185 @@ def test_c2_decouple_recorder_downtime_from_market_silence():
 # =====================================================================
 
 
-def test_c3_resolve_front_month_symbol_october_and_november():
+async def test_c3_resolve_front_month_symbol_october_and_november():
     """C3: Chọn hợp đồng VN30F còn sống có lastTradingDate gần nhất trong tương lai.
 
     - 14/10 -> chọn 41I1GA000 (đáo hạn 15/10/2026).
     - 16/10 -> chọn 41I1GB000 (41I1GA000 đã hết hạn, hợp đồng kế tiếp đáo hạn 19/11/2026).
     """
-    assert resolve_front_month_symbol(date(2026, 10, 14)) == "41I1GA000"
-    assert resolve_front_month_symbol(date(2026, 10, 16)) == "41I1GB000"
-    assert resolve_front_month_symbol(date(2026, 9, 25)) == "41I1GA000"
+    assert await resolve_front_month_symbol(date(2026, 10, 14)) == "41I1GA000"
+    assert await resolve_front_month_symbol(date(2026, 10, 16)) == "41I1GB000"
+    assert await resolve_front_month_symbol(date(2026, 9, 25)) == "41I1GA000"
+
+
+# =====================================================================
+# Brief 91 Task 1: Một nguồn sự thật cho ngày đáo hạn (SSI + Fallback)
+# =====================================================================
+
+
+async def test_task1_ssi_success_selects_front_month_no_warn():
+    """Ca 1: Lấy thành công từ SSI -> chọn đúng mã theo SSI, KHÔNG phát WARN."""
+    contracts = [
+        ContractInfo(
+            symbol="41I1GA000",
+            name="VN30F 10/2026",
+            board="DERIVATIVES",
+            first_trading_date="",
+            last_trading_date="2026/10/15",
+        ),
+        ContractInfo(
+            symbol="41I1GB000",
+            name="VN30F 11/2026",
+            board="DERIVATIVES",
+            first_trading_date="",
+            last_trading_date="2026/11/19",
+        ),
+    ]
+    with patch("scripts.record_vn30f_orderbook.alert") as mock_alert:
+        symbol = await resolve_front_month_symbol(
+            as_of=date(2026, 10, 14),
+            ssi_fetcher=lambda: contracts,
+        )
+        assert symbol == "41I1GA000"
+        mock_alert.assert_not_called()
+
+
+async def test_task1_ssi_error_falls_back_to_formula_with_warn():
+    """Ca 2: Gọi SSI thất bại -> rơi về công thức tự tính, chọn đúng mã, CÓ ĐÚNG 1 WARN."""
+    def _failing_fetcher():
+        raise ConnectionResetError("SSI connection reset by peer")
+
+    with patch("scripts.record_vn30f_orderbook.alert") as mock_alert:
+        symbol = await resolve_front_month_symbol(
+            as_of=date(2026, 10, 14),
+            ssi_fetcher=_failing_fetcher,
+        )
+        assert symbol == "41I1GA000"
+        mock_alert.assert_called_once()
+        args, kwargs = mock_alert.call_args
+        assert args[0] == "WARN"
+        assert "41I1GA000" in args[1]
+        assert "SSI connection reset by peer" in str(kwargs.get("ssi_error", ""))
+
+
+async def test_task1_ca_phan_biet_hai_nguon_holiday_shift_prefers_ssi():
+    """Ca 3 (BẮT BUỘC): Phân biệt 2 nguồn khi thứ Năm thứ 3 trùng ngày lễ.
+
+    - Ngày xét: 14/10/2026.
+    - Công thức tự tính (get_third_thursday): tính thứ Năm thứ ba của tháng 10/2026 là 15/10/2026.
+      Do 14/10 <= 15/10, công thức coi 41I1GA000 còn sống -> chọn 41I1GA000.
+    - Thực tế HNX (phản ánh qua SSI): do 15/10 nghỉ lễ, HNX đẩy ngày đáo hạn sớm lên 13/10/2026.
+      Tại ngày 14/10, hợp đồng 41I1GA000 đã hết hạn (13/10 < 14/10). Hợp đồng còn sống gần nhất là 41I1GB000 (19/11/2026).
+    -> Máy ghi PHẢI chọn 41I1GB000 (theo SSI), KHÔNG ĐƯỢC chọn 41I1GA000 (theo công thức).
+    -> KHÔNG phát WARN vì SSI trả về thành công.
+    """
+    ssi_contracts = [
+        # Hợp đồng tháng 10 bị đẩy đáo hạn về 13/10 do ngày lễ
+        ContractInfo(
+            symbol="41I1GA000",
+            name="VN30F 10/2026",
+            board="DERIVATIVES",
+            first_trading_date="",
+            last_trading_date="2026/10/13",
+        ),
+        # Hợp đồng tháng 11 đáo hạn 19/11
+        ContractInfo(
+            symbol="41I1GB000",
+            name="VN30F 11/2026",
+            board="DERIVATIVES",
+            first_trading_date="",
+            last_trading_date="2026/11/19",
+        ),
+    ]
+
+    with patch("scripts.record_vn30f_orderbook.alert") as mock_alert:
+        chosen = await resolve_front_month_symbol(
+            as_of=date(2026, 10, 14),
+            ssi_fetcher=lambda: ssi_contracts,
+        )
+        assert chosen == "41I1GB000", "Phải chọn hợp đồng theo ngày đáo hạn thực tế của SSI!"
+        assert chosen != "41I1GA000", "Không được chọn theo công thức tự tính chưa trừ ngày lễ!"
+        mock_alert.assert_not_called()
+
+
+async def test_task1_both_sources_fail_raises_runtime_error():
+    """Ca 4: Cả SSI và công thức tự tính đều thất bại -> ném RuntimeError, không tạo file."""
+    def _failing_fetcher():
+        raise RuntimeError("SSI down")
+
+    def _failing_generator(d: date) -> list[ContractInfo]:
+        return []
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await resolve_front_month_symbol(
+            as_of=date(2026, 10, 14),
+            ssi_fetcher=_failing_fetcher,
+            fallback_generator=_failing_generator,
+        )
+
+    assert "Cả hai nguồn" in str(exc_info.value)
+
+
+# =====================================================================
+# Brief 91 Task 2: Chuông cho ca ghi sai mã (Quote Rate Alarm)
+# =====================================================================
+
+
+def test_task2_quote_rate_alarm_normal():
+    """Task 2 Ca 1: Phiên bình thường sau 10 phút (>= 1,000 QUOTE) -> Không báo động."""
+    # Front-month bình thường nhận ~17,000 QUOTE / 10 phút
+    assert check_quote_rate_alarm(quote_count=17000, elapsed_minutes=10.0) is False
+    # Ngay tại ngưỡng 1,000 QUOTE
+    assert check_quote_rate_alarm(quote_count=1000, elapsed_minutes=10.0) is False
+    # Phiên chạy lâu hơn 10 phút và đạt lưu lượng
+    assert check_quote_rate_alarm(quote_count=5000, elapsed_minutes=15.0) is False
+
+
+def test_task2_quote_rate_alarm_low_triggers():
+    """Task 2 Ca 2: Lưu lượng thấp bất thường sau 10 phút (< 1,000 QUOTE) -> BÁO ĐỘNG."""
+    # Hợp đồng không phải front-month chỉ nhận ~35 QUOTE / 10 phút (0.2% volume)
+    assert check_quote_rate_alarm(quote_count=35, elapsed_minutes=10.0) is True
+    # Dưới ngưỡng: 999 tin
+    assert check_quote_rate_alarm(quote_count=999, elapsed_minutes=10.0) is True
+    # Hoàn toàn không nhận được tin nào
+    assert check_quote_rate_alarm(quote_count=0, elapsed_minutes=10.0) is True
+    assert check_quote_rate_alarm(quote_count=500, elapsed_minutes=12.0) is True
+
+
+def test_task2_quote_rate_alarm_not_yet_ten_minutes():
+    """Task 2 Ca 3: Chưa đủ 10 phút -> KHÔNG báo động (chưa đủ dữ liệu để kết luận)."""
+    assert check_quote_rate_alarm(quote_count=0, elapsed_minutes=0.0) is False
+    assert check_quote_rate_alarm(quote_count=50, elapsed_minutes=5.0) is False
+    assert check_quote_rate_alarm(quote_count=500, elapsed_minutes=9.9) is False
+    assert check_quote_rate_alarm(quote_count=0, elapsed_minutes=9.99) is False
+
+
+def test_task2_compute_continuous_session_minutes():
+    """Task 2: Tính số phút giao dịch liên tục (09:00-11:30 và 13:00-14:45)."""
+    # 1. Trước giờ mở cửa (08:50) -> 0 phút
+    t_pre = datetime(2026, 9, 28, 8, 50, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_pre) == 0.0
+
+    # 2. Sau 10 phút mở phiên sáng (09:10) -> 10.0 phút
+    t_10m = datetime(2026, 9, 28, 9, 10, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_10m) == pytest.approx(10.0)
+
+    # 3. Hết phiên sáng (11:30) -> 150.0 phút
+    t_m_end = datetime(2026, 9, 28, 11, 30, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_m_end) == pytest.approx(150.0)
+
+    # 4. Giữa giờ nghỉ trưa (12:15) -> vẫn là 150.0 phút (không tính nghỉ trưa)
+    t_lunch = datetime(2026, 9, 28, 12, 15, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_lunch) == pytest.approx(150.0)
+
+    # 5. Đầu phiên chiều (13:10) -> 150 + 10 = 160.0 phút
+    t_afternoon = datetime(2026, 9, 28, 13, 10, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_afternoon) == pytest.approx(160.0)
+
+    # 6. Với since_dt: chạy từ 10:00 đến 10:10 -> 10.0 phút
+    t_start = datetime(2026, 9, 28, 10, 0, tzinfo=TZ)
+    t_end = datetime(2026, 9, 28, 10, 10, tzinfo=TZ)
+    assert compute_continuous_session_minutes(t_end, since_dt=t_start) == pytest.approx(10.0)
 
 
 def test_c3_calendar_trading_day_skips_weekends_and_holidays():

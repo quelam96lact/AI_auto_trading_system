@@ -37,7 +37,8 @@ from trading.derivative_series import (
 from trading.models import Bar
 from trading.storage.db import Storage
 
-# Danh sách chuỗi hợp đồng front-month theo thứ tự thời gian từ 04/2026 đến 10/2026
+# Danh sách chuỗi hợp đồng front-month theo thứ tự thời gian từ 04/2026 đến 10/2026.
+# LƯU Ý: Đây là bản chụp dữ liệu lịch sử để tái lập chuỗi VN30F1M_CONT, không phải nguồn sự thật cho code chạy thật.
 FRONT_MONTH_CONTRACTS = [
     ContractMetadata(
         symbol="41I1G4000",

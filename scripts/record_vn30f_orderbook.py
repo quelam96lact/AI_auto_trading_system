@@ -23,6 +23,7 @@ import os
 import pathlib
 import signal
 import sys
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
@@ -42,9 +43,11 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.measure_derivative_contract_volume import (
     PREFIX_VN30,
     ContractInfo,
+    discover_derivative_contracts,
     filter_living_contracts,
     identify_front_month,
 )
+from trading.alerts import alert
 from trading.calendar_vn import TZ, is_trading_day
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import load_config
@@ -142,22 +145,131 @@ def generate_vn30_candidate_contracts(as_of: date) -> list[ContractInfo]:
     return contracts
 
 
-def resolve_front_month_symbol(
+async def resolve_front_month_symbol(
     as_of: date,
-    contracts: list[ContractInfo] | None = None,
+    ssi_fetcher: Any = None,
+    allow_fallback: bool = True,
+    fallback_generator: Callable[[date], list[ContractInfo]] | None = None,
 ) -> str:
-    """Hàm thuần (C3): Xác định mã hợp đồng front-month VN30F còn sống tại ngày as_of.
+    """Xác định mã hợp đồng front-month VN30F còn sống tại ngày as_of (Brief 91 Task 1).
 
-    Tái sử dụng filter_living_contracts và identify_front_month từ
-    scripts.measure_derivative_contract_volume (không ghim cứng mã, không chép lại logic).
+    Ưu tiên 1: Lấy danh sách hợp đồng từ SSI API (nguồn sự thật duy nhất cho ngày đáo hạn thực tế).
+    Ưu tiên 2 (Đường lùi): Tự tính theo quy tắc thứ Năm thứ ba (get_third_thursday), phát cảnh báo WARN.
+    Nếu cả hai đường đều thất bại: ném RuntimeError, dừng sạch không ghi file.
     """
-    if contracts is None:
-        contracts = generate_vn30_candidate_contracts(as_of)
-    living = filter_living_contracts(contracts, as_of)
-    front = identify_front_month(living, as_of)
-    if not front:
-        raise ValueError(f"Không tìm thấy hợp đồng VN30F còn sống tại ngày {as_of}")
-    return front.symbol
+    ssi_contracts: list[ContractInfo] | None = None
+    ssi_error: Exception | str | None = None
+
+    if ssi_fetcher is not None:
+        try:
+            if callable(ssi_fetcher):
+                res = ssi_fetcher()
+                if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                    ssi_contracts = await res
+                else:
+                    ssi_contracts = res
+            elif isinstance(ssi_fetcher, list):
+                ssi_contracts = ssi_fetcher
+        except Exception as e:
+            ssi_error = e
+
+    # 1. Thử giải quyết từ nguồn SSI (Ưu tiên số 1)
+    if ssi_contracts:
+        living = filter_living_contracts(ssi_contracts, as_of)
+        front = identify_front_month(living, as_of)
+        if front:
+            return front.symbol
+        if ssi_error is None:
+            ssi_error = "SSI không trả về hợp đồng VN30F nào còn sống"
+    elif ssi_fetcher is not None and ssi_error is None:
+        ssi_error = "SSI trả về danh sách hợp đồng rỗng"
+
+    # 2. Đường lùi: Tự tính theo công thức thứ Năm thứ 3
+    if not allow_fallback:
+        raise RuntimeError(
+            f"Không thể xác định hợp đồng front-month từ SSI tại ngày {as_of}: {ssi_error}"
+        )
+
+    generator = fallback_generator or generate_vn30_candidate_contracts
+    fallback_contracts = generator(as_of)
+    fallback_living = filter_living_contracts(fallback_contracts, as_of)
+    fallback_front = identify_front_month(fallback_living, as_of)
+
+    if not fallback_front:
+        raise RuntimeError(
+            f"Cả hai nguồn (SSI và tự tính) đều không tìm thấy hợp đồng VN30F còn sống tại ngày {as_of}. "
+            f"Lỗi SSI: {ssi_error}"
+        )
+
+    # Khi rơi vào đường lùi: phát cảnh báo WARN nêu rõ lý do và mã chọn được
+    err_msg = str(ssi_error) if ssi_error else "không có kết nối SSI"
+    alert(
+        "WARN",
+        f"Lấy hợp đồng từ SSI thất bại ({err_msg}), chuyển sang đường lùi tự tính: chọn {fallback_front.symbol}",
+        symbol=fallback_front.symbol,
+        as_of=as_of.isoformat(),
+        ssi_error=err_msg,
+    )
+    return fallback_front.symbol
+
+
+def compute_continuous_session_minutes(
+    current_dt: datetime,
+    since_dt: datetime | None = None,
+) -> float:
+    """Tính số phút đã trôi qua trong giờ giao dịch khớp lệnh liên tục của ngày hôm nay.
+
+    Khớp lệnh liên tục:
+    - Phiên sáng: 09:00 -> 11:30 (tối đa 150 phút)
+    - Nghỉ trưa: 11:30 -> 13:00 (không tính)
+    - Phiên chiều: 13:00 -> 14:45 (tối đa 105 phút)
+
+    Nếu truyền since_dt, chỉ tính thời gian giao dịch liên tục nằm trong khoảng [since_dt, current_dt].
+    Nếu không truyền since_dt, tính từ đầu ngày giao dịch (09:00).
+    """
+    dt_vn = current_dt.astimezone(TZ)
+    d = dt_vn.date()
+
+    m_start = datetime.combine(d, MORNING_START, tzinfo=TZ)
+    m_end = datetime.combine(d, MORNING_END, tzinfo=TZ)
+    a_start = datetime.combine(d, AFTERNOON_START, tzinfo=TZ)
+    a_end = datetime.combine(d, AFTERNOON_END, tzinfo=TZ)
+
+    start_vn = since_dt.astimezone(TZ) if since_dt is not None else m_start
+
+    minutes = 0.0
+    # Phiên sáng: giao của [start_vn, dt_vn] và [m_start, m_end]
+    period_m_start = max(start_vn, m_start)
+    if dt_vn > period_m_start and period_m_start < m_end:
+        period_m_end = min(dt_vn, m_end)
+        minutes += max(0.0, (period_m_end - period_m_start).total_seconds() / 60.0)
+
+    # Phiên chiều: giao của [start_vn, dt_vn] và [a_start, a_end]
+    period_a_start = max(start_vn, a_start)
+    if dt_vn > period_a_start and period_a_start < a_end:
+        period_a_end = min(dt_vn, a_end)
+        minutes += max(0.0, (period_a_end - period_a_start).total_seconds() / 60.0)
+
+    return minutes
+
+
+def check_quote_rate_alarm(
+    quote_count: int,
+    elapsed_minutes: float,
+    min_minutes: float = 10.0,
+    min_expected_quotes: int = 1000,
+) -> bool:
+    """Hàm thuần (Brief 91 Task 2): Kiểm tra lưu lượng tin QUOTE sau 10 phút đầu.
+
+    Trả về True nếu cần phát cảnh báo (lưu lượng thấp bất thường, nghi ghi sai mã).
+    Trả về False nếu:
+    - Chưa đủ 10 phút (elapsed_minutes < min_minutes)
+    - Hoặc số tin QUOTE đạt chuẩn (quote_count >= min_expected_quotes).
+    """
+    if elapsed_minutes < min_minutes:
+        return False
+    return quote_count < min_expected_quotes
+
 
 
 
@@ -349,13 +461,26 @@ async def record_orderbook_stream(
             "date": today.isoformat(),
         }
 
-    # Động xác định mã hợp đồng front-month nếu không chỉ định (C3)
-    if not symbol:
-        symbol = resolve_front_month_symbol(today)
-        print(f"[{now_vn.strftime('%H:%M:%S')}] Tự động xác định hợp đồng front-month VN30F: {symbol}")
-
     db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
     storage = Storage(db_dsn)
+
+    # Động xác định mã hợp đồng front-month nếu không chỉ định (Brief 91 Task 1)
+    if not symbol:
+        async def _fetch_from_ssi() -> list[ContractInfo]:
+            auth_ssi = await ensure_authenticated(app_cfg, storage)
+            try:
+                from ssi_sdk import AsyncData
+
+                data_ssi = AsyncData(auth_ssi)
+                return await discover_derivative_contracts(data_ssi)
+            finally:
+                try:
+                    await auth_ssi.close()
+                except Exception:
+                    pass
+
+        symbol = await resolve_front_month_symbol(today, ssi_fetcher=_fetch_from_ssi)
+        print(f"[{now_vn.strftime('%H:%M:%S')}] Tự động xác định hợp đồng front-month VN30F: {symbol}")
 
     out_path = get_orderbook_filepath(data_dir, symbol, now_vn)
     print(f"[{now_vn.strftime('%H:%M:%S')}] Khởi động máy ghi sổ lệnh {symbol}")
@@ -404,6 +529,8 @@ async def record_orderbook_stream(
     consecutive_failures = 0
     disconnect_intervals: list[tuple[datetime, datetime]] = []
     t_disconnect: datetime | None = None
+    recording_start_dt = now_vn
+    rate_alarm_checked = False
 
     # Mở file gzip chế độ append
     with gzip.open(out_path, mode="at", encoding="utf-8") as gz_file:
@@ -472,13 +599,36 @@ async def record_orderbook_stream(
                 consecutive_failures = 0
 
                 while not stop_event.is_set():
-                    now_loop = datetime.now(TZ).time()
+                    now_dt = datetime.now(TZ)
+                    now_loop = now_dt.time()
                     if until_time and now_loop >= until_time:
                         stop_event.set()
                         print(
                             f"\nĐã đạt mốc thời gian tự dừng ({until_time.strftime('%H:%M:%S')}), kết thúc phiên ghi."
                         )
                         break
+
+                    # Kiểm tra lưu lượng tin QUOTE sau 10 phút đầu khớp lệnh liên tục (Brief 91 Task 2)
+                    if not rate_alarm_checked:
+                        elapsed_cont_min = compute_continuous_session_minutes(
+                            now_dt, since_dt=recording_start_dt
+                        )
+                        if elapsed_cont_min >= 10.0:
+                            rate_alarm_checked = True
+                            if check_quote_rate_alarm(counts["QUOTE"], elapsed_cont_min):
+                                warn_msg = (
+                                    f"Cảnh báo lưu lượng thấp bất thường: chỉ nhận được {counts['QUOTE']} tin QUOTE "
+                                    f"sau {elapsed_cont_min:.1f} phút giao dịch liên tục cho mã {symbol}. "
+                                    f"Có thể đang ghi sai mã hợp đồng phái sinh!"
+                                )
+                                print(f"\n[CẢNH BÁO] {warn_msg}\n")
+                                alert(
+                                    "WARN",
+                                    warn_msg,
+                                    symbol=symbol,
+                                    quote_count=counts["QUOTE"],
+                                    elapsed_minutes=elapsed_cont_min,
+                                )
 
                     # Tự động phát hiện ngắt kết nối từ SSI và nối lại (C1)
                     ws_client = getattr(stream.streaming, "_ws", None)
