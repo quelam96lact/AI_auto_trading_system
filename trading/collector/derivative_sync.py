@@ -47,16 +47,60 @@ async def _sync_balance(
     )
 
 
+REQUIRED_MARGIN_FIELDS = (
+    "account_ratio_ssi",
+    "account_ratio_vsdc",
+    "used_limit_warning_level1_ssi",
+    "used_limit_warning_level2_ssi",
+    "used_limit_warning_level3_ssi",
+)
+
+
+def _find_missing_margin_fields(ppmmr: object) -> list[str]:
+    missing = []
+    for f in REQUIRED_MARGIN_FIELDS:
+        val = ppmmr.get(f) if isinstance(ppmmr, dict) else getattr(ppmmr, f, None)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            missing.append(f)
+    return missing
+
+
 async def _sync_margin(
     portfolio, account_no: str, ts: datetime, storage: Storage
 ) -> None:
     ppmmr = await portfolio.get_derivative_ppmmr(account_no)
-    rc_call = bool(ppmmr.rc_call)
-    ratio_ssi = float(ppmmr.account_ratio_ssi or 0)
-    ratio_vsdc = float(ppmmr.account_ratio_vsdc or 0)
-    level1 = float(ppmmr.used_limit_warning_level1_ssi or 0)
-    level2 = float(ppmmr.used_limit_warning_level2_ssi or 0)
-    level3 = float(ppmmr.used_limit_warning_level3_ssi or 0)
+    if not ppmmr:
+        return
+    missing = _find_missing_margin_fields(ppmmr)
+    if missing:
+        alert(
+            "WARN",
+            f"derivative ppmmr missing required margin fields: {','.join(missing)}",
+            account_no=account_no,
+            missing_fields=missing,
+        )
+        return
+
+    rc_call = bool(
+        ppmmr.get("rc_call")
+        if isinstance(ppmmr, dict)
+        else getattr(ppmmr, "rc_call", False)
+    )
+    get_f = (
+        (lambda k: ppmmr.get(k))
+        if isinstance(ppmmr, dict)
+        else (lambda k: getattr(ppmmr, k))
+    )
+    ratio_ssi = float(get_f("account_ratio_ssi"))
+    ratio_vsdc = float(get_f("account_ratio_vsdc"))
+    level1 = float(get_f("used_limit_warning_level1_ssi"))
+    level2 = float(get_f("used_limit_warning_level2_ssi"))
+    level3 = float(get_f("used_limit_warning_level3_ssi"))
+    total_eq = (
+        ppmmr.get("total_equity")
+        if isinstance(ppmmr, dict)
+        else getattr(ppmmr, "total_equity", 0)
+    )
 
     storage.save_derivative_margin(
         account_no=account_no,
@@ -67,7 +111,7 @@ async def _sync_margin(
         used_limit_warning_level1_ssi=level1,
         used_limit_warning_level2_ssi=level2,
         used_limit_warning_level3_ssi=level3,
-        total_equity=float(ppmmr.total_equity or 0),
+        total_equity=float(total_eq or 0),
     )
 
     level = margin_alert_level(rc_call, ratio_ssi, ratio_vsdc, level1, level2, level3)

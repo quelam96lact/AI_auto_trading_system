@@ -10,6 +10,7 @@
 #   scripts/sched.sh engine-cam
 #   scripts/sched.sh engine-consumer
 #   scripts/sched.sh stream-health
+#   scripts/sched.sh orderbook-recorder
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -78,8 +79,16 @@ case "${1:-}" in
       --min-coverage-crit 0.50 \
       "$@"
     ;;
+  orderbook-recorder)
+    shift || true
+    exec "$RUN" orderbook-recorder.log orderbook-recorder \
+      uv run python scripts/record_vn30f_orderbook.py \
+      --until 14:46 \
+      "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health|orderbook-recorder}" >&2
     exit 2
     ;;
 esac
+

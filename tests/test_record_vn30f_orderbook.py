@@ -11,7 +11,7 @@ Kiểm tra 3 hàm thuần không cần mạng/SSI:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 import pytest
@@ -20,10 +20,14 @@ from scripts.record_vn30f_orderbook import (
     _parse_until_time,
     classify_message,
     compute_market_silence_seconds,
+    compute_reconnect_backoff,
+    compute_total_downtime_seconds,
     detect_silence_gaps,
     get_orderbook_filepath,
+    resolve_front_month_symbol,
+    should_reconnect,
 )
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, is_trading_day
 
 
 def test_classify_message():
@@ -161,3 +165,166 @@ def test_parse_until_time():
 
     with pytest.raises(ValueError):
         _parse_until_time("invalid_time")
+
+
+# =====================================================================
+# C1: Test cho nhánh tự kết nối lại (pure functions)
+# =====================================================================
+
+
+def test_c1_case_1_should_not_reconnect_when_connected():
+    """C1 Ca 1: Kết nối đang sống -> KHÔNG kết nối lại."""
+    assert (
+        should_reconnect(
+            is_connected=True,
+            current_time=time(10, 0),
+            until_time=time(14, 46),
+        )
+        is False
+    )
+
+
+def test_c1_case_2_should_reconnect_when_disconnected_before_until():
+    """C1 Ca 2: Kết nối đã đóng, chưa tới --until -> KẾT NỐI LẠI."""
+    assert (
+        should_reconnect(
+            is_connected=False,
+            current_time=time(10, 0),
+            until_time=time(14, 46),
+        )
+        is True
+    )
+
+
+def test_c1_case_3_should_not_reconnect_after_until():
+    """C1 Ca 3: Kết nối đã đóng, đã quá --until -> KHÔNG kết nối lại, dừng sạch."""
+    # Đã quá mốc 14:46 (14:47)
+    assert (
+        should_reconnect(
+            is_connected=False,
+            current_time=time(14, 47),
+            until_time=time(14, 46),
+        )
+        is False
+    )
+    # Đúng mốc 14:46:00
+    assert (
+        should_reconnect(
+            is_connected=False,
+            current_time=time(14, 46),
+            until_time=time(14, 46),
+        )
+        is False
+    )
+
+
+def test_c1_case_4_retry_limit_and_exponential_backoff():
+    """C1 Ca 4: Giới hạn số lần thử và khoảng nghỉ tăng dần, không quay tít."""
+    # Đã vượt quá số lần thử tối đa (10 lần)
+    assert (
+        should_reconnect(
+            is_connected=False,
+            current_time=time(10, 0),
+            until_time=time(14, 46),
+            consecutive_failures=10,
+            max_retries=10,
+        )
+        is False
+    )
+    # Chưa vượt quá
+    assert (
+        should_reconnect(
+            is_connected=False,
+            current_time=time(10, 0),
+            until_time=time(14, 46),
+            consecutive_failures=9,
+            max_retries=10,
+        )
+        is True
+    )
+
+    # Khoảng nghỉ tăng dần
+    b1 = compute_reconnect_backoff(1)
+    b2 = compute_reconnect_backoff(2)
+    b3 = compute_reconnect_backoff(3)
+    b4 = compute_reconnect_backoff(4)
+    assert 0 < b1 < b2 < b3 < b4
+    # Cap tại max_delay = 60s
+    assert compute_reconnect_backoff(10) <= 60.0
+    assert compute_reconnect_backoff(20) == 60.0
+
+
+# =====================================================================
+# C2: Tách khoảng lặng thị trường khỏi thời gian máy ghi chết
+# =====================================================================
+
+
+def test_c2_decouple_recorder_downtime_from_market_silence():
+    """C2: Dựng chuỗi có quãng mất kết nối 600s và khoảng lặng thật 15s.
+
+    Phải báo đúng hai con số riêng biệt:
+    - Thời gian máy ghi mất kết nối: 600s
+    - Khoảng lặng thị trường dài nhất: 15s (KHÔNG được là 600s hay 607s).
+    """
+    m0 = datetime(2026, 9, 25, 10, 0, 0, tzinfo=TZ)
+    m1 = datetime(2026, 9, 25, 10, 0, 15, tzinfo=TZ)  # Market gap = 15s
+
+    # Mất kết nối từ 10:00:20 đến 10:10:20 (600 giây downtime)
+    d_start = datetime(2026, 9, 25, 10, 0, 20, tzinfo=TZ)
+    d_end = datetime(2026, 9, 25, 10, 10, 20, tzinfo=TZ)
+    disconnects = [(d_start, d_end)]
+
+    # Tin m2 đến sau khi nối lại 2s (10:10:22)
+    m2 = datetime(2026, 9, 25, 10, 10, 22, tzinfo=TZ)
+
+    timestamps = [m0, m1, m2]
+
+    # 1. Thống kê downtime máy ghi riêng biệt
+    total_downtime, detailed = compute_total_downtime_seconds(disconnects)
+    assert total_downtime == pytest.approx(600.0)
+    assert len(detailed) == 1
+    assert detailed[0][2] == pytest.approx(600.0)
+
+    # 2. Thống kê khoảng lặng thị trường riêng biệt (đã trừ downtime)
+    max_gap, long_gaps, total_considered = detect_silence_gaps(
+        timestamps, min_gap_seconds=10.0, disconnect_intervals=disconnects
+    )
+
+    assert total_considered == 3
+    # Khoảng lặng thị trường lớn nhất là 15.0s (giữa m0 và m1), KHÔNG phải 600s hay 607s!
+    assert max_gap == pytest.approx(15.0)
+    assert max_gap != pytest.approx(600.0)
+    assert max_gap != pytest.approx(607.0)
+
+    # Đúng 1 khoảng lặng thị trường > 10.0s (m0 -> m1)
+    assert len(long_gaps) == 1
+    assert long_gaps[0][0] == m0
+    assert long_gaps[0][1] == m1
+    assert long_gaps[0][2] == pytest.approx(15.0)
+
+
+# =====================================================================
+# C3: Lên lịch ghi hằng ngày & chọn hợp đồng front-month động
+# =====================================================================
+
+
+def test_c3_resolve_front_month_symbol_october_and_november():
+    """C3: Chọn hợp đồng VN30F còn sống có lastTradingDate gần nhất trong tương lai.
+
+    - 14/10 -> chọn 41I1GA000 (đáo hạn 15/10/2026).
+    - 16/10 -> chọn 41I1GB000 (41I1GA000 đã hết hạn, hợp đồng kế tiếp đáo hạn 19/11/2026).
+    """
+    assert resolve_front_month_symbol(date(2026, 10, 14)) == "41I1GA000"
+    assert resolve_front_month_symbol(date(2026, 10, 16)) == "41I1GB000"
+    assert resolve_front_month_symbol(date(2026, 9, 25)) == "41I1GA000"
+
+
+def test_c3_calendar_trading_day_skips_weekends_and_holidays():
+    """C3: Tái sử dụng is_trading_day từ calendar_vn, không chạy cuối tuần và ngày lễ."""
+    assert is_trading_day(date(2026, 9, 26)) is False  # Thứ Bảy
+    assert is_trading_day(date(2026, 9, 27)) is False  # Chủ Nhật
+    assert is_trading_day(date(2026, 9, 28)) is True   # Thứ Hai (ngày GD tiếp theo)
+    # Ngày lễ
+    holidays = {date(2026, 9, 2)}
+    assert is_trading_day(date(2026, 9, 2), holidays=holidays) is False
+
