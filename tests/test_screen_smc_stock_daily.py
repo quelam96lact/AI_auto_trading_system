@@ -47,7 +47,6 @@ from scripts.screen_smc_stock_daily import (
     median_of,
     missing_ks,
     sweep_candidates,
-    swing_high_level,
     top10_share,
     verdict_for_event,
 )
@@ -130,6 +129,18 @@ def _series_with_swing() -> tuple[list[Bar], int]:
     return bars, 25
 
 
+def swing_high_level(bars, t, k=FRACTAL_K):
+    """BAN THAM CHIEU CHI DUNG TRONG TEST (quet nguoc, cham, de doc): muc swing high da
+    xac nhan gan nhat tai t. Doi chieu voi confirmed_swing_levels (ban tang dan chay that)
+    o test_5d. Chuyen tu script sang day khi Claude audit dot 101."""
+    from scripts.screen_vn30f_smc import _la_swing_high
+
+    for j in range(min(t - k, len(bars) - k - 1), -1, -1):
+        if _la_swing_high(bars, j, k):
+            return bars[j].high
+    return None
+
+
 def test_2a_swing_high_chi_duoc_biet_tu_j_2():
     bars, j = _series_with_swing()
     assert FRACTAL_K == 2
@@ -137,6 +148,8 @@ def test_2a_swing_high_chi_duoc_biet_tu_j_2():
     assert swing_high_level(bars, j) is None          # tai chinh nen j: chua biet
     assert swing_high_level(bars, j + 1) is None      # j+1: van chua (thieu high[j+2])
     assert swing_high_level(bars, j + 2) == 105.0     # j+2: da xac nhan
+    lv = confirmed_swing_levels(bars)                 # ham chay that, cung luat j+2
+    assert lv[j] is None and lv[j + 1] is None and lv[j + 2] == 105.0
 
 
 def test_2b_bos_pha_dinh_da_xac_nhan():
@@ -153,6 +166,7 @@ def test_2c_khong_the_co_su_kien_bos_tai_t_bang_j_1_hoac_j_2():
     bars, j = _series_with_swing()
     _set(bars, j + 2, 100.0, 107.0, 100.0, 106.0)
     assert swing_high_level(bars, j + 2) is None
+    assert confirmed_swing_levels(bars)[j + 2] is None
     assert bos_candidates(bars) == []
 
 

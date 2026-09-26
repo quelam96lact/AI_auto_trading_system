@@ -120,14 +120,6 @@ def confirmed_swing_levels(bars: list[Bar], k: int = FRACTAL_K) -> list[float | 
     return out
 
 
-def swing_high_level(bars: list[Bar], t: int, k: int = FRACTAL_K) -> float | None:
-    """Muc swing high da xac nhan gan nhat tai thoi diem t (quet nguoc, doc lap voi ban tang dan)."""
-    for j in range(min(t - k, len(bars) - k - 1), -1, -1):
-        if _la_swing_high(bars, j, k):
-            return bars[j].high
-    return None
-
-
 def bos_candidates(bars: list[Bar], k: int = FRACTAL_K) -> list[int]:
     """Pha dinh dao dong: close[t-1] <= S_h VA close[t] > S_h, S_h = swing da xac nhan (j+2 <= t)."""
     levels = confirmed_swing_levels(bars, k)
