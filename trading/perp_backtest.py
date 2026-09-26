@@ -54,7 +54,7 @@ class PerpTrade:
     gross_pnl: float
     fees: float
     net_pnl: float           # gross - fees
-    exit_reason: Literal["SL", "TP", "TIME"]
+    exit_reason: Literal["SL", "TP", "TIME", "TP1", "TP2", "BE", "EMA20"]
     bars_held: int
     clipped: bool            # đã bị cắt bởi trần đòn bẩy
     would_liquidate: bool    # biến động bất lợi vượt entry/max_leverage
