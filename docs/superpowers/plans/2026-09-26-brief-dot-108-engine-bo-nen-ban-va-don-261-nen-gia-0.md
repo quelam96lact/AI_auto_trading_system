@@ -9,7 +9,7 @@ Người audit: Claude. Người thực thi: agent. Agent **không commit, khôn
   - Tất cả nằm ở 09:00, 09:05, 09:10 (ATO) hoặc 14:30, 14:35, 14:40 (ATC).
   - Khoảng thời gian: 13/08 → 16/09.
   - Từ 17/09 không còn dòng nào như vậy, và cũng không còn nến ATO.
-- Luật `is_dirty_bar` (`trading/data_quality.py:23`, một nguồn sự thật) mới chỉ được dùng trong các engine **backtest**. **Engine thật không lọc.** Toàn bộ `trading/engine` không gọi `is_dirty_bar` ở đâu.
+- Luật `is_dirty_bar` (`trading/data_quality.py:22`, một nguồn sự thật) mới chỉ được dùng trong các engine **backtest**. **Engine thật không lọc.** Toàn bộ `trading/engine` không gọi `is_dirty_bar` ở đâu.
 - **Hệ quả đã thấy ở đợt 107:** ATR(14) đi qua các nến này bị thổi từ khoảng 20 lên khoảng 2.100. TP khôi phục của IJC/AAA ra khoảng +58% so với giá vốn, tức vô hiệu. EMA cũng bị kéo về 0 ở những nến đó.
 
 ## 1. Phạm vi
