@@ -202,3 +202,5 @@ uv run ruff check trading tests scripts
 **Hạn chế agent phát hiện, Claude xác nhận là đúng:** **không** mã nào có nến cuối cùng rơi trong 2016–2022, tức IS **hoàn toàn** không có mã hủy niêm yết. Thiên lệch sống sót là **toàn phần**, và con số "185 mã" trong brief đo ở mốc hiện tại nên không liên quan tới IS; đó là sai sót của brief. Vì phép so là **trong cùng một vũ trụ sống sót** (sự kiện so với đối chứng), thiên lệch này ảnh hưởng cả hai phe. Kết luận âm không bị nó đảo ngược, nhưng mọi con số lãi **tuyệt đối** đều lạc quan.
 
 Brief cũng sai ở kỳ vọng "phá hoại 2 thì test 7 đỏ": tính bộ lọc tại `t` là sai luật, không phải nhìn trộm tương lai, nên test bất biến không bắt được. Agent đã tự thêm `test_1h` để đo trực tiếp luật `t−1`.
+
+**Ghi chú sau (26/09, khi viết brief 102):** đợt 99 **không** lọc ETF/quỹ; 24 mã như `E1VFVN30`, `FUE…` nằm trong vũ trụ. Claude đo: chỉ **1/152** sự kiện VCP đến từ các mã này (0,7%). Kết luận âm (p = 0,79) không bị ảnh hưởng. Từ đợt 102, quy tắc "đúng 3 ký tự chữ/số" loại chúng.

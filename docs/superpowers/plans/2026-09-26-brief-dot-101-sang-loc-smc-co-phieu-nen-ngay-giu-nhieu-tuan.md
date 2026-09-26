@@ -173,3 +173,5 @@ uv run ruff check trading tests scripts
 **Claude kiểm độc lập** vì sao trung vị `r` của `bos` đúng bằng 0,0000 (dễ là dấu hiệu lỗi chỉ số). Chỉ **123/9.725 (1,3%)** sự kiện có `r_20` đúng bằng 0. Các ví dụ là dữ liệu thật (ACB, ABI, ASM…, thanh khoản hàng chục tới hàng trăm tỷ). Phân phối gần đối xứng quanh 0, nên trung vị rơi vào dải nhỏ các giá trị bằng 0 do bước giá rời rạc. **Không phải lỗi.** Lời giải thích của agent ("47,69% nến có close = open") không liên quan: đó là giá mở và giá đóng của cùng một phiên, còn `r_20` so hai phiên khác nhau.
 
 Code audit: swing chỉ được xác nhận tại `t = j + 2`; lọc thanh khoản áp ở phía sự kiện; thời gian nghỉ tính riêng từng loại; chỉ import các hàm của đợt 98/99, không chép. 37 test, 1009 suite, ruff sạch.
+
+**Ghi chú sau (26/09, khi viết brief 102):** đợt 101 **không** lọc ETF/quỹ (24 mã). Claude đo số sự kiện từ các mã này: `sweep` 62/6.993, `bos` 94/9.726, `fvg` 132/14.018, **khoảng 1%** ở mỗi loại; rổ đối chứng cũng có chúng ở tỷ lệ tương tự. Không đủ để đảo kết luận (ví dụ `sweep` −1,01%, KTC nằm hẳn dưới 0). Từ đợt 102, quy tắc "đúng 3 ký tự chữ/số" loại chúng.
