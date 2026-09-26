@@ -180,3 +180,25 @@ uv run ruff check trading tests scripts
 
 - **RS rating** (xếp hạng sức mạnh tương đối trong toàn thị trường) là một phần của phương pháp Minervini. Nó bị bỏ vì cần một bảng xếp hạng riêng tại từng thời điểm. Nếu đợt 99 dương, bước tiếp theo là thêm nó như **một** phép thử đăng ký trước, không phải như một biến thể để thử.
 - **Thoát lệnh theo stop:** Minervini dùng cắt lỗ chặt (7–8%). Đợt này thoát theo thời gian cố định để đo **thông tin** của tín hiệu, không đo một hệ thống giao dịch. Hệ thống cụ thể chỉ đáng thiết kế nếu tín hiệu có thông tin.
+
+
+---
+
+## 7. Kết quả và audit của Claude (26/09)
+
+**Lỗi Claude bắt khi audit, đã sửa trước khi commit:** `find_events` **không** gọi `liquidity_ok`, trong khi rổ đối chứng (`compact_control_series`) có lọc thanh khoản. Như vậy phe VCP gồm cả mã không đủ thanh khoản, còn phe đối chứng thì không, và hai phe **khác vũ trụ**, trái §1.1. Đã thêm bộ lọc (cùng cửa sổ 20 nến trước `t` với `SymbolData.liq_ok`), thêm `test_1i`, và phá thử: bỏ bộ lọc thì `test_1i` đỏ. Vì đây là lỗi code làm sai thiết kế, phép đo **được chạy lại** theo §1.
+
+| | Lần 1 (agent, có lỗi) | **Lần 2 (sau khi sửa)** |
+|---|---|---|
+| Sự kiện hợp lệ | 315 | **152** |
+| TB excess_20 | +0,0003 | **−0,0095** |
+| Trung vị excess_20 | âm | **−0,0279** |
+| KTC 95% | [−0,0158; +0,0174] | **[−0,0302; +0,0147]** |
+| p | 0,48 | **0,79** |
+| Tỷ lệ excess_20 > 0 | — | **38,8%** |
+
+**Kết luận: VCP dạng máy KHÔNG có lợi thế so với cổ phiếu cùng xu hướng, sau chi phí. Đây là phép đo âm thứ bảy.** Trung bình lãi ròng 20 phiên có dương (+0,49%), nhưng rổ đối chứng cùng ngày lãi +2,15%. Phần lãi đó là của thị trường và của bộ lọc xu hướng, không phải của mẫu VCP. Ở cả ba khung, VCP đều **thua** rổ đối chứng.
+
+**Hạn chế agent phát hiện, Claude xác nhận là đúng:** **không** mã nào có nến cuối cùng rơi trong 2016–2022, tức IS **hoàn toàn** không có mã hủy niêm yết. Thiên lệch sống sót là **toàn phần**, và con số "185 mã" trong brief đo ở mốc hiện tại nên không liên quan tới IS; đó là sai sót của brief. Vì phép so là **trong cùng một vũ trụ sống sót** (sự kiện so với đối chứng), thiên lệch này ảnh hưởng cả hai phe. Kết luận âm không bị nó đảo ngược, nhưng mọi con số lãi **tuyệt đối** đều lạc quan.
+
+Brief cũng sai ở kỳ vọng "phá hoại 2 thì test 7 đỏ": tính bộ lọc tại `t` là sai luật, không phải nhìn trộm tương lai, nên test bất biến không bắt được. Agent đã tự thêm `test_1h` để đo trực tiếp luật `t−1`.
