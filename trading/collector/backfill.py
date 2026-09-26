@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 
 from trading.calendar_vn import TZ
 from trading.config import Config, load_config
+from trading.data_quality import is_dirty_bar
 from trading.models import Bar
 from trading.storage.db import Storage
 
@@ -356,9 +357,23 @@ async def run_backfill(
                 for b in await client.intraday_ohlc(sym, frm, today)
                 if last is None or b.ts > last
             ]
-            storage.write_bars(intraday)
+            # DIRTY-1b (brief dot 109): khong ghi nen rac (gia <= 0) vao `bars`.
+            # Cung MOT luat voi duong stream: `data_quality.is_dirty_bar`.
+            clean_intraday = [b for b in intraday if not is_dirty_bar(b)]
+            rac = [b for b in intraday if is_dirty_bar(b)]
+            if rac:
+                alert(
+                    "WARN",
+                    f"backfill {sym}: bo {len(rac)} bar rac (co gia <= 0) khoi "
+                    f"intraday truoc khi ghi",
+                    symbol=sym,
+                    so_bar_rac=len(rac),
+                    ts_dau=rac[0].ts.isoformat(),
+                    ts_cuoi=rac[-1].ts.isoformat(),
+                )
+            storage.write_bars(clean_intraday)
             storage.write_daily(await client.daily_ohlc(sym, frm, today))
-            counts[sym] = len(intraday)
+            counts[sym] = len(clean_intraday)
         except Exception as e:
             alert(
                 "WARN",

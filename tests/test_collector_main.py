@@ -494,6 +494,126 @@ async def test_stream_handler_skips_unparsable_message_without_raising(monkeypat
     )
 
 
+async def test_stream_handler_bo_nen_rac_khong_ghi_khong_latch_khong_publish(monkeypatch):
+    """Brief đợt 109 §2.1: message có OHLC = 0 thì KHÔNG ghi DB, KHÔNG đưa latch,
+    KHÔNG publish — nhưng nhịp tim `wd.beat()` VẪN được đập (message tới = luồng sống)."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    rac = Bar("VCB", datetime(2026, 9, 27, 9, 0, tzinfo=TZ), 0.0, 0.0, 0.0, 0.0, 0)
+    monkeypatch.setattr(collector_main, "parse_interval_message", lambda msg: rac)
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    wd = MagicMock()
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    latch = MagicMock()
+    latch.interval = timedelta(minutes=5)
+
+    persist_tasks = set()
+    handler = collector_main.make_stream_message_handler(
+        wd, storage, pub, persist_tasks=persist_tasks, latch=latch
+    )
+    handler({"dummy": 1})
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    storage.write_bars.assert_not_called()
+    latch.offer.assert_not_called()
+    pub.publish.assert_not_called()
+    wd.beat.assert_called_once()
+    warns = [a for a in alerts_seen if a[0] == "WARN"]
+    assert len(warns) == 1, f"phai co dung 1 WARN: {alerts_seen}"
+    assert "VCB" in warns[0][1] and "0.0/0.0/0.0/0.0" in warns[0][1]
+
+
+async def test_stream_handler_nen_rac_warn_mot_lan_moi_ma_moi_ngay(monkeypatch):
+    """Hai message bẩn cùng mã trong cùng ngày -> MỘT WARN; sang ngày khác -> WARN lại."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    bars_seq = [
+        Bar("VCB", datetime(2026, 9, 27, 9, 0, tzinfo=TZ), 0.0, 0.0, 0.0, 0.0, 0),
+        Bar("VCB", datetime(2026, 9, 27, 9, 5, tzinfo=TZ), 0.0, 0.0, 0.0, 0.0, 0),
+        Bar("VCB", datetime(2026, 9, 28, 9, 0, tzinfo=TZ), 0.0, 0.0, 0.0, 0.0, 0),
+        Bar("AAA", datetime(2026, 9, 28, 9, 5, tzinfo=TZ), 0.0, 0.0, 0.0, 0.0, 0),
+    ]
+    idx = 0
+
+    def fake_parse(msg):
+        nonlocal idx
+        b = bars_seq[idx]
+        idx += 1
+        return b
+
+    monkeypatch.setattr(collector_main, "parse_interval_message", fake_parse)
+    alerts_seen = []
+    monkeypatch.setattr(
+        collector_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    wd = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    latch = MagicMock()
+    latch.interval = timedelta(minutes=5)
+    persist_tasks = set()
+    handler = collector_main.make_stream_message_handler(
+        wd, MagicMock(), pub, persist_tasks=persist_tasks, latch=latch
+    )
+    for _ in range(4):
+        handler({"dummy": 1})
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    warns = [a for a in alerts_seen if a[0] == "WARN"]
+    assert len(warns) == 3, f"1 (VCB 27/09) + 1 (VCB 28/09) + 1 (AAA 28/09) = 3, thuc te {alerts_seen}"
+
+
+async def test_stream_handler_nen_sach_ngay_sau_nen_rac_di_duong_cu(monkeypatch):
+    """Nến sạch sau nến rác vẫn đi đúng đường cũ: có ghi DB và có đưa vào latch."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import trading.collector.main as collector_main
+    from trading.models import Bar
+
+    clean = Bar("VCB", datetime(2026, 9, 27, 9, 10, tzinfo=TZ), 90.0, 90.5, 89.8, 90.2, 1000)
+    monkeypatch.setattr(collector_main, "parse_interval_message", lambda msg: clean)
+    monkeypatch.setattr(collector_main, "alert", lambda *a, **k: None)
+
+    wd = MagicMock()
+    storage = MagicMock()
+    pub = MagicMock()
+    pub.publish = AsyncMock()
+    latch = MagicMock()
+    latch.interval = timedelta(minutes=5)
+    latch.offer.return_value = None
+
+    persist_tasks = set()
+    handler = collector_main.make_stream_message_handler(
+        wd, storage, pub, persist_tasks=persist_tasks, latch=latch
+    )
+    handler({"dummy": 1})
+    if persist_tasks:
+        await asyncio.gather(*list(persist_tasks))
+
+    assert storage.write_bars.call_count == 1, "snapshot nen sach phai duoc ghi"
+    assert storage.write_bars.call_args[0][0] == [clean]
+    latch.offer.assert_called_once_with(clean)
+    wd.beat.assert_called_once()
+
+
 @pytest.mark.integration  # DOC-1: test nay CHAM DB THAT (db_dsn=TEST_DSN) — can ha tang, khong phai unit; cac test con lai trong file nay la unit that
 async def test_collector_stops_cleanly_when_stop_event_set(cfg, monkeypatch):
     """SIGTERM -> stop_event set -> feed.stop() + pub.close() phải được gọi,

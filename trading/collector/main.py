@@ -17,6 +17,7 @@ from trading.collector.latch import BarLatch
 from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
 from trading.config import load_config
+from trading.data_quality import is_dirty_bar
 from trading.logging_setup import attach_durable_alert_handler
 from trading.storage.db import Storage
 
@@ -150,6 +151,11 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
     if latch is None:
         latch = BarLatch()
 
+    # DIRTY-1b (brief dot 109): tap da bao WARN cho nen rac, khoa (ma, ngay).
+    # Xoa khi sang ngay moi -> khong phinh mai. Luat van la
+    # `data_quality.is_dirty_bar`, khong chep dieu kien `<= 0` ra day.
+    dirty_state: dict = {"day": None, "alerted": set()}
+
     def on_stream_message(msg):
         try:
             bar = parse_interval_message(msg)
@@ -162,6 +168,26 @@ def make_stream_message_handler(wd, storage, pub, persist_tasks=None, latch=None
             return
         if bar is not None:
             wd.beat()
+            # Chan nen rac NGAY TAI NGUON GHI: khong ghi DB (persist_snapshot),
+            # khong dua latch (nen khong bao gio duoc publish), roi thoat.
+            # `wd.beat()` da chay TRUOC do: nhan duoc message nghia la luong van
+            # song, nen nhip tim khong duoc phep im vi mot ban ghi rac.
+            if is_dirty_bar(bar):
+                day = bar.ts.date()
+                if dirty_state["day"] != day:
+                    dirty_state["day"] = day
+                    dirty_state["alerted"].clear()
+                key = (bar.symbol, day)
+                if key not in dirty_state["alerted"]:
+                    dirty_state["alerted"].add(key)
+                    alert(
+                        "WARN",
+                        f"bo nen rac (co gia <= 0) tu luong: {bar.symbol} "
+                        f"ts={bar.ts} OHLC={bar.open}/{bar.high}/{bar.low}/{bar.close}",
+                        symbol=bar.symbol,
+                        ts=bar.ts.isoformat(),
+                    )
+                return
             now = datetime.now(TZ)
             late_ms = (now - (bar.ts + latch.interval)).total_seconds() * 1000
             if late_ms > 0:

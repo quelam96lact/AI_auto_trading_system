@@ -49,6 +49,54 @@ async def test_run_backfill_writes_missing_bars():
     assert counts["VCB"] == 2 and len(st.bars) == 2 and len(st.daily) == 1
 
 
+class DirtyIntradayClient:
+    """Trả 3 bar intraday, trong đó bar giữa là nến rác (OHLC = 0) — brief đợt 109 §2.2."""
+
+    async def daily_ohlc(self, symbol, frm, to):
+        return [Bar(symbol, datetime(2026, 7, 14, tzinfo=TZ), 1, 2, 1, 2, 10)]
+
+    async def intraday_ohlc(self, symbol, frm, to):
+        return [
+            Bar(symbol, datetime(2026, 7, 15, 9, 0, tzinfo=TZ), 1, 2, 1, 2, 10),
+            Bar(symbol, datetime(2026, 7, 15, 9, 5, tzinfo=TZ), 0, 0, 0, 0, 0),
+            Bar(symbol, datetime(2026, 7, 15, 9, 10, tzinfo=TZ), 3, 4, 3, 4, 30),
+        ]
+
+
+async def test_run_backfill_bo_nen_rac_intraday(monkeypatch):
+    """Nến rác bị bỏ TRƯỚC write_bars; `counts` đếm số bar ĐÃ GHI; có một WARN nêu số bị bỏ."""
+    import trading.alerts as alerts_mod
+
+    seen = []
+    monkeypatch.setattr(
+        alerts_mod, "alert", lambda level, msg, **f: seen.append((level, msg, f))
+    )
+
+    st = FakeStorage(last=datetime(2026, 7, 15, 8, 55, tzinfo=TZ))
+    counts = await run_backfill(st, DirtyIntradayClient(), ["VCB"], today=date(2026, 7, 15))
+
+    assert [b.ts.hour * 60 + b.ts.minute for b in st.bars] == [9 * 60, 9 * 60 + 10]
+    assert counts["VCB"] == 2, "counts phai dem so bar DA GHI (2), khong phai so bar keo ve (3)"
+    warns = [a for a in seen if a[0] == "WARN"]
+    assert len(warns) == 1, f"phai co dung 1 WARN: {seen}"
+    assert "VCB" in warns[0][1] and "1" in warns[0][1]
+
+
+async def test_run_backfill_khong_warn_khi_khong_co_nen_rac(monkeypatch):
+    import trading.alerts as alerts_mod
+
+    seen = []
+    monkeypatch.setattr(
+        alerts_mod, "alert", lambda level, msg, **f: seen.append((level, msg, f))
+    )
+
+    st = FakeStorage(last=datetime(2026, 7, 15, 8, 55, tzinfo=TZ))
+    counts = await run_backfill(st, FakeClient(), ["VCB"], today=date(2026, 7, 15))
+
+    assert counts["VCB"] == 2 and len(st.bars) == 2
+    assert not [a for a in seen if a[0] == "WARN"], f"khong duoc WARN khi du lieu sach: {seen}"
+
+
 class FailingDailyClient:
     """Mô phỏng đúng lỗi thật quan sát 2026-08-07: get_ohlc_5minute_historical
     (intraday) trả 200 OK bình thường, nhưng get_ohlc_1day_historical (daily)
