@@ -290,3 +290,12 @@ Tôi không commit, không push, không build hay restart container, không ch�
 **Task B:** không có commit nào tắt nguồn sinh nến 0. Đường ghi hiện tại vẫn có thể sinh nến giá 0, nên cổng lọc ở engine là cần thiết. Nguyên nhân nến 0 ngừng xuất hiện từ 17/09 chưa được chứng minh.
 
 **`bars_daily` có 71.439 dòng bẩn (2016–2024):** đây là dạng khác (open = 0 nhưng close thật), đến từ đường backfill. Các phép đo trên `bars_daily` đã lọc bằng `is_dirty_bar` hoặc bằng danh sách mã loại trừ. Không xử lý trong đợt này.
+
+### Đính chính của Claude (27/09): Task B truy sai đường ghi
+
+`aggregator.py::BarAggregator` **không có caller nào** trong `trading/`: đây là code chết. Đường ghi thật của luồng realtime là `collector/main.py::on_stream_message`, qua ba bước:
+1. `parse_interval_message`
+2. `persist_snapshot` (ghi DB mỗi snapshot)
+3. `latch.offer`, rồi `persist_bars` (publish NATS và ghi DB)
+
+Đường backfill là `backfill.py::run_backfill` dòng 354–359. Brief đợt 109 chặn nến bẩn ở đúng hai chỗ này.
