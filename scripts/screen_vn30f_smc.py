@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import os
 import pathlib
 import statistics
 import sys
@@ -41,6 +40,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts._db_common import load_dotenv
 from scripts.audit_information import run_block_permutation_test
 from scripts.leakage_audit import check_control_variable, compute_leakage_pair
 from scripts.screen_vn30f_intraday import (
@@ -311,16 +311,6 @@ def run_smc_screening(
     }
 
 
-def _load_dotenv(env_path: str = ".env") -> None:
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-
-
 def _fmt(v: float | None, spec: str = "+.4f") -> str:
     return "None" if v is None else format(v, spec)
 
@@ -332,7 +322,7 @@ def main() -> None:
     parser.add_argument("--config", default="config/config.yaml", help="Đường dẫn cấu hình")
     args = parser.parse_args()
 
-    _load_dotenv()
+    load_dotenv()
     app_cfg = load_config(args.config)
     db_dsn = app_cfg.db_dsn.replace("@localhost:", "@127.0.0.1:")
     storage = Storage(db_dsn)
