@@ -18,6 +18,7 @@ from trading.calendar_vn import (
     previous_trading_day,
 )
 from trading.config import Config, load_config
+from trading.data_quality import is_dirty_bar
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.logging_setup import attach_durable_alert_handler
 from trading.paper_broker import PaperBroker
@@ -255,22 +256,35 @@ async def run(
     warmed_until: dict[str, datetime] = {}
     for sym in cfg.symbols:
         hist = storage.read_last_bars(sym, strategy.warmup_bars)
-        if len(hist) < strategy.warmup_bars:
+        # DIRTY-1 (brief dot 108): bo nen rac khoi lich su TRUOC khi nap. Bar gia
+        # 0 lam ATR(14) nhay tu ~20 len ~2.100 va keo EMA ve 0 (dot 107 da do),
+        # tuc chien luoc "nong" bang so rac ngay tu luc khoi dong.
+        clean_hist = [b for b in hist if not is_dirty_bar(b)]
+        if len(clean_hist) != len(hist):
+            alert(
+                "INFO",
+                f"warm-up {sym}: bo {len(hist) - len(clean_hist)} bar rac "
+                f"(co gia <= 0) khoi lich su",
+                symbol=sym,
+                so_bar_rac=len(hist) - len(clean_hist),
+                con_lai=len(clean_hist),
+            )
+        if len(clean_hist) < strategy.warmup_bars:
             alert(
                 "WARN",
-                f"warm-up {sym} thieu lich su: chi co {len(hist)}/"
+                f"warm-up {sym} thieu lich su: chi co {len(clean_hist)}/"
                 f"{strategy.warmup_bars} bar trong bang bars — ma nay VAN DANG MU",
                 symbol=sym,
             )
             continue
-        for hb in hist:
+        for hb in clean_hist:
             strategy.compute_crossover(hb)
-        warmed_until[sym] = hist[-1].ts
+        warmed_until[sym] = clean_hist[-1].ts
         alert(
             "INFO",
             f"warm-up {sym} xong",
-            bars=len(hist),
-            until=str(hist[-1].ts),
+            bars=len(clean_hist),
+            until=str(clean_hist[-1].ts),
         )
     risk = RiskManager(capital=CAPITAL)
     trailing_stop = TrailingStopManager()
@@ -324,12 +338,38 @@ async def run(
                 )
                 continue
             window = storage.read_bars_until(sym, anchor.ts, strategy.warmup_bars)
-            tp = strategy.restore_take_profit(sym, window)
+            if is_dirty_bar(anchor):
+                # Ly do thu tu (brief dot 108): bar neo A co gia 0 thi KHONG the
+                # chay lai ATR tu no, va cung khong duoc lang le lay ATR tu chuoi
+                # khac — khong tai dung duoc thi phai noi ra.
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc take-profit cho {sym}: bar neo "
+                    f"{anchor.ts} la bar rac "
+                    f"(OHLC={anchor.open}/{anchor.high}/{anchor.low}/{anchor.close}) "
+                    f"— khong chay lai duoc ATR tu no; TP se bi NEO LAI theo gia "
+                    f"mo cua bar dau tien sau restart",
+                    symbol=sym,
+                )
+                continue
+            # DIRTY-1: cua so chay lai ATR phai la chuoi DA LOC, neu khong ATR
+            # khoi phuc se tinh ca cac TR gia tu nen 0 (dung loi dot 107).
+            clean_window = [b for b in window if not is_dirty_bar(b)]
+            if len(clean_window) != len(window):
+                alert(
+                    "INFO",
+                    f"khoi phuc take-profit {sym}: bo {len(window) - len(clean_window)} "
+                    f"bar rac trong cua so ATR",
+                    symbol=sym,
+                    so_bar_rac=len(window) - len(clean_window),
+                    con_lai=len(clean_window),
+                )
+            tp = strategy.restore_take_profit(sym, clean_window)
             if tp is None:
                 alert(
                     "WARN",
                     f"khong tai dung duoc take-profit cho {sym}: chi co "
-                    f"{len(window)} bar tinh den bar neo {anchor.ts}, khong du de "
+                    f"{len(clean_window)} bar tinh den bar neo {anchor.ts}, khong du de "
                     f"chay lai ATR — TP se bi NEO LAI theo gia mo cua bar dau tien "
                     f"sau restart",
                     symbol=sym,

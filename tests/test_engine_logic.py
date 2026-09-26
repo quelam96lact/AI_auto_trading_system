@@ -1,7 +1,10 @@
 from datetime import date, datetime, timedelta
 
+import pytest
+
 from trading.broker import Fill
 from trading.calendar_vn import TZ
+from trading.engine import logic as engine_logic
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
@@ -20,6 +23,134 @@ def bar_at(i, close, sym="VCB"):
         close,
         100,
     )
+
+
+class _SpyStrategy(SmaCrossStrategy):
+    """SmaCross ghi lai moi bar `on_bar` nhan duoc (brief dot 108 §2.1)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bars_seen: list[Bar] = []
+
+    def on_bar(self, bar, context):
+        self.bars_seen.append(bar)
+        return super().on_bar(bar, context)
+
+
+def dirty_bar(ts, sym="VCB"):
+    """Bar rac dung nghia SPEC-1c: OHLC deu <= 0."""
+    return Bar(sym, ts, 0.0, 0.0, 0.0, 0.0, 0)
+
+
+@pytest.fixture
+def alerts(monkeypatch):
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        engine_logic, "alert", lambda level, msg, **fields: seen.append((level, msg, fields))
+    )
+    return seen
+
+
+def _engine():
+    broker = PaperBroker(capital=100_000_000)
+    strategy = _SpyStrategy(fast=2, slow=4, qty=100, atr_period=1, atr_pct_threshold=0.0)
+    risk = RiskManager(capital=100_000_000)
+    trailing_stop = TrailingStopManager()
+    return broker, strategy, risk, trailing_stop, {}, {}
+
+
+def test_process_bar_bo_nen_rac_khong_cham_broker_marks_hay_strategy(alerts):
+    """Nến rác bị bỏ NGAY ĐẦU process_bar: broker không nhận, marks không đổi,
+    strategy không được gọi, trả [].
+
+    Đối chứng nằm trong chính test: trước nến rác đã có một lệnh BUY nằm chờ, nếu
+    nến 0 lọt vào broker thì lệnh chờ SẼ khớp ở giá 0 (vị thế 100, marks[VCB] = 0).
+    """
+    broker, strategy, risk, trailing_stop, marks, day_state = _engine()
+    for i, p in enumerate([10, 10, 10, 10, 20]):
+        process_bar(bar_at(i, p), broker, strategy, risk, trailing_stop, marks, day_state)
+    assert marks["VCB"] == 20
+    seen_before = len(strategy.bars_seen)
+
+    got = process_bar(
+        dirty_bar(datetime(2026, 7, 15, 10, 15, tzinfo=TZ)),
+        broker,
+        strategy,
+        risk,
+        trailing_stop,
+        marks,
+        day_state,
+    )
+
+    assert got == []
+    assert broker.position_qty("VCB") == 0, "nến rác không được làm lệnh chờ khớp ở giá 0"
+    assert marks["VCB"] == 20, "marks không được đổi"
+    assert len(strategy.bars_seen) == seen_before, "strategy không được nhận nến rác"
+    assert [a[0] for a in alerts] == ["WARN"]
+    assert "VCB" in alerts[0][1]
+
+
+def test_nen_rac_warn_mot_lan_moi_ma_moi_ngay(alerts):
+    """Hai (ba) nến bẩn cùng mã trong cùng ngày -> MỘT WARN; sang ngày mới -> WARN lại."""
+    broker, strategy, risk, trailing_stop, marks, day_state = _engine()
+    for k in range(3):  # 09:00, 09:05, 09:10 cung ngay
+        process_bar(
+            dirty_bar(datetime(2026, 7, 15, 9, 5 * k, tzinfo=TZ)),
+            broker,
+            strategy,
+            risk,
+            trailing_stop,
+            marks,
+            day_state,
+        )
+    assert len(alerts) == 1, f"cung ngay chi duoc 1 WARN, thuc te {alerts}"
+
+    process_bar(
+        dirty_bar(datetime(2026, 7, 16, 9, 0, tzinfo=TZ)),
+        broker,
+        strategy,
+        risk,
+        trailing_stop,
+        marks,
+        day_state,
+    )
+    assert len(alerts) == 2, "sang ngay moi phai WARN lai"
+
+    # ma khac trong cung ngay -> WARN rieng
+    process_bar(
+        dirty_bar(datetime(2026, 7, 16, 9, 5, tzinfo=TZ), sym="AAA"),
+        broker,
+        strategy,
+        risk,
+        trailing_stop,
+        marks,
+        day_state,
+    )
+    assert len(alerts) == 3
+
+
+def test_nen_sach_ngay_sau_nen_rac_van_xu_ly_binh_thuong(alerts):
+    """Nến sạch ngay sau nến rác vẫn đi đúng đường cũ (lệnh chờ khớp bình thường)."""
+    broker, strategy, risk, trailing_stop, marks, day_state = _engine()
+    for i, p in enumerate([10, 10, 10, 10, 20]):
+        process_bar(bar_at(i, p), broker, strategy, risk, trailing_stop, marks, day_state)
+    process_bar(
+        dirty_bar(datetime(2026, 7, 15, 10, 15, tzinfo=TZ)),
+        broker,
+        strategy,
+        risk,
+        trailing_stop,
+        marks,
+        day_state,
+    )
+
+    fills = process_bar(
+        bar_at(6, 20), broker, strategy, risk, trailing_stop, marks, day_state
+    )
+
+    assert [f.side for f in fills] == ["BUY"]
+    assert broker.position_qty("VCB") == fills[0].qty, "vi the phai bang dung so lenh cho khop"
+    assert marks["VCB"] == 20
 
 
 def test_process_bar_submits_and_next_bar_fills():

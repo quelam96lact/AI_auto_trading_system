@@ -4,6 +4,7 @@ from datetime import datetime
 from trading.alerts import alert
 from trading.broker import Fill
 from trading.calendar_vn import TZ
+from trading.data_quality import is_dirty_bar
 from trading.models import Bar
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
@@ -32,6 +33,27 @@ def process_bar(
         day_state["day"] = today
         day_state["start_realized"] = broker.realized_pnl
         day_state["stop_blocked_alerted"] = set()
+        day_state["dirty_alerted"] = set()
+
+    # DIRTY-1 (brief dot 108): chan bar rac (OHLC <= 0) NGAY tai day — truoc
+    # broker.on_bar, truoc marks, truoc strategy. Truoc dot 108 luat
+    # `is_dirty_bar` chi duoc dung trong cac engine BACKTEST, engine that khong
+    # loc: nen gia 0 di thang vao ATR/EMA (ATR(14) bi thoi tu ~20 len ~2.100 —
+    # do o dot 107) va vao broker (lenh cho khop o gia 0). Luat chi song o
+    # `data_quality.is_dirty_bar`, khong chep lai o day.
+    # WARN mot lan cho moi ma trong ngay, dung khuon `stop_blocked_alerted`:
+    # dat SAU khoi reset ngay o tren de chi co MOT dinh nghia "sang ngay moi".
+    if is_dirty_bar(bar):
+        dirty_alerted = day_state.setdefault("dirty_alerted", set())
+        if bar.symbol not in dirty_alerted:
+            dirty_alerted.add(bar.symbol)
+            alert(
+                "WARN",
+                f"bo nen rac {bar.symbol} ts={bar.ts} "
+                f"OHLC={bar.open}/{bar.high}/{bar.low}/{bar.close} (co gia <= 0)",
+                symbol=bar.symbol,
+            )
+        return []
 
     fills = broker.on_bar(bar)
     marks[bar.symbol] = bar.close

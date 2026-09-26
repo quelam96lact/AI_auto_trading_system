@@ -9,6 +9,7 @@ from tests.conftest import TEST_DSN, TEST_NATS_URL
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ
 from trading.config import Config
+from trading.data_quality import is_dirty_bar
 from trading.engine.main import run
 from trading.models import Bar
 from trading.storage.db import Storage
@@ -1922,6 +1923,161 @@ async def test_engine_warns_when_octopus_take_profit_cannot_restore(storage, mon
         lvl == "WARN" and "ENGT" in msg and "take-profit" in msg
         for lvl, msg, _ in alerts_seen
     ), f"phai WARN neu ro ma va ly do, thuc te: {alerts_seen}"
+
+
+# ---------------------------------------------------------------------------
+# Brief đợt 108 — engine bỏ nến bẩn (OHLC <= 0)
+# ---------------------------------------------------------------------------
+
+
+class _HeldCtx:
+    """Context tối thiểu cho `on_bar` của Octopus (chỉ cần position_qty)."""
+
+    def position_qty(self, symbol):
+        return 1
+
+
+def _seed_with_dirty(strategy, dirty_idx, n_extra=2):
+    """Chuỗi `warmup_bars + n_extra` bar, các vị trí `dirty_idx` đổi thành nến 0."""
+    n = strategy.warmup_bars + n_extra
+    seeded = make_bars([10.0 + 0.3 * (i % 5) for i in range(n)])
+    for i in dirty_idx:
+        b = seeded[i]
+        seeded[i] = Bar(b.symbol, b.ts, 0.0, 0.0, 0.0, 0.0, 0)
+    return seeded
+
+
+async def test_engine_warmup_bo_nen_rac_va_bao_so_bar_bo(storage, monkeypatch):
+    """Nến rác trong lịch sử bị bỏ TRƯỚC khi nạp; có INFO đếm số bar bỏ; và khi
+    phần còn lại thiếu `warmup_bars` thì rơi vào ĐÚNG nhánh WARN cũ (không nhánh mới)."""
+    import trading.engine.main as engine_main
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    strategy = OctopusPullbackStrategy()
+    seeded = _seed_with_dirty(strategy, [100, 150])
+    storage.write_bars(seeded)
+
+    seen_bars: list = []
+    real_cc = strategy.compute_crossover
+
+    def spy_cc(bar):
+        seen_bars.append(bar)
+        return real_cc(bar)
+
+    monkeypatch.setattr(strategy, "compute_crossover", spy_cc)
+
+    await _publish(cfg, make_bars([9.0, 9.0]))
+    await run(cfg, strategy=strategy, max_messages=2, warmup_wait_timeout_sec=0)
+
+    info = [a for a in alerts_seen if a[0] == "INFO" and "bar rac" in a[1]]
+    assert len(info) == 1, f"phai co dung 1 INFO dem bar rac: {alerts_seen}"
+    assert info[0][2]["so_bar_rac"] == 2
+    warn = [a for a in alerts_seen if a[0] == "WARN" and "thieu lich su" in a[1]]
+    assert warn and "199/201" in warn[0][1], (
+        f"loc xong con 199/201 -> phai vao nhanh WARN cu voi so DA LOC: {alerts_seen}"
+    )
+    assert seen_bars, "2 bar publish phai duoc nap"
+    assert not any(is_dirty_bar(b) for b in seen_bars), "strategy KHONG duoc nhan nen rac"
+
+
+async def test_engine_tp_khoi_phuc_bo_nen_rac_trong_cua_so(storage, monkeypatch):
+    """Cửa sổ ATR tái dựng TP có nến rác -> TP phải bằng ĐÚNG TP của một chiến lược
+    'sống' chạy qua chuỗi ĐÃ LỌC (so `==`). Trên code cũ (không lọc) ATR tính cả TR
+    giả từ nến 0 nên test này đỏ."""
+    import trading.engine.main as engine_main
+    from trading.broker import Fill, Position
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    strategy = OctopusPullbackStrategy()
+    n = strategy.warmup_bars + 2
+    # Nến rác đặt SÁT bar neo (trong 14 TR cuối) — nếu đặt xa (100, 150) thì ATR
+    # của cả hai chuỗi vẫn bằng nhau và phép phá "bỏ lọc" sẽ KHÔNG bị bắt.
+    seeded = _seed_with_dirty(strategy, [n - 5, n - 3])
+    anchor = seeded[n - 1]  # bar mới nhất = bar neo (fill cùng bar)
+    storage.upsert_position(Position("ENGT", 1, anchor.open))
+    storage.write_order(Fill("ENGT", "BUY", 1, anchor.open, 0.0, anchor.ts))
+    storage.write_bars(seeded)
+    storage.write_engine_state(100_000_000 - anchor.open, 0.0)
+
+    # Chiến lược "sống" chạy qua đúng chuỗi đã lọc -> TP của luồng sống tại bar neo.
+    clean = [
+        b
+        for b in storage.read_bars_until("ENGT", anchor.ts, strategy.warmup_bars)
+        if not is_dirty_bar(b)
+    ]
+    assert len(clean) == strategy.warmup_bars - 2
+    live = OctopusPullbackStrategy()
+    for b in clean[:-1]:
+        live.compute_crossover(b)
+    live.on_bar(clean[-1], _HeldCtx())
+    tp_live = live._tp["ENGT"]
+
+    await _publish(cfg, make_bars([9.0, 9.0]))
+    await run(cfg, strategy=strategy, max_messages=2, warmup_wait_timeout_sec=0)
+
+    tp_alerts = [a for a in alerts_seen if a[0] == "INFO" and "tai dung take-profit" in a[1]]
+    assert tp_alerts, f"phai tai dung duoc TP: {alerts_seen}"
+    _lvl, _msg, fields = tp_alerts[0]
+    assert fields["tp"] == tp_live, "TP khoi phuc phai bang TP luong song tren chuoi DA LOC"
+    assert strategy._tp["ENGT"] == tp_live
+    assert any(a[0] == "INFO" and "bar rac" in a[1] for a in alerts_seen), (
+        "phai bao so bar rac bi bo trong cua so ATR"
+    )
+
+
+async def test_engine_tp_warn_khi_bar_neo_la_nen_rac(storage, monkeypatch):
+    """Bar neo `A` là nến rác -> WARN (lý do thứ tư) và KHÔNG được đặt `_tp`."""
+    import trading.engine.main as engine_main
+    from trading.broker import Fill, Position
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    strategy = OctopusPullbackStrategy()
+    seeded = _seed_with_dirty(strategy, [100])
+    rack = seeded[100]  # bar neo CHINH LA nen rac
+    storage.upsert_position(Position("ENGT", 1, 10.0))
+    storage.write_order(Fill("ENGT", "BUY", 1, 10.0, 0.0, rack.ts))
+    storage.write_bars(seeded)
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+
+    # Spy: bar neo rac thi KHONG duoc goi restore_take_profit lan nao.
+    # (Sau do luong song VAN neo lai `_tp` theo gia mo cua bar dau tien — do la
+    # hanh vi dot 107 con lai, khong phai "da khoi phuc"; nen khang dinh dung
+    # phai la "khong goi restore", khong phai "_tp khong duoc dat".)
+    calls: list = []
+    real_restore = strategy.restore_take_profit
+
+    def spy_restore(symbol, bars):
+        calls.append((symbol, len(bars)))
+        return real_restore(symbol, bars)
+
+    monkeypatch.setattr(strategy, "restore_take_profit", spy_restore)
+
+    await _publish(cfg, make_bars([9.0, 9.0]))
+    await run(cfg, strategy=strategy, max_messages=2, warmup_wait_timeout_sec=0)
+
+    warn = [
+        a for a in alerts_seen if a[0] == "WARN" and "take-profit" in a[1] and "bar rac" in a[1]
+    ]
+    assert warn, f"bar neo rac phai WARN neu ro ly do: {alerts_seen}"
+    assert calls == [], f"bar neo rac thi KHONG duoc khoi phuc, thuc te goi: {calls}"
 
 
 async def test_engine_does_not_restore_take_profit_for_other_strategies(storage, monkeypatch):
