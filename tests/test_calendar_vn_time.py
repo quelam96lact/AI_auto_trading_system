@@ -91,3 +91,30 @@ def test_feed_chet_tu_sang_den_chieu_tinh_du():
         _dt(2026, 9, 3, 9, 30), _dt(2026, 9, 3, 13, 0), sessions=SESSIONS
     )
     assert mins == 120.0
+
+
+def test_previous_trading_day_bo_qua_cuoi_tuan_va_ngay_le():
+    from datetime import date
+
+    from trading.calendar_vn import previous_trading_day
+
+    assert previous_trading_day(date(2026, 9, 28)) == date(2026, 9, 25)  # T2 -> T6
+    assert previous_trading_day(date(2026, 9, 23)) == date(2026, 9, 22)
+    assert previous_trading_day(date(2026, 9, 23), {date(2026, 9, 22)}) == date(2026, 9, 21)
+
+
+def test_trading_days_between_dates_khop_ban_datetime():
+    """Ban `date` phai cho dung ket qua cua trading_days_between (ban datetime)."""
+    from datetime import date, datetime
+
+    from trading.calendar_vn import TZ, trading_days_between, trading_days_between_dates
+
+    hol = frozenset({date(2026, 9, 2)})
+    cases = [(date(2026, 8, 28), date(2026, 9, 3)), (date(2026, 9, 17), date(2026, 9, 22)),
+             (date(2026, 9, 25), date(2026, 9, 25))]
+    for s_, e_ in cases:
+        dt_s = datetime(s_.year, s_.month, s_.day, 12, tzinfo=TZ)
+        dt_e = datetime(e_.year, e_.month, e_.day, 12, tzinfo=TZ)
+        assert trading_days_between_dates(s_, e_, hol) == trading_days_between(dt_s, dt_e, hol)
+    assert trading_days_between_dates(date(2026, 9, 17), date(2026, 9, 22)) == 3
+

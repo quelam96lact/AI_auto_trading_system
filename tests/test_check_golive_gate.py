@@ -441,4 +441,37 @@ def test_golive_gate_nav_negative_fails():
     assert item2.status == "FAIL"
 
 
+def test_golive_gate_stream_coverage_ngay_le_khong_fail_oan():
+    """Truoc day evaluate_golive_gate goi get_latest_completed_trading_day KHONG truyen
+    holidays: vao mot ngay le giua tuan (sau 15:25), cong coi CHINH NGAY LE la phien
+    gan nhat, so do cua phien that hom truoc bi danh FAIL oan -> EXIT 2 oan."""
+    from datetime import date, datetime
+
+    from trading.calendar_vn import TZ
+
+    measured_at = datetime(2026, 9, 22, 15, 10, tzinfo=TZ)  # phien that thu Ba
+    now_run = datetime(2026, 9, 23, 22, 14, tzinfo=TZ)  # thu Tu, gia su la ngay le
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=5_000_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=1.0,
+        stream_coverage_summary="100.0% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khop image",
+        real_fills_count=0,
+        symbols=["HPG", "IJC", "AAA"],
+        stream_measured_at=measured_at,
+        stream_age_sec=(now_run - measured_at).total_seconds(),
+        nav_age_sec=300.0,
+        now=now_run,
+        holidays=frozenset({date(2026, 9, 23)}),
+    )
+    assert exit_code == 0
+    item6 = next(it for it in items if it.name == "Độ phủ luồng phiên gần nhất")
+    assert item6.status == "PASS"
 

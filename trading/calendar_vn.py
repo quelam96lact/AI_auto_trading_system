@@ -31,15 +31,36 @@ def trading_days_between(
     Quy uoc: (start, end] — ngay cua chinh bar (start) khong tinh vi gia do
     da phan anh phien do; end tinh (hom nay da mo cua thi la 1 phien da qua).
     """
-    s = start.astimezone(TZ).date()
-    e = end.astimezone(TZ).date()
+    return trading_days_between_dates(
+        start.astimezone(TZ).date(), end.astimezone(TZ).date(), holidays
+    )
+
+
+def trading_days_between_dates(
+    start: date, end: date, holidays: set[date] | frozenset = frozenset()
+) -> int:
+    """So ngay giao dich trong (start, end] — ban theo `date` cua trading_days_between.
+
+    Mot cho duy nhat cho phep dem nay: trading_days_between (compute_nav) va
+    PaperBroker (quy doi ngay mua khi khoi phuc, dot 96) cung goi ham nay."""
     n = 0
-    d = s + timedelta(days=1)
-    while d <= e:
+    d = start + timedelta(days=1)
+    while d <= end:
         if is_trading_day(d, holidays):
             n += 1
         d += timedelta(days=1)
     return n
+
+
+def previous_trading_day(d: date, holidays: set[date] | frozenset = frozenset()) -> date:
+    """Ngay giao dich gan nhat TRUOC d (khong gom d), bo qua cuoi tuan va ngay le.
+
+    Truoc day vong lap nay duoc viet lai o engine/main.py, check_golive_gate.py va
+    daily_data_check.py."""
+    cur = d - timedelta(days=1)
+    while not is_trading_day(cur, holidays):
+        cur -= timedelta(days=1)
+    return cur
 
 
 def market_minutes_between(

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from trading.broker import Fill, Position
-from trading.calendar_vn import is_trading_day
+from trading.calendar_vn import trading_days_between_dates
 from trading.models import Bar
 from trading.strategy import Signal
 
@@ -83,12 +83,7 @@ class PaperBroker:
             lots = self._lots.get(sym)
             if not lots:
                 continue
-            k = 0
-            cur = buy_date + timedelta(days=1)
-            while cur <= T:
-                if is_trading_day(cur, self._holidays):
-                    k += 1
-                cur += timedelta(days=1)
+            k = trading_days_between_dates(buy_date, T, self._holidays)
             for lot in lots:
                 lot.day_index = -k
         self._pending_buy_dates = None

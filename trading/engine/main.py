@@ -15,6 +15,7 @@ from trading.calendar_vn import (
     TZ,
     is_trading_day,
     market_minutes_between,
+    previous_trading_day,
 )
 from trading.config import Config, load_config
 from trading.engine.logic import bar_from_payload, process_bar
@@ -144,10 +145,7 @@ def last_session_date_needed(
     current_date = now_vn.date()
     if is_trading_day(current_date, holidays) and now_vn.time() >= SESSION_DATA_READY_TIME:
         return current_date
-    target = current_date - timedelta(days=1)
-    while not is_trading_day(target, holidays):
-        target -= timedelta(days=1)
-    return target
+    return previous_trading_day(current_date, holidays)
 
 
 async def run(

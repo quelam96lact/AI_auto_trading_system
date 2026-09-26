@@ -19,7 +19,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from pathlib import Path
 
 import psycopg
@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from trading.calendar_vn import TZ, is_trading_day
+from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
 from trading.real_orders import (
     BUYING_POWER_MAX_AGE_MINUTES,
     POSITION_MAX_AGE_MINUTES,
@@ -167,11 +167,7 @@ def get_latest_completed_trading_day(
     if is_trading_day(cur_date, holidays) and now_vn.time() >= STREAM_COVERAGE_READY_TIME:
         return cur_date
 
-    cur_date -= timedelta(days=1)
-    while True:
-        if is_trading_day(cur_date, holidays):
-            return cur_date
-        cur_date -= timedelta(days=1)
+    return previous_trading_day(cur_date, holidays)
 
 
 def evaluate_golive_gate(
@@ -192,6 +188,7 @@ def evaluate_golive_gate(
     stream_age_sec: float | None = None,
     nav_age_sec: float | None = None,
     now: datetime | None = None,
+    holidays: set[date] | frozenset = frozenset(),
 ) -> tuple[int, list[GateItem]]:
     """Hàm thuần đánh giá các tiêu chí cổng go-live, không phụ thuộc I/O."""
     items: list[GateItem] = []
@@ -349,7 +346,9 @@ def evaluate_golive_gate(
 
         # Brief 79 Task 1: Tiêu chí 6 phải FAIL nếu số đo không thuộc phiên hoàn tất gần nhất
         effective_now = now or datetime.now(TZ)
-        latest_completed_day = get_latest_completed_trading_day(effective_now)
+        # Truyen holidays: truoc day thieu, nen vao mot ngay le giua tuan cong coi
+        # chinh ngay le la 'phien gan nhat' va danh FAIL oan tieu chi 6.
+        latest_completed_day = get_latest_completed_trading_day(effective_now, holidays)
 
         if stream_measured_at is not None and stream_measured_at.date() != latest_completed_day:
             items.append(
@@ -483,6 +482,7 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
     real_trading_enabled = bool(cfg.get("real_trading_enabled", False))
     real_account = str(cfg.get("real_order_account", "0434221"))
     symbols = list(cfg.get("symbols", []))
+    holidays = frozenset(date.fromisoformat(str(h)) for h in cfg.get("holidays", []))
 
     now_vn = datetime.now(TZ)
 
@@ -574,6 +574,7 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
         stream_age_sec=stream_age_sec,
         nav_age_sec=nav_age_sec,
         now=now_vn,
+        holidays=holidays,
     )
 
     # In bảng báo cáo

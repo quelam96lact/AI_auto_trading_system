@@ -16,9 +16,8 @@ from scripts.daily_data_check import (
     check_backfill_completed,
     evaluate_daily_completeness,
     friday_only_symbols,
-    get_previous_trading_day,
 )
-from trading.calendar_vn import TZ
+from trading.calendar_vn import TZ, previous_trading_day
 
 
 def test_active_symbols_rong_thi_code_0():
@@ -384,9 +383,9 @@ def test_task3_get_previous_trading_day_bo_qua_cuoi_tuan_va_ngay_le():
     """3. Hôm nay là thứ Hai: ngày liền trước là thứ Sáu (bỏ qua T7, CN)."""
     holidays = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
     # Thứ Hai 21/09 -> Thứ Sáu 18/09
-    assert get_previous_trading_day(date(2026, 9, 21), holidays) == date(2026, 9, 18)
+    assert previous_trading_day(date(2026, 9, 21), holidays) == date(2026, 9, 18)
     # Thứ Năm 03/09 (sau lễ 31/08 - 02/09) -> Thứ Sáu 28/08
-    assert get_previous_trading_day(date(2026, 9, 3), holidays) == date(2026, 8, 28)
+    assert previous_trading_day(date(2026, 9, 3), holidays) == date(2026, 8, 28)
 
 
 def test_task3_hom_nay_xong_kiem_binh_thuong():

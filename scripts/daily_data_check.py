@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _db_common import resolve_dsn
 
 from trading.alerts import _print_safe
-from trading.calendar_vn import TZ, is_trading_day
+from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
 from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
@@ -77,16 +77,6 @@ def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
             return bool("DONE:" in block and "EXIT=0" in block)
 
     return False
-
-
-def get_previous_trading_day(
-    target_date: date, holidays: set[date] | frozenset = frozenset()
-) -> date:
-    """Tìm ngày giao dịch liền trước target_date (bỏ qua cuối tuần và ngày lễ)."""
-    cur = target_date - timedelta(days=1)
-    while not is_trading_day(cur, holidays):
-        cur -= timedelta(days=1)
-    return cur
 
 
 FRIDAY_ONLY_WINDOW_TRADING_DAYS = 30
@@ -279,7 +269,7 @@ def main() -> None:
 
     backfill_log = Path("logs/backfill.log")
     backfill_done = check_backfill_completed(backfill_log, target_date)
-    prev_date = get_previous_trading_day(target_date, holidays)
+    prev_date = previous_trading_day(target_date, holidays)
     prev_backfill_done = check_backfill_completed(backfill_log, prev_date)
 
     code, _missing, msg = evaluate_daily_completeness(
