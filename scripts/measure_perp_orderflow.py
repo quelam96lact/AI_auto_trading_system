@@ -30,6 +30,7 @@ except ImportError:
     from significance_test import calibrate_signal_prob, run_null_simulation
 
 from trading.crypto_fees import BINGX_PERP_TAKER
+from trading.metrics import max_drawdown, profit_factor
 from trading.models import Bar
 from trading.perp_backtest import PerpTrade, run_perp_backtest
 
@@ -313,18 +314,14 @@ def make_entry_filter(
     return _filter
 
 
-def _max_drawdown(equity_points: list[float]) -> tuple[float, float]:
-    """Tra (muc giam sau nhat tinh bang USDT, % so voi dinh truoc do)."""
+def _max_drawdown_usdt(equity_points: list[float]) -> float:
+    """Muc giam sau nhat tinh bang USDT (ty le % lay tu trading.metrics.max_drawdown)."""
     peak = equity_points[0]
-    worst_usdt = 0.0
-    worst_pct = 0.0
+    worst = 0.0
     for eq in equity_points:
         peak = max(peak, eq)
-        dd = peak - eq
-        if dd > worst_usdt:
-            worst_usdt = dd
-            worst_pct = (dd / peak * 100.0) if peak > 0 else 0.0
-    return worst_usdt, worst_pct
+        worst = max(worst, peak - eq)
+    return worst
 
 
 def _funding_of_trades(
@@ -376,17 +373,14 @@ def run_one(
     net_after_funding = sum(t.net_pnl for t in trades) - sum(fund_list)
 
     wins = [t.net_pnl for t in trades if t.net_pnl > 0]
-    losses = [t.net_pnl for t in trades if t.net_pnl < 0]
-    gross_win = sum(wins)
-    gross_loss = abs(sum(losses))
-    profit_factor = (gross_win / gross_loss) if gross_loss > 0 else None
 
     equity = CAPITAL
     curve = [equity]
     for t, f in zip(trades, fund_list, strict=True):
         equity += t.net_pnl - f
         curve.append(equity)
-    max_dd_usdt, max_dd_pct = _max_drawdown(curve)
+    max_dd_usdt = _max_drawdown_usdt(curve)
+    max_dd_pct = max_drawdown(curve) * 100.0
 
     long_trades = [t for t in trades if t.side == "LONG"]
     short_trades = [t for t in trades if t.side == "SHORT"]
@@ -407,7 +401,7 @@ def run_one(
         funding_total=sum(fund_list),
         net_after_funding=net_after_funding,
         win_rate=(len(wins) / len(trades) * 100.0) if trades else 0.0,
-        profit_factor=profit_factor,
+        profit_factor=profit_factor([t.net_pnl for t in trades]),
         max_dd_usdt=max_dd_usdt,
         max_dd_pct=max_dd_pct,
         long_trades=len(long_trades),
