@@ -113,6 +113,7 @@ class OctopusPullbackStrategy:
         self.pullback_red = pullback_red
         self.pullback_window = pullback_window
         self.tp_atr_mult = tp_atr_mult
+        self.atr_period = atr_period
         self.min_avg_value_20 = min_avg_value_20
         self.liquidity_window = liquidity_window
 
@@ -209,6 +210,36 @@ class OctopusPullbackStrategy:
         """ATR vừa tính ở lần compute_crossover() gần nhất cho symbol này."""
         return self._atr.last(symbol)
 
+    def _tp_level(self, anchor_open: float, atr: float) -> float:
+        """Mức chốt lời: `TP = open bar neo + tp_atr_mult * ATR`.
+
+        MỘT CÔNG THỨC MỘT CHỖ: cả luồng sống (`on_bar`) lẫn khôi phục sau restart
+        (`restore_take_profit`) đều đi qua đây — hai chỗ tính cùng một công thức
+        là đúng lớp lỗi brief đợt 107 phải sửa.
+        """
+        return anchor_open + self.tp_atr_mult * atr
+
+    def restore_take_profit(self, symbol: str, bars_until_anchor: list[Bar]) -> float | None:
+        """Dựng lại TP như luồng sống đã tính tại bar neo `A` (brief đợt 107 §1).
+
+        `bars_until_anchor` là `warmup_bars` bar kết thúc TẠI `A` (gồm `A`): chạy
+        một `AtrCalculator` MỚI qua đúng chuỗi đó (đúng quy ước warm-up của
+        `main.py:255-268`) nên `ATR_A` bằng đúng ATR luồng sống có ở bar `A`
+        (`AtrCalculator` là trung bình TR của `period` nến cuối, không phụ thuộc
+        lịch sử xa hơn). Trả `None` nếu không đủ bar — caller phải WARN.
+        """
+        if len(bars_until_anchor) < self.atr_period + 1:
+            return None
+        atr_calc = AtrCalculator(period=self.atr_period)
+        atr: float | None = None
+        for b in bars_until_anchor:
+            atr = atr_calc.update(b)
+        if atr is None:
+            return None
+        tp = self._tp_level(bars_until_anchor[-1].open, atr)
+        self._tp[symbol] = tp
+        return tp
+
     def on_bar(self, bar: Bar, context: Context) -> Signal | None:
         crossover = self.compute_crossover(bar)
         held = context.position_qty(bar.symbol)
@@ -219,7 +250,7 @@ class OctopusPullbackStrategy:
             if tp is None:
                 atr = self._atr.last(bar.symbol) or 0.0
                 # Giá vào ~ bar.open của bar đầu tiên thấy vị thế (bar fill)
-                tp = bar.open + self.tp_atr_mult * atr
+                tp = self._tp_level(bar.open, atr)
                 self._tp[bar.symbol] = tp
             if bar.close >= tp:
                 return Signal(bar.symbol, "SELL", held)

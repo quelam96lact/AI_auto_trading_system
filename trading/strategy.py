@@ -52,3 +52,18 @@ class Strategy(Protocol):
     def warmup_bars(self) -> int: ...
 
     def compute_crossover(self, bar: Bar) -> Crossover | None: ...
+
+
+@runtime_checkable
+class RestoresTakeProfit(Protocol):
+    """Hop dong cho chien luoc TAI DUNG duoc muc chot loi sau restart (brief dot 107).
+
+    `_tp` cua Octopus la dict in-memory: sau moi lan khoi dong lai no rong nen bar
+    dau tien thay vi the se NEO LAI TP theo gia mo cua hom do. Voi gia da giam thi
+    lenh "chot loi" thanh ban lo duoi gia von, khong co canh bao nao.
+
+    `bars_until_anchor`: cac bar ket thuc TAI bar neo `A` (gom ca `A`) — dung so bar
+    ma luong song nap luc warm-up. Tra `None` neu khong tai dung duoc.
+    """
+
+    def restore_take_profit(self, symbol: str, bars_until_anchor: list[Bar]) -> float | None: ...

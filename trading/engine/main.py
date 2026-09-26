@@ -24,7 +24,7 @@ from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.strategies.octopus_pullback import OctopusPullbackStrategy
-from trading.strategy import Strategy
+from trading.strategy import RestoresTakeProfit, Strategy
 from trading.trailing_stop import TrailingStopManager
 
 CAPITAL = 100_000_000.0
@@ -289,6 +289,60 @@ async def run(
                     f"fill hoac khong co bar tu luc vao lenh — vi the nay DANG "
                     f"KHONG co trailing stop",
                 )
+    # TAI DUNG TP CHO CHIEN LUOC KHAI BAO DUOC (brief dot 107): `_tp` la dict
+    # in-memory nen sau restart no rong, va bar dau tien thay vi the se NEO LAI TP
+    # theo gia mo cua HOM DO (octopus_pullback.py:217-223) — gia da giam thi lenh
+    # "chot loi" thanh ban lo duoi gia von, khong canh bao. Tai dung dung cong thuc
+    # luong song da dung: TP = open bar neo A + tp_atr_mult * ATR_A, voi A la bar
+    # dau tien `strategy.on_bar` thay held > 0 (logic.py:36 nap broker TRUOC
+    # logic.py:44 goi strategy -> A CHINH LA bar cua fill). Tai dung duoc hay khong
+    # deu phai noi ra: WARN khi thieu BUY/bar, khong bao gio im lang.
+    # Kiem bang isinstance tren Protocol RestoresTakeProfit, KHONG dung hasattr.
+    if isinstance(strategy, RestoresTakeProfit):
+        for sym, pos in positions.items():
+            if pos.qty <= 0:
+                continue
+            fill = storage.read_last_buy_fill(sym)
+            if fill is None:
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc take-profit cho {sym}: khong co lenh BUY "
+                    f"nao trong orders — TP se bi NEO LAI theo gia mo cua bar dau "
+                    f"tien sau restart",
+                    symbol=sym,
+                )
+                continue
+            fill_ts, _fill_price = fill
+            anchor = storage.read_anchor_bar(sym, fill_ts)
+            if anchor is None:
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc take-profit cho {sym}: khong co bar nao "
+                    f"tu lenh BUY ({fill_ts}) — TP se bi NEO LAI theo gia mo cua "
+                    f"bar dau tien sau restart",
+                    symbol=sym,
+                )
+                continue
+            window = storage.read_bars_until(sym, anchor.ts, strategy.warmup_bars)
+            tp = strategy.restore_take_profit(sym, window)
+            if tp is None:
+                alert(
+                    "WARN",
+                    f"khong tai dung duoc take-profit cho {sym}: chi co "
+                    f"{len(window)} bar tinh den bar neo {anchor.ts}, khong du de "
+                    f"chay lai ATR — TP se bi NEO LAI theo gia mo cua bar dau tien "
+                    f"sau restart",
+                    symbol=sym,
+                )
+                continue
+            alert(
+                "INFO",
+                f"tai dung take-profit {sym} sau restart",
+                symbol=sym,
+                anchor=str(anchor.ts),
+                anchor_open=anchor.open,
+                tp=tp,
+            )
     # NAV-CI: vốn lệnh thật đọc NAV từ account_nav_snapshot (chủ dự án BỎ
     # real_order_capital khỏi config — quyết định 13/08; và 14/08 chốt vốn rủi
     # ro = NAV = tiền mặt + Σ(qty×giá) − nợ, KHÔNG phải withdrawable: 1% rủi

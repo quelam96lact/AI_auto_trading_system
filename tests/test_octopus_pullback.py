@@ -324,3 +324,93 @@ def test_last_atr_tracks_per_symbol():
     b2 = bar_at(1, 20.0, high=20.0, low=20.0)
     s.compute_crossover(b2)
     assert s.last_atr("VCB") == 10.0  # TR = |20-10| = 10
+
+
+# ---------------------------------------------------------------------------
+# Brief đợt 107 — tái dựng take-profit sau khi engine khởi động lại
+# ---------------------------------------------------------------------------
+
+def _tp_bars(n, sym="AAA", start=None):
+    """n bar 15' có biên độ thật (TR > 0) để ATR có giá trị khác 0."""
+    start = start or datetime(2026, 6, 1, 9, 0, tzinfo=TZ)
+    out = []
+    for i in range(n):
+        o = 100.0 + (i % 7) * 0.5
+        c = o + (0.4 if i % 3 else -0.3)
+        out.append(
+            Bar(
+                sym,
+                start + timedelta(minutes=15 * i),
+                o,
+                max(o, c) + 0.2,
+                min(o, c) - 0.2,
+                c,
+                10_000_000,
+            )
+        )
+    return out
+
+
+def test_restore_take_profit_bang_dung_tp_luong_song():
+    """§1 brief 107: TP khôi phục phải bằng ĐÚNG TP luồng sống tính ở bar neo A.
+
+    Luồng sống: warm-up `warmup_bars` bar (main.py:255-268), rồi bar cuối là bar
+    neo A — logic.py:36 nạp broker TRƯỚC logic.py:44 gọi strategy.on_bar, nên bar
+    mà lệnh BUY khớp CHÍNH LÀ bar đầu tiên `on_bar` thấy held > 0.
+    """
+    sym = "AAA"
+    live = OctopusPullbackStrategy()
+    bars = _tp_bars(live.warmup_bars, sym=sym)
+    for b in bars[:-1]:
+        live.compute_crossover(b)
+    assert live.on_bar(bars[-1], FakeContext(qty=100)) is None
+    tp_live = live._tp[sym]
+    assert tp_live > 0
+
+    fresh = OctopusPullbackStrategy()
+    tp_restored = fresh.restore_take_profit(sym, bars)
+
+    assert tp_restored == tp_live  # cố ý == tuyệt đối, không dùng approx
+    assert fresh._tp[sym] == tp_live
+
+
+def test_restore_take_profit_none_khi_thieu_bar():
+    """Thiếu bar (< atr_period + 1) → None và KHÔNG ghi `_tp` (để luồng sống neo lại)."""
+    s = OctopusPullbackStrategy()
+    bars = _tp_bars(s.atr_period, sym="AAA")  # 14 bar, cần >= 15
+    assert s.restore_take_profit("AAA", bars) is None
+    assert "AAA" not in s._tp
+
+
+def test_on_bar_sau_khoi_phuc_khong_neo_lai_tp():
+    """Sau khôi phục, bar sau KHÔNG neo lại TP theo giá mở cửa bar đó.
+
+    Có ĐỐI CHỨNG: cùng chuỗi bar, chiến lược KHÔNG khôi phục (đúng như code cũ
+    sau restart) thì neo lại TP theo open bar này và bán — nếu không có đối
+    chứng thì test không phân biệt được hai hành vi.
+    """
+    sym = "AAA"
+    s = OctopusPullbackStrategy()
+    bars = _tp_bars(s.warmup_bars, sym=sym)
+    tp = s.restore_take_profit(sym, bars)
+    assert tp is not None
+
+    nxt = bars[-1].ts + timedelta(minutes=15)
+    o = tp - 5.0
+    c = tp - 0.5  # dưới TP khôi phục, trên TP nếu bị neo lại
+    b1 = Bar(sym, nxt, o, max(o, c) + 0.2, min(o, c) - 0.2, c, 10_000_000)
+
+    ctrl = OctopusPullbackStrategy()  # KHÔNG khôi phục -> neo lại ở b1
+    for b in bars[:-1]:
+        ctrl.compute_crossover(b)
+    ctrl_sig = ctrl.on_bar(b1, FakeContext(qty=100))
+    assert ctrl_sig is not None and ctrl_sig.side == "SELL", (
+        "đối chứng: không khôi phục thì neo lại TP theo open bar này và bán"
+    )
+    assert s.on_bar(b1, FakeContext(qty=100)) is None, (
+        "đã khôi phục TP thì KHÔNG được bán theo mức neo lại"
+    )
+
+    b2 = Bar(sym, nxt + timedelta(minutes=15), c, tp + 1.0, c, tp + 0.5, 10_000_000)
+    sig = s.on_bar(b2, FakeContext(qty=100))
+    assert sig is not None and sig.side == "SELL" and sig.qty == 100

@@ -1849,5 +1849,104 @@ async def test_engine_warmup_times_out_and_alerts_critical(storage, monkeypatch)
     assert any("thieu lich su" in msg for lvl, msg, f in alerts_seen)
 
 
+# ---------------------------------------------------------------------------
+# Brief đợt 107 — tái dựng take-profit sau restart (khuôn RESTORE-1)
+# ---------------------------------------------------------------------------
+
+
+async def test_engine_restores_octopus_take_profit_after_restart(storage, monkeypatch):
+    """Sau restart, `self._tp` rỗng nên bar đầu tiên sẽ NEO LẠI TP theo giá mở cửa
+    hôm đó (octopus_pullback.py:217-223) — luật chốt lời chạy khác luật đã
+    backtest, im lặng. Test này đòi TP phải được tái dựng từ DB lúc khởi động."""
+    import trading.engine.main as engine_main
+    from trading.broker import Fill, Position
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    strategy = OctopusPullbackStrategy()
+    seeded = make_bars([10.0 + 0.3 * (i % 5) for i in range(strategy.warmup_bars)])
+    anchor = seeded[100]
+    storage.upsert_position(Position("ENGT", 1, anchor.open))
+    storage.write_order(Fill("ENGT", "BUY", 1, anchor.open, 0.0, anchor.ts))
+    storage.write_bars(seeded)
+    storage.write_engine_state(100_000_000 - anchor.open, 0.0)
+
+    # Publish 3 bar giá THẤP (9.0) ở các ts đầu — dưới TP khôi phục nên không
+    # bán, giữ vị thế mở để kiểm `_tp` còn nguyên sau khi run() kết thúc.
+    await _publish(cfg, make_bars([9.0, 9.0, 9.0]))
+    await run(cfg, strategy=strategy, max_messages=3, warmup_wait_timeout_sec=0)
+
+    tp_alerts = [a for a in alerts_seen if "take-profit" in a[1]]
+    assert tp_alerts, f"phai co alert take-profit, thuc te: {alerts_seen}"
+    lvl, _msg, fields = tp_alerts[0]
+    assert lvl == "INFO" and "ENGT" in fields["symbol"]
+
+    expected = OctopusPullbackStrategy().restore_take_profit(
+        "ENGT", storage.read_bars_until("ENGT", anchor.ts, strategy.warmup_bars)
+    )
+    assert expected is not None
+    assert fields["tp"] == expected, "TP trong alert phai bang TP tai dung tu DB"
+    assert strategy._tp["ENGT"] == expected, "`strategy._tp[sym]` phai duoc dat"
+
+
+async def test_engine_warns_when_octopus_take_profit_cannot_restore(storage, monkeypatch):
+    """Có vị thế nhưng KHÔNG có BUY fill -> PHAI WARN nêu tên mã (không im lặng)."""
+    import trading.engine.main as engine_main
+    from trading.broker import Position
+    from trading.strategies.octopus_pullback import OctopusPullbackStrategy
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    storage.upsert_position(Position("ENGT", 1, 10.0))
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+    # KHONG write_order -> khong co BUY fill -> read_last_buy_fill tra None
+
+    await _publish(cfg, make_bars([9.0, 9.0]))
+    await run(
+        cfg,
+        strategy=OctopusPullbackStrategy(),
+        max_messages=2,
+        warmup_wait_timeout_sec=0,
+    )
+
+    assert any(
+        lvl == "WARN" and "ENGT" in msg and "take-profit" in msg
+        for lvl, msg, _ in alerts_seen
+    ), f"phai WARN neu ro ma va ly do, thuc te: {alerts_seen}"
+
+
+async def test_engine_does_not_restore_take_profit_for_other_strategies(storage, monkeypatch):
+    """Chiến lược KHÔNG thoả RestoresTakeProfit (SMA cross) -> không gọi, không WARN."""
+    import trading.engine.main as engine_main
+    from trading.broker import Fill, Position
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg()
+    entry_ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    storage.upsert_position(Position("ENGT", 1, 10.0))
+    storage.write_order(Fill("ENGT", "BUY", 1, 10.0, 0.0, entry_ts))
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+
+    await _publish(cfg, make_bars([10.0, 10.0]))
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=2, warmup_wait_timeout_sec=0)
+
+    assert not [a for a in alerts_seen if "take-profit" in a[1]], (
+        f"SMA cross khong thoa RestoresTakeProfit -> khong duoc co alert take-profit: {alerts_seen}"
+    )
+
+
 
 

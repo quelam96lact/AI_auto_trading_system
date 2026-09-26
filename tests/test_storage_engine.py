@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -257,6 +257,71 @@ def test_read_placed_real_fills_filters_correctly(storage):
     assert placed[0].ssi_order_id == "SSI-P-VALID"
     assert placed[0].account_no == acc
     assert placed[0].status == "placed"
+
+
+# ---------------------------------------------------------------------------
+# Brief đợt 107 — storage cho tái dựng take-profit
+# ---------------------------------------------------------------------------
+
+TP_SYM = "TSTOR107"
+
+
+def _clean_tp_rows(storage) -> None:
+    with storage.conn() as c:
+        c.execute("DELETE FROM orders WHERE symbol = %s", (TP_SYM,))
+        c.execute("DELETE FROM bars WHERE symbol = %s", (TP_SYM,))
+
+
+def _tp_bar(ts, price):
+    return Bar(TP_SYM, ts, price, price, price, price, 1000)
+
+
+def test_read_last_buy_fill_lay_buy_muon_nhat_va_bo_qua_sell(storage):
+    _clean_tp_rows(storage)
+    t1 = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    t2 = datetime(2026, 7, 16, 9, 0, tzinfo=TZ)
+    t3 = datetime(2026, 7, 17, 9, 0, tzinfo=TZ)
+    storage.write_order(Fill(TP_SYM, "BUY", 100, 10.0, 1.0, t1))
+    storage.write_order(Fill(TP_SYM, "BUY", 100, 12.0, 1.0, t2))
+    storage.write_order(Fill(TP_SYM, "SELL", 100, 20.0, 1.0, t3))
+
+    got = storage.read_last_buy_fill(TP_SYM)
+    assert got is not None
+    ts, price = got
+    assert price == 12.0
+    assert ts == t2
+
+
+def test_read_last_buy_fill_none_khi_khong_co_buy(storage):
+    _clean_tp_rows(storage)
+    storage.write_order(
+        Fill(TP_SYM, "SELL", 100, 20.0, 1.0, datetime(2026, 7, 17, 9, 0, tzinfo=TZ))
+    )
+    assert storage.read_last_buy_fill(TP_SYM) is None
+
+
+def test_read_bars_until_tra_dung_n_bar_tang_dan_gom_ca_moc(storage):
+    _clean_tp_rows(storage)
+    ts = [datetime(2026, 7, 15, 9, 0, tzinfo=TZ) + timedelta(days=i) for i in range(5)]
+    storage.write_bars([_tp_bar(ts[i], 10.0 + i) for i in range(5)])
+
+    got = storage.read_bars_until(TP_SYM, ts[2], 3)
+    assert [b.ts for b in got] == [ts[0], ts[1], ts[2]]  # 3 bar cuối <= ts[2]
+
+    got2 = storage.read_bars_until(TP_SYM, ts[4], 3)
+    assert [b.ts for b in got2] == [ts[2], ts[3], ts[4]]  # 3 bar cuối, tăng dần, gồm mốc
+    assert [b.close for b in got2] == [12.0, 13.0, 14.0]
+
+
+def test_read_anchor_bar_la_bar_dau_tien_ts_khong_nho_hon_fill_ts(storage):
+    """Ghim luật bước 1: A = bar đầu tiên có `ts >= fill.ts` (không phải `>`)."""
+    _clean_tp_rows(storage)
+    ts = [datetime(2026, 7, 15, 9, 0, tzinfo=TZ) + timedelta(days=i) for i in range(5)]
+    storage.write_bars([_tp_bar(ts[i], 10.0 + i) for i in range(5)])
+
+    assert storage.read_anchor_bar(TP_SYM, ts[2]).ts == ts[2]  # đúng bằng fill.ts
+    assert storage.read_anchor_bar(TP_SYM, ts[2] + timedelta(seconds=1)).ts == ts[3]
+    assert storage.read_anchor_bar(TP_SYM, ts[4] + timedelta(days=1)) is None
 
 
 

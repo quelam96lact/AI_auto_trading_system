@@ -267,6 +267,52 @@ class Storage:
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def read_last_buy_fill(self, symbol: str) -> tuple[datetime, float] | None:
+        """`(ts, price)` của lệnh BUY MUỘN NHẤT trong bảng orders (brief đợt 107).
+
+        Bỏ qua SELL: SELL không phải mốc mua, và sau khi bán hết thì không còn vị
+        thế để tái dựng. Trả None nếu không có BUY nào → main.py WARN, không im lặng.
+        """
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT ts, price FROM orders WHERE symbol = %s AND side = 'BUY' "
+                "ORDER BY ts DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def read_anchor_bar(self, symbol: str, fill_ts: datetime) -> Bar | None:
+        """Bar neo `A` = bar ĐẦU TIÊN có `ts >= fill_ts`.
+
+        Luật này đọc từ luồng sống, KHÔNG đoán: `engine/logic.py:36` gọi
+        `broker.on_bar(bar)` (khớp lệnh, cập nhật vị thế) TRƯỚC `engine/logic.py:44`
+        gọi `strategy.on_bar(bar, broker)`, và `PaperBroker` ghi `Fill(..., bar.ts, ...)`
+        (`paper_broker.py:203`) — nên bar mà lệnh BUY khớp CHÍNH LÀ bar đầu tiên
+        `strategy.on_bar` thấy `held > 0`, tức `ts == fill_ts` (dấu `>=`, không phải `>`).
+        """
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
+                "WHERE symbol = %s AND ts >= %s ORDER BY ts ASC LIMIT 1",
+                (symbol, fill_ts),
+            ).fetchone()
+        return Bar(*row) if row else None
+
+    def read_bars_until(self, symbol: str, until_ts: datetime, n: int) -> list[Bar]:
+        """`n` bar CUỐI có `ts <= until_ts`, sắp TĂNG DẦN (khuôn `read_last_bars`).
+
+        Dùng để chạy lại ATR tại bar neo lúc khởi động (brief đợt 107 §1 bước 3).
+        """
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
+                "WHERE symbol = %s AND ts <= %s ORDER BY ts DESC LIMIT %s",
+                (symbol, until_ts, n),
+            ).fetchall()
+        bars = [Bar(*r) for r in rows]
+        bars.reverse()  # DESC -> ASC theo ts
+        return bars
+
     def read_account_balance_with_debt(self, account_no: str) -> tuple[float, float, datetime] | None:
         """(withdrawable, total_debt, ts) moi nhat — MARGIN-1 tinh NAV can CA no
         (debt). Dung chung bang account_balance_snapshot; total_debt la so SSI
