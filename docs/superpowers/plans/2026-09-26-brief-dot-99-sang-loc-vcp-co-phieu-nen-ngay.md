@@ -75,6 +75,7 @@ Nền là **60 nến `t−60 … t−1`**, chia làm 3 đoạn 20 nến: `S1 = t
 
 - **Vào:** giá mở cửa của nến `t+1`.
   - **Bỏ sự kiện nếu `t+1` mở cửa ở giá trần:** `open[t+1] ≥ close[t] × (1 + biên_độ − 0,001)`, với biên độ theo `symbol_universe.exchange`: HOSE 0,07; HNX 0,10; UPCOM 0,15; sàn không rõ thì 0,07. **Đếm và báo** số sự kiện bị bỏ vì trần.
+  - Claude đã kiểm (26/09): `symbol_universe.exchange` chỉ có đúng ba giá trị `HOSE` (431), `HNX` (302), `UPCOM` (862), và **mọi** mã có nến trong `bars_daily` đều có dòng trong bảng này. **Hạn chế:** đây là sàn **hiện tại**. Mã từng chuyển sàn bị áp biên độ của sàn mới cho cả giai đoạn trước. Ghi hạn chế này trong báo cáo, **không** tự dựng lịch sử chuyển sàn.
   - Bỏ nếu `volume[t+1] = 0`.
 - **Mục tiêu:** với `k ∈ {5, 10, 20}`, thoát tại **giá đóng cửa của nến `t+k`**.
   - Lợi nhuận gộp: `r_k = close[t+k] / open[t+1] − 1`.
