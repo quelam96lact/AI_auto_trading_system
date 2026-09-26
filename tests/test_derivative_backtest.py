@@ -14,6 +14,11 @@ from trading.strategies.sma_cross import SmaCrossStrategy
 
 CAP = 100_000_000
 
+# Cac con so VND trong comment ben duoi (vd -208,250, -708,250) tinh theo bieu phi CU
+# 8.250d/luot, truoc dot 95. Bieu phi moi = 8.250d + thue TNCN theo gia; o gia do choi
+# 1-20 diem cua cac test nay thue chi ~10-170d/luot, nen khong ket luan so nguong nao
+# doi. Assertion dung derivative_side_cost() nen luon theo bieu phi hien hanh.
+
 
 def bars_from_prices(prices: list[float], sym: str = DERIVATIVE_SYMBOL) -> list[Bar]:
     start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
@@ -362,6 +367,9 @@ def test_daily_loss_halt_resets_next_day_not_cumulative():
 def test_eod_keep_min_profit_points_closes_small_profit_below_threshold():
     # Lenh lai gross +50,000 (bar 14:25 close=11.5, long @11) nho hon nguong
     # 1.0 diem = 100,000 (du bu D+ 1 dem ~87k + phi dong 8,250 @1900) ->
+    # [dot 95: phi dong moi @1900 = 24.400d (co thue) -> can ~111k, VUOT nguong
+    # 1.0 diem. Lap luan chon tham so nay khong con dung; KHONG sua o day vi day
+    # la tham so chien luoc, chi test co che.]
     # KHONG giu, dong tai cutoff (bar.close=11.5).
     start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
     sym = DERIVATIVE_SYMBOL
