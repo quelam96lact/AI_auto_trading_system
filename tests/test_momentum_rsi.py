@@ -124,7 +124,13 @@ def test_chot_config_with_rsi_matches_spike_results():
         intraday_close_time=time(14, 20), eod_keep_min_profit_points=1.0,
     )
     assert rep.trades == 18
-    assert rep.win_rate == pytest.approx(0.6667, abs=0.001)
-    # approx abs=1.0: gia tri float tich luy loi lam tron ~1e-7 (19,081,499.9999...)
-    # DERIV-FEE-1: 18 lenh x 8.250 phi mo = 148.500 (spike cu thieu phi mo)
-    assert rep.realized_pnl == pytest.approx(19_081_500.0 - 18 * 8_250.0, abs=1.0)
+    # Brief 95: 12/18 -> 11/18 do bieu phi moi (co thue TNCN, ~50.000d/vong thay vi
+    # 16.500d). Lenh 7 (short 09/07 1993.0 -> 1992.6) lai gop +40.000d, phi 50.377,6d
+    # -> rong -10.377,6d. So lenh van 18 (ngay 09/07 chi co 1 lenh, khong cham quy tac
+    # 2 loi/ngay). Claude da tu chay lai, liet ke tung vong, xac nhan.
+    assert rep.win_rate == pytest.approx(11 / 18, abs=0.001)
+    # Lãi gộp trước phí của spike (19_081_500 đã trừ 18 x 8_250 phí đóng) = 19_230_000,
+    # không phụ thuộc biểu phí. realized_pnl = lãi gộp - tổng phí của mọi lượt đã đóng.
+    closed_fees = sum(f.fee for f in rep.fills[: 2 * rep.trades])
+    assert rep.realized_pnl + closed_fees == pytest.approx(19_230_000.0, abs=1.0)
+
