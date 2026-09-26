@@ -151,3 +151,25 @@ uv run ruff check trading tests scripts
 
 - **VCP không được đo lại với khung giữ dài hơn trong đợt này.** Thử thêm khung sau khi đã thấy khung 20 phiên thua là đi tìm con số đẹp. Nếu chủ dự án vẫn muốn, đó sẽ là một phép thử **riêng**, đăng ký trước, ghi rõ "thêm sau khi đã biết kết quả k=20".
 - Kết luận của đợt 98 (SMC trên phái sinh trong phiên) **không bị thay** bởi đợt này. Hai đợt đo hai câu hỏi khác nhau.
+
+
+---
+
+## 7. Kết quả và audit của Claude (26/09)
+
+**Chạy đúng một lần** (177,5 giây). Claude đã đối chiếu log gốc `run_dot101.log` với báo cáo: khớp.
+
+| Sự kiện | n | TB r_20 ròng | TB đối chứng | TB vượt trội 20 phiên | KTC 95% | p | Trung vị vượt trội |
+|---|---|---|---|---|---|---|---|
+| `sweep` | 6.993 | **−2,29%** | −0,59% | **−1,01%** | [−1,52%; −0,54%] | 1,000 | −1,71% |
+| `bos` | 9.725 | +0,58% | +1,46% | −0,18% | [−0,51%; +0,15%] | 0,84 | −1,85% |
+| `fvg` | 14.017 | +0,35% | +1,26% | −0,21% | [−0,40%; −0,02%] | 0,98 | −1,70% |
+
+**Kết luận: SMC dạng máy trên cổ phiếu, giữ 2–8 tuần, KHÔNG có lợi thế so với cổ phiếu đủ thanh khoản cùng ngày, sau chi phí.** Đây là phép đo âm thứ tám.
+- Với `sweep` và `fvg`, **KTC nằm hoàn toàn dưới 0**: mua theo hai tín hiệu này **tệ hơn có ý nghĩa thống kê** so với mua bừa cùng ngày.
+- `bos` và `fvg` có lãi ròng tuyệt đối dương, nhưng thấp hơn rổ đối chứng.
+- Ở cả 9 ô (3 sự kiện × 3 khung), trung vị vượt trội đều âm, và tỷ lệ thắng rổ đối chứng chỉ 41–43%.
+
+**Claude kiểm độc lập** vì sao trung vị `r` của `bos` đúng bằng 0,0000 (dễ là dấu hiệu lỗi chỉ số). Chỉ **123/9.725 (1,3%)** sự kiện có `r_20` đúng bằng 0. Các ví dụ là dữ liệu thật (ACB, ABI, ASM…, thanh khoản hàng chục tới hàng trăm tỷ). Phân phối gần đối xứng quanh 0, nên trung vị rơi vào dải nhỏ các giá trị bằng 0 do bước giá rời rạc. **Không phải lỗi.** Lời giải thích của agent ("47,69% nến có close = open") không liên quan: đó là giá mở và giá đóng của cùng một phiên, còn `r_20` so hai phiên khác nhau.
+
+Code audit: swing chỉ được xác nhận tại `t = j + 2`; lọc thanh khoản áp ở phía sự kiện; thời gian nghỉ tính riêng từng loại; chỉ import các hàm của đợt 98/99, không chép. 37 test, 1009 suite, ruff sạch.
