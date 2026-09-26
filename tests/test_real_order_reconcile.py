@@ -8,17 +8,30 @@ from trading.real_order_reconcile import (
     Update,
     decide_update,
 )
+from trading.storage.db import PlacedRealFill
+
+
+def _row(qty, price, side, fee, pnl):
+    """Dung dung kieu du lieu ma code chay that truyen vao (PlacedRealFill), khong dung dict."""
+    from datetime import datetime
+
+    from trading.calendar_vn import TZ
+
+    return PlacedRealFill(
+        id=1, ts=datetime(2026, 9, 28, 10, 0, tzinfo=TZ), account_no="0434221", symbol="HPG",
+        side=side, qty=qty, price=price, fee=fee, pnl=pnl, ssi_order_id="1", status="placed",
+    )
 
 
 def test_1_order_incomplete_returns_none():
     """1. Lệnh chưa kết thúc (f=0, c=0, status không thuộc tập kết thúc) -> None."""
-    row = {
-        "qty": 100,
-        "price": 10_000.0,
-        "side": "BUY",
-        "fee": 2500.0,
-        "pnl": None,
-    }
+    row = _row(
+        qty=100,
+        price=10_000.0,
+        side="BUY",
+        fee=2500.0,
+        pnl=None,
+    )
     order = Order(
         filled_quantity=0,
         cancel_quantity=0,
@@ -30,13 +43,13 @@ def test_1_order_incomplete_returns_none():
 
 def test_2_buy_full_fill():
     """2. MUA 100 @10.000, khớp 100 -> filled, qty=100, fee = 10.000 × 100 × FEE_RATE_ESTIMATE."""
-    row = {
-        "qty": 100,
-        "price": 10_000.0,
-        "side": "BUY",
-        "fee": 10_000.0 * 100 * FEE_RATE_ESTIMATE,
-        "pnl": None,
-    }
+    row = _row(
+        qty=100,
+        price=10_000.0,
+        side="BUY",
+        fee=10_000.0 * 100 * FEE_RATE_ESTIMATE,
+        pnl=None,
+    )
     order = Order(
         filled_quantity=100,
         cancel_quantity=0,
@@ -63,13 +76,13 @@ def test_3_sell_partial_fill_and_cancelled_remaining():
     - PnL mới = (avg_price - giá vốn) * qty_khớp = (11900 - 10000) * 40 = 1900 * 40 = 76000.
     - Phí mới = 11900 * 40 * FEE_RATE_ESTIMATE.
     """
-    row = {
-        "qty": 100,
-        "price": 12_000.0,
-        "side": "SELL",
-        "fee": 12_000.0 * 100 * FEE_RATE_ESTIMATE,
-        "pnl": 200_000.0,
-    }
+    row = _row(
+        qty=100,
+        price=12_000.0,
+        side="SELL",
+        fee=12_000.0 * 100 * FEE_RATE_ESTIMATE,
+        pnl=200_000.0,
+    )
     order = Order(
         filled_quantity=40,
         cancel_quantity=60,
@@ -89,13 +102,13 @@ def test_3_sell_partial_fill_and_cancelled_remaining():
 
 def test_4_cancelled_order_zero_fills():
     """4. f=0, c=100 -> cancelled, fee=0, pnl=0."""
-    row = {
-        "qty": 100,
-        "price": 12_000.0,
-        "side": "SELL",
-        "fee": 12_000.0 * 100 * FEE_RATE_ESTIMATE,
-        "pnl": 200_000.0,
-    }
+    row = _row(
+        qty=100,
+        price=12_000.0,
+        side="SELL",
+        fee=12_000.0 * 100 * FEE_RATE_ESTIMATE,
+        pnl=200_000.0,
+    )
     order = Order(
         filled_quantity=0,
         cancel_quantity=100,
@@ -114,13 +127,13 @@ def test_4_cancelled_order_zero_fills():
 
 def test_5_terminal_status_rejected_with_zero_fills():
     """5. f=0, c=0 nhưng status thuộc tập kết thúc (ví dụ bị từ chối) -> cancelled."""
-    row = {
-        "qty": 100,
-        "price": 10_000.0,
-        "side": "BUY",
-        "fee": 2500.0,
-        "pnl": None,
-    }
+    row = _row(
+        qty=100,
+        price=10_000.0,
+        side="BUY",
+        fee=2500.0,
+        pnl=None,
+    )
     order = Order(
         filled_quantity=0,
         cancel_quantity=0,
@@ -139,13 +152,13 @@ def test_5_terminal_status_rejected_with_zero_fills():
 
 def test_6_no_avg_price_falls_back_to_row_price():
     """6. Không có trường giá khớp (avg_price=0 hoặc None) -> dùng row.price."""
-    row = {
-        "qty": 50,
-        "price": 25_000.0,
-        "side": "BUY",
-        "fee": 50 * 25_000.0 * FEE_RATE_ESTIMATE,
-        "pnl": None,
-    }
+    row = _row(
+        qty=50,
+        price=25_000.0,
+        side="BUY",
+        fee=50 * 25_000.0 * FEE_RATE_ESTIMATE,
+        pnl=None,
+    )
     order = Order(
         filled_quantity=50,
         cancel_quantity=0,
@@ -160,13 +173,13 @@ def test_6_no_avg_price_falls_back_to_row_price():
 
 def test_7_sell_order_with_none_pnl_keeps_none():
     """7. row.pnl = None với lệnh BÁN -> pnl giữ None, không nổ."""
-    row = {
-        "qty": 100,
-        "price": 15_000.0,
-        "side": "SELL",
-        "fee": 15_000.0 * 100 * FEE_RATE_ESTIMATE,
-        "pnl": None,
-    }
+    row = _row(
+        qty=100,
+        price=15_000.0,
+        side="SELL",
+        fee=15_000.0 * 100 * FEE_RATE_ESTIMATE,
+        pnl=None,
+    )
     order = Order(
         filled_quantity=100,
         cancel_quantity=0,

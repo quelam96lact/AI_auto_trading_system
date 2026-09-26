@@ -5,11 +5,14 @@ dựa trên dữ liệu sổ lệnh thật từ SSI SDK.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ssi_sdk.enums.trading import OrderStatus
 
 from trading.paper_broker import FEE_RATE as FEE_RATE_ESTIMATE
+
+if TYPE_CHECKING:
+    from trading.storage.db import PlacedRealFill
 
 # Tập các trạng thái kết thúc (terminal statuses) của SSI SDK:
 # - OrderStatus.FILLED ("FF"): ssi_sdk/enums/trading.py:35
@@ -17,17 +20,14 @@ from trading.paper_broker import FEE_RATE as FEE_RATE_ESTIMATE
 # - OrderStatus.CANCELLED ("CL"): ssi_sdk/enums/trading.py:40
 # - OrderStatus.REJECTED ("RJ"): ssi_sdk/enums/trading.py:41
 # - OrderStatus.EXPIRED ("EX"): ssi_sdk/enums/trading.py:42
-DEFAULT_TERMINAL_STATUSES: frozenset[Any] = frozenset({
+# SDK luon parse status thanh enum (ssi_sdk/models/portfolio.py:725: OrderStatus(...)), nen chi
+# can enum - ban chep chuoi "FF"/"CL"... truoc day khong bao gio khop va co the lech (audit dot 103).
+DEFAULT_TERMINAL_STATUSES: frozenset[OrderStatus] = frozenset({
     OrderStatus.FILLED,
     OrderStatus.PARTIAL_CANCELLED,
     OrderStatus.CANCELLED,
     OrderStatus.REJECTED,
     OrderStatus.EXPIRED,
-    "FF",
-    "FFPC",
-    "CL",
-    "RJ",
-    "EX",
 })
 
 
@@ -43,7 +43,7 @@ class Update:
 
 
 def decide_update(
-    row: Any,
+    row: "PlacedRealFill",
     order: Any,
     terminal_statuses: frozenset[Any] | set[Any] = DEFAULT_TERMINAL_STATUSES,
 ) -> Update | None:
@@ -57,20 +57,17 @@ def decide_update(
     Returns:
         Update(...) nếu lệnh đã kết thúc và cần cập nhật; None nếu lệnh chưa kết thúc.
     """
-    row_qty = getattr(row, "qty", None) if hasattr(row, "qty") else row["qty"]
-    row_price = float(getattr(row, "price", None) if hasattr(row, "price") else row["price"])
-    row_side = getattr(row, "side", None) if hasattr(row, "side") else row["side"]
-    row_pnl = getattr(row, "pnl", None) if hasattr(row, "pnl") else row.get("pnl")
+    row_qty = row.qty
+    row_price = float(row.price)
+    row_side = row.side
+    row_pnl = row.pnl
 
     f = int(getattr(order, "filled_quantity", 0) or 0)
     c = int(getattr(order, "cancel_quantity", 0) or 0)
     q = int(row_qty)
 
     order_status = getattr(order, "status", None)
-    is_terminal_status = (
-        order_status in terminal_statuses
-        or getattr(order_status, "value", None) in terminal_statuses
-    )
+    is_terminal_status = order_status in terminal_statuses
 
     is_finished = (f + c >= q) or is_terminal_status
     if not is_finished:
