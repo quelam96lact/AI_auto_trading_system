@@ -401,3 +401,44 @@ async def test_confirm_real_mode_aborts_when_insufficient_sell_power(
     assert alert_args.kwargs["side"] == "SELL"
     assert alert_args.kwargs["requested_qty"] == 100
     assert alert_args.kwargs["available_qty"] == 30
+
+
+@pytest.mark.asyncio
+async def test_confirm_place_exception_says_state_unknown_not_just_failed(cfg, pending_order):
+    """Audit dot 100: loi NGAY LUC dat lenh (vd het thoi gian cho SAU khi lenh toi san) thi
+    lenh CO THE dang song. Canh bao phai noi 'khong ro, kiem tra iBoard', khong chi 'FAILED'.
+    Loi TRUOC khi goi dat lenh (vd doc suc mua) thi van la that bai thuong."""
+    cfg_real = with_real_trading_enabled(cfg)
+    fake_auth = MagicMock()
+    fake_auth.config = MagicMock()
+    fake_auth.close = AsyncMock()
+    ok_mbs = AsyncMock(return_value=MagicMock(max_buy_quantity=1000, max_sell_quantity=1000))
+
+    # (a) loi luc dat lenh
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert,
+        patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth),
+        pytest.raises(SystemExit),
+    ):
+        await confirm(
+            cfg_real, make_storage(pending_order), 42, "YES",
+            place_order_fn=AsyncMock(side_effect=TimeoutError("read timeout")),
+            max_buy_sell_fn=ok_mbs,
+        )
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+    assert "iBoard" in mock_alert.call_args.args[1]
+
+    # (b) loi TRUOC khi dat lenh -> khong duoc noi lenh co the dang song
+    with (
+        patch("scripts.confirm_real_order.alert") as mock_alert2,
+        patch("scripts.confirm_real_order.ensure_authenticated", return_value=fake_auth),
+        pytest.raises(SystemExit),
+    ):
+        await confirm(
+            cfg_real, make_storage(pending_order), 42, "YES",
+            place_order_fn=AsyncMock(),
+            max_buy_sell_fn=AsyncMock(side_effect=RuntimeError("SSI down")),
+        )
+    assert mock_alert2.call_args.args[0] == "CRITICAL"
+    assert "iBoard" not in mock_alert2.call_args.args[1]
+

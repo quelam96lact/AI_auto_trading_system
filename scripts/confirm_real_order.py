@@ -114,6 +114,7 @@ async def confirm(
         sys.exit(0)
 
     auth = None
+    send_attempted = False
     try:
         auth = await ensure_authenticated(cfg, storage)
         auth.config.private_key = cfg.ssi_private_key
@@ -149,6 +150,9 @@ async def confirm(
             sys.exit(1)
 
         side = OrderSide.BUY if order["side"] == "BUY" else OrderSide.SELL
+        # Tu day tro di loi CO THE xay ra SAU khi lenh da toi san (vd het thoi gian cho):
+        # canh bao phai noi 'khong ro', khong duoc chi noi 'FAILED' (audit dot 100).
+        send_attempted = True
         if place_order_fn is None:
             placed = await trading_client.trading.place_limit_order(
                 order["account_no"],
@@ -210,7 +214,13 @@ async def confirm(
     except Exception as exc:
         storage.update_pending_order_status(order_id, "failed")
         traceback.print_exc()
-        t = alert("CRITICAL", "real order placement FAILED", id=order_id, error=str(exc))
+        msg = (
+            "real order state UNKNOWN - loi luc dat lenh, lenh CO THE da len san: "
+            "KIEM TRA iBoard truoc khi lam gi khac"
+            if send_attempted
+            else "real order placement FAILED (chua gui lenh)"
+        )
+        t = alert("CRITICAL", msg, id=order_id, error=str(exc))
         if t is not None:
             t.join(timeout=6)
         sys.exit(1)
