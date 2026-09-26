@@ -156,3 +156,29 @@ uv run ruff check trading tests scripts
 - **Thiên lệch sống sót toàn phần:** dữ liệu 2016–2022 không có mã hủy niêm yết (đợt 99). Nó làm cả `WIN` lẫn `EW` đẹp hơn thật. Phép so hai danh mục trong cùng vũ trụ ít bị ảnh hưởng hơn, nhưng momentum hay **tránh được** các mã sắp hủy niêm yết (vì chúng thường đang giảm mạnh), nên thiếu các mã đó có thể làm `LOSE` và `EW` **đẹp hơn thật**, tức làm lợi thế của `WIN` trông **nhỏ hơn thật**.
 - **Giá đã điều chỉnh ngược:** tỷ số giá trong một mã vẫn đúng. Riêng ngưỡng thanh khoản tuyệt đối lệch ở các năm cũ (như đợt 99).
 - **Chi phí xấp xỉ theo vòng quay** (§1.5).
+
+
+---
+
+## 7. Kết quả và audit của Claude (26/09)
+
+**Chạy đúng một lần** (145,4 giây); log gốc `run_dot102.log` khớp báo cáo.
+
+| Danh mục | TB tháng ròng | Trung vị tháng ròng | CAGR ròng | Sụt vốn lớn nhất | Vòng quay |
+|---|---|---|---|---|---|
+| WIN (10% mạnh nhất) | −0,12% | +0,81% | **−6,96%** | 63,6% | 0,338 |
+| EW (mua đều) | +0,90% | +0,46% | **+6,52%** | 53,6% | 0,126 |
+| LOSE (mô tả) | +0,06% | −0,62% | −6,42% | 69,7% | 0,407 |
+| ETF `E1VFVN30` mua-giữ (mô tả) | | | **+9,18%** | | |
+
+- Vượt trội tháng WIN − EW: **−1,02%**, KTC 95% [−1,81%; −0,26%] (**hoàn toàn dưới 0**), p = 0,9945, trung vị −1,49%. **Không đạt cả ba điều kiện.**
+- WIN thua EW ở 5/6 năm; chênh WIN − LOSE âm (−0,18%/tháng). Trong 2017–2022, cổ phiếu tăng mạnh 12 tháng qua **không** tiếp tục tăng mạnh hơn.
+- WIN có trung vị tháng cao hơn EW nhưng trung bình thấp hơn: đuôi lỗ rất nặng (2018, 2022).
+
+**Kết luận: Momentum 12−1 danh mục tháng KHÔNG vượt được mua-đều cổ phiếu đủ thanh khoản, sau chi phí. Đây là phép đo âm thứ chín, và là lần đầu một phép đo *danh mục* thua có ý nghĩa thống kê.**
+
+**Claude tính lại độc lập** ba tháng (03/2018, 06/2020, 05/2022) bằng code riêng: tìm ngày theo lịch, lọc thanh khoản, tính momentum, top 10% và lợi nhuận giữ, chỉ dùng chung hàm đọc DB. Kết quả **khớp tới 5 chữ số thập phân** với agent: số mã đủ điều kiện 151/235/369, và WIN/EW −0,11256/−0,07768, −0,08241/−0,05855, −0,21475/−0,15661.
+
+**Sai sót của brief (agent phát hiện, đúng):** từ 2016-01-04 tới 2016-12-30 chỉ có **251** phiên, nên tháng xếp hạng 12/2016 không đủ 252 phiên và bị bỏ. Kết quả là 71 tháng chứ không phải 72; vẫn ≥ 60 nên vẫn kết luận được. Dòng in "(2016, 12) đến (2022, 11)" là biên của cửa sổ, không phải các tháng đã dùng; lỗi này chỉ ở phần trình bày, số liệu không bị ảnh hưởng.
+
+**Điều đáng nói nhất cho chủ dự án:** trong 2017–2022, **mua và giữ ETF VN30 (+9,18%/năm ròng) thắng mọi thứ đã đo**, kể cả mua đều toàn thị trường (+6,52%). Đây là mốc mà bất kỳ chiến lược chủ động nào cũng phải vượt.
