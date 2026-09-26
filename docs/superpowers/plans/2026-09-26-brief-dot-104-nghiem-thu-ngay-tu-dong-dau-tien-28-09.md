@@ -17,6 +17,8 @@ Nó cũng thêm các điểm của đợt 93, 97 và 103 mà hai brief cũ chưa
 - Thấy gì khác với "Kỳ vọng": ghi **nguyên văn**, **không** đoán nguyên nhân, **không** sửa. Claude quyết.
 - Mọi lọc theo ngày trên `ts`: `(ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`, **không** dùng `ts::date`.
 
+**Đường dẫn (Claude đã kiểm 26/09):** file sổ lệnh `data/orderbook/41I1GA000/2026-09-28.jsonl.gz`; log tác vụ trong `logs/` (`orderbook-recorder.log`, `orderbook-daily-check.log`, `stream-health.log`, `engine-cam.log`, `backfill.log`, `daily-data-check.log`); log engine ở `logs/engine_alerts.log` và `docker compose logs --since 24h engine`; log collector ở `docker compose logs --since 24h collector`. `verify_orderbook_file.py` và `build_orderbook_features.py` nhận đường dẫn file làm tham số đầu tiên.
+
 Có hai lượt báo cáo: **Lượt A sau 15:40**, **Lượt B sau 21:15** (hoặc sáng thứ Ba nếu không kịp).
 
 ---
