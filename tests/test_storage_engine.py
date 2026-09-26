@@ -22,6 +22,7 @@ def storage():
         c.execute("DELETE FROM orders WHERE symbol = 'TEST'")
         c.execute("DELETE FROM pnl_daily WHERE date = '2026-07-15'")
         c.execute("DELETE FROM engine_state WHERE id = 1")
+        c.execute("DELETE FROM real_order_fills WHERE account_no = 'ACC_RECONCILE_TEST'")
     return s
 
 
@@ -112,4 +113,150 @@ def test_read_daily_bar_dates_tra_ngay_vn(storage):
     storage.write_daily(bars)
     out = storage.read_daily_bar_dates(["TESTFRI"], date(2026, 9, 1), date(2026, 9, 25))
     assert out == {"TESTFRI": [date(2026, 9, 18)]}
+
+
+def test_8_update_real_order_fill_on_filled_is_noop(storage):
+    """8. update_real_order_fill trên dòng đã 'filled' -> 0 dòng bị ảnh hưởng, dữ liệu không đổi."""
+    ts = datetime(2026, 9, 26, 10, 0, tzinfo=TZ)
+    account_no = "ACC_RECONCILE_TEST"
+    storage.write_real_order_fill(
+        account_no=account_no,
+        ts=ts,
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="SSI-RECON-8",
+        status="filled",
+    )
+    # Tìm id vừa tạo
+    with storage.conn() as c:
+        row = c.execute("SELECT id, status, qty, price, fee, pnl FROM real_order_fills WHERE ssi_order_id = 'SSI-RECON-8'").fetchone()
+        fill_id = row[0]
+
+    affected = storage.update_real_order_fill(
+        id=fill_id,
+        status="cancelled",
+        qty=0,
+        price=0.0,
+        fee=0.0,
+        pnl=0.0,
+    )
+    assert affected == 0
+
+    # Dữ liệu trong DB không đổi
+    with storage.conn() as c:
+        updated_row = c.execute("SELECT status, qty, price, fee, pnl FROM real_order_fills WHERE id = %s", (fill_id,)).fetchone()
+        assert updated_row[0] == "filled"
+        assert updated_row[1] == 100
+        assert updated_row[2] == 25000.0
+        assert updated_row[3] == 625.0
+        assert updated_row[4] is None
+
+
+def test_9_update_real_order_fill_cancelled_excludes_from_daily_pnl(storage):
+    """9. Sau khi một dòng BÁN chuyển 'cancelled', read_real_daily_pnl của ngày đó không còn tính pnl của nó."""
+    ts = datetime(2026, 9, 26, 11, 0, tzinfo=TZ)
+    account_no = "ACC_RECONCILE_TEST"
+    storage.write_real_order_fill(
+        account_no=account_no,
+        ts=ts,
+        symbol="HPG",
+        side="SELL",
+        qty=100,
+        price=26000.0,
+        fee=650.0,
+        pnl=100000.0,
+        ssi_order_id="SSI-RECON-9",
+        status="placed",
+    )
+    # Ban đầu status='placed', nằm trong EFFECTIVE_FILL_STATUSES nên được tính pnl
+    initial_pnl = storage.read_real_daily_pnl(account_no, ts.date())
+    assert initial_pnl == 100000.0
+
+    with storage.conn() as c:
+        fill_id = c.execute("SELECT id FROM real_order_fills WHERE ssi_order_id = 'SSI-RECON-9'").fetchone()[0]
+
+    # Cập nhật sang cancelled
+    affected = storage.update_real_order_fill(
+        id=fill_id,
+        status="cancelled",
+        qty=0,
+        price=26000.0,
+        fee=0.0,
+        pnl=0.0,
+    )
+    assert affected == 1
+
+    # read_real_daily_pnl không còn tính dòng này nữa
+    after_pnl = storage.read_real_daily_pnl(account_no, ts.date())
+    assert after_pnl == 0.0
+
+
+def test_read_placed_real_fills_filters_correctly(storage):
+    """Kiểm tra read_placed_real_fills chỉ trả về các dòng placed có ssi_order_id của đúng tài khoản."""
+    ts = datetime(2026, 9, 26, 10, 0, tzinfo=TZ)
+    acc = "ACC_RECONCILE_TEST"
+    # Dòng 1: placed có ssi_order_id -> PHẢI ĐƯỢC CHỌN
+    storage.write_real_order_fill(
+        account_no=acc,
+        ts=ts,
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="SSI-P-VALID",
+        status="placed",
+    )
+    # Dòng 2: placed không có ssi_order_id -> BỊ LOẠI
+    storage.write_real_order_fill(
+        account_no=acc,
+        ts=ts,
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id=None,
+        status="placed",
+    )
+    # Dòng 3: filled có ssi_order_id -> BỊ LOẠI
+    storage.write_real_order_fill(
+        account_no=acc,
+        ts=ts,
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="SSI-F-OTHER",
+        status="filled",
+    )
+    # Dòng 4: tài khoản khác -> BỊ LOẠI
+    storage.write_real_order_fill(
+        account_no="OTHER_ACC",
+        ts=ts,
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="SSI-P-OTHERACC",
+        status="placed",
+    )
+
+    placed = storage.read_placed_real_fills(acc)
+    assert len(placed) == 1
+    assert placed[0].ssi_order_id == "SSI-P-VALID"
+    assert placed[0].account_no == acc
+    assert placed[0].status == "placed"
+
+
 

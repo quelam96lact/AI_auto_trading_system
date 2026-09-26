@@ -475,3 +475,44 @@ def test_golive_gate_stream_coverage_ngay_le_khong_fail_oan():
     item6 = next(it for it in items if it.name == "Độ phủ luồng phiên gần nhất")
     assert item6.status == "PASS"
 
+
+def test_14_golive_gate_criteria_9_counts_only_filled():
+    """14. Bảng có 1 filled, 2 placed, 1 cancelled -> tiêu chí 9 báo 1."""
+    from scripts.check_golive_gate import query_real_order_fills_counts
+
+    class FakeCursor:
+        def execute(self, sql):
+            pass
+
+        def fetchall(self):
+            return [("filled", 1), ("placed", 2), ("cancelled", 1)]
+
+    filled, placed, cancelled = query_real_order_fills_counts(FakeCursor())
+    assert filled == 1
+    assert placed == 2
+    assert cancelled == 1
+
+    exit_code, items = evaluate_golive_gate(
+        real_trading_enabled=False,
+        real_account="0434221",
+        nav=5_000_000.0,
+        buying_powers={"HPG": 200, "IJC": 600, "AAA": 600},
+        buying_power_age_sec=300.0,
+        position_age_sec=300.0,
+        stream_coverage=0.95,
+        stream_coverage_summary="95% coverage",
+        telegram_configured=True,
+        deploy_drift_ok=True,
+        deploy_drift_msg="Khớp image",
+        real_fills_count=filled,
+        placed_fills_count=placed,
+        cancelled_fills_count=cancelled,
+        symbols=["HPG", "IJC", "AAA"],
+    )
+    assert exit_code == 0
+    item9 = next(it for it in items if it.name == "Lịch sử lệnh thật đã khớp")
+    assert item9.measured_value == "1 lệnh"
+    assert "2 đang chờ" in item9.note or "đang chờ: 2" in item9.note
+    assert "1 đã huỷ" in item9.note or "đã huỷ: 1" in item9.note
+
+

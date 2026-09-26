@@ -95,8 +95,15 @@ def run_readiness_check(dsn: str, config_path: str = "config/config.yaml") -> No
         """)
         orders_with_ssi_id = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM real_order_fills;")
-        total_fills = cur.fetchone()[0]
+        cur.execute("""
+            SELECT status, count(*)
+            FROM real_order_fills
+            GROUP BY status
+            ORDER BY status;
+        """)
+        fill_status_rows = cur.fetchall()
+        total_fills = sum(r[1] for r in fill_status_rows)
+        fill_status_str = ", ".join(f"{r[0]}: {r[1]}" for r in fill_status_rows) if fill_status_rows else "0 lệnh"
 
         cur.execute("SELECT max(created_at) FROM pending_real_orders;")
         latest_order_time = cur.fetchone()[0]
@@ -108,7 +115,7 @@ def run_readiness_check(dsn: str, config_path: str = "config/config.yaml") -> No
 
         print(f"  • Tổng số pending_real_orders : {total_pending} ({status_str})")
         print(f"  • Số lệnh có ssi_order_id     : {orders_with_ssi_id} (chưa từng đặt thành công lên sàn)")
-        print(f"  • Số dòng real_order_fills    : {total_fills}")
+        print(f"  • Số dòng real_order_fills    : {total_fills} ({fill_status_str})")
         print(f"  • Thời điểm lệnh gần nhất     : {latest_order_str}")
 
         # =========================================================================

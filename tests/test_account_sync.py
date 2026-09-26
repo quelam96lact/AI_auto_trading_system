@@ -2,9 +2,12 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from ssi_sdk.enums.trading import OrderStatus
+from ssi_sdk.models import Order
 
 from trading.calendar_vn import TZ
 from trading.collector import account_sync
+from trading.storage.db import PlacedRealFill
 
 
 class FakeRestClient:
@@ -42,6 +45,12 @@ class FakeStorage:
     def parse_margin_ratio(self, v):
         from trading.storage.db import Storage
         return Storage.parse_margin_ratio(v)
+
+    def read_placed_real_fills(self, account_no):
+        return []
+
+    def update_real_order_fill(self, *a, **k):
+        return 0
 
 
 async def test_sync_balance_maps_real_api_fields():
@@ -452,3 +461,334 @@ async def test_sync_balance_case7_missing_equity_block_no_op(monkeypatch):
 
     assert storage.balance_calls == []
     assert alerts == []
+
+
+# =====================================================================
+# Brief 103: Đối soát lệnh thật trong account_sync
+# Tests 10, 11, 12, 13
+# =====================================================================
+
+
+class FakePortfolioForReconcile:
+    def __init__(self, orders=None, error=None):
+        self.orders = orders or []
+        self.error = error
+        self.historical_calls = []
+        self.today_calls = []
+
+    async def get_historical_orders(self, account_no, from_date, to_date):
+        self.historical_calls.append((account_no, from_date, to_date))
+        if self.error:
+            raise self.error
+        return self.orders
+
+    async def get_today_orders(self, account_no):
+        self.today_calls.append(account_no)
+        if self.error:
+            raise self.error
+        return self.orders
+
+
+class FakeStorageForReconcile:
+    def __init__(self, placed_rows=None):
+        self.placed_rows = placed_rows or []
+        self.update_calls = []
+
+    def read_placed_real_fills(self, account_no):
+        return [r for r in self.placed_rows if r.account_no == account_no]
+
+    def update_real_order_fill(self, id, status, qty, price, fee, pnl):
+        self.update_calls.append({
+            "id": id,
+            "status": status,
+            "qty": qty,
+            "price": price,
+            "fee": fee,
+            "pnl": pnl,
+        })
+        return 1
+
+
+async def test_10_reconcile_no_placed_rows_zero_ssi_calls():
+    """10. Không có dòng placed -> get_historical_orders và get_today_orders được gọi 0 lần."""
+    portfolio = FakePortfolioForReconcile(orders=[])
+    storage = FakeStorageForReconcile(placed_rows=[])
+    ts = datetime(2026, 9, 26, 10, 0, tzinfo=TZ)
+
+    await account_sync._reconcile_real_orders(portfolio, "0434221", ts, storage)
+
+    assert len(portfolio.historical_calls) == 0
+    assert len(portfolio.today_calls) == 0
+
+
+async def test_11_reconcile_two_placed_rows_one_ssi_call_updates_both(monkeypatch):
+    """11. Có 2 dòng placed -> SSI được gọi 1 lần; mỗi dòng được cập nhật theo lệnh tương ứng."""
+    ts = datetime(2026, 9, 26, 14, 0, tzinfo=TZ)
+    row1_ts = datetime(2026, 9, 25, 10, 0, tzinfo=TZ)
+    row2_ts = datetime(2026, 9, 26, 9, 30, tzinfo=TZ)
+
+    r1 = PlacedRealFill(
+        id=1,
+        ts=row1_ts,
+        account_no="0434221",
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="111",
+        status="placed",
+    )
+    r2 = PlacedRealFill(
+        id=2,
+        ts=row2_ts,
+        account_no="0434221",
+        symbol="VCB",
+        side="SELL",
+        qty=200,
+        price=50000.0,
+        fee=25000.0,
+        pnl=100000.0,  # cost_price = 50000 - 100000/200 = 49500
+        ssi_order_id="222",
+        status="placed",
+    )
+    storage = FakeStorageForReconcile(placed_rows=[r1, r2])
+
+    o1 = Order(
+        order_id="111",
+        filled_quantity=100,
+        cancel_quantity=0,
+        avg_price=25000.0,
+        status=OrderStatus.FILLED,
+    )
+    o2 = Order(
+        order_id="222",
+        filled_quantity=50,
+        cancel_quantity=150,
+        avg_price=51000.0,
+        status=OrderStatus.PARTIAL_CANCELLED,
+    )
+    portfolio = FakePortfolioForReconcile(orders=[o1, o2])
+
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+
+    await account_sync._reconcile_real_orders(portfolio, "0434221", ts, storage)
+
+    # SSI được gọi đúng 1 lần từ ngày của dòng cũ nhất
+    assert len(portfolio.historical_calls) == 1
+    assert portfolio.historical_calls[0] == ("0434221", "2026/09/25", "2026/09/26")
+
+    # 2 dòng đều được cập nhật
+    assert len(storage.update_calls) == 2
+    u1 = storage.update_calls[0]
+    assert u1["id"] == 1
+    assert u1["status"] == "filled"
+    assert u1["qty"] == 100
+
+    u2 = storage.update_calls[1]
+    assert u2["id"] == 2
+    assert u2["status"] == "filled"
+    assert u2["qty"] == 50
+
+    # Khớp 1 phần phải alert WARN, khớp đủ alert INFO
+    info_alerts = [a for a in alerts if a[0] == "INFO"]
+    warn_alerts = [a for a in alerts if a[0] == "WARN"]
+    assert len(info_alerts) == 1
+    assert len(warn_alerts) == 1
+    assert "khớp một phần" in warn_alerts[0][1]
+
+
+async def test_12_reconcile_ssi_error_skips_account_other_syncs_normally(monkeypatch):
+    """12. SSI ném lỗi -> tài khoản đó bị bỏ qua với WARN như hiện nay, tài khoản kia vẫn đồng bộ bình thường."""
+    cfg = SimpleNamespace(
+        symbols=["HPG"],
+        ssi_equity_accounts=["ACC_ERR", "ACC_OK"],
+        holidays=frozenset(),
+        real_trading_enabled=False,
+    )
+
+    ts = datetime(2026, 9, 26, 10, 0, tzinfo=TZ)
+    row_err = PlacedRealFill(
+        id=1,
+        ts=ts,
+        account_no="ACC_ERR",
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="111",
+        status="placed",
+    )
+
+    class MultiAccountStorage(FakeStorage):
+        def __init__(self):
+            super().__init__()
+            self.reconcile_storage = FakeStorageForReconcile([row_err])
+
+        def read_placed_real_fills(self, account_no):
+            return self.reconcile_storage.read_placed_real_fills(account_no)
+
+        def update_real_order_fill(self, *a, **k):
+            return self.reconcile_storage.update_real_order_fill(*a, **k)
+
+        def read_account_balance_with_debt(self, account_no):
+            return (1000000.0, 0.0)
+
+        def read_real_positions(self, account_no):
+            return {}
+
+        def compute_nav(self, *a, **k):
+            return 1000000.0, []
+
+    storage = MultiAccountStorage()
+
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+
+    # Mock ensure_authenticated
+    class MockAuth:
+        def __init__(self):
+            self.token_manager = SimpleNamespace(access_token="fake.token")
+            self.config = SimpleNamespace(client_id="cid")
+            self.rest_client = FakeRestClient({
+                "equity": {
+                    "accountBalance": "1000000",
+                    "totalDebt": "0",
+                    "withdrawable": "1000000",
+                }
+            })
+
+        async def close(self):
+            pass
+
+    async def fake_auth(c, s):
+        return MockAuth()
+
+    monkeypatch.setattr(account_sync, "ensure_authenticated", fake_auth)
+    monkeypatch.setattr(account_sync, "decode_client_id", lambda tok: "cid")
+
+    class MockTradingService:
+        def __init__(self, *a):
+            pass
+        async def get_max_buy_sell_at_market_price(self, acc, sym):
+            return SimpleNamespace(max_buy_quantity=100, max_sell_quantity=0, margin_ratio="50%")
+
+    class MockPortfolioService:
+        def __init__(self, *a):
+            pass
+        async def get_equity_positions(self, acc):
+            return []
+        async def get_historical_orders(self, acc, from_date, to_date):
+            if acc == "ACC_ERR":
+                raise RuntimeError("SSI API blip")
+            return []
+
+    monkeypatch.setattr("ssi_sdk.services.trading.AsyncTradingService", MockTradingService)
+    monkeypatch.setattr("ssi_sdk.services.portfolio.AsyncPortfolioService", MockPortfolioService)
+
+    await account_sync.sync_account_data(cfg, storage)
+
+    # ACC_ERR bị WARN và bỏ qua
+    err_alerts = [a for a in alerts if a[0] == "WARN" and a[2].get("account_no") == "ACC_ERR"]
+    assert len(err_alerts) >= 1
+    assert "account sync failed" in err_alerts[0][1]
+
+    # ACC_OK vẫn đồng bộ balance bình thường
+    ok_balances = [c for c in storage.balance_calls if c.get("account_no") == "ACC_OK"]
+    assert len(ok_balances) == 1
+
+
+async def test_13_reconcile_stale_unmatched_placed_row_dedup_critical(monkeypatch):
+    """13. Dòng placed quá 1 ngày giao dịch không có trong SSI -> đúng 1 CRITICAL trong ngày dù hàm chạy nhiều lần."""
+    # Reset alert cache
+    account_sync._alerted_unmatched_fills.clear()
+
+    # Dòng đặt từ 3 ngày trước (thứ Tư 23/09, hiện tại là thứ Bảy 26/09 -> cách > 1 ngày giao dịch)
+    placed_ts = datetime(2026, 9, 23, 10, 0, tzinfo=TZ)
+    now_ts = datetime(2026, 9, 26, 14, 0, tzinfo=TZ)
+
+    stale_fill = PlacedRealFill(
+        id=99,
+        ts=placed_ts,
+        account_no="0434221",
+        symbol="HPG",
+        side="BUY",
+        qty=100,
+        price=25000.0,
+        fee=625.0,
+        pnl=None,
+        ssi_order_id="999_NOT_IN_SSI",
+        status="placed",
+    )
+    storage = FakeStorageForReconcile(placed_rows=[stale_fill])
+    portfolio = FakePortfolioForReconcile(orders=[])  # Không có lệnh 999
+
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+
+    # Chạy lần 1
+    await account_sync._reconcile_real_orders(portfolio, "0434221", now_ts, storage)
+
+    # Chạy lần 2 cùng ngày
+    await account_sync._reconcile_real_orders(portfolio, "0434221", now_ts, storage)
+
+    # Chạy lần 3 cùng ngày
+    await account_sync._reconcile_real_orders(portfolio, "0434221", now_ts, storage)
+
+    crit_alerts = [a for a in alerts if a[0] == "CRITICAL"]
+    assert len(crit_alerts) == 1, f"Phải đúng 1 CRITICAL alert trong ngày dù chạy nhiều lần, thực tế: {len(crit_alerts)}"
+    assert "lệnh thật không rõ trạng thái" in crit_alerts[0][1]
+    assert crit_alerts[0][2].get("fill_id") == 99
+
+
+
+@pytest.mark.asyncio
+async def test_reconcile_loi_khong_lam_cu_suc_mua_va_nav(monkeypatch):
+    """Audit dot 103: doi soat la buoc PHU, phai chay SAU CUNG. Neu no nem loi, suc mua va
+    NAV cua CHINH tai khoan do van phai da duoc cap nhat - khong thi cong go-live bao so
+    lieu cu va duong lenh that tu choi lenh vi mot buoc phu hong."""
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setattr(account_sync, "alert", lambda *a, **k: None)
+
+    async def _noop():
+        pass
+
+    async def fake_auth(cfg, storage):
+        return NS(token_manager=NS(access_token="tok"), config=NS(), rest_client=None,
+                  close=lambda: _noop())
+
+    monkeypatch.setattr(account_sync, "ensure_authenticated", fake_auth)
+    monkeypatch.setattr(account_sync, "decode_client_id", lambda tok: "043422")
+    import ssi_sdk.services.portfolio as sdk_portfolio
+
+    monkeypatch.setattr(sdk_portfolio, "AsyncPortfolioService", lambda rc, cfg: NS())
+    calls = []
+
+    def rec(name, boom=False):
+        async def f(*a, **k):
+            calls.append(name)
+            if boom:
+                raise RuntimeError("SSI lich su lenh loi")
+        return f
+
+    monkeypatch.setattr(account_sync, "_sync_balance", rec("balance"))
+    monkeypatch.setattr(account_sync, "_sync_positions", rec("positions"))
+    monkeypatch.setattr(account_sync, "_sync_buying_power", rec("buying_power"))
+    monkeypatch.setattr(account_sync, "_sync_nav", rec("nav"))
+    monkeypatch.setattr(account_sync, "_reconcile_real_orders", rec("reconcile", boom=True))
+
+    cfg = NS(ssi_equity_accounts=["ACC"], symbols=["HPG"], holidays=frozenset())
+    await account_sync.sync_account_data(cfg, FakeStorage())
+
+    assert calls == ["balance", "positions", "buying_power", "nav", "reconcile"], calls

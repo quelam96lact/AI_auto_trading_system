@@ -189,6 +189,8 @@ def evaluate_golive_gate(
     nav_age_sec: float | None = None,
     now: datetime | None = None,
     holidays: set[date] | frozenset = frozenset(),
+    placed_fills_count: int = 0,
+    cancelled_fills_count: int = 0,
 ) -> tuple[int, list[GateItem]]:
     """Hàm thuần đánh giá các tiêu chí cổng go-live, không phụ thuộc I/O."""
     items: list[GateItem] = []
@@ -456,7 +458,7 @@ def evaluate_golive_gate(
             requirement="In ra số dòng (không chặn)",
             measured_value=f"{real_fills_count} lệnh",
             status="INFO",
-            note="Số lệnh đã ghi nhận trong bảng real_order_fills",
+            note=f"Đã khớp: {real_fills_count}, đang chờ: {placed_fills_count}, đã huỷ: {cancelled_fills_count}",
         )
     )
 
@@ -471,6 +473,21 @@ def evaluate_golive_gate(
         exit_code = 0
 
     return exit_code, items
+
+
+def query_real_order_fills_counts(cur) -> tuple[int, int, int]:
+    """Truy vấn số dòng real_order_fills theo từng trạng thái (Brief 103).
+
+    Returns:
+        (filled_count, placed_count, cancelled_count)
+    """
+    cur.execute("SELECT status, count(*) FROM real_order_fills GROUP BY status;")
+    counts = dict(cur.fetchall())
+    return (
+        int(counts.get("filled", 0)),
+        int(counts.get("placed", 0)),
+        int(counts.get("cancelled", 0)),
+    )
 
 
 def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
@@ -493,6 +510,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
     bp_age_sec = None
     pos_age_sec = None
     real_fills_count = 0
+    placed_fills_count = 0
+    cancelled_fills_count = 0
 
     try:
         with psycopg.connect(dsn, connect_timeout=10) as conn, conn.cursor() as cur:
@@ -536,11 +555,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
                 pos_ts = r_pos[0].astimezone(TZ)
                 pos_age_sec = (now_vn - pos_ts).total_seconds()
 
-            # 4. Fills
-            cur.execute("SELECT count(*) FROM real_order_fills;")
-            r_fills = cur.fetchone()
-            if r_fills:
-                real_fills_count = int(r_fills[0])
+            # 4. Fills (Brief 103: đếm status = 'filled', note thêm placed và cancelled)
+            real_fills_count, placed_fills_count, cancelled_fills_count = query_real_order_fills_counts(cur)
     except Exception as e:
         print(f"LỖI KẾT NỐI DATABASE: {e}")
         return 2
@@ -575,6 +591,8 @@ def run_gate_check(dsn: str, config_path: str = "config/config.yaml") -> int:
         nav_age_sec=nav_age_sec,
         now=now_vn,
         holidays=holidays,
+        placed_fills_count=placed_fills_count,
+        cancelled_fills_count=cancelled_fills_count,
     )
 
     # In bảng báo cáo

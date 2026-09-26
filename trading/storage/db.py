@@ -8,6 +8,7 @@ from importlib.resources import files
 from psycopg_pool import ConnectionPool
 
 from trading.broker import Fill, Position
+from trading.calendar_vn import TZ
 from trading.models import Bar, IndexValue
 
 
@@ -17,6 +18,21 @@ class RealPosition:
     qty: int
     avg_price: float
     sellable_qty: int
+
+
+@dataclass
+class PlacedRealFill:
+    id: int
+    ts: datetime
+    account_no: str
+    symbol: str
+    side: str
+    qty: int
+    price: float
+    fee: float
+    pnl: float | None
+    ssi_order_id: str
+    status: str
 
 
 # Trạng thái fill có hiệu lực cho tính toán PnL ngày và trailing stop đỉnh mua.
@@ -916,6 +932,56 @@ class Storage:
                     status,
                 ),
             )
+
+    def read_placed_real_fills(self, account_no: str) -> list[PlacedRealFill]:
+        """Đọc các dòng real_order_fills có status='placed' và có ssi_order_id của một tài khoản."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT id, ts, account_no, symbol, side, qty, price, fee, pnl, ssi_order_id, status "
+                "FROM real_order_fills "
+                "WHERE account_no = %s AND status = 'placed' "
+                "AND ssi_order_id IS NOT NULL AND ssi_order_id != '' "
+                "ORDER BY id ASC",
+                (account_no,),
+            ).fetchall()
+        return [
+            PlacedRealFill(
+                id=r[0],
+                ts=r[1].astimezone(TZ) if r[1].tzinfo else r[1],
+                account_no=r[2],
+                symbol=r[3],
+                side=r[4],
+                qty=int(r[5]),
+                price=float(r[6]),
+                fee=float(r[7]),
+                pnl=float(r[8]) if r[8] is not None else None,
+                ssi_order_id=r[9],
+                status=r[10],
+            )
+            for r in rows
+        ]
+
+    def update_real_order_fill(
+        self,
+        id: int,
+        status: str,
+        qty: int,
+        price: float,
+        fee: float,
+        pnl: float | None,
+    ) -> int:
+        """Cập nhật một dòng real_order_fills theo id khi status vẫn là 'placed'.
+
+        Trả về số dòng bị ảnh hưởng (c.rowcount). Nếu status không còn là 'placed', trả về 0.
+        """
+        with self.conn() as c:
+            cur = c.execute(
+                "UPDATE real_order_fills "
+                "SET status = %s, qty = %s, price = %s, fee = %s, pnl = %s "
+                "WHERE id = %s AND status = 'placed'",
+                (status, qty, price, fee, pnl, id),
+            )
+            return cur.rowcount
 
     def upsert_symbol_universe(self, rows: list[dict]) -> None:
         if not rows:

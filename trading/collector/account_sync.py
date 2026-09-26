@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from ssi_sdk.constant import EP_ACCOUNT_BALANCE
 
@@ -6,7 +6,11 @@ from trading.alerts import alert
 from trading.calendar_vn import TZ, trading_days_between
 from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
 from trading.config import Config
+from trading.real_order_reconcile import decide_update
 from trading.storage.db import Storage
+
+# Khử trùng lặp alert CRITICAL cho lệnh thật không rõ trạng thái (đúng 1 alert / dòng / ngày)
+_alerted_unmatched_fills: set[tuple[int, date]] = set()
 
 
 async def sync_account_data(cfg: Config, storage: Storage) -> None:
@@ -34,6 +38,10 @@ async def sync_account_data(cfg: Config, storage: Storage) -> None:
                 # Suc mua theo tung ma trong cfg.symbols (trần cứng — phan 2).
                 await _sync_buying_power(trading, account_no, now, cfg.symbols, storage)
                 await _sync_nav(account_no, now, storage, cfg.holidays)
+                # Doi soat lenh that chay SAU CUNG (audit dot 103): neu SSI loi o buoc phu
+                # nay, suc mua va NAV cua tai khoan van da duoc cap nhat - khong duoc de mot
+                # buoc phu lam cu so lieu ma cong go-live va duong lenh that dua vao.
+                await _reconcile_real_orders(portfolio, account_no, now, storage, cfg.holidays)
             except Exception as e:
                 alert(
                     "WARN",
@@ -110,6 +118,91 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
     # fetch nem exception (exception day len sync_account_data, dong nay khong
     # chay — ghi mot lan dong bo chua xay ra con te hon khong ghi).
     storage.record_position_sync(account_no, ts)
+
+
+async def _reconcile_real_orders(
+    portfolio,
+    account_no: str,
+    ts: datetime,
+    storage: Storage,
+    holidays: frozenset = frozenset(),
+) -> None:
+    """Đối soát các dòng lệnh thật có status='placed' với sổ lệnh SSI (Brief 103).
+
+    1. Không có dòng placed nào: không gọi SSI (đa số chu kỳ).
+    2. Có dòng placed: gọi get_historical_orders từ ngày của dòng cũ nhất đến hôm nay.
+    3. Ghép theo ssi_order_id == order.order_id:
+       - Có kết quả cập nhật: update_real_order_fill (WHERE status = 'placed').
+       - Alert INFO cho lệnh khớp đủ/huỷ; alert WARN cho lệnh khớp một phần.
+    4. Dòng placed có ts cách hiện tại quá 1 ngày giao dịch mà không tìm thấy trong SSI:
+       - Alert CRITICAL "lệnh thật không rõ trạng thái — kiểm tra iBoard".
+       - Khử trùng lặp đúng 1 lần mỗi dòng mỗi ngày qua _alerted_unmatched_fills.
+    """
+    placed_rows = storage.read_placed_real_fills(account_no)
+    if not placed_rows:
+        return
+
+    earliest_date = min(r.ts.astimezone(TZ).date() for r in placed_rows)
+    today_date = ts.astimezone(TZ).date()
+
+    from_date = earliest_date.strftime("%Y/%m/%d")
+    to_date = today_date.strftime("%Y/%m/%d")
+
+    orders = await portfolio.get_historical_orders(account_no, from_date, to_date)
+    orders_by_id = {
+        str(o.order_id): o for o in (orders or []) if getattr(o, "order_id", None)
+    }
+
+    for row in placed_rows:
+        order = orders_by_id.get(str(row.ssi_order_id))
+        if order is not None:
+            update = decide_update(row, order)
+            if update is not None:
+                affected = storage.update_real_order_fill(
+                    id=row.id,
+                    status=update.status,
+                    qty=update.qty,
+                    price=update.price,
+                    fee=update.fee,
+                    pnl=update.pnl,
+                )
+                if affected > 0:
+                    if update.status == "filled" and update.qty < row.qty:
+                        alert(
+                            "WARN",
+                            "lệnh thật khớp một phần",
+                            account_no=account_no,
+                            symbol=row.symbol,
+                            order_id=row.ssi_order_id,
+                            status=update.status,
+                            matched_qty=update.qty,
+                            orig_qty=row.qty,
+                        )
+                    else:
+                        alert(
+                            "INFO",
+                            "đối soát lệnh thật cập nhật",
+                            account_no=account_no,
+                            symbol=row.symbol,
+                            order_id=row.ssi_order_id,
+                            status=update.status,
+                            matched_qty=update.qty,
+                            orig_qty=row.qty,
+                        )
+        else:
+            if trading_days_between(row.ts, ts, holidays) > 1:
+                today = ts.astimezone(TZ).date()
+                if (row.id, today) not in _alerted_unmatched_fills:
+                    _alerted_unmatched_fills.add((row.id, today))
+                    alert(
+                        "CRITICAL",
+                        "lệnh thật không rõ trạng thái — kiểm tra iBoard",
+                        account_no=account_no,
+                        symbol=row.symbol,
+                        order_id=row.ssi_order_id,
+                        fill_id=row.id,
+                        placed_ts=row.ts.isoformat(),
+                    )
 
 
 async def _sync_buying_power(trading, account_no: str, ts: datetime, symbols: list[str], storage: Storage) -> None:
