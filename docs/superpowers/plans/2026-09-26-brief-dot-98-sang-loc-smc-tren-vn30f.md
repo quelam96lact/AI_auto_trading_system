@@ -146,3 +146,24 @@ Chạy `uv run python scripts/screen_vn30f_smc.py` **một lần**. In theo đú
 
 - **Kiểm quét thanh khoản bằng sổ lệnh thật:** SMC nói "thanh khoản" là lệnh dừng nằm chờ quanh đỉnh/đáy. Sổ lệnh 10 bước giá ghi từ 25/09 cho phép đo thẳng điều đó, thay vì đoán từ hình nến. Cần khoảng 20 phiên (giữa tháng 10). Sẽ giao sau, và **chỉ nếu** đợt 98 không cho thấy `sweep` hoàn toàn vô nghĩa.
 - **SMC trên cổ phiếu nến ngày:** chỉ chiều mua, có benchmark buy-and-hold. Chưa giao, vì phí 0,60% và không bán khống khiến kỳ vọng còn thấp hơn.
+
+
+---
+
+## 7. Kết quả và quyết định của Claude (26/09)
+
+**Kết quả (chạy đúng một lần, Claude tái lập độc lập m = +0,676):** 8/9 cặp KHÔNG. `sweep` và `bos`: 6/6 không tín hiệu, m âm, số sự kiện đủ (≥157 mỗi chiều), nên đây là âm thật chứ không phải thiếu dữ liệu. Chỉ **`fvg × fwd_3`** qua cả hai cổng: rho_sau 0,0544 so với ngưỡng 0,0534 (hơn 1,9%), m +0,676 so với chi phí 0,5004.
+
+**Vì sao chưa coi là tín hiệu:**
+1. **Biên thống kê mỏng.** Với FWER 5% trên 9 cặp, luôn có khoảng 5% khả năng ít nhất một cặp vượt ngưỡng do may. Cặp này vượt 1,9%, và hai khung bên cạnh (`fwd_1`, `fwd_6`) đều dưới ngưỡng.
+2. **Chi phí trong brief thiếu spread.** Chi phí 0,5004 chỉ gồm phí và thuế. Đợt 93 đo spread trung vị VN30F = **0,2 điểm**. Vào và ra bằng lệnh thị trường mất khoảng 0,2 điểm nữa, nên chi phí thật khoảng **0,70 điểm**, lớn hơn m = 0,676. Đây là **chỗ hở của brief** (của planner), không phải lỗi của agent.
+3. **Tỷ lệ thắng 52,3%.** m dương là nhờ một số nhịp lớn, không phải thắng đều.
+4. Mô tả (không phải kiểm định): m dương ở cả hai nửa IS (+0,540 / +0,813) và cả hai chiều (+0,557 / +0,789). Chưa có dấu hiệu là một cú ăn may trong một giai đoạn.
+
+**Quyết định:**
+- **Tập từ 01/08 KHÔNG mở bây giờ.** Hiện mới có khoảng 38 phiên; mở sớm là dùng mất tập kiểm chứng duy nhất với sức mạnh thấp.
+- **Đăng ký trước phép kiểm chứng duy nhất,** chạy **một lần** khi tập từ 01/08 đủ **≥ 60 phiên** (khoảng cuối tháng 10):
+  - Chỉ một cặp: `fvg × fwd_3`, định nghĩa y hệt §1.2, lưới 48 nến bỏ ATC.
+  - Thành công khi **cả hai**: (a) hoán vị khối cho **riêng cặp này**, một phía (dương), p < 0,05; (b) m trên tập kiểm chứng > **phí + thuế + spread trung vị đo từ sổ lệnh của chính giai đoạn đó**.
+  - Không đạt thì đóng hướng SMC. Đạt thì mới bàn tới chuyện thực thi, vì với m cỡ 0,7 điểm, cách vào lệnh (lệnh giới hạn thay vì lệnh thị trường) quyết định lời hay lỗ.
+- Ghi nhận hiện tại: **SMC dạng máy trên VN30F1M không có lợi thế sau chi phí thực.** `sweep`/`bos` âm rõ; `fvg` có thông tin nhưng không đủ trả chi phí thực, và đang chờ kiểm chứng.
