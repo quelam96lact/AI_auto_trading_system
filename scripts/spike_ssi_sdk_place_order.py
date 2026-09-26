@@ -48,6 +48,11 @@ SAFETY_MARGIN = 0.93  # đặt mua ở 93% giá đóng cửa gần nhất — tr
 
 
 async def main() -> None:
+    print(
+        "ĐÃ THAY bằng scripts/drill_place_cancel_order.py (đợt 100) — script này dùng xác thực cũ và có thể đặt giá dưới sàn"
+    )
+    sys.exit(1)
+
     from ssi_sdk import AsyncData, AsyncTrading
     from ssi_sdk.enums import OrderSide
 
