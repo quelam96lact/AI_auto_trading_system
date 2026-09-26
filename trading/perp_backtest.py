@@ -14,6 +14,7 @@ Ràng buộc & quy ước:
 
 import random
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -74,6 +75,19 @@ class PerpReport:
     orders_dropped: int = 0  # loại bỏ bởi 3 phép lọc quản trị lệnh của module B
 
 
+def _flow_ok(
+    entry_filter: Callable[[Bar, str], bool] | None,
+    bar: Bar,
+    side: str,
+) -> bool:
+    """True nếu không truyền filter, hoặc filter chấp nhận tín hiệu tại đúng nến tín hiệu này.
+
+    Tách thành hàm riêng để điều kiện tín hiệu giữ nguyên cấu trúc `if/elif` (không đổi
+    thứ tự ưu tiên Long/Short) và để lần chạy thật dùng CHÍNH hàm này (đợt 105).
+    """
+    return entry_filter is None or entry_filter(bar, side)
+
+
 def run_perp_backtest(
     bars: list[Bar],
     module: Literal["donchian_breakout", "bollinger_mr"],
@@ -85,6 +99,7 @@ def run_perp_backtest(
     max_leverage: float = 10.0,
     use_ema_filter: bool = False,   # chỉ module A
     random_entry: RandomEntryConfig | None = None,
+    entry_filter: Callable[[Bar, str], bool] | None = None,
 ) -> PerpReport:
     """Chạy backtest mô phỏng module perpetual 1H.
 
@@ -97,6 +112,9 @@ def run_perp_backtest(
         risk_fraction: Tỷ lệ rủi ro vốn cho mỗi lệnh (0.005 = 0.5%).
         max_leverage: Trần đòn bẩy tối đa (10.0).
         use_ema_filter: Bật lọc xu hướng EMA50/EMA200 cho Module A.
+        entry_filter: Hàm tuỳ chọn `f(bar_t, side) -> bool`, gọi NGAY TẠI nến tín hiệu t
+            (trước khi tạo lệnh chờ) cho cả hai module; trả False thì bỏ tín hiệu, KHÔNG
+            tạo lệnh chờ. Không áp cho nhánh `random_entry`. Mặc định None = giữ hành vi cũ.
     """
     clean_bars = [b for b in bars if not is_dirty_bar(b)]
     symbol = clean_bars[0].symbol if clean_bars else (bars[0].symbol if bars else "")
@@ -556,7 +574,9 @@ def run_perp_backtest(
                                 ema_short_ok = ema50_val < ema200_val
 
                         # Tín hiệu Long
-                        if b.close > upper_20 and clv >= 0.65 and ema_long_ok:
+                        if b.close > upper_20 and clv >= 0.65 and ema_long_ok and _flow_ok(
+                            entry_filter, b, "LONG"
+                        ):
                             signals_generated += 1
                             pending_order = {
                                 "side": "LONG",
@@ -567,7 +587,9 @@ def run_perp_backtest(
                                 "created_bar_idx": i,
                             }
                         # Tín hiệu Short
-                        elif b.close < lower_20 and clv <= 0.35 and ema_short_ok:
+                        elif b.close < lower_20 and clv <= 0.35 and ema_short_ok and _flow_ok(
+                            entry_filter, b, "SHORT"
+                        ):
                             signals_generated += 1
                             pending_order = {
                                 "side": "SHORT",
@@ -614,6 +636,7 @@ def run_perp_backtest(
                             and b.close > lower_t
                             and b.close > b.open
                             and pct_b <= 0.25
+                            and _flow_ok(entry_filter, b, "LONG")
                         ):
                             signals_generated += 1
                             pending_order = {
@@ -631,6 +654,7 @@ def run_perp_backtest(
                             and b.close < upper_t
                             and b.close < b.open
                             and pct_b >= 0.75
+                            and _flow_ok(entry_filter, b, "SHORT")
                         ):
                             signals_generated += 1
                             pending_order = {

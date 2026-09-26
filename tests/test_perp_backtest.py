@@ -431,3 +431,120 @@ def test_filter_module_b_distance_to_middle():
     bars_fail.append(_make_bar(272, 99.0, 102.0, 98.5, 101.0))
     rep_fail = run_perp_backtest(bars_fail, "bollinger_mr", fee_rate=BINGX_PERP_TAKER, slippage_bps=0.0)
     assert len(rep_fail.trades) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tham số entry_filter (đợt 105) — lọc tín hiệu theo order flow
+# ---------------------------------------------------------------------------
+
+def _module_a_one_signal_bars() -> list[Bar]:
+    """Chuỗi bar Module A sinh ĐÚNG một tín hiệu LONG tại bar 270 (như test 1)."""
+    bars = _build_module_a_base_bars(270)
+    bars.append(_make_bar(270, 101.0, 105.0, 100.0, 104.5))
+    bars.append(_make_bar(271, 102.0, 103.0, 101.5, 102.5))
+    bars.append(_make_bar(272, 102.5, 115.0, 90.0, 100.0))
+    return bars
+
+
+def test_entry_filter_true_matches_baseline():
+    """18. entry_filter luôn True phải cho kết quả Y HỆT lần chạy không truyền filter."""
+    bars = _module_a_one_signal_bars()
+    base = run_perp_backtest(bars, "donchian_breakout", fee_rate=BINGX_PERP_TAKER, slippage_bps=0.0)
+    always_true = run_perp_backtest(
+        bars,
+        "donchian_breakout",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        entry_filter=lambda b, d: True,
+    )
+    assert always_true.signals_generated == base.signals_generated
+    assert len(always_true.trades) == len(base.trades) == 1
+    assert always_true.ending_capital == base.ending_capital
+    assert always_true.trades[0].net_pnl == base.trades[0].net_pnl
+
+
+def test_entry_filter_false_blocks_signal():
+    """19. entry_filter luôn False -> 0 lệnh, và filter PHẢI được gọi (không bị bỏ qua)."""
+    bars = _module_a_one_signal_bars()
+    calls: list = []
+    rep = run_perp_backtest(
+        bars,
+        "donchian_breakout",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        entry_filter=lambda b, d: calls.append((b.ts, d)) or False,
+    )
+    assert rep.trades == []
+    assert len(calls) == 1
+    assert rep.ending_capital == 500.0
+
+
+def test_entry_filter_sees_signal_bar_not_entry_bar():
+    """20. filter nhận ĐÚNG nến tín hiệu t (270) + hướng, KHÔNG phải nến vào lệnh t+1 (271)."""
+    bars = _module_a_one_signal_bars()
+    seen: list = []
+    rep = run_perp_backtest(
+        bars,
+        "donchian_breakout",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        entry_filter=lambda b, d: seen.append((b.ts, d)) or False,
+    )
+    assert seen == [(bars[270].ts, "LONG")]
+    assert rep.trades == []
+    # Không truyền filter -> chính nến đó sinh 1 lệnh (chứng minh filter là thứ chặn)
+    base = run_perp_backtest(bars, "donchian_breakout", fee_rate=BINGX_PERP_TAKER, slippage_bps=0.0)
+    assert len(base.trades) == 1
+
+
+def test_entry_filter_none_keeps_old_behaviour():
+    """21. entry_filter=None tường minh == không truyền tham số."""
+    bars = _module_a_one_signal_bars()
+    no_kwarg = run_perp_backtest(
+        bars, "donchian_breakout", fee_rate=BINGX_PERP_TAKER, slippage_bps=0.0
+    )
+    explicit_none = run_perp_backtest(
+        bars,
+        "donchian_breakout",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        entry_filter=None,
+    )
+    assert len(no_kwarg.trades) == len(explicit_none.trades) == 1
+    assert no_kwarg.ending_capital == explicit_none.ending_capital
+    assert no_kwarg.signals_generated == explicit_none.signals_generated
+
+
+def test_entry_filter_not_called_on_random_entry():
+    """23. Khi dùng random_entry, filter KHÔNG được gọi (nhánh ngẫu nhiên không lọc flow)."""
+    from trading.perp_backtest import RandomEntryConfig
+
+    bars = _module_a_one_signal_bars()
+    seen: list = []
+    rep = run_perp_backtest(
+        bars,
+        "donchian_breakout",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        random_entry=RandomEntryConfig(seed=7, signal_prob=0.5),
+        entry_filter=lambda b, d: seen.append((b.ts, d)) or True,
+    )
+    assert seen == []
+    assert rep.signals_generated > 0  # nhánh ngẫu nhiên CÓ phát tín hiệu (nên phép thử có nghĩa)
+
+
+def test_entry_filter_applies_to_module_b():
+    """22. filter cũng được gọi cho Module B (không chỉ module A)."""
+    bars = _generate_valid_module_b_bars()
+    bars.append(_make_bar(271, 98.0, 98.5, 97.5, 98.0))
+    bars.append(_make_bar(272, 98.0, 102.0, 97.5, 101.0))
+    seen: list = []
+    rep = run_perp_backtest(
+        bars,
+        "bollinger_mr",
+        fee_rate=BINGX_PERP_TAKER,
+        slippage_bps=0.0,
+        entry_filter=lambda b, d: seen.append((b.ts, d)) or False,
+    )
+    assert rep.trades == []
+    assert seen == [(bars[270].ts, "LONG")]
