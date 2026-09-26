@@ -134,3 +134,6 @@ Có gì khác dự báo thì **báo nguyên văn, không sửa, không đoán ng
 4. Nguyên văn lần chạy thật ngày 24/09.
 5. Pytest và ruff.
 6. Mọi điều thấy ngoài phạm vi: **báo cáo, không sửa.** Đặc biệt: nếu thấy mã active nào **không có nến nào** trong 30 ngày (bị đình chỉ hẳn), chỉ liệt kê. Đó là loại khác, chưa giao.
+
+
+> **Cập nhật 26/09:** mục nghiệm thu thứ Hai của brief này đã được gom vào **brief đợt 104** (`2026-09-26-brief-dot-104-nghiem-thu-ngay-tu-dong-dau-tien-28-09.md`). Làm theo brief 104, không làm riêng mục ở đây.

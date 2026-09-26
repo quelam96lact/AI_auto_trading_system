@@ -204,3 +204,6 @@ Hai lớp cho cùng một lỗi là có chủ ý, không phải trùng lặp.
 **Việc chặn duy nhất vẫn là biểu phí phái sinh** — cần chủ dự án lấy từ SSI/HNX/VSD kèm nguồn. Trước khi có
 nó, hướng phái sinh dừng ở sàng lọc tín hiệu, không đi tới backtest được. Việc thu dữ liệu sổ lệnh (20 phiên,
 tới khoảng giữa tháng 10) chạy song song và **không** chờ biểu phí.
+
+
+> **Cập nhật 26/09:** mục nghiệm thu thứ Hai của brief này đã được gom vào **brief đợt 104** (`2026-09-26-brief-dot-104-nghiem-thu-ngay-tu-dong-dau-tien-28-09.md`). Làm theo brief 104, không làm riêng mục ở đây.
