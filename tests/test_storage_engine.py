@@ -5,6 +5,7 @@ import pytest
 from tests.conftest import TEST_DSN
 from trading.broker import Fill, Position
 from trading.calendar_vn import TZ
+from trading.models import Bar
 from trading.storage.db import Storage
 
 DSN = TEST_DSN
@@ -17,6 +18,7 @@ def storage():
     s.init_schema()
     with s.conn() as c:
         c.execute("DELETE FROM positions WHERE symbol = 'TEST'")
+        c.execute("DELETE FROM bars_daily WHERE symbol IN ('TESTFRI', 'TESTOTH')")
         c.execute("DELETE FROM orders WHERE symbol = 'TEST'")
         c.execute("DELETE FROM pnl_daily WHERE date = '2026-07-15'")
         c.execute("DELETE FROM engine_state WHERE id = 1")
@@ -97,4 +99,17 @@ def test_read_last_buy_date(storage):
     f_sell = Fill("TEST", "SELL", 100, 11.0, 10.0, datetime(2026, 9, 16, 14, 0, tzinfo=TZ), pnl=50.0)
     storage.write_order(f_sell)
     assert storage.read_last_buy_date("TEST") == date(2026, 9, 15)
+
+
+def test_read_daily_bar_dates_tra_ngay_vn(storage):
+    """Dot 97: nen daily luu 00:00 VN (= 17:00 UTC hom truoc). Ham phai tra NGAY VN,
+    va chi trong [start, end). ts::date se tra thu Nam cho nen thu Sau."""
+    bars = [
+        Bar("TESTFRI", datetime(2026, 9, 18, 0, 0, tzinfo=TZ), 1, 1, 1, 1, 10),  # thu Sau
+        Bar("TESTFRI", datetime(2026, 9, 25, 0, 0, tzinfo=TZ), 1, 1, 1, 1, 10),  # thu Sau, = end
+        Bar("TESTOTH", datetime(2026, 9, 18, 0, 0, tzinfo=TZ), 1, 1, 1, 1, 10),
+    ]
+    storage.write_daily(bars)
+    out = storage.read_daily_bar_dates(["TESTFRI"], date(2026, 9, 1), date(2026, 9, 25))
+    assert out == {"TESTFRI": [date(2026, 9, 18)]}
 

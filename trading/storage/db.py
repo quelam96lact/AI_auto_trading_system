@@ -1075,6 +1075,25 @@ class Storage:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def read_daily_bar_dates(
+        self, symbols: list[str], start: date, end: date
+    ) -> dict[str, list[date]]:
+        """{ma: [ngay VN co bar daily]} voi start <= ngay < end. Dung cho phep loc
+        ma chi-thu-Sau cua daily_data_check (dot 97). Ngay quy ve Asia/Ho_Chi_Minh:
+        bars_daily luu 00:00 VN = 17:00 UTC hom truoc, ts::date se lui mot ngay."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT symbol, (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date FROM bars_daily "
+                "WHERE (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= %s "
+                "AND (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date < %s "
+                "AND symbol = ANY(%s)",
+                (start, end, list(symbols)),
+            ).fetchall()
+        out: dict[str, list[date]] = {}
+        for sym, d in rows:
+            out.setdefault(sym, []).append(d)
+        return out
+
     def read_symbols_with_bar_on_date(
         self, day: date, symbols: list[str] | None = None
     ) -> set[str]:

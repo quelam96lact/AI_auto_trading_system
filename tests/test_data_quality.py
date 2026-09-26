@@ -323,6 +323,9 @@ def test_daily_data_check_union_includes_must_price(monkeypatch):
         def read_symbols_with_bar_on_date(self, d):
             return {"VCB", "SSI"}
 
+        def read_daily_bar_dates(self, symbols, start, end):
+            return {}  # dot 97: khong co lich su -> khong loai ma nao, hanh vi test giu nguyen
+
     class FakeCfg:
         ssi_equity_accounts: ClassVar[list[str]] = ["CAP"]
         symbols: ClassVar[list[str]] = []
@@ -549,6 +552,9 @@ def test_daily_data_check_khong_noi_doi_khi_gui_telegram_that_bai(monkeypatch, c
 
         def read_symbols_with_bar_on_date(self, d):
             return {"VCB", "SSI"}
+
+        def read_daily_bar_dates(self, symbols, start, end):
+            return {}  # dot 97: khong co lich su -> khong loai ma nao, hanh vi test giu nguyen
 
     class FakeCfg:
         ssi_equity_accounts: ClassVar[list[str]] = ["CAP"]

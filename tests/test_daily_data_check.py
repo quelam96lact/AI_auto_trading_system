@@ -9,13 +9,16 @@ KHONG sua scripts/daily_data_check.py — day la characterization test: ghim
 hanh vi HIEN CO, khong phai refactor.
 """
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from scripts.daily_data_check import (
     check_backfill_completed,
     evaluate_daily_completeness,
+    friday_only_symbols,
+    get_previous_trading_day,
 )
+from trading.calendar_vn import TZ
 
 
 def test_active_symbols_rong_thi_code_0():
@@ -194,4 +197,209 @@ def test_task4_check_backfill_completed(tmp_path: Path):
 
     # 4. Khác ngày -> False
     assert check_backfill_completed(log_file, date(2026, 9, 26)) is False
+
+
+# ============ Brief 97 Task 2: Mã chỉ giao dịch thứ Sáu ============
+
+
+def test_task2_khong_bao_oan_kiem_thu_hai_va_pom_thieu():
+    """1. (b) Không báo oan: POM có nến 6 thứ Sáu gần nhất; kiểm thứ Hai và POM thiếu -> exit 0, không WARN."""
+    pom_fridays = [
+        date(2026, 9, 18),
+        date(2026, 9, 11),
+        date(2026, 9, 4),
+        date(2026, 8, 28),
+        date(2026, 8, 21),
+        date(2026, 8, 14),
+    ]
+    check_monday = date(2026, 9, 21)
+    excluded = friday_only_symbols({"POM": pom_fridays}, check_date=check_monday)
+    assert "POM" in excluded
+
+    code, missing, msg = evaluate_daily_completeness(
+        active_symbols=["POM", "HPG"],
+        present_symbols={"HPG"},
+        is_trading_day=True,
+        backfill_done=True,
+        excluded_symbols=excluded,
+    )
+    assert code == 0
+    assert missing == set()
+    assert "Loại 1 mã chỉ giao dịch thứ Sáu (POM)" in msg
+
+
+def test_task2_van_bat_thu_sau_pom_thieu_thi_warn():
+    """2. (a) Vẫn bắt thứ Sáu: cùng lịch sử đó; kiểm thứ Sáu và POM thiếu -> WARN, có tên POM."""
+    pom_fridays = [
+        date(2026, 9, 18),
+        date(2026, 9, 11),
+        date(2026, 9, 4),
+        date(2026, 8, 28),
+        date(2026, 8, 21),
+        date(2026, 8, 14),
+    ]
+    check_friday = date(2026, 9, 25)
+    excluded = friday_only_symbols({"POM": pom_fridays}, check_date=check_friday)
+    assert "POM" not in excluded
+
+    code, missing, msg = evaluate_daily_completeness(
+        active_symbols=["POM", "HPG"],
+        present_symbols={"HPG"},
+        is_trading_day=True,
+        backfill_done=True,
+        excluded_symbols=excluded,
+    )
+    assert code == 1
+    assert missing == {"POM"}
+    assert "POM" in msg
+
+
+def test_task2_khong_lam_mu_ma_thuong_hpg_thieu_thi_warn():
+    """3. (a) Không làm mù mã thường: HPG có nến mọi ngày; kiểm thứ Hai và HPG thiếu -> WARN."""
+    hpg_dates = [
+        date(2026, 9, 18),  # T6
+        date(2026, 9, 17),  # T5
+        date(2026, 9, 16),  # T4
+        date(2026, 9, 15),  # T3
+        date(2026, 9, 14),  # T2
+    ]
+    check_monday = date(2026, 9, 21)
+    excluded = friday_only_symbols({"HPG": hpg_dates}, check_date=check_monday)
+    assert "HPG" not in excluded
+
+    code, missing, msg = evaluate_daily_completeness(
+        active_symbols=["HPG", "AAA"],
+        present_symbols={"AAA"},
+        is_trading_day=True,
+        backfill_done=True,
+        excluded_symbols=excluded,
+    )
+    assert code == 1
+    assert missing == {"HPG"}
+    assert "HPG" in msg
+
+
+def test_task2_mau_so_dung_174_ma_ghi_ro_loai_pom():
+    """4. (c) Mẫu số: 175 mã, 1 mã chỉ-thứ-Sáu, kiểm thứ Hai -> báo cáo ghi 174 mã được kiểm, và ghi rõ đã loại POM."""
+    active_175 = ["POM"] + [f"SYM{i:03d}" for i in range(174)]
+    present_174 = set(active_175[1:])
+    excluded = {"POM"}
+
+    code, missing, msg = evaluate_daily_completeness(
+        active_symbols=active_175,
+        present_symbols=present_174,
+        is_trading_day=True,
+        backfill_done=True,
+        excluded_symbols=excluded,
+    )
+    assert code == 0
+    assert missing == set()
+    assert "174" in msg
+    assert "Loại 1 mã chỉ giao dịch thứ Sáu (POM)" in msg
+
+
+def test_task2_quay_lai_binh_thuong_khi_co_nen_ngay_khac():
+    """5. Quay lại bình thường: POM có thêm một nến thứ Ba trong cửa sổ -> không còn là chỉ-thứ-Sáu."""
+    pom_dates = [
+        date(2026, 9, 18),  # T6
+        date(2026, 9, 15),  # T3
+        date(2026, 9, 11),  # T6
+        date(2026, 9, 4),   # T6
+    ]
+    check_monday = date(2026, 9, 21)
+    excluded = friday_only_symbols({"POM": pom_dates}, check_date=check_monday)
+    assert "POM" not in excluded
+
+
+def test_task2_qua_it_du_lieu_duoi_3_nen_van_kiem_binh_thuong():
+    """6. Quá ít dữ liệu: mã chỉ có 2 nến, cả hai là thứ Sáu -> không được coi là chỉ-thứ-Sáu (chưa đủ 3), vẫn kiểm bình thường."""
+    sym_dates = [
+        date(2026, 9, 18),  # T6
+        date(2026, 9, 11),  # T6 (chỉ 2 nến)
+    ]
+    check_monday = date(2026, 9, 21)
+    excluded = friday_only_symbols({"NEW": sym_dates}, check_date=check_monday)
+    assert "NEW" not in excluded
+
+
+def test_task2_cua_so_30_ngay_dem_bang_is_trading_day_va_holidays():
+    """7. Ngày lễ: cửa sổ 30 ngày giao dịch đếm bằng trading.calendar_vn.is_trading_day với holidays."""
+    holidays = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
+    check_monday = date(2026, 9, 21)
+    pom_fridays = [
+        date(2026, 9, 18),
+        date(2026, 9, 11),
+        date(2026, 9, 4),
+        date(2026, 8, 28),
+    ]
+    excluded = friday_only_symbols({"POM": pom_fridays}, check_date=check_monday, holidays=holidays)
+    assert "POM" in excluded
+
+
+def test_task2_tinh_ngay_theo_gio_vn_khong_theo_utc():
+    """Kiểm tra múi giờ VN vs UTC: nến ngày 00:00 VN = 17:00 UTC hôm trước.
+    Thứ Sáu 25/09 00:00 VN tương đương Thứ Năm 24/09 17:00 UTC.
+    Hàm phải tính đúng Thứ Sáu theo giờ VN."""
+    dt_fridays = [
+        datetime(2026, 9, 18, 0, 0, tzinfo=TZ),
+        datetime(2026, 9, 11, 0, 0, tzinfo=TZ),
+        datetime(2026, 9, 4, 0, 0, tzinfo=TZ),
+    ]
+    check_monday = date(2026, 9, 21)
+    excluded = friday_only_symbols({"POM": dt_fridays}, check_date=check_monday)
+    assert "POM" in excluded
+
+
+# ============ Brief 97 Task 3: Hoãn hai ngày giao dịch liên tiếp thì phải leo thang ============
+
+
+def test_task3_hom_nay_chua_xong_hom_qua_xong_exit_1():
+    """1. Hôm nay chưa xong, hôm qua xong -> exit 1 (hoãn như cũ)."""
+    code, _missing, msg = evaluate_daily_completeness(
+        active_symbols=["AAA"],
+        present_symbols=set(),
+        is_trading_day=True,
+        backfill_done=False,
+        prev_backfill_done=True,
+    )
+    assert code == 1
+    assert "HOÃN PHÁN QUYẾT" in msg
+
+
+def test_task3_hom_nay_chua_xong_hom_qua_cung_chua_xong_exit_2_critical():
+    """2. Hôm nay chưa xong, hôm qua cũng chưa xong -> exit 2, CRITICAL."""
+    code, _missing, msg = evaluate_daily_completeness(
+        active_symbols=["AAA"],
+        present_symbols=set(),
+        is_trading_day=True,
+        backfill_done=False,
+        prev_backfill_done=False,
+    )
+    assert code == 2
+    assert "CRITICAL" in msg
+    assert "backfill-universe không hoàn thành 2 ngày giao dịch liên tiếp" in msg
+
+
+def test_task3_get_previous_trading_day_bo_qua_cuoi_tuan_va_ngay_le():
+    """3. Hôm nay là thứ Hai: ngày liền trước là thứ Sáu (bỏ qua T7, CN)."""
+    holidays = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
+    # Thứ Hai 21/09 -> Thứ Sáu 18/09
+    assert get_previous_trading_day(date(2026, 9, 21), holidays) == date(2026, 9, 18)
+    # Thứ Năm 03/09 (sau lễ 31/08 - 02/09) -> Thứ Sáu 28/08
+    assert get_previous_trading_day(date(2026, 9, 3), holidays) == date(2026, 8, 28)
+
+
+def test_task3_hom_nay_xong_kiem_binh_thuong():
+    """4. Hôm nay xong -> hành vi kiểm bình thường, không bị ảnh hưởng."""
+    code, missing, msg = evaluate_daily_completeness(
+        active_symbols=["AAA", "HPG"],
+        present_symbols={"AAA", "HPG"},
+        is_trading_day=True,
+        backfill_done=True,
+        prev_backfill_done=False,
+    )
+    assert code == 0
+    assert missing == set()
+    assert "Đầy đủ" in msg
+
 

@@ -16,7 +16,7 @@ CLI:
 
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Đảm bảo import được _db_common và trading
@@ -79,49 +79,137 @@ def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
     return False
 
 
+def get_previous_trading_day(
+    target_date: date, holidays: set[date] | frozenset = frozenset()
+) -> date:
+    """Tìm ngày giao dịch liền trước target_date (bỏ qua cuối tuần và ngày lễ)."""
+    cur = target_date - timedelta(days=1)
+    while not is_trading_day(cur, holidays):
+        cur -= timedelta(days=1)
+    return cur
+
+
+FRIDAY_ONLY_WINDOW_TRADING_DAYS = 30
+
+
+def recent_trading_days(
+    check_date: date, n: int, holidays: set[date] | frozenset = frozenset()
+) -> set[date]:
+    """n ngay giao dich gan nhat TRUOC check_date (khong gom check_date).
+
+    Mot cho duy nhat: friday_only_symbols() va truy van cua main() cung dung ham nay,
+    de cua so cua phep loc va cua cau SQL khong the lech nhau."""
+    days: set[date] = set()
+    cur = check_date - timedelta(days=1)
+    while len(days) < n:
+        if is_trading_day(cur, holidays):
+            days.add(cur)
+        cur -= timedelta(days=1)
+    return days
+
+
+def friday_only_symbols(
+    bar_dates_by_symbol: dict[str, list[date | datetime]],
+    check_date: date,
+    holidays: set[date] | frozenset = frozenset(),
+) -> set[str]:
+    """Tìm tập các mã 'chỉ-thứ-Sáu' cần loại khi kiểm tra vào các ngày không phải thứ Sáu.
+
+    Quy tắc (Brief 97 Task 2):
+    - Ngày kiểm tra là thứ Sáu (check_date.weekday() == 4): không loại mã nào (trả về set rỗng).
+    - Cửa sổ: 30 ngày giao dịch gần nhất trước ngày kiểm tra (sử dụng is_trading_day với holidays).
+    - Một mã là 'chỉ-thứ-Sáu' nếu trong cửa sổ đó:
+        * có ít nhất 3 nến (len(dates_in_window) >= 3)
+        * VÀ mọi nến đều rơi vào thứ Sáu (all(d.weekday() == 4 theo giờ VN)).
+    """
+    if check_date.weekday() == 4:
+        return set()
+
+    window_days = recent_trading_days(check_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays)
+
+    result: set[str] = set()
+    for sym, raw_dates in bar_dates_by_symbol.items():
+        # Chuyển đổi an toàn sang date theo giờ VN nếu phần tử là datetime
+        dates: list[date] = []
+        for d in raw_dates:
+            if isinstance(d, datetime):
+                dates.append(d.astimezone(TZ).date())
+            else:
+                dates.append(d)
+
+        dates_in_window = [d for d in dates if d in window_days]
+        if len(dates_in_window) >= 3 and all(d.weekday() == 4 for d in dates_in_window):
+            result.add(sym)
+
+    return result
+
+
 def evaluate_daily_completeness(
     active_symbols: list[str],
     present_symbols: set[str],
     is_trading_day: bool = False,
     backfill_done: bool = True,
+    excluded_symbols: set[str] | None = None,
+    prev_backfill_done: bool = True,
 ) -> tuple[int, set[str], str]:
     """Hàm thuần đánh giá trạng thái bar daily của các mã active.
 
     Trả về: (exit_code, missing_symbols, message)
     - exit_code 0: Đầy đủ bar, HOẶC ngày nghỉ không có bar (nhường 2A).
-    - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác, HOẶC hoãn phán quyết do backfill chưa xong.
-    - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar VÀ backfill đã hoàn tất (sự cố dữ liệu thật).
+    - exit_code 1: Sót mã active khi feed vẫn có dữ liệu các mã khác, HOẶC hoãn phán quyết do backfill chưa xong 1 ngày.
+    - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar VÀ backfill đã hoàn tất (sự cố dữ liệu thật),
+                   HOẶC backfill chưa hoàn thành 2 ngày giao dịch liên tiếp (CRITICAL leo thang - Brief 97 Task 3).
     """
-    if not active_symbols:
+    excluded = (set(excluded_symbols) & set(active_symbols)) if excluded_symbols else set()
+    effective_active = [s for s in active_symbols if s not in excluded]
+
+    if not effective_active:
         return 0, set(), "Không có mã active nào trong symbol_universe."
+
+    # Ghi chú về các mã được loại trừ (nếu có)
+    excluded_note = ""
+    if excluded:
+        excluded_list = sorted(excluded)
+        excluded_note = f"\nLoại {len(excluded)} mã chỉ giao dịch thứ Sáu ({', '.join(excluded_list)})"
 
     # Nếu toàn bộ thị trường 0 có bar nào:
     if not present_symbols:
         if is_trading_day:
             if not backfill_done:
+                if not prev_backfill_done:
+                    # Task 3: 2 ngày giao dịch liên tiếp chưa hoàn thành backfill -> CRITICAL leo thang, exit 2
+                    msg = (
+                        "🚨 [AI Trading] SỰ CỐ DỮ LIỆU CRITICAL: backfill-universe không hoàn thành 2 ngày giao dịch liên tiếp "
+                        "(ngày kiểm tra và ngày giao dịch liền trước đều chưa hoàn tất)!"
+                        f"{excluded_note}"
+                    )
+                    return 2, set(effective_active), msg
+
                 msg = (
                     "⚠️ [AI Trading] HOÃN PHÁN QUYẾT: Ngày giao dịch nhưng 0 mã nào có bar daily trong DB, "
                     "và tác vụ backfill-universe chưa hoàn tất (dữ liệu chưa về). Hoãn phán quyết, không báo đỏ sai."
+                    f"{excluded_note}"
                 )
-                return 1, set(active_symbols), msg
+                return 1, set(effective_active), msg
 
             msg = (
                 f"🚨 [AI Trading] SỰ CỐ DỮ LIỆU: Ngày giao dịch nhưng 0 mã nào có bar daily trong DB "
-                f"(toàn bộ {len(active_symbols)} mã active thiếu bar)!"
+                f"(toàn bộ {len(effective_active)} mã active thiếu bar)!"
+                f"{excluded_note}"
             )
-            return 2, set(active_symbols), msg
+            return 2, set(effective_active), msg
         return (
             0,
             set(),
-            "Không có mã nào có bar trong ngày (ngày nghỉ hoặc feed ngừng toàn diện — nhường Heartbeat 2A).",
+            f"Không có mã nào có bar trong ngày (ngày nghỉ hoặc feed ngừng toàn diện — nhường Heartbeat 2A).{excluded_note}",
         )
 
-    missing = set(active_symbols) - set(present_symbols)
+    missing = set(effective_active) - set(present_symbols)
     if not missing:
         return (
             0,
             set(),
-            f"Đầy đủ: toàn bộ {len(active_symbols)} mã active đều đã có bar daily.",
+            f"Đầy đủ: toàn bộ {len(effective_active)} mã active đều đã có bar daily.{excluded_note}",
         )
 
     missing_list = sorted(missing)
@@ -131,9 +219,10 @@ def evaluate_daily_completeness(
 
     msg = (
         f"⚠️ [AI Trading] CẢNH BÁO: Sót bar daily sau phiên!\n"
-        f"Tổng số mã active: {len(active_symbols)}\n"
-        f"Số mã có bar: {len(set(active_symbols) & set(present_symbols))}\n"
+        f"Tổng số mã active: {len(effective_active)}\n"
+        f"Số mã có bar: {len(set(effective_active) & set(present_symbols))}\n"
         f"Số mã THIẾU bar ({len(missing)} mã): {sample_missing}"
+        f"{excluded_note}"
     )
     return 1, missing, msg
 
@@ -169,18 +258,37 @@ def main() -> None:
         )
         active_symbols = sorted(set(active) | set(must_price))
         present_symbols = storage.read_symbols_with_bar_on_date(target_date)
+
+        # Brief 97 Task 2: Xác định các mã chỉ giao dịch thứ Sáu
+        holidays = cfg.holidays
+        bar_dates_by_symbol: dict[str, list[date]] = {}
+        if target_date.weekday() != 4:
+            min_date = min(
+                recent_trading_days(target_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays)
+            )
+            bar_dates_by_symbol = storage.read_daily_bar_dates(
+                active_symbols, min_date, target_date
+            )
+
+        excluded = friday_only_symbols(bar_dates_by_symbol, target_date, holidays)
     except Exception as e:
         _print_safe(f"LỖI TRUY VẤN DB: {e}")
         sys.exit(2)
 
-    holidays = cfg.holidays
     trading_day = is_trading_day(target_date, holidays)
 
     backfill_log = Path("logs/backfill.log")
     backfill_done = check_backfill_completed(backfill_log, target_date)
+    prev_date = get_previous_trading_day(target_date, holidays)
+    prev_backfill_done = check_backfill_completed(backfill_log, prev_date)
 
     code, _missing, msg = evaluate_daily_completeness(
-        active_symbols, present_symbols, is_trading_day=trading_day, backfill_done=backfill_done
+        active_symbols,
+        present_symbols,
+        is_trading_day=trading_day,
+        backfill_done=backfill_done,
+        excluded_symbols=excluded,
+        prev_backfill_done=prev_backfill_done,
     )
 
     _print_safe(f"[{target_date}] {msg}")
