@@ -351,3 +351,77 @@ def test_daily_pnl_resets_next_day_and_does_not_halt_forever():
             f"daily_pnl ngay 16 = {pnl} van mang lo tich luy cua ngay 15"
         )
     assert risk.halted_date is None, "khong duoc halt: ngay 16 chua lo gi"
+
+
+# ============ Brief 96 Task 2: Cảnh báo có khử trùng lặp khi stop chạm nhưng chưa settle ============
+
+
+def test_stop_blocked_warns_once_per_day(monkeypatch):
+    """Brief 96 Task 2: 5 bar trong cùng ngày chạm stop khi sellable_qty == 0
+    phát đúng 1 alert WARN (khử trùng lặp per-symbol-per-day)."""
+    alerts = []
+    monkeypatch.setattr(
+        "trading.engine.logic.alert",
+        lambda level, msg, **kw: alerts.append((level, msg, kw)),
+    )
+    _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),
+            (16, [20.0, 20.5]),  # BUY fill
+            (17, [19.0, 18.5, 18.0, 18.2, 18.1]),  # 5 bar đều chạm stop nhưng chưa settle (D+1)
+        ]
+    )
+    blocked_alerts = [a for a in alerts if "chua ban duoc" in a[1]]
+    assert len(blocked_alerts) == 1, f"phải có đúng 1 alert WARN, thực tế {len(blocked_alerts)}"
+    level, msg, kw = blocked_alerts[0]
+    assert level == "WARN"
+    assert "vi the VCB da cham stop" in msg
+    assert "chua settle T+2.5, sellable_qty=0" in msg
+    assert kw.get("symbol") == "VCB"
+
+
+def test_stop_blocked_warns_again_on_new_day(monkeypatch):
+    """Brief 96 Task 2: Sang ngày hôm sau lại chạm stop -> phát tiếp đúng 1 alert WARN nữa (tổng 2)."""
+    alerts = []
+    monkeypatch.setattr(
+        "trading.engine.logic.alert",
+        lambda level, msg, **kw: alerts.append((level, msg, kw)),
+    )
+    _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),
+            (16, [20.0, 20.5]),  # BUY fill
+            (17, [19.0, 18.5, 18.0]),  # 3 bar chạm stop ngày 17 (D+1) -> 1 alert
+            (18, [18.0, 17.5, 17.0]),  # 3 bar chạm stop ngày 18 (D+2) -> 1 alert nữa
+        ]
+    )
+    blocked_alerts = [a for a in alerts if "chua ban duoc" in a[1]]
+    assert len(blocked_alerts) == 2, f"phải có đúng 2 alert WARN cho 2 ngày, thực tế {len(blocked_alerts)}"
+    for level, msg, kw in blocked_alerts:
+        assert level == "WARN"
+        assert "vi the VCB da cham stop" in msg
+        assert kw.get("symbol") == "VCB"
+
+
+def test_stop_settled_exits_without_blocked_warn(monkeypatch):
+    """Brief 96 Task 2: Khi đã settle, chạm stop -> bán thành công, 0 alert WARN về blocked."""
+    alerts = []
+    monkeypatch.setattr(
+        "trading.engine.logic.alert",
+        lambda level, msg, **kw: alerts.append((level, msg, kw)),
+    )
+    fills, broker, _ = _run_stop_sequence(
+        [
+            (15, [10.0, 10.0, 10.0, 10.0]),
+            (16, [20.0, 20.5]),  # BUY fill
+            (17, [21.0, 22.0]),  # giá lên, không chạm stop
+            (18, [23.0, 24.0]),  # tiếp tục lên
+            (19, [19.0]),        # D+3 (đã settle): chạm stop -> bán thành công
+        ]
+    )
+    blocked_alerts = [a for a in alerts if "chua ban duoc" in a[1]]
+    assert len(blocked_alerts) == 0, f"không được có alert blocked nào, thực tế {len(blocked_alerts)}"
+    sell_fills = [f for f in fills if f.side == "SELL"]
+    assert len(sell_fills) == 1
+    assert broker.position_qty("VCB") == 0
+

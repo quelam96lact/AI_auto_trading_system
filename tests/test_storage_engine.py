@@ -70,3 +70,31 @@ def test_write_order_and_pnl_daily(storage):
             (date(2026, 7, 15),),
         ).fetchone()
     assert row == (45.0, 200.0, 165.0)
+
+
+def test_read_last_buy_date(storage):
+    """Brief 96 Task 1a / Test 6:
+    Đọc ngày mua gần nhất của mã từ bảng orders.
+    - Không có lệnh BUY: trả về None.
+    - Có lệnh BUY cũ: ngày 10/09/2026.
+    - Có lệnh BUY mới hơn lúc 00:30 giờ VN ngày 15/09/2026 (UTC là 17:30 ngày 14/09).
+      Bắt buộc trả về đúng ngày 15/09/2026 giờ VN (bắt bẫy múi giờ).
+    - Có lệnh SELL sau đó (16/09/2026): hàm chỉ lấy BUY gần nhất nên vẫn trả 15/09/2026.
+    """
+    assert storage.read_last_buy_date("TEST") is None
+
+    # BUY 1: 10/09/2026 10:00 VN
+    f1 = Fill("TEST", "BUY", 100, 10.0, 10.0, datetime(2026, 9, 10, 10, 0, tzinfo=TZ))
+    storage.write_order(f1)
+    assert storage.read_last_buy_date("TEST") == date(2026, 9, 10)
+
+    # BUY 2: 00:30 VN ngày 15/09/2026 (17:30 UTC ngày 14/09/2026)
+    f2 = Fill("TEST", "BUY", 100, 10.5, 10.0, datetime(2026, 9, 15, 0, 30, tzinfo=TZ))
+    storage.write_order(f2)
+    assert storage.read_last_buy_date("TEST") == date(2026, 9, 15)
+
+    # SELL: 16/09/2026 (không phải BUY)
+    f_sell = Fill("TEST", "SELL", 100, 11.0, 10.0, datetime(2026, 9, 16, 14, 0, tzinfo=TZ), pnl=50.0)
+    storage.write_order(f_sell)
+    assert storage.read_last_buy_date("TEST") == date(2026, 9, 15)
+

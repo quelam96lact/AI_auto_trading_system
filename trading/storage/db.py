@@ -235,6 +235,22 @@ class Storage:
             ).fetchone()
         return row[0] if row and row[0] is not None else None
 
+    def read_last_buy_date(self, symbol: str) -> date | None:
+        """Ngày (giờ VN) của BUY fill gần nhất trong bảng orders.
+
+        Bảo thủ: nếu mua nhiều lần, lấy lần muộn nhất (không bao giờ bán sớm hơn luật).
+        Bắt buộc dùng (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date để tránh bẫy múi giờ.
+        Trả về None nếu không có lệnh BUY nào.
+        """
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date "
+                "FROM orders WHERE symbol = %s AND side = 'BUY' "
+                "ORDER BY ts DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def read_account_balance_with_debt(self, account_no: str) -> tuple[float, float, datetime] | None:
         """(withdrawable, total_debt, ts) moi nhat — MARGIN-1 tinh NAV can CA no
         (debt). Dung chung bang account_balance_snapshot; total_debt la so SSI

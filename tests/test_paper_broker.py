@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from trading.broker import Position
 from trading.calendar_vn import TZ
@@ -319,3 +319,128 @@ def test_fee_rates_parameterized():
     fill = b.force_exit("VCB", price=10.0, ts=datetime(2026, 7, 18, 9, 10, tzinfo=TZ))
     # SELL: fee = gross*0.001 + gross*0.0 (khong thue ban)
     assert abs(fill.fee - 10.0 * 100 * 0.001) < 1e-9
+
+
+# ============ Brief 96 Task 1: Vị thế khôi phục tính T+ theo ngày mua thật ============
+
+
+def test_restore_with_buy_date_allows_exit_after_settle():
+    """1. Tái hiện lỗi: restore IJC (400 cp) với buy_dates={'IJC': date(2026, 9, 3)}.
+    Bar đầu tiên sau restart là 22/09/2026 (sau >10 ngày giao dịch >> T+3).
+    Trên code cũ: day_index=0 nên force_exit trả qty=0.
+    Trên code mới: k >= 3 nên force_exit bán được đủ 400 cp.
+    """
+    positions = {"IJC": Position("IJC", 400, 7354.0)}
+    b = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions,
+        buy_dates={"IJC": date(2026, 9, 3)},
+    )
+    # Bar đầu tiên sau restart ngày 22/09/2026
+    ts = datetime(2026, 9, 22, 9, 15, tzinfo=TZ)
+    fill = b.force_exit("IJC", price=6720.0, ts=ts)
+    assert fill.qty == 400
+    assert b.position_qty("IJC") == 0
+
+
+def test_restore_boundary_t_plus_counting():
+    """2. Biên T+: mua thứ Năm 17/09/2026 (settle_days=3).
+    - Phép đếm ngày giao dịch d thỏa 17/09 < d <= T:
+      * 18/09 (thứ Sáu): ngày 1
+      * 19/09, 20/09 (thứ Bảy, CN): cuối tuần
+      * 21/09 (thứ Hai): ngày 2
+      * 22/09 (thứ Ba): ngày 3
+    - Ca 1: Bar đầu tiên thứ Hai 21/09 (k=2 < 3) -> chưa settle -> force_exit qty = 0.
+    - Ca 2: Bar đầu tiên thứ Ba 22/09 (k=3 >= 3) -> đã settle -> force_exit qty = 400.
+    """
+    positions_ca1 = {"VCB": Position("VCB", 400, 10.0)}
+    b1 = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions_ca1,
+        buy_dates={"VCB": date(2026, 9, 17)},
+    )
+    fill1 = b1.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 21, 9, 15, tzinfo=TZ))
+    assert fill1.qty == 0
+    assert b1.position_qty("VCB") == 400
+
+    positions_ca2 = {"VCB": Position("VCB", 400, 10.0)}
+    b2 = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions_ca2,
+        buy_dates={"VCB": date(2026, 9, 17)},
+    )
+    fill2 = b2.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 22, 9, 15, tzinfo=TZ))
+    assert fill2.qty == 400
+    assert b2.position_qty("VCB") == 0
+
+
+def test_restore_counts_holidays_correctly():
+    """3. Ngày lễ được đếm đúng: mua thứ Năm 17/09/2026.
+    Có ngày lễ thứ Hai 21/09 (holidays={date(2026, 9, 21)}).
+    Bar đầu tiên thứ Ba 22/09:
+    - 18/09 (T6): ngày giao dịch 1
+    - 19-20/09: cuối tuần
+    - 21/09 (T2): nghỉ lễ (không tính)
+    - 22/09 (T3): ngày giao dịch 2
+    -> k = 2 (< 3) -> chưa đủ T+3 -> force_exit qty = 0.
+    """
+    positions = {"VCB": Position("VCB", 400, 10.0)}
+    b = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions,
+        buy_dates={"VCB": date(2026, 9, 17)},
+        holidays=frozenset({date(2026, 9, 21)}),
+    )
+    fill = b.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 22, 9, 15, tzinfo=TZ))
+    assert fill.qty == 0
+    assert b.position_qty("VCB") == 400
+
+
+def test_restore_without_buy_date_keeps_legacy_day_index_zero():
+    """4. Không có ngày mua (không tìm thấy BUY): hành vi cũ (day_index=0).
+    Bị khóa 3 ngày giao dịch trong cùng tiến trình mới bán được.
+    """
+    positions = {"VCB": Position("VCB", 400, 10.0)}
+    b = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions,
+        buy_dates={},  # khong co VCB
+    )
+    # Ngay dau tien 22/09 (day_index 0): chua ban duoc
+    f1 = b.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 22, 9, 15, tzinfo=TZ))
+    assert f1.qty == 0
+    # Cac ngay tiep theo trong cung tien trinh: 23, 24
+    b.on_bar(Bar("VCB", datetime(2026, 9, 23, 9, 15, tzinfo=TZ), 10, 10, 10, 10, 100))
+    b.on_bar(Bar("VCB", datetime(2026, 9, 24, 9, 15, tzinfo=TZ), 10, 10, 10, 10, 100))
+    # Ngay 25/09 (today = 3): da du 3 ngay giao dich ke tu restart -> ban duoc
+    f2 = b.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 25, 9, 15, tzinfo=TZ))
+    assert f2.qty == 400
+    assert b.position_qty("VCB") == 0
+
+
+def test_restore_default_arguments_backwards_compatible():
+    """5. Không truyền gì (buy_dates=None, holidays=frozenset()):
+    Kết quả giống hệt trước khi sửa.
+    """
+    positions = {"VCB": Position("VCB", 400, 10.0)}
+    b = PaperBroker.restore(
+        capital=100_000_000,
+        cash=90_000_000,
+        realized_pnl=0.0,
+        positions=positions,
+    )
+    # Day 0: khong ban duoc
+    f = b.force_exit("VCB", price=9.5, ts=datetime(2026, 9, 22, 9, 15, tzinfo=TZ))
+    assert f.qty == 0
+    assert b.position_qty("VCB") == 400
+

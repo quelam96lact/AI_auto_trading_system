@@ -183,7 +183,26 @@ async def run(
         alert("INFO", "engine starting fresh", capital=CAPITAL)
     else:
         cash, realized_pnl = state
-        broker = PaperBroker.restore(CAPITAL, cash, realized_pnl, positions)
+        buy_dates: dict[str, date] = {}
+        for sym, pos in positions.items():
+            if pos.qty > 0:
+                buy_date = storage.read_last_buy_date(sym)
+                if buy_date is not None:
+                    buy_dates[sym] = buy_date
+                else:
+                    alert(
+                        "WARN",
+                        f"khong tim thay ngay mua cho {sym}: vi the se bi khoa "
+                        f"3 ngay giao dich theo cach bao thu (day_index=0)",
+                    )
+        broker = PaperBroker.restore(
+            CAPITAL,
+            cash,
+            realized_pnl,
+            positions,
+            buy_dates=buy_dates,
+            holidays=frozenset(cfg.holidays),
+        )
         alert(
             "INFO",
             "engine restored state",

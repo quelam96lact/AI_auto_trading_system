@@ -31,6 +31,7 @@ def process_bar(
     if day_state.get("day") != today:
         day_state["day"] = today
         day_state["start_realized"] = broker.realized_pnl
+        day_state["stop_blocked_alerted"] = set()
 
     fills = broker.on_bar(bar)
     marks[bar.symbol] = bar.close
@@ -58,8 +59,18 @@ def process_bar(
             # (persist_fills ghi moi fill khong loc).
             trailing_stop.on_position_closed(bar.symbol)
             fills.append(forced)
-        # qty=0: stop da cham nhung luat khong cho ban — khong alert de tranh
-        # nhiem (moi bar cham = 1 canh bao); stop se thu lai o bar ke tiep.
+        else:
+            # Brief 96 Task 2: stop đã chạm nhưng chưa settle (qty=0).
+            # Khử trùng lặp: mỗi mã chỉ cảnh báo 1 lần mỗi ngày để tránh bão log.
+            blocked_set = day_state.setdefault("stop_blocked_alerted", set())
+            if bar.symbol not in blocked_set:
+                blocked_set.add(bar.symbol)
+                alert(
+                    "WARN",
+                    f"vi the {bar.symbol} da cham stop {stop_price:.0f} nhung "
+                    f"chua ban duoc (chua settle T+2.5, sellable_qty=0)",
+                    symbol=bar.symbol,
+                )
     elif signal is not None:
         daily_pnl = (
             broker.realized_pnl

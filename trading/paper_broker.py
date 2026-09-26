@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from trading.broker import Fill, Position
+from trading.calendar_vn import is_trading_day
 from trading.models import Bar
 from trading.strategy import Signal
 
@@ -55,14 +56,42 @@ class PaperBroker:
         # nhan bar song). Moi ngay lich moi = 1 ngay giao dich moi.
         self._trade_days: list[date] = []
         self._lots: dict[str, list[Lot]] = {}
+        self._pending_buy_dates: dict[str, date] | None = None
+        self._holidays: frozenset = frozenset()
 
     def _day_index(self, ts: datetime) -> int:
         """Tra index cua ngay giao dich chua `ts`; neu la ngay moi, them vao
         cuoi danh sach (gia dinh bar den theo thu tu thoi gian)."""
         d = ts.date()
         if not self._trade_days or self._trade_days[-1] != d:
+            first_day = len(self._trade_days) == 0
             self._trade_days.append(d)
+            if first_day and self._pending_buy_dates:
+                self._resolve_pending_lots(d)
         return len(self._trade_days) - 1
+
+    def _resolve_pending_lots(self, T: date) -> None:
+        """Brief 96 Task 1b: phân giải lazy day_index cho các vị thế khôi phục.
+
+        k = số ngày giao dịch d thỏa buy_date < d <= T.
+        Gán lot.day_index = -k để tại ngày đầu tiên (today=0),
+        today - lot.day_index = 0 - (-k) = k.
+        """
+        if not self._pending_buy_dates:
+            return
+        for sym, buy_date in self._pending_buy_dates.items():
+            lots = self._lots.get(sym)
+            if not lots:
+                continue
+            k = 0
+            cur = buy_date + timedelta(days=1)
+            while cur <= T:
+                if is_trading_day(cur, self._holidays):
+                    k += 1
+                cur += timedelta(days=1)
+            for lot in lots:
+                lot.day_index = -k
+        self._pending_buy_dates = None
 
     def sellable_qty(self, symbol: str, ts: datetime) -> int:
         """SPEC-1a: phan co the ban hom nay = tong qty cac lo co day_index sao
@@ -192,21 +221,22 @@ class PaperBroker:
         cash: float,
         realized_pnl: float,
         positions: dict[str, Position],
+        buy_dates: dict[str, date] | None = None,
+        holidays: frozenset = frozenset(),
         **kwargs,
     ) -> "PaperBroker":
         broker = cls(capital, **kwargs)
         broker.cash = cash
         broker.realized_pnl = realized_pnl
         broker.positions = positions
-        # SPEC1-FIX Lỗi 2: restore (engine restart) khong co thong tin ngay mua
-        # cua cac vi the. KHONG dung day_index am lon (mo lo hong lac quan: ban
-        # duoc ngay trong paper trong khi live phai doi SSI quyet sellable).
-        # Chon: coi nhu mua o NGAY RESTORE (day_index 0 = bar dau tien sau
-        # restart) — thận trọng, co the khoa nham vi the cu toi da 3 ngay giao
-        # dich, nhung khong bao gio ban som hon luat cho phep. (Cach chinh xac
-        # hon — doc ts BUY fill gan nhat tu bang orders nhu 7b5d6aa dung cho
-        # _highest — can dependency DB trong broker, de sau neu chu du an muon.)
+        # Brief 96 Task 1: Khôi phục vị thế theo ngày mua thật.
+        # Mặc định day_index = 0 cho mọi vị thế (bảo thủ).
+        # Nếu có buy_dates, _day_index sẽ phân giải lazy ngày mua ở bar đầu tiên
+        # theo công thức k = count(trading days buy_date < d <= T) và gán day_index = -k.
         for sym, p in positions.items():
             if p.qty > 0:
                 broker._lots[sym] = [Lot(day_index=0, qty=p.qty)]
+        if buy_dates:
+            broker._pending_buy_dates = dict(buy_dates)
+            broker._holidays = holidays
         return broker
