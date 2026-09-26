@@ -226,3 +226,19 @@ Nếu có cặp nào vượt ngưỡng: chưa phải lợi thế. Bước tiếp
 tháng 8–9 — mà muốn thế thì tập đó phải **còn nguyên**, đó là lý do niêm phong. Nếu không cặp nào vượt:
 đó là phép đo âm thứ năm, và là câu trả lời dứt khoát rằng dữ liệu giá/khối lượng công khai không đủ
 cho hướng này.
+
+
+---
+
+## Phụ lục 26/09 — kiểm lại sau khi phát hiện nến ATC lẫn vào lưới (audit đợt 93)
+
+Thiết kế ở trên dùng đủ **49 nến/phiên, gồm cả nến ATC 14:45**. Brief này không nhắc gì đến ATC, đó là chỗ hở của planner. Hệ quả: nhãn `fwd_k` của các nến cuối phiên vắt qua lần khớp ATC, là một cơ chế khớp khác hẳn khớp lệnh liên tục (1/48 hàng với `fwd_1`, 3/46 với `fwd_3`, 6/43 với `fwd_6`).
+
+Claude chạy lại, **giữ nguyên tiêu chí quyết định** (FWER P95, 1000 hoán vị khối 1 phiên, seed 42), chỉ bỏ 82 nến 14:45 để còn 48 nến/phiên:
+
+| | Phiên | Hàng | rho đối chứng | Ngưỡng P95 | max \|rho_sau\| | Kết quả |
+|---|---|---|---|---|---|---|
+| A. Nguyên bản (tái lập) | 81 | 3969 | 0,9791 | 0,0889 | 0,0473 | 18/18 không tín hiệu |
+| B. Bỏ nến ATC | 81 | 3888 | 0,9924 | 0,0893 | 0,0520 | **18/18 không tín hiệu** |
+
+**Kết luận không đổi.** Phép sàng lọc phái sinh sau này phải dùng lưới **khớp lệnh liên tục**: 09:00–11:30 và 13:00–14:30, không gồm nến 14:45.
