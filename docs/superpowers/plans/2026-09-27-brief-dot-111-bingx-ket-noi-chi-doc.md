@@ -22,6 +22,20 @@ Ghi key vào `.env` với hai biến `BINGX_API_KEY` và `BINGX_API_SECRET`. Kh�
 
 Nếu agent làm lúc chủ dự án chưa có key: mọi test chạy bằng fake, còn bước 5 (thăm dò thật) ghi **"BỎ QUA — chưa có key"**. Đợt vẫn được coi là xong.
 
+## 1b. Cập nhật 27/09: key đã có trong `.env`
+
+Claude kiểm ngày 27/09, **chỉ đọc tên biến, không đọc giá trị**. `.env` đang có `BingX_API_KEY` (85 ký tự) và `BingX_API_SECRET` (82 ký tự).
+
+Tên biến **viết hoa thường lẫn lộn**, khác quy ước của repo (`BINGX_API_KEY`, giống `SSI_*`). Trên Windows biến môi trường không phân biệt hoa thường, nhưng trên VPS Linux thì **có**.
+
+Claude đã đề nghị chủ dự án đổi tên sang `BINGX_API_KEY` / `BINGX_API_SECRET`. Code **chỉ** đọc tên viết hoa. Không thêm nhánh đọc tên khác để "cho chạy được".
+
+Nếu thiếu biến viết hoa, probe phải thoát với mã khác 0 và thông điệp nêu **đúng tên biến cần có**. **Không** in giá trị. Nếu đây là tình huống agent gặp, dán thông điệp đó rồi **dừng bước 5** để chủ dự án đổi tên. Agent **không tự sửa `.env`**.
+
+**Kiểm quyền của key (thêm vào bước 5).** Nếu tài liệu chính thức có endpoint đọc quyền của API key, probe gọi nó và in danh sách quyền. Nếu key đang bật **Trade** hoặc **Withdraw**, probe in **CẢNH BÁO** và thoát với mã khác 0: key của đợt 111 phải là key **chỉ đọc**. Nếu tài liệu không có endpoint như vậy, ghi "không kiểm được quyền bằng API — chủ dự án tự xác nhận trên web BingX".
+
+**Không tự suy ra định dạng key.** Độ dài 85/82 ký tự có thể khác độ dài chuẩn, ví dụ do dấu cách hay chú thích cuối dòng. Nếu xác thực thất bại, in mã lỗi và thông điệp của BingX, rồi báo lại. **Không** đoán nguyên nhân.
+
 ## 2. Phạm vi
 
 | File | Được làm gì |
