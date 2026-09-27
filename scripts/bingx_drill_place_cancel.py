@@ -29,7 +29,7 @@ import time
 from typing import Any
 
 from trading.alerts import alert
-from trading.bingx_client import BingXTradeClient
+from trading.bingx_client import BingXError, BingXTradeClient
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -41,6 +41,10 @@ STATUS_POLL_SLEEP_SEC = 2.0
 MAX_NOTIONAL_USDT = 20.0
 MAX_CLOCK_OFFSET_MS = 2500
 DEMO_BASE_URL = "https://open-api-vst.bingx.com"
+# San THAT tra "CANCELLED" (hai chu L) — Claude chay dien tap demo 27/09, orderId 2104034563454930944.
+# "CANCELED" (bang trang thai cua dot 112 lay tu tai lieu) giu lai de khong bao dong gia neu tai lieu dung
+# o mot moi truong khac. Chi coi la "da huy" khi executedQty == 0 (xem buoc xac nhan).
+CANCELLED_STATUSES = ("CANCELLED", "CANCELED")
 LIVE_BASE_URL = "https://open-api.bingx.com"
 
 
@@ -269,6 +273,14 @@ def run_drill(
                 file=sys.stderr,
             )
 
+    # 8b. Che do vi the quyet dinh positionSide (dot 113: demo o Hedge mode, "BOTH" bi tu choi 109400)
+    try:
+        hedge_mode = client.get_position_mode_dual()
+    except Exception as e:
+        print(f"!! DỪNG: Không đọc được chế độ vị thế (Hedge/One-way): {e}", file=sys.stderr)
+        return 1
+    position_side = "LONG" if hedge_mode else "BOTH"
+
     # 9. In Kế hoạch lệnh
     discount_pct = ((market_price - price) / market_price) * 100
     print("\n" + "=" * 70)
@@ -277,7 +289,8 @@ def run_drill(
     print(f" Môi trường:        {env.upper()} ({'LIVE REAL MONEY' if env == 'live' else 'DEMO VST'})")
     print(f" Mã hợp đồng:       {symbol}")
     print(" Chiều lệnh:        BUY (Long)")
-    print(" Loại lệnh:         LIMIT (PostOnly)")
+    print(f" Chế độ vị thế:     {'Hedge' if hedge_mode else 'One-way'} -> positionSide={position_side}")
+    print(" Loại lệnh:         LIMIT, gửi timeInForce=PostOnly (san co the KHONG ap dung — bao ve chinh la gia cach 5%)")
     print(f" Giá thị trường:    {market_price}")
     print(f" Giá đặt diễn tập:  {price} (thấp hơn thị trường {discount_pct:.2f}%)")
     print(f" Bước giá:          {tick_size}")
@@ -302,7 +315,7 @@ def run_drill(
 
     # 12. Gửi lệnh lên sàn (Send Attempted)
     client_order_id = f"drill_{int(time.time() * 1000)}"
-    print(f"\n[Bước 1] Đặt lệnh LIMIT BUY {qty} {symbol} @ {price} (PostOnly)...")
+    print(f"\n[Bước 1] Đặt lệnh LIMIT BUY {qty} {symbol} @ {price} (gui timeInForce=PostOnly)...")
     placed = None
     try:
         placed = client.place_limit_order(
@@ -310,10 +323,25 @@ def run_drill(
             side="BUY",
             price=price,
             quantity=qty,
-            position_side="BOTH",
+            position_side=position_side,
             time_in_force="PostOnly",
             client_order_id=client_order_id,
         )
+    except BingXError as exc:
+        if exc.code is not None:
+            # San tra HTTP 200 kem code != 0: lenh bi TU CHOI tai buoc tham dinh, KHONG co
+            # lenh nao duoc tao (dot 113: code 109400 positionSide). Khong phai "khong ro".
+            print(
+                f"!! SÀN TỪ CHỐI LỆNH — KHÔNG CÓ LỆNH NÀO ĐƯỢC TẠO (code {exc.code}): {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        _fail_loud(
+            alert_fn,
+            "KHÔNG RÕ LỆNH ĐÃ LÊN SÀN CHƯA — KIỂM TRA app BingX",
+            symbol, price, qty, None, exc,
+        )
+        return 2
     except Exception as exc:
         _fail_loud(
             alert_fn,
@@ -325,6 +353,9 @@ def run_drill(
     order_id = placed.get("order_id")
     client_order_id = placed.get("client_order_id") or client_order_id
     print(f"  -> ĐÃ GỬI LỆNH: order_id={order_id}, client_order_id={client_order_id}, status={placed.get('status')}")
+    # Dot 113: san tra postOnly=False du da gui timeInForce=PostOnly. Noi ra, khong gia vo duoc bao ve.
+    if placed.get("raw", {}).get("postOnly") is not True:
+        print("  !! Luu y: san bao postOnly != true — lenh la LIMIT thuong; chi con gia cach 5% bao ve khoi khop.")
 
     # 13. Đọc lại lệnh tối đa 3 lần
     found = None
@@ -358,6 +389,7 @@ def run_drill(
 
     # Nhánh ĐANG CHỜ -> HUỶ LỆNH
     cancel_resp = None
+    confirmed_status = status
     if status in ("NEW", "PENDING"):
         print(f"\n[Bước 3] Huỷ lệnh vừa đặt (order_id={order_id})...")
         try:
@@ -372,29 +404,40 @@ def run_drill(
 
         # Xác nhận đã huỷ
         verified = None
+        last_seen = None  # giu trang thai THAT cuoi cung doc duoc de canh bao co noi dung
         for attempt in range(STATUS_POLL_ATTEMPTS):
             sleep_fn(STATUS_POLL_SLEEP_SEC)
             try:
                 v = client.get_order(symbol=symbol, order_id=order_id, client_order_id=client_order_id)
-                if v and str(v.get("status", "")).upper() == "CANCELED":
-                    verified = v
-                    break
             except Exception:  # noqa: S112
                 continue
+            last_seen = v
+            if str(v.get("status", "")).upper() in CANCELLED_STATUSES:
+                verified = v
+                break
 
-        final_status = str(verified.get("status", "")).upper() if verified else ""
-        if final_status == "CANCELED":
+        if verified is not None and float(verified.get("executed_qty", 0.0)) > 0:
+            _fail_loud(
+                alert_fn,
+                f"ĐÃ KHỚP {verified.get('executed_qty')} TRƯỚC KHI HUỶ — ĐÓNG VỊ THẾ TAY TRÊN APP",
+                symbol, price, qty, verified, f"Status: {verified.get('status')}",
+            )
+            return 2
+        final_status = str((verified or last_seen or {}).get("status", "")).upper()
+        confirmed_status = final_status
+        if verified is not None:
             print(f"  -> ĐÃ XÁC NHẬN HUỶ THÀNH CÔNG: Lệnh ở trạng thái {final_status}.")
         else:
             _fail_loud(
                 alert_fn,
                 "LỆNH CÒN TREO — HUỶ TAY",
-                symbol, price, qty, verified or found, f"Status after cancel: {final_status}",
+                symbol, price, qty, last_seen or found,
+                f"Status after cancel: {final_status or '(khong doc duoc)'}",
             )
             return 2
 
-    elif status == "CANCELED":
-        print("  -> Lệnh đã ở trạng thái CANCELED (ví dụ PostOnly huỷ do điều kiện khớp).")
+    elif status in CANCELLED_STATUSES:
+        print(f"  -> Lệnh đã ở trạng thái {status} ngay sau khi đặt (ví dụ PostOnly huỷ do điều kiện khớp).")
     else:
         _fail_loud(
             alert_fn,
@@ -417,7 +460,7 @@ def run_drill(
         "notional": notional,
         "placed_response": placed,
         "cancel_response": cancel_resp,
-        "status_confirmed": "CANCELED",
+        "status_confirmed": confirmed_status,
     }
     log_file.write_text(json.dumps(audit_payload, indent=2, default=str), encoding="utf-8")
     print(f"\nĐã ghi audit log diễn tập vào: {log_file}")

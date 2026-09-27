@@ -26,6 +26,8 @@ import ast
 import pathlib
 from unittest.mock import MagicMock
 
+import pytest
+
 from scripts.bingx_drill_place_cancel import (
     calculate_drill_price,
     round_down_to_tick,
@@ -407,3 +409,83 @@ def test_post_send_not_found_returns_exit_1():
     )
 
     assert code == 1
+
+
+
+# ---------------------------------------------------------------------------
+# Audit dot 113 (Claude): positionSide theo che do vi the; tu choi != khong ro
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("hedge,expected", [(True, "LONG"), (False, "BOTH")])
+def test_position_side_follows_account_mode(hedge, expected):
+    """Hedge mode -> LONG (BOTH bi san tu choi 109400, dot 113); One-way -> BOTH."""
+    client = create_mock_client()
+    client.get_position_mode_dual.return_value = hedge
+    client.place_limit_order.side_effect = BingXError("dung sau khi da thay tham so", code=109400)
+    run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+              input_fn=lambda _: "YES", alert_fn=MagicMock())
+    assert client.place_limit_order.call_args.kwargs["position_side"] == expected
+
+
+def test_exchange_rejection_is_not_reported_as_unknown():
+    """San tra code != 0 -> lenh KHONG duoc tao: exit 1, khong CRITICAL 'khong ro'."""
+    client = create_mock_client()
+    client.get_position_mode_dual.return_value = True
+    client.place_limit_order.side_effect = BingXError("rejected", code=109400)
+    alert_fn = MagicMock()
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=alert_fn)
+    assert code == 1
+    alert_fn.assert_not_called()
+
+
+def test_position_mode_unreadable_stops_before_send():
+    """Khong doc duoc che do vi the -> dung, KHONG gui lenh."""
+    client = create_mock_client()
+    client.get_position_mode_dual.side_effect = BingXError("x", code=1)
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=MagicMock())
+    assert code == 1
+    client.place_limit_order.assert_not_called()
+
+
+
+def _order(status: str, executed: float = 0.0) -> dict:
+    return {"order_id": 1, "symbol": "BTC-USDT", "price": 57000.0, "orig_qty": 0.0001,
+            "executed_qty": executed, "status": status, "raw": {}}
+
+
+def test_real_cancelled_spelling_confirms_cancel(tmp_path, monkeypatch):
+    """San THAT tra 'CANCELLED' (dot 113, demo 27/09) -> phai xac nhan huy, exit 0.
+
+    Ban dau code chi nhan 'CANCELED' -> bao dong gia 'LENH CON TREO' tren mot lenh da huy.
+    """
+    import scripts.bingx_drill_place_cancel as drill
+
+    monkeypatch.setattr(drill, "LOGS_DIR", tmp_path)
+    client = create_mock_client()
+    client.get_position_mode_dual.return_value = True
+    client.place_limit_order.return_value = {"order_id": 1, "client_order_id": "c", "status": "PENDING",
+                                             "raw": {"postOnly": False}}
+    client.get_order.side_effect = [_order("PENDING"), _order("CANCELLED")]
+    alert_fn = MagicMock()
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=alert_fn, sleep_fn=lambda _: None)
+    assert code == 0
+    alert_fn.assert_not_called()
+
+
+def test_cancelled_but_partially_executed_is_critical(tmp_path, monkeypatch):
+    """Da huy nhung executedQty > 0 -> da co vi the: CRITICAL, exit 2, khong bao 'huy thanh cong'."""
+    import scripts.bingx_drill_place_cancel as drill
+
+    monkeypatch.setattr(drill, "LOGS_DIR", tmp_path)
+    client = create_mock_client()
+    client.get_position_mode_dual.return_value = True
+    client.place_limit_order.return_value = {"order_id": 1, "client_order_id": "c", "status": "PENDING", "raw": {}}
+    client.get_order.side_effect = [_order("PENDING"), _order("CANCELLED", executed=0.0001)]
+    alert_fn = MagicMock()
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=alert_fn, sleep_fn=lambda _: None)
+    assert code == 2
+    assert alert_fn.call_args[0][0] == "CRITICAL"

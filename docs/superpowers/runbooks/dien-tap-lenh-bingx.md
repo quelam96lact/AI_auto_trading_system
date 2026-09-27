@@ -160,3 +160,14 @@ BingX cung cấp domain `https://open-api-vst.bingx.com` cho giao dịch tiền 
 - Lệnh: `uv run python scripts/bingx_drill_place_cancel.py --symbol BTC-USDT --env demo`
 - **Key hiện tại DÙNG ĐƯỢC trên VST** (Claude kiểm thật 27/09: cùng `BINGX_API_KEY` đọc được số dư VST 80.002,16 VST). Bản nháp đầu của runbook ghi ngược lại, nhưng đó là suy đoán chưa kiểm.
 - **Thứ tự bắt buộc: chạy `--env demo --send` TRƯỚC, đạt exit 0, rồi mới chạy live.** Demo dùng tiền ảo nên kiểm được đường POST đặt lệnh (chữ ký POST chưa được kiểm thật ở đợt 112; GET và DELETE đã kiểm) mà không có rủi ro.
+
+## 8. Bài học từ lần diễn tập demo thật (Claude, 27/09/2026)
+
+Đạt, exit 0: orderId `2104035039902699520`, đặt → `PENDING` → huỷ → `CANCELLED`. Sau đó 0 lệnh chờ, 0 vị thế.
+
+1. **Tài khoản ở Hedge mode** (`dualSidePosition: "true"`, cả demo lẫn live). Gửi `positionSide=BOTH` thì bị từ chối với mã 109400. Script giờ **đọc chế độ vị thế trước**, rồi chọn `LONG` (Hedge) hoặc `BOTH` (One-way).
+2. **Sàn trả `CANCELLED` (hai chữ L)**, không phải `CANCELED`. Bản đầu của script vì vậy báo động giả "LỆNH CÒN TREO" trên một lệnh đã huỷ xong.
+3. **PostOnly KHÔNG được áp dụng**: sàn trả `postOnly: false` dù đã gửi `timeInForce=PostOnly`. Lệnh thực chất là LIMIT thường, và **chỉ còn giá thấp hơn thị trường 5% bảo vệ** khỏi bị khớp. Chưa tìm được tham số post-only đúng có nguồn; không đoán.
+4. **Gõ YES qua pipe:** PowerShell 5.1 chèn BOM (`﻿YES`), nên cổng YES từ chối, và đó là **đúng**. Nếu phải pipe thì dùng `cmd /c "echo YES| uv run python ..."`. Tốt nhất là chạy tay rồi tự gõ.
+5. Đòn bẩy mặc định trên demo là **20X** (theo `raw.leverage`). Script không đổi đòn bẩy.
+6. **Sàn từ chối** (HTTP 200 kèm `code != 0`) nghĩa là **không có lệnh nào được tạo**: script thoát với mã 1 và in thông báo từ chối. Còn **mất kết nối hoặc timeout** mới là "KHÔNG RÕ LỆNH ĐÃ LÊN SÀN CHƯA" (CRITICAL, mã 2).

@@ -328,6 +328,21 @@ class BingXClient:
                 })
         return positions
 
+    def get_position_mode_dual(self, recv_window: int = 5000) -> bool:
+        """True neu tai khoan o Hedge mode (hai chieu), False neu One-way.
+
+        Endpoint: GET /openApi/swap/v1/positionSide/dual (Signed)
+        Claude kiem that 27/09 (dot 113): demo va live deu tra {"dualSidePosition": "true"} — chuoi,
+        khong phai bool. Hedge mode bat buoc positionSide LONG/SHORT; "BOTH" bi tu choi (code 109400).
+        """
+        res = self._get("/openApi/swap/v1/positionSide/dual", params={"recvWindow": recv_window}, signed=True)
+        data = _require(res, "data", "positionSide/dual")
+        raw = _require(data, "dualSidePosition", "positionSide/dual")
+        text = str(raw).strip().lower()
+        if text not in ("true", "false"):
+            raise BingXError(f"Phan hoi positionSide/dual: dualSidePosition khong hop le ({raw!r})")
+        return text == "true"
+
     def get_open_orders(self, symbol: str | None = None, recv_window: int = 5000) -> list[dict[str, Any]]:
         """Lấy danh sách các lệnh đang chờ (open orders).
 
