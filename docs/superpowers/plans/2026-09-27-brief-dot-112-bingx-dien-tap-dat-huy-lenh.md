@@ -23,25 +23,28 @@ Mục tiêu là chứng minh đường lệnh đúng từ đầu đến cuối, 
 
 Chưa có chiến lược crypto có lợi thế, nên không có gì tự động gửi lệnh.
 
-## 1. Việc chủ dự án làm
+## 1. Key: MỘT key cho cả đọc lẫn đặt lệnh (chủ dự án quyết 27/09)
 
-Tạo **key thứ hai**, tách khỏi key chỉ đọc của đợt 111:
-- bật **Trade**;
-- **tuyệt đối không bật Withdraw**;
-- **bắt buộc gắn IP whitelist** là IP máy sẽ chạy diễn tập.
+Key trong `.env` là `BINGX_API_KEY` / `BINGX_API_SECRET`. Theo xác nhận của chủ dự án:
+- key **có quyền Trade**;
+- **đã tắt Withdraw**;
+- **đã gắn IP whitelist**.
 
-Ghi vào `.env` dưới hai biến `BINGX_TRADE_API_KEY` và `BINGX_TRADE_API_SECRET`.
+Chủ dự án **chọn dùng một key** thay vì tách hai key như bản đầu của brief này. **Không** tạo biến `BINGX_TRADE_*`.
 
-Tách hai key để probe chỉ đọc **không thể** đặt lệnh, kể cả khi có lỗi code.
+Vì không còn lớp bảo vệ phía sàn, việc tách quyền **dồn hết vào code** và phải được test ghim:
+- `BingXClient` (đợt 111) giữ nguyên, **chỉ đọc**. Test "chỉ đọc" của đợt 111 vẫn phải xanh.
+- Lớp đặt lệnh `BingXTradeClient` là lớp **riêng**, cũng đọc `BINGX_API_KEY` / `BINGX_API_SECRET`. Nó **chỉ** được khởi tạo trong `scripts/bingx_drill_place_cancel.py`.
+- Thêm test quét toàn repo (AST hoặc grep có kiểm soát): ngoài file script diễn tập và test của nó, **không** file nào trong `trading/` hay `scripts/` import hoặc khởi tạo `BingXTradeClient`. Bất kỳ ai nối lớp này vào engine sau này sẽ làm test đỏ.
+- Runbook phải ghi: **đổi máy chạy (ví dụ chuyển sang VPS) thì phải cập nhật IP whitelist trên BingX**. Nếu không, mọi request có ký sẽ bị từ chối.
 
 ## 2. Phạm vi
 
 | File | Được làm gì |
 |---|---|
-| `trading/bingx_client.py` | Thêm một lớp **riêng** cho lệnh, ví dụ `BingXTradeClient`, **chỉ** khởi tạo được từ cặp `BINGX_TRADE_*`, gồm: đặt lệnh giới hạn, huỷ lệnh, đọc một lệnh theo id. Lớp chỉ đọc của đợt 111 **giữ nguyên**: test "chỉ đọc" của đợt 111 vẫn phải xanh với lớp đó. |
+| `trading/bingx_client.py` | Thêm một lớp **riêng** cho lệnh, `BingXTradeClient`, đọc cùng cặp `BINGX_API_*` (§1), gồm: đặt lệnh giới hạn, huỷ lệnh, đọc một lệnh theo id. Lớp chỉ đọc của đợt 111 **giữ nguyên**: test "chỉ đọc" của đợt 111 vẫn phải xanh với lớp đó. |
 | `scripts/bingx_drill_place_cancel.py` | **Mới.** Script diễn tập (xem §3). |
 | `tests/test_bingx_client.py`, `tests/test_bingx_drill.py` | Thêm và tạo mới. |
-| `.env.example` | Thêm `BINGX_TRADE_API_KEY=`, `BINGX_TRADE_API_SECRET=`, **để trống giá trị**. |
 | `docs/superpowers/runbooks/dien-tap-lenh-bingx.md` | **Mới.** Runbook cho chủ dự án, cùng khuôn `dien-tap-lenh-that.md`. |
 
 **Không được đụng:** engine, collector, storage, config, `docker-compose.yml`, Task Scheduler.
@@ -103,14 +106,15 @@ Mọi chi tiết API phải trích từ tài liệu chính thức, kèm URL. Cá
    - (i) làm tròn giá **lên**;
    - (ii) bỏ kiểm "không có lệnh chờ";
    - (iii) nhánh "đã khớp" trả exit 0;
-   - (iv) cho lớp chỉ đọc gọi được endpoint đặt lệnh.
+   - (iv) cho lớp chỉ đọc gọi được endpoint đặt lệnh;
+   - (v) import `BingXTradeClient` trong một file của `trading/engine` → test quét repo ở §1 phải đỏ.
 
    Sao lưu ra ngoài repo rồi khôi phục từ bản sao lưu. **Cấm `git checkout`, `git restore`, `git stash`.**
    → **Kiểm chứng bằng:** dán tên test đỏ cho từng phép phá, rồi dán lần chạy xanh sau khi khôi phục.
 4. **Chạy khô thật.** Chỉ chạy nếu `.env` có key Read của đợt 111; chạy khô chỉ cần đọc. Dán nguyên văn kế hoạch lệnh.
    **Không `--send`.**
 5. **Viết runbook `dien-tap-lenh-bingx.md`:**
-   - tạo key Trade: quyền nào được bật, IP whitelist;
+   - key: một key Trade, tắt Withdraw, IP whitelist, và phải cập nhật whitelist khi đổi máy;
    - chạy khô;
    - chạy demo nếu có môi trường demo;
    - chạy live;

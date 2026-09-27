@@ -78,7 +78,7 @@ def main() -> None:
     # Kiểm quyền API Key
     print("\n[2] Kiểm tra quyền API Key:")
     print("    - API BingX hiện KHÔNG có endpoint REST tra cứu quyền trực tiếp của API key.")
-    print("    - CHUA XAC MINH: chu du an phai tu kiem tren web BingX rang key nay CHI bat Read (khong Trade, khong Withdraw).")
+    print("    - Theo chu du an (27/09): key CO quyen Trade, DA TAT Withdraw, CO IP whitelist. Khong kiem duoc bang API — neu doi may chay, cap nhat IP whitelist tren BingX.")
 
     # Kiểm tra đồng hồ & độ lệch
     try:
