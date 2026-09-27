@@ -141,6 +141,10 @@ def create_mock_client():
     }
     client.get_positions.return_value = []
     client.get_open_orders.return_value = []
+    # Mac dinh giong tai khoan that 27/09: Hedge, ISOLATED (don bay 5 cho de doc so)
+    client.get_position_mode_dual.return_value = True
+    client.get_leverage.return_value = {"long": 5, "short": 5, "max_long": 150}
+    client.get_margin_type.return_value = "ISOLATED"
     client.get_perpetual_balance.return_value = {
         "asset": "USDT",
         "balance": 100.0,
@@ -248,9 +252,9 @@ def test_safety_gate_existing_open_positions():
 def test_safety_gate_insufficient_available_margin():
     """Exit != 0 if available margin < 2x estimated margin."""
     client = create_mock_client()
-    # Order notional: 0.0001 BTC * 57000 = 5.7 USDT -> 2x margin is 11.4 USDT
-    # Set available margin to only 5.0 USDT
-    client.get_perpetual_balance.return_value["available_margin"] = 5.0
+    # Danh nghia ~5,7 USDT, don bay mac dinh x5 -> ky quy ~1,14, 2x ~2,28 USDT (27/09: ky quy theo don bay that)
+    # Kha dung chi 2,0 USDT -> phai chan
+    client.get_perpetual_balance.return_value["available_margin"] = 2.0
 
     code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo", input_fn=lambda _: "YES")
     assert code != 0
@@ -489,3 +493,41 @@ def test_cancelled_but_partially_executed_is_critical(tmp_path, monkeypatch):
                      input_fn=lambda _: "YES", alert_fn=alert_fn, sleep_fn=lambda _: None)
     assert code == 2
     assert alert_fn.call_args[0][0] == "CRITICAL"
+
+
+
+# ---------------------------------------------------------------------------
+# Claude 27/09: ky quy theo don bay that, bat buoc ISOLATED, tran x50
+# ---------------------------------------------------------------------------
+
+def test_margin_uses_real_leverage_so_small_balance_passes(capsys):
+    """8,08 USDT kha dung, lenh ~6 USDT o x5 -> ky quy ~1,2 USDT: phai QUA cong 2x (truoc day tinh x1 -> chan)."""
+    client = create_mock_client()
+    client.get_perpetual_balance.return_value = {**client.get_perpetual_balance.return_value,
+                                                 "available_margin": 8.08}
+    # send=True + tra loi "NO": di qua MOI cong (dry-run chi canh bao so du, khong chan), roi dung o YES.
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo", input_fn=lambda _: "NO")
+    assert code == 0
+    client.place_limit_order.assert_not_called()
+    out = capsys.readouterr().out
+    assert "x5 / ISOLATED" in out
+
+
+def test_crossed_margin_stops_before_send():
+    """CROSSED: ca vi bi dem ra chiu lo -> dung, khong gui."""
+    client = create_mock_client()
+    client.get_margin_type.return_value = "CROSSED"
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=MagicMock())
+    assert code == 1
+    client.place_limit_order.assert_not_called()
+
+
+def test_leverage_above_cap_stops_before_send():
+    """x150 vuot tran dien tap x50 -> dung, khong gui."""
+    client = create_mock_client()
+    client.get_leverage.return_value = {"long": 150, "short": 150, "max_long": 150}
+    code = run_drill(client=client, symbol="BTC-USDT", send=True, env="demo",
+                     input_fn=lambda _: "YES", alert_fn=MagicMock())
+    assert code == 1
+    client.place_limit_order.assert_not_called()

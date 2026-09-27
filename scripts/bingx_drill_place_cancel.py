@@ -45,6 +45,10 @@ DEMO_BASE_URL = "https://open-api-vst.bingx.com"
 # "CANCELED" (bang trang thai cua dot 112 lay tu tai lieu) giu lai de khong bao dong gia neu tai lieu dung
 # o mot moi truong khac. Chi coi la "da huy" khi executedQty == 0 (xem buoc xac nhan).
 CANCELLED_STATUSES = ("CANCELLED", "CANCELED")
+# Don bay: dien tap dung DON BAY DANG DAT tren san (khong doi). Ky quy = danh nghia / don bay.
+# Chan > x50 (muc live dang dat 27/09) de khong vo tinh chay o x150. Bat buoc ISOLATED: khi do lo
+# toi da neu lo khop = ky quy cua lenh; CROSSED thi ca vi bi dem ra chiu lo -> dung.
+MAX_DRILL_LEVERAGE = 50
 LIVE_BASE_URL = "https://open-api.bingx.com"
 
 
@@ -250,15 +254,32 @@ def run_drill(
         )
         return 1
 
-    # 8. Kiểm tra số dư ký quỹ
+    # 8. Kiểm tra số dư ký quỹ, đòn bẩy, chế độ ký quỹ
     try:
         bal = client.get_perpetual_balance()
         avail_margin = float(bal["available_margin"])
+        leverage = int(client.get_leverage(symbol)["long"])  # BUY mo vi the LONG
+        margin_type = str(client.get_margin_type(symbol)).upper()
     except Exception as e:
-        print(f"!! DỪNG: Không đọc được số dư ký quỹ: {e}", file=sys.stderr)
+        print(f"!! DỪNG: Không đọc được số dư / đòn bẩy / chế độ ký quỹ: {e}", file=sys.stderr)
         return 1
 
-    estimated_margin = notional
+    if margin_type != "ISOLATED":
+        print(
+            f"!! DỪNG: Chế độ ký quỹ là {margin_type}, diễn tập yêu cầu ISOLATED "
+            "(lỗ tối đa nếu lỡ khớp = ký quỹ của lệnh, không đụng phần còn lại của ví).",
+            file=sys.stderr,
+        )
+        return 1
+    if leverage < 1 or leverage > MAX_DRILL_LEVERAGE:
+        print(
+            f"!! DỪNG: Đòn bẩy BTC long đang đặt là x{leverage}, diễn tập chỉ chấp nhận x1..x{MAX_DRILL_LEVERAGE}. "
+            "Chỉnh trong app BingX.",
+            file=sys.stderr,
+        )
+        return 1
+
+    estimated_margin = round(notional / leverage, 4)
     if avail_margin < 2 * estimated_margin:
         if send:
             print(
@@ -296,7 +317,8 @@ def run_drill(
     print(f" Bước giá:          {tick_size}")
     print(f" Khối lượng đặt:    {qty} {symbol.split('-')[0]} (khối lượng tối thiểu)")
     print(f" Giá trị danh nghĩa: {notional:.4f} USDT (trần an toàn: {MAX_NOTIONAL_USDT} USDT)")
-    print(f" Ký quỹ ước tính:   {estimated_margin:.4f} USDT")
+    print(f" Đòn bẩy / ký quỹ:  x{leverage} / {margin_type}")
+    print(f" Ký quỹ ước tính:   {estimated_margin:.4f} USDT (= danh nghĩa / đòn bẩy; lỗ tối đa nếu lỡ khớp)")
     print(f" Ký quỹ khả dụng:   {avail_margin:.4f} USDT")
     print(f" Độ lệch đồng hồ:   {clock_offset:+d} ms")
     print("=" * 70)

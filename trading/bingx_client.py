@@ -343,6 +343,33 @@ class BingXClient:
             raise BingXError(f"Phan hoi positionSide/dual: dualSidePosition khong hop le ({raw!r})")
         return text == "true"
 
+    def get_leverage(self, symbol: str, recv_window: int = 5000) -> dict[str, int]:
+        """Don bay dang dat cho ma (long/short) va muc toi da san cho.
+
+        Endpoint: GET /openApi/swap/v2/trade/leverage (Signed). Claude kiem that 27/09:
+        live BTC-USDT long/short 50, max 150; demo 20.
+        """
+        res = self._get("/openApi/swap/v2/trade/leverage",
+                        params={"symbol": symbol.upper(), "recvWindow": recv_window}, signed=True)
+        data = _require(res, "data", "leverage")
+        ctx = f"leverage {symbol.upper()}"
+        return {
+            "long": int(_num(data, "longLeverage", ctx)),
+            "short": int(_num(data, "shortLeverage", ctx)),
+            "max_long": int(_num(data, "maxLongLeverage", ctx)),
+        }
+
+    def get_margin_type(self, symbol: str, recv_window: int = 5000) -> str:
+        """'ISOLATED' hoac 'CROSSED' cho ma.
+
+        Endpoint: GET /openApi/swap/v2/trade/marginType (Signed). Claude kiem that 27/09:
+        live va demo BTC-USDT deu 'ISOLATED'.
+        """
+        res = self._get("/openApi/swap/v2/trade/marginType",
+                        params={"symbol": symbol.upper(), "recvWindow": recv_window}, signed=True)
+        data = _require(res, "data", "marginType")
+        return str(_require(data, "marginType", f"marginType {symbol.upper()}")).upper()
+
     def get_open_orders(self, symbol: str | None = None, recv_window: int = 5000) -> list[dict[str, Any]]:
         """Lấy danh sách các lệnh đang chờ (open orders).
 

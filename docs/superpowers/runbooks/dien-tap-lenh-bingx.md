@@ -171,3 +171,19 @@ BingX cung cấp domain `https://open-api-vst.bingx.com` cho giao dịch tiền 
 4. **Gõ YES qua pipe:** PowerShell 5.1 chèn BOM (`﻿YES`), nên cổng YES từ chối, và đó là **đúng**. Nếu phải pipe thì dùng `cmd /c "echo YES| uv run python ..."`. Tốt nhất là chạy tay rồi tự gõ.
 5. Đòn bẩy mặc định trên demo là **20X** (theo `raw.leverage`). Script không đổi đòn bẩy.
 6. **Sàn từ chối** (HTTP 200 kèm `code != 0`) nghĩa là **không có lệnh nào được tạo**: script thoát với mã 1 và in thông báo từ chối. Còn **mất kết nối hoặc timeout** mới là "KHÔNG RÕ LỆNH ĐÃ LÊN SÀN CHƯA" (CRITICAL, mã 2).
+
+## 9. Đòn bẩy và ký quỹ — không cần nạp thêm tiền (Claude, 27/09/2026)
+
+- Script tính **ký quỹ = giá trị danh nghĩa ÷ đòn bẩy đang đặt trên sàn**. Đòn bẩy đọc qua `GET /openApi/swap/v2/trade/leverage`, script **không đổi** nó. Bản trước tính theo x1, nên đòi khoảng 16 USDT.
+- **Bắt buộc ISOLATED**, đọc qua `GET /openApi/swap/v2/trade/marginType`. Nếu là CROSSED thì script dừng, vì khi đó cả ví phải chịu lỗ.
+- **Trần đòn bẩy cho diễn tập là x50.** Nếu đòn bẩy đang đặt cao hơn thì script dừng, và chủ dự án chỉnh lại trong app.
+- **Số đọc ngày 27/09:**
+
+  | | Đòn bẩy | Chế độ | Ký quỹ lệnh diễn tập |
+  |---|---|---|---|
+  | Live | x50 (tối đa x150) | ISOLATED | ≈ 0,16 USDT |
+  | Demo | x20 | ISOLATED | ≈ 0,40 USDT |
+
+  Live qua được cổng 2× với số dư 8,08 USDT, nên **không cần nạp thêm**.
+- **Lỗ tối đa nếu lệnh diễn tập lỡ khớp** chỉ bằng ký quỹ của lệnh, khoảng 0,16 USDT ở x50, cộng phí. Muốn khớp thì giá phải giảm 5% trong vài giây giữa lúc đặt và lúc huỷ.
+- Demo chạy lại sau khi sửa: orderId `2104037388096376832`, PENDING → CANCELLED, exit 0.
