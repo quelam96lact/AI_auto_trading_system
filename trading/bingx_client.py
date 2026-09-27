@@ -357,3 +357,214 @@ class BingXClient:
                 "raw": o,
             })
         return orders
+
+
+# ---------------------------------------------------------------------------
+# Lớp đặt / huỷ / tra cứu lệnh (Brief 112)
+# TÁCH BIỆT HOÀN TOÀN: BingXClient chỉ đọc giữ nguyên, không có quyền đặt lệnh.
+# BingXTradeClient kế thừa BingXClient nhưng trang bị các phương thức giao dịch.
+# ---------------------------------------------------------------------------
+
+
+def _order_payload(res: dict[str, Any], ctx: str) -> dict[str, Any]:
+    """Lay object lenh tu phan hoi trade (`data.order` hoac `data`); thieu -> BingXError."""
+    data = _require(res, "data", ctx)
+    if not isinstance(data, dict):
+        raise BingXError(f"Phan hoi {ctx}: 'data' khong phai object ({type(data).__name__})")
+    order = data.get("order", data)
+    if not isinstance(order, dict):
+        raise BingXError(f"Phan hoi {ctx}: 'order' khong phai object ({type(order).__name__})")
+    return order
+
+
+class BingXTradeClient(BingXClient):
+    """Client đặt và huỷ lệnh cho BingX Perpetual Swap API (Brief 112).
+
+    Kế thừa BingXClient để tái sử dụng các phương thức đọc thị trường / số dư,
+    và bổ sung các phương thức gửi lệnh có ký HMAC-SHA256 (POST / DELETE / GET).
+
+    BẢO MẬT:
+    - Không bao giờ để lộ api_secret trong exception, repr, str, hoặc log.
+    - Lớp này CHỈ được phép import trong scripts/bingx_drill_place_cancel.py
+      và các file test tương ứng. Tuyệt đối không import vào trading/engine/.
+    """
+
+    def __repr__(self) -> str:
+        masked_key = f"{self._api_key[:4]}..." if len(self._api_key) >= 4 else "***"
+        return f"BingXTradeClient(api_key='{masked_key}', base_url='{self._base_url}')"
+
+    def _trade_request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Gửi request HTTP (POST/DELETE/GET) có chữ ký HMAC-SHA256 cho Trade API."""
+        if not self._api_key or not self._api_secret:
+            raise BingXError("Missing API key or secret for signed trade request")
+
+        request_params = dict(params or {})
+        if "timestamp" not in request_params:
+            request_params["timestamp"] = int(time.time() * 1000)
+
+        qs, signature = sign_params(request_params, self._api_secret)
+        url = f"{self._base_url}{path}?{qs}&signature={signature}"
+        headers = {"X-BX-APIKEY": self._api_key}
+
+        try:
+            resp = self._session.request(
+                method.upper(),
+                url,
+                headers=headers,
+                timeout=self._timeout,
+            )
+        except requests.exceptions.Timeout as e:
+            raise BingXError(f"Trade request timeout to {path}: {e}") from e
+        except requests.exceptions.RequestException as e:
+            safe_err = str(e).replace(self._api_secret, "***") if self._api_secret else str(e)
+            raise BingXError(f"Trade HTTP request failed to {path}: {safe_err}") from e
+
+        if resp.status_code != 200:
+            err_msg = f"HTTP status {resp.status_code}: {resp.text}"
+            safe_msg = err_msg.replace(self._api_secret, "***") if self._api_secret else err_msg
+            raise BingXError(safe_msg, status_code=resp.status_code)
+
+        try:
+            data = resp.json()
+        except Exception as e:
+            safe_text = resp.text.replace(self._api_secret, "***") if self._api_secret else resp.text
+            raise BingXError(f"Failed to parse JSON trade response: {safe_text}") from e
+
+        if not isinstance(data, dict):
+            raise BingXError(f"Unexpected non-dict trade response format: {type(data)}")
+
+        code = data.get("code")
+        if code != 0:
+            msg = data.get("msg", "Unknown trade error")
+            safe_msg = str(msg).replace(self._api_secret, "***") if self._api_secret else str(msg)
+            raise BingXError(f"BingX Trade API error (code {code}): {safe_msg}", code=code, status_code=resp.status_code)
+
+        return data
+
+    def place_limit_order(
+        self,
+        symbol: str,
+        side: str,
+        price: float,
+        quantity: float,
+        position_side: str = "BOTH",
+        time_in_force: str = "PostOnly",
+        client_order_id: str | None = None,
+        recv_window: int = 5000,
+    ) -> dict[str, Any]:
+        """Đặt lệnh giới hạn (LIMIT) trên BingX Perpetual Swap.
+
+        Endpoint: POST /openApi/swap/v2/trade/order
+        Tài liệu: https://bingx-api.github.io/docs/#/swapV2/trade-api.html#Place%20Order
+        """
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "type": "LIMIT",
+            "positionSide": position_side.upper(),
+            "price": str(price),
+            "quantity": str(quantity),
+            "timeInForce": time_in_force,
+            "recvWindow": recv_window,
+        }
+        if client_order_id:
+            params["clientOrderID"] = client_order_id
+
+        res = self._trade_request("POST", "/openApi/swap/v2/trade/order", params=params)
+        order_dict = _order_payload(res, "place_order")
+        # orderId BAT BUOC (audit dot 112): thieu no thi KHONG huy duoc -> lenh mo coi tren san.
+        # Cac truong con lai tra nguyen tu san (co the vang), KHONG dien gia tri minh gui.
+        return {
+            "order_id": _require(order_dict, "orderId", "place_order"),
+            "client_order_id": order_dict.get("clientOrderID"),
+            "symbol": order_dict.get("symbol"),
+            "side": order_dict.get("side"),
+            "type": order_dict.get("type"),
+            "status": order_dict.get("status"),
+            "raw": order_dict,
+        }
+
+    def cancel_order(
+        self,
+        symbol: str,
+        order_id: int | str | None = None,
+        client_order_id: str | None = None,
+        recv_window: int = 5000,
+    ) -> dict[str, Any]:
+        """Huỷ một lệnh trên BingX Perpetual Swap theo orderId hoặc clientOrderID.
+
+        Endpoint: DELETE /openApi/swap/v2/trade/order
+        Tài liệu: https://bingx-api.github.io/docs/#/swapV2/trade-api.html#Cancel%20an%20Order
+        """
+        if order_id is None and client_order_id is None:
+            raise BingXError("Phải cung cấp ít nhất order_id hoặc client_order_id để huỷ lệnh")
+
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "recvWindow": recv_window,
+        }
+        if order_id is not None:
+            params["orderId"] = order_id
+        if client_order_id is not None:
+            params["clientOrderID"] = client_order_id
+
+        res = self._trade_request("DELETE", "/openApi/swap/v2/trade/order", params=params)
+        order_dict = _order_payload(res, "cancel_order")
+        # KHONG mac dinh status "CANCELED" (audit dot 112): phan hoi thieu status ma tra
+        # "da huy" la bao an toan gia cho mot lenh co the con treo. Xac nhan huy that nam
+        # o get_order sau do (drill buoc 3).
+        return {
+            "order_id": order_dict.get("orderId"),
+            "client_order_id": order_dict.get("clientOrderID"),
+            "symbol": order_dict.get("symbol"),
+            "status": order_dict.get("status"),
+            "raw": order_dict,
+        }
+
+    def get_order(
+        self,
+        symbol: str,
+        order_id: int | str | None = None,
+        client_order_id: str | None = None,
+        recv_window: int = 5000,
+    ) -> dict[str, Any]:
+        """Tra cứu chi tiết một lệnh trên BingX Perpetual Swap theo orderId hoặc clientOrderID.
+
+        Endpoint: GET /openApi/swap/v2/trade/order
+        Tài liệu: https://bingx-api.github.io/docs/#/swapV2/trade-api.html#Query%20Order%20Details
+        """
+        if order_id is None and client_order_id is None:
+            raise BingXError("Phải cung cấp ít nhất order_id hoặc client_order_id để tra cứu lệnh")
+
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "recvWindow": recv_window,
+        }
+        if order_id is not None:
+            params["orderId"] = order_id
+        if client_order_id is not None:
+            params["clientOrderID"] = client_order_id
+
+        res = self._trade_request("GET", "/openApi/swap/v2/trade/order", params=params)
+        order_dict = _order_payload(res, "get_order")
+        ctx = "get_order"
+        # status va executedQty BAT BUOC (audit dot 112): day la hai truong drill dung de
+        # quyet "da khop / con treo / da huy". Mac dinh 0/"" se doc lenh DA KHOP thanh chua khop.
+        return {
+            "order_id": _require(order_dict, "orderId", ctx),
+            "client_order_id": order_dict.get("clientOrderID"),
+            "symbol": _require(order_dict, "symbol", ctx),
+            "price": _num(order_dict, "price", ctx),
+            "orig_qty": _num(order_dict, "origQty", ctx),
+            "executed_qty": _num(order_dict, "executedQty", ctx),
+            "status": str(_require(order_dict, "status", ctx)),
+            "type": order_dict.get("type"),
+            "side": order_dict.get("side"),
+            "raw": order_dict,
+        }
+

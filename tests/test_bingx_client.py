@@ -332,7 +332,7 @@ def test_error_timeout_raises_bingx_error(mock_get):
 # ---------------------------------------------------------------------------
 
 def test_client_is_strictly_read_only():
-    """Verify BingXClient module has NO order placement/modification/cancellation methods."""
+    """Verify BingXClient class has NO order placement/modification/cancellation methods."""
     # 1. Introspection check: methods of BingXClient
     forbidden_prefixes = ["place", "create", "order", "cancel", "modify", "amend", "buy", "sell", "delete", "post", "put"]
     methods = [name for name, _ in inspect.getmembers(BingXClient, predicate=inspect.isfunction)]
@@ -341,24 +341,178 @@ def test_client_is_strictly_read_only():
         for prefix in forbidden_prefixes:
             assert not m.startswith(prefix), f"Forbidden trading method detected: {m}"
 
-    # 2. AST check: examine trading/bingx_client.py
+    # 2. AST check: examine BingXClient class definition
     import trading.bingx_client as client_module
     source = inspect.getsource(client_module)
     tree = ast.parse(source)
 
-    for node in ast.walk(tree):
+    bingx_client_node = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "BingXClient"
+    )
+    for node in ast.walk(bingx_client_node):
         # Check HTTP method calls
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr.lower() in ("post", "delete", "put", "patch")
         ):
-            pytest.fail(f"Forbidden HTTP mutation method '{node.func.attr}' found at line {node.lineno}")
+            pytest.fail(f"Forbidden HTTP mutation method '{node.func.attr}' found in BingXClient at line {node.lineno}")
         # Check string literals for mutation endpoints
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             val = node.value.lower()
             if "/trade/order" in val and ("post" in val or "delete" in val):
-                pytest.fail(f"Forbidden trade order mutation string found: {node.value}")
+                pytest.fail(f"Forbidden trade order mutation string found in BingXClient: {node.value}")
+
+
+# ---------------------------------------------------------------------------
+# 6. BingXTradeClient Tests (Brief 112)
+# ---------------------------------------------------------------------------
+
+def test_trade_client_repr_and_str_mask_secret():
+    """Verify BingXTradeClient masks key and never leaks secret in repr or str."""
+    from trading.bingx_client import BingXTradeClient
+
+    client = BingXTradeClient(api_key="trade_key_9876", api_secret="trade_secret_very_sensitive")
+    assert "trade_secret_very_sensitive" not in repr(client)
+    assert "trade_secret_very_sensitive" not in str(client)
+    assert "trad..." in repr(client)
+
+
+@patch.object(requests.Session, "request")
+def test_trade_client_place_limit_order(mock_request):
+    """Verify place_limit_order sends signed POST request with correct parameters."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_request.return_value = MockResponse({
+        "code": 0,
+        "msg": "",
+        "data": {
+            "order": {
+                "orderId": 123456789,
+                "clientOrderID": "drill_client_1",
+                "symbol": "BTC-USDT",
+                "side": "BUY",
+                "type": "LIMIT",
+                "price": "60000.0",
+                "origQty": "0.0001",
+                "status": "NEW",
+            }
+        },
+    })
+
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    res = client.place_limit_order(
+        symbol="BTC-USDT",
+        side="BUY",
+        price=60000.0,
+        quantity=0.0001,
+        position_side="BOTH",
+        time_in_force="PostOnly",
+        client_order_id="drill_client_1",
+    )
+
+    assert res["order_id"] == 123456789
+    assert res["client_order_id"] == "drill_client_1"
+    assert res["status"] == "NEW"
+
+    mock_request.assert_called_once()
+    method, url = mock_request.call_args[0]
+    assert method == "POST"
+    assert "/openApi/swap/v2/trade/order" in url
+    assert "symbol=BTC-USDT" in url
+    assert "side=BUY" in url
+    assert "type=LIMIT" in url
+    assert "positionSide=BOTH" in url
+    assert "timeInForce=PostOnly" in url
+    assert "signature=" in url
+    assert mock_request.call_args[1]["headers"]["X-BX-APIKEY"] == "key"
+
+
+@patch.object(requests.Session, "request")
+def test_trade_client_cancel_order(mock_request):
+    """Verify cancel_order sends signed DELETE request."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_request.return_value = MockResponse({
+        "code": 0,
+        "msg": "",
+        "data": {
+            "orderId": 123456789,
+            "symbol": "BTC-USDT",
+            "status": "CANCELED",
+        },
+    })
+
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    res = client.cancel_order(symbol="BTC-USDT", order_id=123456789)
+
+    assert res["order_id"] == 123456789
+    assert res["status"] == "CANCELED"
+
+    mock_request.assert_called_once()
+    method, url = mock_request.call_args[0]
+    assert method == "DELETE"
+    assert "/openApi/swap/v2/trade/order" in url
+    assert "orderId=123456789" in url
+    assert "symbol=BTC-USDT" in url
+    assert "signature=" in url
+
+
+@patch.object(requests.Session, "request")
+def test_trade_client_get_order(mock_request):
+    """Verify get_order sends signed GET request and parses status & executed_qty."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_request.return_value = MockResponse({
+        "code": 0,
+        "msg": "",
+        "data": {
+            "order": {
+                "orderId": 123456789,
+                "clientOrderID": "drill_client_1",
+                "symbol": "BTC-USDT",
+                "price": "60000.0",
+                "origQty": "0.0001",
+                "executedQty": "0.0",
+                "cumQuote": "0.0",
+                "status": "NEW",
+            }
+        },
+    })
+
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    res = client.get_order(symbol="BTC-USDT", order_id=123456789)
+
+    assert res["order_id"] == 123456789
+    assert res["status"] == "NEW"
+    assert res["executed_qty"] == 0.0
+
+    mock_request.assert_called_once()
+    method, url = mock_request.call_args[0]
+    assert method == "GET"
+    assert "/openApi/swap/v2/trade/order" in url
+    assert "orderId=123456789" in url
+
+
+@patch.object(requests.Session, "request")
+def test_trade_client_error_handling_masks_secret(mock_request):
+    """Verify trade errors raise BingXError without leaking api_secret."""
+    from trading.bingx_client import BingXTradeClient
+
+    secret = "my_private_trade_secret_999"
+    mock_request.return_value = MockResponse(
+        {"code": 80014, "msg": "Insufficient margin"},
+        status_code=200,
+    )
+
+    client = BingXTradeClient(api_key="key", api_secret=secret)
+    with pytest.raises(BingXError) as exc_info:
+        client.place_limit_order(symbol="BTC-USDT", side="BUY", price=60000.0, quantity=0.1)
+
+    assert exc_info.value.code == 80014
+    assert "Insufficient margin" in str(exc_info.value)
+    assert secret not in str(exc_info.value)
+
 
 
 
@@ -424,3 +578,47 @@ def test_clock_offset_uses_round_trip_midpoint(monkeypatch):
     client = BingXClient(api_key="key", api_secret="sec")
     monkeypatch.setattr(client, "get_server_time", lambda: 1_001_000)  # server = diem giua
     assert client.get_clock_offset() == 0
+
+
+
+# ---------------------------------------------------------------------------
+# Audit dot 112 (Claude): phan hoi lenh thieu truong -> loi, KHONG bao an toan gia
+# ---------------------------------------------------------------------------
+
+def _trade_resp(order: dict) -> MockResponse:
+    return MockResponse({"code": 0, "msg": "", "data": {"order": order}})
+
+
+@patch.object(requests.Session, "request")
+def test_get_order_missing_executed_qty_raises(mock_req):
+    """Thieu executedQty KHONG duoc doc thanh 0 (lenh da khop se bi coi la chua khop)."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_req.return_value = _trade_resp({
+        "orderId": 1, "symbol": "BTC-USDT", "price": "80000", "origQty": "0.0001", "status": "FILLED",
+    })
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    with pytest.raises(BingXError, match="executedQty"):
+        client.get_order("BTC-USDT", order_id=1)
+
+
+@patch.object(requests.Session, "request")
+def test_cancel_order_missing_status_is_not_reported_canceled(mock_req):
+    """Phan hoi huy thieu status -> status None, KHONG phai 'CANCELED' tu dien."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_req.return_value = _trade_resp({"orderId": 1, "symbol": "BTC-USDT"})
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    res = client.cancel_order("BTC-USDT", order_id=1)
+    assert res["status"] is None
+
+
+@patch.object(requests.Session, "request")
+def test_place_order_missing_order_id_raises(mock_req):
+    """Khong co orderId thi khong huy duoc -> phai loi ngay, khong tra None."""
+    from trading.bingx_client import BingXTradeClient
+
+    mock_req.return_value = _trade_resp({"symbol": "BTC-USDT", "status": "NEW"})
+    client = BingXTradeClient(api_key="key", api_secret="sec")
+    with pytest.raises(BingXError, match="orderId"):
+        client.place_limit_order("BTC-USDT", "BUY", 80000.0, 0.0001)
