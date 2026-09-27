@@ -187,3 +187,16 @@ BingX cung cấp domain `https://open-api-vst.bingx.com` cho giao dịch tiền 
   Live qua được cổng 2× với số dư 8,08 USDT, nên **không cần nạp thêm**.
 - **Lỗ tối đa nếu lệnh diễn tập lỡ khớp** chỉ bằng ký quỹ của lệnh, khoảng 0,16 USDT ở x50, cộng phí. Muốn khớp thì giá phải giảm 5% trong vài giây giữa lúc đặt và lúc huỷ.
 - Demo chạy lại sau khi sửa: orderId `2104037388096376832`, PENDING → CANCELLED, exit 0.
+
+## 10. Diễn tập LIVE — ĐẠT (27/09/2026)
+
+Chủ dự án tự chạy `--env live --send` và tự gõ YES. Kết quả: orderId `2104038268786135040`, giá 80.211,7 (thấp hơn thị trường 5%), 0,0001 BTC, x50 ISOLATED. Diễn biến: PENDING → huỷ → **CANCELLED**, exit 0.
+
+Claude đã kiểm độc lập qua API ngay sau đó, chỉ đọc:
+- lệnh ở trạng thái `CANCELLED`, `executedQty` = 0;
+- 0 lệnh chờ, 0 vị thế;
+- số dư 8,0778 USDT, **không đổi**; ký quỹ đang dùng = 0.
+
+**Đường lệnh BingX (ký request, đặt, đọc, huỷ, xác nhận) đã được kiểm chứng trên tài khoản thật.** Chưa có chiến lược nào được nối vào đường lệnh này.
+
+Ghi chú nhỏ: audit log `logs/bingx_drill_*.json` chứa cả hai khoá `orderId` và `orderID` (phản hồi gốc của BingX). `ConvertFrom-Json` của PowerShell 5.1 không đọc được file này; hãy đọc bằng Python.
