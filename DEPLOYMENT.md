@@ -4,22 +4,48 @@ This covers deploying the collector/engine/postgres/nats/grafana stack to a
 production Ubuntu server via Docker Compose. See `GO_LIVE_AUDIT.md` for what is
 still blocking go-live — read it before enabling real trading.
 
+> [!IMPORTANT]
+> **Danh sách các placeholder cần điền trước khi thực hiện các lệnh trong tài liệu:**
+> - `<ĐIỀN: repo-url>`: URL git clone của repository (ví dụ: `https://github.com/quelam96lact/AI_auto_trading_system.git`).
+> - `<ĐIỀN: YOUR_DOMAIN>`: Tên miền trỏ về IP của VPS để dùng cho Grafana TLS (ví dụ: `grafana.example.com`).
+> - `<ĐIỀN: VPS_IP>`: Địa chỉ IP public của VPS Ubuntu.
+> - `<ĐIỀN: USER>`: Tên tài khoản người dùng có quyền sudo trên VPS Ubuntu (ví dụ: `ubuntu`).
+
 ## 1. Server prerequisites
 
 ```bash
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin ufw
+# 1. Cấu hình múi giờ Việt Nam (BẮT BUỘC để cron và log khớp đúng giờ phiên giao dịch VN)
+sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+timedatectl   # Xác nhận: Time zone: Asia/Ho_Chi_Minh (+07, +0700)
+
+# 2. Cài đặt Docker, Compose plugin, UFW và các tiện ích cần thiết
+# (Áp dụng cho Ubuntu 24.04 LTS. Trên Ubuntu 22.04 LTS, các gói tương tự nhưng
+# docker-compose-plugin có thể cần thêm repository chính thức nếu bản apt quá cũ).
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin ufw curl git ca-certificates
 sudo systemctl enable --now docker
+
+# 3. Cài đặt uv trên host (công cụ quản lý môi trường Python cho các cron job trên host)
+# Nguồn chính thức Astral: https://docs.astral.sh/uv/getting-started/installation/
+# Cài đặt vào /usr/local/bin để cả user và crontab đều thực thi được:
+curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR="/usr/local/bin" sh
+uv --version
 ```
 
 ## 2. Get the code + secrets onto the server
 
 ```bash
-git clone <this-repo-url> /opt/trading
+git clone <ĐIỀN: repo-url> /opt/trading
 cd /opt/trading
 cp .env.example .env
 # edit .env with real SSI credentials + Telegram token (see README.md for
 # which variables config.py requires). Never commit this file.
 chmod 600 .env
+
+# Đồng bộ môi trường Python trên host bằng uv (chạy các cron job ngoài container)
+uv sync --frozen --python 3.12
+# --python 3.12: KHOP voi image (Dockerfile: FROM python:3.12-slim). Khong ghim thi uv tu
+# lay ban Python moi nhat (thu 27/09 ra 3.14) -> job cron tren host chay khac Python voi container.
+uv run python -c "import sys, trading; print('trading module OK', sys.version)"
 
 # Tạo thư mục logs trên host và phân quyền cho appuser (uid 10001 trong Dockerfile)
 # BẮT BUỘC: docker-compose.yml gắn mount ./logs:/app/logs cho collector và engine.
@@ -28,7 +54,18 @@ chmod 600 .env
 # sẽ bị PermissionError khi ghi log, nuốt lỗi và chạy tiếp im lặng
 # làm mất toàn bộ bằng chứng chốt nến luồng và cảnh báo engine!
 mkdir -p logs && sudo chown 10001:10001 logs
+
+# Tạo thư mục data/orderbook/ cho máy ghi sổ lệnh thời gian thực (orderbook-recorder)
+# Thư mục này được ghi trực tiếp bởi cron job trên host (chạy dưới quyền user hiện tại).
+# Phân quyền 775 để user hiện tại và cron đều ghi được:
+mkdir -p data/orderbook && chmod 775 data/orderbook
 ```
+
+**Ước tính dung lượng sổ lệnh (`data/orderbook/`):**
+Dữ liệu sổ lệnh phái sinh VN30F được lưu theo từng hợp đồng dưới dạng các file `.jsonl.gz` nén gzip (ví dụ `data/orderbook/VN30F2610/2026-09-25.jsonl.gz`).
+- Đo lường thực tế (ngày 25/09/2026): **~10.3 MB/ngày** (giao dịch trọn phiên).
+- Dung lượng ước tính: **~220 MB/tháng** (~22 ngày giao dịch), **~2.5 GB/năm**.
+- Khuyến nghị: VPS nên có ít nhất **10–20 GB** dung lượng đĩa trống dự phòng cho thư mục này trong năm đầu tiên và đưa `data/orderbook/` vào lịch sao lưu định kỳ (§6).
 
 Review `config/config.yaml` — in particular keep `real_trading_enabled: false`
 until the real-order verification runbook (`docs/plans-legacy/PLAN_REAL_ORDER_PLACEMENT.md`) has
@@ -63,7 +100,7 @@ Minimal reverse-proxy config (`/etc/nginx/sites-available/trading-grafana`):
 ```nginx
 server {
     listen 80;
-    server_name grafana.YOUR_DOMAIN;
+    server_name <ĐIỀN: YOUR_DOMAIN>;
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
@@ -75,7 +112,7 @@ server {
 ```bash
 sudo ln -s /etc/nginx/sites-available/trading-grafana /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d grafana.YOUR_DOMAIN
+sudo certbot --nginx -d <ĐIỀN: YOUR_DOMAIN>
 ```
 
 Also change Grafana's default admin password before exposing it: set
@@ -102,6 +139,8 @@ for the services themselves.
 
 ## 6. Backups
 
+### Sao lưu cơ sở dữ liệu hàng ngày
+
 `scripts/backup_db.sh` runs `pg_dump` inside the `postgres` container, gzips
 it, and prunes backups older than 14 days (override with
 `BACKUP_RETENTION_DAYS`). Schedule it via cron on the host:
@@ -118,15 +157,61 @@ sudo crontab -e
 0 2 * * * cd /opt/trading && ./scripts/backup_db.sh /var/backups/trading-db >> /var/log/trading-backup.log 2>&1
 ```
 
-Restore:
+### Sao lưu thư mục sổ lệnh `data/orderbook/`
+
+Thư mục `data/orderbook/` chứa toàn bộ dữ liệu khớp lệnh và sổ lệnh phái sinh thời gian thực ghi được mỗi ngày. Cần tạo thư mục `/var/backups/trading-db` và sao lưu định kỳ:
 
 ```bash
-gunzip -c /var/backups/trading-db/trading_YYYYMMDD_HHMMSS.sql.gz | \
-  docker compose exec -T postgres psql -U trading trading
+# Tạo thư mục chứa backup trên host:
+sudo mkdir -p /var/backups/trading-db
+
+# Thêm vào crontab để sao lưu dữ liệu sổ lệnh lúc 02:30 hàng ngày:
+30 2 * * * tar -czf /var/backups/trading-db/orderbook_$(date +\%Y\%m\%d).tar.gz -C /opt/trading data/orderbook
 ```
 
-Test the restore path at least once against a scratch database before relying
-on it — an untested backup is not a backup.
+### Quy chuẩn sao lưu & khôi phục TimescaleDB (Tài liệu chính thức)
+
+> [!WARNING]
+> **Bẫy chết người khi sao lưu TimescaleDB (`pg_dump -t`):**
+> Trong TimescaleDB, dữ liệu của các hypertable (như bảng `bars`, `bars_daily`) không nằm trực tiếp trong bảng gốc mà được phân chia thành các chunk table nằm trong schema nội bộ `_timescaledb_internal`. Nếu chạy `pg_dump -t bars`, pg_dump chỉ xuất schema catalog của bảng mẹ mà **KHÔNG DUMP DỮ LIỆU CÁC CHUNK**, dẫn tới khi restore bảng sẽ hoàn toàn rỗng (0 dòng) mà không hề có thông báo lỗi!
+> 
+> BẮT BUỘC sao lưu toàn bộ cơ sở dữ liệu ở định dạng custom archive (`-Fc`):
+> ```bash
+> docker compose exec -T postgres pg_dump -U trading -Fc trading > /var/backups/trading-db/trading_manual.dump
+> ```
+> Nguồn tài liệu chính thức: https://docs.timescale.com/use-timescale/latest/backup-restore/pg-dump-and-restore/
+
+**Quy trình khôi phục (Restore) TimescaleDB đúng chuẩn:**
+
+Theo tài liệu TimescaleDB, việc restore hypertable bắt buộc phải tạm ngắt các trigger nội bộ trước khi nạp dữ liệu và bật lại sau khi nạp:
+
+```bash
+# 1. Gọi pre_restore trước khi khôi phục dữ liệu:
+docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_pre_restore();"
+
+# 2. Khôi phục dữ liệu từ file dump custom archive — vào DB RỖNG, CÙNG phiên bản TimescaleDB
+#    (xem §11 Bước 5 cho cách ghim phiên bản và kiểm DB rỗng):
+docker compose cp /var/backups/trading-db/trading_manual.dump postgres:/tmp/trading_manual.dump
+docker compose exec -T postgres pg_restore -U trading -d trading --no-owner /tmp/trading_manual.dump
+
+# 3. Gọi post_restore sau khi khôi phục xong để kích hoạt lại catalog và chỉ mục:
+docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_post_restore();"
+```
+
+**Bắt buộc kiểm tra số dòng các bảng chính trước và sau khi khôi phục:**
+
+Chạy truy vấn đối soát để đảm bảo dữ liệu không bị thất thoát:
+
+```bash
+docker compose exec -T postgres psql -U trading -d trading -c "
+SELECT 'bars' AS tbl, count(*) FROM bars
+UNION ALL SELECT 'bars_daily', count(*) FROM bars_daily
+UNION ALL SELECT 'orders', count(*) FROM orders
+UNION ALL SELECT 'positions', count(*) FROM positions
+UNION ALL SELECT 'engine_state', count(*) FROM engine_state
+UNION ALL SELECT 'real_order_fills', count(*) FROM real_order_fills;
+"
+```
 
 ## 7. Resource limits
 
@@ -233,38 +318,51 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# Cài đặt đầy đủ 7 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# Cài đặt đầy đủ 9 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# BẮT BUỘC: Đặt CRON_TZ để cron chạy chuẩn theo giờ Việt Nam
+CRON_TZ=Asia/Ho_Chi_Minh
 
 # 1. Kiểm tra token trước giờ mở cửa và heartbeat trong phiên (08:00–15:55, mỗi 5 phút, T2–T6)
 # Chạy từ 8:00 để kích hoạt nhánh tiền-phiên (cảnh báo token SSI trước 09:00, CRON-1)
-*/5 8-15 * * 1-5 /opt/trading/scripts/sched.sh heartbeat
+# (Lựa chọn giờ: Windows Task Scheduler lặp 7h đến 15:00; trên VPS giữ khung 8-15 tức đến 15:55 theo
+# cấu hình chuẩn cũ để giám sát hậu phiên khi hệ thống chốt sổ và xử lý cuối ngày).
+*/5 8-15 * * 1-5 cd /opt/trading && scripts/sched.sh heartbeat
 
 # 2. Phát hiện image container cũ hơn commit git trước phiên giao dịch (08:00, T2–T6)
-0 8 * * 1-5 /opt/trading/scripts/sched.sh deploy-drift
+0 8 * * 1-5 cd /opt/trading && scripts/sched.sh deploy-drift
 
-# 3. Giám sát NATS consumer của engine trong giờ giao dịch (mỗi 5 phút, 09:00–15:10, T2–T6)
-*/5 9-15 * * 1-5 /opt/trading/scripts/sched.sh engine-consumer
+# 3. Ghi dữ liệu sổ lệnh và dòng lệnh VN30F phái sinh thời gian thực (08:40, T2–T6)
+# Script tự dừng lúc 14:46 (--until 14:46). Ghi dữ liệu vào data/orderbook/
+40 8 * * 1-5 cd /opt/trading && scripts/sched.sh orderbook-recorder
 
-# 4. Kiểm tra độ phủ nến luồng thời gian thực sau khi chốt phiên chiều (15:10, T2–T6)
-10 15 * * 1-5 /opt/trading/scripts/sched.sh stream-health
+# 4. Giám sát NATS consumer của engine trong giờ giao dịch (mỗi 5 phút, 09:00–15:55, T2–T6)
+# (Lựa chọn giờ: Windows Task Scheduler lặp 6h10m đến 15:10; trên VPS giữ khung 9-15 tức đến 15:55 theo
+# cấu hình chuẩn cũ để giám sát thông suốt cho đến khi các khâu xử lý sau phiên hoàn tất).
+*/5 9-15 * * 1-5 cd /opt/trading && scripts/sched.sh engine-consumer
 
-# 5. Phát hiện engine câm không sinh tín hiệu sau phiên giao dịch (15:15, T2–T6)
-15 15 * * 1-5 /opt/trading/scripts/sched.sh engine-cam
+# 5. Kiểm tra độ phủ nến luồng thời gian thực sau khi chốt phiên chiều (15:10, T2–T6)
+10 15 * * 1-5 cd /opt/trading && scripts/sched.sh stream-health
 
-# 6. Backfill nến ngày lịch sử toàn vũ trụ mã ban đêm (20:30, T2–T6)
-30 20 * * 1-5 /opt/trading/scripts/sched.sh backfill
+# 6. Phát hiện engine câm không sinh tín hiệu sau phiên giao dịch (15:15, T2–T6)
+15 15 * * 1-5 cd /opt/trading && scripts/sched.sh engine-cam
 
-# 7. Kiểm tra tính toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
+# 7. Kiểm tra tính toàn vẹn của file sổ lệnh phái sinh sau phiên (15:30, T2–T6)
+30 15 * * 1-5 cd /opt/trading && scripts/sched.sh orderbook-daily-check
+
+# 8. Backfill nến ngày lịch sử toàn vũ trụ mã ban đêm (20:30, T2–T6)
+30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
+
+# 9. Kiểm tra tính toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
 # BẮT BUỘC 21:00: backfill đêm nạp nến lúc 20:30; kiểm trước giờ đó thì bảng nến ngày luôn rỗng!
-0 21 * * 1-5 /opt/trading/scripts/sched.sh daily-check
+0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Bảy task tương ứng với bảy dòng
+Máy Windows dùng Task Scheduler, không phải cron. Chín task tương ứng với chín dòng
 cron ở trên (tên task `trading-*`):
 
-Cả bảy gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả chín gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -272,9 +370,11 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 |---|---|---|
 | `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 (lặp 7h) | `wscript.exe //B //Nologo "D:\...\scripts\run_hidden.vbs" heartbeat` |
 | `trading-deploy-drift` | 08:00 T2–T6 | cùng vbs, tham số `deploy-drift` |
+| `trading-orderbook-recorder` | 08:40 T2–T6 (tự dừng 14:46) | cùng vbs, tham số `orderbook-recorder` |
 | `trading-engine-consumer` | 5 phút/lần, 09:00–15:10, T2–T6 (lặp 6h10m) | cùng vbs, tham số `engine-consumer` |
 | `trading-stream-health` | 15:10 T2–T6 | cùng vbs, tham số `stream-health` |
 | `trading-engine-cam` | 15:15 T2–T6 | cùng vbs, tham số `engine-cam` |
+| `trading-orderbook-daily-check` | 15:30 T2–T6 | cùng vbs, tham số `orderbook-daily-check` |
 | `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
 | `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
 
@@ -516,7 +616,174 @@ Test: `tests/test_silent_engine_guard.py` (dùng MockStorage — không cần DB
 trading-engine-cam` rồi xem `logs/engine-cam.log` có dòng mới. Hôm nay job này
 **phải kêu** — HII và AAA đang câm 100%, đó là đối chứng dương sẵn có.
 
-## Not covered here (needs a decision, not just infra)
+## 11. Chuyển từ máy Windows sang VPS Ubuntu (Migration Runbook)
+
+Mục này hướng dẫn quy trình chuyển toàn bộ dữ liệu và vận hành hệ thống từ máy Windows hiện tại sang VPS Ubuntu.
+
+> [!CAUTION]
+> **QUY TẮC BẮT BUỘC ĐỂ TRÁNH XUNG ĐỘT VÀ MẤT DỮ LIỆU:**
+> 1. **Thời điểm thực hiện:** BẮT BUỘC thực hiện vào **ngày không có phiên giao dịch** (tối thứ Sáu sau 21:30 khi các job cuối ngày hoàn tất, hoặc vào ngày cuối tuần Thứ Bảy / Chủ Nhật). Tuyệt đối KHÔNG chuyển đổi trong phiên giao dịch vì sẽ làm đứt quãng dòng nến luồng thời gian thực và ghi sổ lệnh.
+> 2. **Không chạy song song:** VPS chạy **thay thế** máy Windows, KHÔNG chạy song song. Tuyệt đối không để cả 2 máy cùng chạy collector/engine vì sẽ xung đột luồng stream của SSI FastConnect và consumer NATS.
+> 3. **Trạng thái an toàn (`real_trading_enabled: false`):** Trên VPS, luôn giữ cấu hình `real_trading_enabled: false` trong `config/config.yaml`. Việc kích hoạt đặt lệnh thật là quyết định riêng của chủ dự án sau khi hoàn thành các bước diễn tập và đối soát lệnh thật (Phase 4).
+> 4. **Chưa xác minh kết nối SSI từ IP nước ngoài:** Chưa có tài liệu xác minh chính thức liệu SSI FastConnect có áp dụng IP whitelist hay giới hạn truy cập từ các dải IP VPS ngoài Việt Nam hay không. Vì vậy, **bắt buộc phải chạy bước kiểm tra kết nối SSI chỉ đọc (Bước 7)** từ VPS trước khi tiến hành cắt chuyển chính thức.
+
+---
+
+### Quy trình cắt chuyển 10 bước
+
+#### Bước 1: Dừng toàn bộ Scheduled Tasks trên máy Windows
+Mở PowerShell trên máy Windows và vô hiệu hóa tất cả 9 task `trading-*`:
+```powershell
+Get-ScheduledTask -TaskName "trading-*" | Disable-ScheduledTask
+# Xác nhận toàn bộ State đã chuyển sang Disabled:
+Get-ScheduledTask -TaskName "trading-*" | Select-Object TaskName, State
+```
+
+#### Bước 2: Dừng engine và collector trên máy Windows
+Chỉ dừng 2 service nghiệp vụ, giữ postgres chạy để trích xuất dữ liệu:
+```powershell
+cd D:\My_Vault_Obsidian\Project\AI_auto_trading_system
+docker compose stop engine collector
+```
+
+#### Bước 3: Đếm số dòng mốc và sao lưu dữ liệu trên Windows
+1. Đếm và ghi lại số dòng mốc của 6 bảng chính trên Windows:
+```powershell
+docker compose exec -T postgres psql -U trading -d trading -c "
+SELECT 'bars' AS tbl, count(*) FROM bars
+UNION ALL SELECT 'bars_daily', count(*) FROM bars_daily
+UNION ALL SELECT 'orders', count(*) FROM orders
+UNION ALL SELECT 'positions', count(*) FROM positions
+UNION ALL SELECT 'engine_state', count(*) FROM engine_state
+UNION ALL SELECT 'real_order_fills', count(*) FROM real_order_fills;
+"
+```
+
+2. Xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) ra file.
+
+> [!CAUTION]
+> **KHÔNG** dùng `docker compose exec ... pg_dump -Fc > file` trong Windows PowerShell 5.1: toán tử `>` mã hoá lại luồng ra thành văn bản UTF-16, file `.dump` nhị phân **hỏng**, và bạn chỉ phát hiện lúc restore trên VPS — khi máy Windows đã tắt. Ghi file **bên trong container** rồi chép ra bằng `docker compose cp`:
+
+```powershell
+docker compose exec -T postgres pg_dump -U trading -Fc -f /tmp/backup_migration.dump trading
+docker compose cp postgres:/tmp/backup_migration.dump .\backup_migration.dump
+# Claude thử 27/09 trên máy Windows: 59 giây, 98,7 MB, 5 byte đầu = `PGDMP` (đúng định dạng).
+# pg_dump in cảnh báo `circular foreign-key constraints ... continuous_agg`: đó là catalog nội bộ
+# của TimescaleDB, gặp ở mọi bản dump toàn DB; exit code vẫn 0. Không phải lỗi.
+# Kiểm file dump đọc được (liệt kê mục lục; phải có dòng, không lỗi):
+docker compose exec -T postgres pg_restore -l /tmp/backup_migration.dump | Select-Object -First 5
+```
+
+3. Ghi lại phiên bản TimescaleDB đang chạy (VPS **phải** khôi phục trên đúng phiên bản này):
+```powershell
+docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT extversion FROM pg_extension WHERE extname='timescaledb';"
+# 27/09/2026 ra: 2.27.2
+```
+
+4. Nén thư mục sổ lệnh `data/orderbook`:
+```powershell
+tar -czvf orderbook_migration.tar.gz data/orderbook
+```
+
+#### Bước 4: Chép file sao lưu sang VPS Ubuntu
+Sử dụng SCP hoặc SFTP để chuyển 2 file sang thư mục `/tmp` của VPS:
+```powershell
+scp backup_migration.dump orderbook_migration.tar.gz <ĐIỀN: USER>@<ĐIỀN: VPS_IP>:/tmp/
+```
+
+#### Bước 5: Khôi phục dữ liệu trên VPS Ubuntu
+Đăng nhập SSH vào VPS (`ssh <ĐIỀN: USER>@<ĐIỀN: VPS_IP>`):
+```bash
+cd /opt/trading
+
+# (a) GHIM phiên bản TimescaleDB bằng đúng số đã ghi ở Bước 3 (compose dùng tag `latest-pg16`,
+#     VPS kéo về hôm nay có thể là bản mới hơn — TimescaleDB yêu cầu khôi phục trên CÙNG phiên bản).
+#     File override chỉ nằm trên VPS, không commit:
+cat > docker-compose.override.yml <<'EOF'
+services:
+  postgres:
+    image: timescale/timescaledb:<ĐIỀN: extversion ở Bước 3, vd 2.27.2>-pg16
+EOF
+
+# (b) CHỈ khởi động postgres (KHÔNG engine/collector — chúng sẽ tạo bảng và ghi dữ liệu vào DB
+#     trước khi restore). DB phải còn RỖNG:
+docker compose up -d postgres
+docker compose exec postgres pg_isready -U trading
+docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT extversion FROM pg_extension WHERE extname='timescaledb';"
+# -> PHẢI bằng số ở Bước 3. Khác thì dừng lại, sửa override.
+docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public';"
+# -> PHẢI là 0 (DB rỗng). Không phải 0 thì dừng lại: đang restore đè lên dữ liệu có sẵn.
+
+# (c) Chép dump vào container rồi khôi phục từ file (không qua pipe, không --clean vì DB rỗng):
+docker compose cp /tmp/backup_migration.dump postgres:/tmp/backup_migration.dump
+docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_pre_restore();"
+docker compose exec -T postgres pg_restore -U trading -d trading --no-owner /tmp/backup_migration.dump
+docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_post_restore();"
+
+# 4. Giải nén thư mục sổ lệnh:
+tar -xzvf /tmp/orderbook_migration.tar.gz -C /opt/trading/
+chmod -R 775 /opt/trading/data/orderbook
+```
+
+#### Bước 6: Kiểm tra đối soát số dòng sau khi khôi phục trên VPS
+Chạy truy vấn đếm dòng trên VPS:
+```bash
+docker compose exec -T postgres psql -U trading -d trading -c "
+SELECT 'bars' AS tbl, count(*) FROM bars
+UNION ALL SELECT 'bars_daily', count(*) FROM bars_daily
+UNION ALL SELECT 'orders', count(*) FROM orders
+UNION ALL SELECT 'positions', count(*) FROM positions
+UNION ALL SELECT 'engine_state', count(*) FROM engine_state
+UNION ALL SELECT 'real_order_fills', count(*) FROM real_order_fills;
+"
+```
+**BẮT BUỘC:** Đối chiếu 6 con số này với số đo được ở Bước 3 trên Windows. Tất cả phải trùng khớp 100%.
+
+#### Bước 7: Kiểm tra kết nối SSI FastConnect từ VPS (Chỉ đọc)
+Chạy script kiểm tra xác thực SSI chỉ đọc (không yêu cầu OTP, không sinh lệnh):
+```bash
+cd /opt/trading
+set -a && . ./.env && set +a
+uv run python scripts/spike_ssi_sdk_auth.py --no-otp
+```
+- Nếu thành công: In thông báo xác thực thành công hoặc token hợp lệ.
+- Nếu gặp lỗi mạng / HTTP 403 / Forbidden: Chứng tỏ IP của VPS đang bị SSI từ chối (chưa xác minh whitelist). Cần liên hệ SSI hoặc sử dụng proxy/VPN IP Việt Nam trước khi tiếp tục.
+
+#### Bước 8: Khởi động toàn bộ stack và kích hoạt crontab trên VPS
+```bash
+cd /opt/trading
+# Khởi động toàn bộ các service container
+docker compose up -d --build
+
+# Kiểm tra trạng thái các container:
+docker compose ps
+
+# Cài đặt 9 cron job vào crontab theo hướng dẫn tại §9:
+sudo crontab -e
+```
+
+#### Bước 9: Kiểm tra cổng go-live an toàn
+Xác minh chắc chắn lệnh thật chưa bị vô tình bật trên VPS:
+```bash
+uv run python -c "
+from trading.config import load_config
+cfg = load_config('config/config.yaml')
+assert not cfg.real_trading_enabled, 'LỖI NGUY HIỂM: real_trading_enabled đang bật!'
+print('GO-LIVE GATE CHECK: OK (real_trading_enabled is False)')
+"
+```
+Đọc lại file `GO_LIVE_AUDIT.md` để đối chiếu các điều kiện tiên quyết.
+
+#### Bước 10: Tắt hoàn toàn stack Windows sau khi nghiệm thu
+Chỉ sau khi VPS đã hoạt động ổn định và vượt qua các phép kiểm trên:
+```powershell
+# Trên máy Windows: Dừng toàn bộ container
+cd D:\My_Vault_Obsidian\Project\AI_auto_trading_system
+docker compose down
+```
+Lúc này toàn bộ hệ thống đã chuyển sang vận hành chính thức trên VPS.
+
+## 12. Not covered here (needs a decision, not just infra)
 
 - Derivative trading — no risk-control code exists yet, do not enable.
 - Real order placement — code exists but has never been tested against a real
