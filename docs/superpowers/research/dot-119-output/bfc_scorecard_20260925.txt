@@ -1,0 +1,26 @@
+========================================================================================
+CẢNH BÁO NIÊM PHONG (SEALED HOLDOUT NOTICE):
+Dữ liệu đang được đọc sau mốc niêm phong 2023-01-01 (giờ VN).
+Bảng điểm này CHỈ PHỤC VỤ MÔ TẢ TRẠNG THÁI KỸ THUẬT HIỆN TẠI (Descriptive Scorecard).
+TUYỆT ĐỐI KHÔNG dùng cho bất kỳ phép đo hiệu năng, kiểm định lợi thế hay dự báo lợi suất nào.
+========================================================================================
+
+BẢNG ĐIỂM KỸ THUẬT SEPA (MINERVINI TREND TEMPLATE) — MÃ: BFC
+Ngày đánh giá: 2026-09-25 (Giờ VN) | Tổng số nến sạch: 2677
+Giá đóng cửa: 48,350.0 VND | Điểm xu hướng SEPA: 3/7
+
+#   | Tiêu chí                            | Giá trị kỹ thuật                           | Trạng thái
+-----------------------------------------------------------------------------------------------
+1   | Giá trên MA150 và MA200             | P=48,350.0 < MA150=53,686.7, < MA200=51,058.5 | Không đạt
+2   | MA150 trên MA200                    | MA150=53,686.7 > MA200=51,058.5            | ĐẠT
+3   | MA200 hướng lên ≥ 1 tháng           | MA200=51,058.5 > MA200_21d=50,436.5        | ĐẠT
+4   | MA50 trên cả MA150 và MA200         | MA50=48,071.2 < MA150=53,686.7, < MA200=51,058.5 | Không đạt
+5   | Giá trên MA50                       | P=48,350.0 > MA50=48,071.2                 | ĐẠT
+6   | Giá ≥ 30% trên đáy 52 tuần          | +29.9% trên đáy (Đáy 252=37,223.9)         | Không đạt
+7   | Giá trong 25% của đỉnh 52 tuần      | 33.6% cách đỉnh (Đỉnh 252=72,766.4)        | Không đạt
+8   | Sức mạnh giá RS ≥ 70 (Thang 1-99)       | RS_rank = 72/99 (Vũ trụ 167 mã)            | ĐẠT
+-----------------------------------------------------------------------------------------------
+KẾT QUẢ TỔNG HỢP: Điểm SEPA = 3/7 | Tiêu chí RS ≥ 70: ĐẠT
+
+* Lưu ý: RS_rank được tính xấp xỉ theo trọng số 0.4/0.2/0.2/0.2 trên vũ trụ cổ phiếu đủ điều kiện,
+  KHÔNG PHẢI là chỉ số bản quyền IBD RS Rating. Bảng điểm mang tính chất mô tả thuần túy kỹ thuật.
