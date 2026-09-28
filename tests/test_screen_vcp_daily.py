@@ -13,6 +13,8 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from scripts.screen_vcp_daily import (
+    CI_HIGH_PCT,
+    CI_LOW_PCT,
     COOLDOWN_BARS,
     DEPTH_MAX_S1,
     DEPTH_MAX_S3,
@@ -21,34 +23,37 @@ from scripts.screen_vcp_daily import (
     MIN_CONTROL,
     MIN_TURNOVER_VND,
     TARGET_KS,
+    TURNOVER_WINDOW,
     ControlEntry,
-    apply_cooldown,
-    bar_date,
     base_depths,
     basket_baseline,
-    bootstrap_by_month,
     breakout_ok,
-    compute_targets,
-    entry_status,
     excess_for_event,
     find_events,
     in_is,
-    is_ceiling_open,
-    liquidity_ok,
-    month_key,
-    net_return,
     pivot_price,
-    rolling_max,
-    rolling_mean,
-    rolling_min,
-    trend_conditions,
     trend_filter_ok,
-    validate_sealed_bars,
     vcp_base_ok,
 )
 from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
+from trading.stock_study import (
+    apply_cooldown,
+    bar_date,
+    bootstrap_by_month,
+    compute_targets,
+    entry_status,
+    is_ceiling_open,
+    liquidity_ok,
+    month_key,
+    net_return,
+    rolling_max,
+    rolling_mean,
+    rolling_min,
+    trend_conditions,
+    validate_sealed_bars,
+)
 
 T0 = date(2020, 1, 6)  # thu Hai
 
@@ -268,8 +273,8 @@ def test_3b_volume_149_lan_thi_khong_dat_150_lan_thi_dat():
 # --- 3.4 thoi gian nghi ------------------------------------------------------------
 
 def test_4a_thoi_gian_nghi_10_nen_bi_bo_21_nen_duoc_giu():
-    assert apply_cooldown([100, 110]) == [100]              # cach 10 < 20 -> bo
-    assert apply_cooldown([100, 121]) == [100, 121]         # cach 21 >= 20 -> giu
+    assert apply_cooldown([100, 110], cooldown=COOLDOWN_BARS) == [100]              # cach 10 < 20 -> bo
+    assert apply_cooldown([100, 121], cooldown=COOLDOWN_BARS) == [100, 121]         # cach 21 >= 20 -> giu
     assert COOLDOWN_BARS == 20
 
 
@@ -344,12 +349,12 @@ def test_7_sua_moi_nen_sau_t_khong_doi_su_kien_bo_loc_va_nen():
 
 def test_7b_muc_tieu_duoc_phep_doi_khi_sua_nen_sau_t():
     bars, t = _base_series(n_after=25)
-    r_before = compute_targets(bars, t, (5,))
+    r_before = compute_targets(bars, t, ks=(5,))
     mutated = list(bars)
     for i in range(t + 1, len(mutated)):
         b = mutated[i]
         mutated[i] = _bar(b.ts.astimezone(TZ).date(), b.open, b.open * 2, b.open * 0.5, b.open * 2, 1000.0)
-    r_after = compute_targets(mutated, t, (5,))
+    r_after = compute_targets(mutated, t, ks=(5,))
     assert r_after[5] > r_before[5]      # muc tieu DOI (duoc phep)
 
 
@@ -412,8 +417,8 @@ def test_10c_ma_doi_chung_thieu_muc_tieu_thi_khong_tinh_vao_ro():
 
 def test_11a_bootstrap_tat_dinh_voi_seed_co_dinh():
     by_month = {(2020, 1): [0.01, 0.02], (2020, 2): [-0.01], (2020, 3): [0.05, 0.03]}
-    a = bootstrap_by_month(by_month, n=200, seed=42)
-    b = bootstrap_by_month(by_month, n=200, seed=42)
+    a = bootstrap_by_month(by_month, n=200, seed=42, ci_low_pct=CI_LOW_PCT, ci_high_pct=CI_HIGH_PCT)
+    b = bootstrap_by_month(by_month, n=200, seed=42, ci_low_pct=CI_LOW_PCT, ci_high_pct=CI_HIGH_PCT)
     assert a == b
     assert 0.0 <= a["p"] <= 1.0
     assert a["ci_low"] <= a["mean"] <= a["ci_high"]
@@ -431,7 +436,7 @@ def test_11b_khoi_theo_thang_duong_lich_gio_VN():
 
 def test_11c_bootstrap_am_thi_p_lon():
     by_month = {(2020, 1): [-0.02, -0.03], (2020, 2): [-0.01]}
-    r = bootstrap_by_month(by_month, n=200, seed=42)
+    r = bootstrap_by_month(by_month, n=200, seed=42, ci_low_pct=CI_LOW_PCT, ci_high_pct=CI_HIGH_PCT)
     assert r["mean"] < 0
     assert r["p"] == pytest.approx(1.0)
 
@@ -440,7 +445,7 @@ def test_11c_bootstrap_am_thi_p_lon():
 
 def test_12_chi_co_12_nen_sau_t_thi_co_r5_r10_ma_khong_co_r20():
     bars, t = _base_series(n_after=12)
-    r = compute_targets(bars, t, TARGET_KS)
+    r = compute_targets(bars, t, ks=TARGET_KS)
     assert r[5] is not None and r[10] is not None
     assert r[20] is None
     # r_5 = close[t+5]/open[t+1] - 1, r_10 = close[t+10]/open[t+1] - 1
@@ -454,10 +459,10 @@ def test_p1_thanh_khoan_20_nen_truoc_phai_tu_1_ty():
     days = _dates(T0, 30)
     # close x volume = 20.000 x 60.000 = 1,2 ty -> dat
     bars = [_bar(days[i], 20_000.0, 20_100.0, 19_900.0, 20_000.0, 60_000) for i in range(30)]
-    assert liquidity_ok(bars, 25) is True
+    assert liquidity_ok(bars, 25, window=TURNOVER_WINDOW, min_turnover=MIN_TURNOVER_VND) is True
     # 20.000 x 40.000 = 0,8 ty -> khong dat
     bars2 = [_bar(days[i], 20_000.0, 20_100.0, 19_900.0, 20_000.0, 40_000) for i in range(30)]
-    assert liquidity_ok(bars2, 25) is False
+    assert liquidity_ok(bars2, 25, window=TURNOVER_WINDOW, min_turnover=MIN_TURNOVER_VND) is False
     assert MIN_TURNOVER_VND == 1_000_000_000.0
 
 
@@ -524,5 +529,5 @@ def test_1i_su_kien_phai_qua_loc_thanh_khoan_nhu_ro_doi_chung():
     thin = list(bars)
     for i in range(t - 20, t):                                  # rut volume 20 nen truoc t
         thin[i] = dataclasses.replace(thin[i], volume=max(1, thin[i].volume // 1000))
-    assert liquidity_ok(thin, t, min_turnover=nguong) is False
+    assert liquidity_ok(thin, t, window=TURNOVER_WINDOW, min_turnover=nguong) is False
     assert t not in find_events(thin, min_turnover=nguong)

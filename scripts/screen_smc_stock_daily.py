@@ -47,7 +47,11 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 from scripts._db_common import resolve_dsn
-from scripts.screen_vcp_daily import (
+from scripts.screen_vn30f_smc import _la_swing_high
+from trading.calendar_vn import TZ
+from trading.metrics import holm_adjust
+from trading.models import Bar
+from trading.stock_study import (
     apply_cooldown,
     bar_date,
     bootstrap_by_month,
@@ -60,10 +64,6 @@ from scripts.screen_vcp_daily import (
     net_return,
     validate_sealed_bars,
 )
-from scripts.screen_vn30f_smc import _la_swing_high
-from trading.calendar_vn import TZ
-from trading.metrics import holm_adjust
-from trading.models import Bar
 from trading.storage.db import Storage
 
 # --- Nguong va tham so da dang ky truoc --------------------------------------------
@@ -75,6 +75,7 @@ READ_TO = datetime(2023, 1, 1, tzinfo=TZ)
 SWEEP_N = 20                                 # so phien tinh day cho sweep
 FRACTAL_K = 2                                # fractal cho swing high (mac dinh cua _la_swing_high)
 MIN_TURNOVER_VND = 1_000_000_000.0           # 1 ty dong, y het dot 99
+TURNOVER_WINDOW = 20                          # cua so thanh khoan, y het dot 99
 COOLDOWN_BARS = 20                           # nghi 20 nen cho TUNG loai, TUNG ma
 
 TARGET_KS = (10, 20, 40)                     # ~2, 4, 8 tuan
@@ -83,6 +84,8 @@ MIN_CONTROL = 5                              # ro doi chung toi thieu
 MIN_EVENTS = 100                             # duoi nguong nay thi IT_SU_KIEN
 N_BOOTSTRAP = 2000
 BOOTSTRAP_SEED = 42
+CI_LOW_PCT = 2.5                              # 2.5%, y het dot 99
+CI_HIGH_PCT = 97.5                            # 97.5%, y het dot 99
 ALPHA = 0.05
 EVENT_TYPES = ("sweep", "bos", "fvg")
 
@@ -151,7 +154,7 @@ def _dat_chung(bars: list[Bar], t: int, min_turnover: float, drop: dict[str, int
     if bars[t].volume == 0:
         _dem(drop, "volume_0")
         return False
-    if not liquidity_ok(bars, t, min_turnover=min_turnover):
+    if not liquidity_ok(bars, t, window=TURNOVER_WINDOW, min_turnover=min_turnover):
         _dem(drop, "duoi_thanh_khoan")
         return False
     return True
@@ -159,7 +162,7 @@ def _dat_chung(bars: list[Bar], t: int, min_turnover: float, drop: dict[str, int
 
 def _loc(bars: list[Bar], cand: list[int], min_turnover: float, drop: dict[str, int] | None) -> list[int]:
     kept = [t for t in cand if _dat_chung(bars, t, min_turnover, drop)]
-    return apply_cooldown(kept, COOLDOWN_BARS)
+    return apply_cooldown(kept, cooldown=COOLDOWN_BARS)
 
 
 def find_sweep_events(
@@ -229,11 +232,11 @@ def make_basket_entry(
     ks: tuple[int, ...] = TARGET_KS,
 ) -> BasketEntry | None:
     """None neu ma nay khong duoc vao ro (duoi thanh khoan, khong vao duoc lenh, khong co du lieu)."""
-    if not liquidity_ok(bars, i, min_turnover=min_turnover):
+    if not liquidity_ok(bars, i, window=TURNOVER_WINDOW, min_turnover=min_turnover):
         return None
     if entry_status(bars, i, exchange) != "ok":
         return None
-    tg = compute_targets(bars, i, ks)
+    tg = compute_targets(bars, i, ks=ks)
     if all(tg.get(k) is None for k in ks):
         return None
     return BasketEntry(symbol, dict(tg))
@@ -362,7 +365,7 @@ def run_screen(
                 if st != "ok":
                     drop[st] += 1
                     continue
-                tg = compute_targets(bars, t, TARGET_KS)
+                tg = compute_targets(bars, t, ks=TARGET_KS)
                 count_drops(tg, drop)
                 entry_open = bars[t + 1].open
                 events.append(
@@ -427,7 +430,13 @@ def run_screen(
             if v is not None:
                 by_month[month_key(e.day)].append(v)
                 xs.append(v)
-        boot = bootstrap_by_month(dict(by_month), n=n_bootstrap, seed=seed)
+        boot = bootstrap_by_month(
+            dict(by_month),
+            n=n_bootstrap,
+            seed=seed,
+            ci_low_pct=CI_LOW_PCT,
+            ci_high_pct=CI_HIGH_PCT,
+        )
         res["types"][kind] = {
             "n": len(rows),
             "by_year": _count_by(rows, lambda e: e.day.year),

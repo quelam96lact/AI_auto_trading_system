@@ -46,7 +46,11 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 from scripts._db_common import resolve_dsn
-from scripts.screen_vcp_daily import (
+from trading.calendar_vn import TZ
+from trading.metrics import calculate_percentile
+from trading.models import Bar
+from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
+from trading.stock_study import (
     bar_date,
     clean_bars,
     is_ceiling_open,
@@ -54,9 +58,6 @@ from scripts.screen_vcp_daily import (
     load_universe,
     validate_sealed_bars,
 )
-from trading.calendar_vn import TZ
-from trading.models import Bar
-from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.storage.db import Storage
 
 __all__ = ["bar_date", "main", "run_screen"]
@@ -312,21 +313,6 @@ def _median(values: Sequence[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
-def _percentile(sorted_vals: list[float], pct: float) -> float:
-    """Phan vi noi suy tuyen tinh (khong dung numpy)."""
-    n = len(sorted_vals)
-    if n == 0:
-        raise ValueError("chuoi rong")
-    if n == 1:
-        return sorted_vals[0]
-    idx = (n - 1) * pct / 100.0
-    lo = math.floor(idx)
-    hi = math.ceil(idx)
-    if lo == hi:
-        return sorted_vals[lo]
-    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (idx - lo)
-
-
 # --- Bootstrap theo KHOI thang lien nhau ------------------------------------------
 
 def block_samples(
@@ -372,8 +358,8 @@ def block_bootstrap(
         "mean": _mean(series),
         "median": _median(series),
         "p": p,
-        "ci_low": _percentile(means_sorted, CI_LOW_PCT),
-        "ci_high": _percentile(means_sorted, CI_HIGH_PCT),
+        "ci_low": calculate_percentile(means_sorted, CI_LOW_PCT),
+        "ci_high": calculate_percentile(means_sorted, CI_HIGH_PCT),
         "n_boot": n_boot,
         "block": block,
         "n_months": len(series),

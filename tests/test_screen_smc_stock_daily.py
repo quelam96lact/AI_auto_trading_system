@@ -52,6 +52,7 @@ from scripts.screen_smc_stock_daily import (
 from trading.calendar_vn import TZ
 from trading.metrics import holm_adjust
 from trading.models import Bar
+from trading.stock_study import bar_date
 
 T0 = date(2020, 1, 6)  # thu Hai
 
@@ -298,8 +299,8 @@ def test_5d_muc_swing_tang_dan_khop_voi_ham_quet_nguoc():
 def test_6_khung_40_thieu_nen_thi_co_r10_r20_ma_khong_co_r40_va_dem_duoc():
     bars = _flat(61)
     t = 30
-    from scripts.screen_vcp_daily import compute_targets
-    tg = compute_targets(bars, t, TARGET_KS)
+    from trading.stock_study import compute_targets
+    tg = compute_targets(bars, t, ks=TARGET_KS)
     assert TARGET_KS == (10, 20, 40)
     assert tg[10] is not None and tg[20] is not None      # t+10 = 40, t+20 = 50 < 61
     assert tg[40] is None                                 # t+40 = 70 >= 61
@@ -311,8 +312,8 @@ def test_6_khung_40_thieu_nen_thi_co_r10_r20_ma_khong_co_r40_va_dem_duoc():
 
 def test_6b_du_nen_thi_khong_thieu_khung_nao():
     bars = _flat(80)
-    from scripts.screen_vcp_daily import compute_targets
-    tg = compute_targets(bars, 30, TARGET_KS)
+    from trading.stock_study import compute_targets
+    tg = compute_targets(bars, 30, ks=TARGET_KS)
     assert missing_ks(tg) == []
     drop: dict[str, int] = {}
     count_drops(tg, drop)
@@ -412,7 +413,7 @@ def test_9a_ngay_tin_hieu_2022_11_01_nam_ngoai_IS():
 def test_9b_nen_ts_2022_10_31_17h_UTC_la_ngay_01_11_gio_VN_nam_ngoai_IS():
     b = Bar(symbol="AAA", ts=datetime(2022, 10, 31, 17, 0, tzinfo=UTC),
             open=100.0, high=101.0, low=99.0, close=100.0, volume=1000)
-    d = vcp.bar_date(b)
+    d = bar_date(b)
     assert d == date(2022, 11, 1)
     assert in_is_signal(d) is False
     assert in_is_signal(date(2016, 1, 3)) is False

@@ -42,7 +42,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts._db_common import resolve_dsn
-from scripts.score_sepa_daily import calculate_rs_ranks
 from scripts.screen_vcp_daily import (
     BOOTSTRAP_SEED,
     CI_HIGH_PCT,
@@ -58,23 +57,27 @@ from scripts.screen_vcp_daily import (
     READ_FROM,
     READ_TO,
     TARGET_KS,
-    TREND_KEYS,
-    TREND_MIN_BARS,
     TURNOVER_WINDOW,
     ControlEntry,
     SymbolData,
     _describe,
-    _percentile,
-    apply_cooldown,
-    bar_date,
     basket_baseline,
-    bootstrap_by_month,
-    clean_bars,
     compact_control_series,
-    compute_targets,
-    entry_status,
     excess_for_event,
     in_is,
+)
+from trading.metrics import empirical_percentile_rank, holm_adjust, max_drawdown
+from trading.models import Bar
+from trading.stock_study import (
+    TREND_KEYS,
+    TREND_MIN_BARS,
+    apply_cooldown,
+    bar_date,
+    bootstrap_by_month,
+    calculate_rs_ranks,
+    clean_bars,
+    compute_targets,
+    entry_status,
     is_ceiling_open,
     limit_rate,
     liquidity_ok,
@@ -87,8 +90,6 @@ from scripts.screen_vcp_daily import (
     trend_conditions,
     validate_sealed_bars,
 )
-from trading.metrics import empirical_percentile_rank, holm_adjust, max_drawdown
-from trading.models import Bar
 from trading.storage.db import Storage
 
 __all__ = [
@@ -113,7 +114,6 @@ __all__ = [
     "SepaEvent",
     "SymbolData",
     "_describe",
-    "_percentile",
     "apply_cooldown",
     "assign_event_excess",
     "bar_date",
@@ -267,7 +267,7 @@ def find_score_events(
         if is_match:
             cand.append(t)
 
-    return apply_cooldown(cand, cooldown)
+    return apply_cooldown(cand, cooldown=cooldown)
 
 
 def assign_event_excess(
@@ -421,7 +421,7 @@ def run_sepa_measurement(
                     continue
                 if entry_status(bars, t, ex) != "ok":
                     continue
-                tg = compute_targets(bars, t, TARGET_KS)
+                tg = compute_targets(bars, t, ks=TARGET_KS)
                 entry_open = bars[t + 1].open
                 d_ord = d.toordinal()
                 rank_val = rs_ranks_by_day_ord.get(d_ord, {}).get(sym)
@@ -452,7 +452,7 @@ def run_sepa_measurement(
                     continue
                 if entry_status(bars, t, ex) != "ok":
                     continue
-                tg = compute_targets(bars, t, TARGET_KS)
+                tg = compute_targets(bars, t, ks=TARGET_KS)
                 entry_open = bars[t + 1].open
                 d_ord = d.toordinal()
                 rank_val = rs_ranks_by_day_ord.get(d_ord, {}).get(sym)
@@ -508,7 +508,13 @@ def run_sepa_measurement(
             v = e.excess.get(MAIN_K)
             if v is not None:
                 by_month[month_key(e.day)].append(v)
-        boot = bootstrap_by_month(dict(by_month), n=n_bootstrap, seed=seed)
+        boot = bootstrap_by_month(
+            dict(by_month),
+            n=n_bootstrap,
+            seed=seed,
+            ci_low_pct=CI_LOW_PCT,
+            ci_high_pct=CI_HIGH_PCT,
+        )
         return {"stats": stats, "boot": boot, "events": evs}
 
     summary_transitions = {s: summarize_group(events_transition_by_score[s]) for s in range(8)}

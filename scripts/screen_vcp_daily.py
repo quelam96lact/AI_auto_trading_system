@@ -25,12 +25,11 @@ import argparse
 import io
 import math
 import pathlib
-import random
 import statistics
 import sys
 import time
 from array import array
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -47,24 +46,35 @@ if str(REPO_ROOT) not in sys.path:
 from scripts._db_common import resolve_dsn
 from trading.calendar_vn import TZ
 from trading.models import Bar
-from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
+from trading.stock_study import (
+    RANGE_WINDOW,
+    TREND_MIN_BARS,
+    apply_cooldown,
+    bar_date,
+    bootstrap_by_month,
+    clean_bars,
+    compute_targets,
+    entry_status,
+    liquidity_ok,
+    load_universe,
+    month_key,
+    net_return,
+    rolling_max,
+    rolling_mean,
+    rolling_min,
+    trend_conditions,
+    validate_sealed_bars,
+)
 from trading.storage.db import Storage
 
-# --- Nguong va tham so da dang ky truoc --------------------------------------------
+# --- Nguong va tham so da dang ky truoc cua rieng dot 99 --------------------------
 IS_SIGNAL_START = date(2016, 1, 4)
 IS_SIGNAL_END = date(2022, 11, 30)
-SEALED_START = date(2023, 1, 1)
 READ_FROM = datetime(2016, 1, 1, tzinfo=TZ)
 READ_TO = datetime(2023, 1, 1, tzinfo=TZ)
 
-LIMIT_BY_EXCHANGE = {"HOSE": 0.07, "HNX": 0.10, "UPCOM": 0.15}
-DEFAULT_LIMIT_RATE = 0.07
-LIMIT_EPS = 0.001
-
 MIN_TURNOVER_VND = 1_000_000_000.0
 TURNOVER_WINDOW = 20
-TREND_MIN_BARS = 252
-RANGE_WINDOW = 252
 DEPTH_MAX_S1 = 0.35
 DEPTH_MAX_S3 = 0.10
 BASE_LEN = 60
@@ -82,171 +92,10 @@ P95 = 0.95
 CI_LOW_PCT = 2.5
 CI_HIGH_PCT = 97.5
 
-TREND_KEYS = (
-    "c1_close_tren_sma150_200",
-    "c2_sma150_tren_sma200",
-    "c3_sma200_di_len",
-    "c4_sma50_tren_sma150_200",
-    "c5_close_tren_sma50",
-    "c6_cach_day_252_nen",
-    "c7_gan_dinh_252_nen",
-)
-
-
-# --- Tien ich thoi gian ------------------------------------------------------------
-
-def bar_date(b: Bar) -> date:
-    """Ngay giao dich cua nen theo GIO VN (bars_daily luu 00:00 VN = 17:00 UTC hom truoc)."""
-    return b.ts.astimezone(TZ).date()
-
 
 def in_is(d: date) -> bool:
     """Ngay tin hieu co nam trong In-Sample khong."""
     return IS_SIGNAL_START <= d <= IS_SIGNAL_END
-
-
-def month_key(d: date) -> tuple[int, int]:
-    """Khoa khoi bootstrap: thang duong lich cua ngay (gio VN)."""
-    return (d.year, d.month)
-
-
-def validate_sealed_bars(bars: list[Bar]) -> None:
-    """Ném lỗi nếu có nến từ 2023-01-01 (giờ VN) trở đi — khuôn của screen_vn30f_intraday."""
-    for b in bars:
-        d = bar_date(b)
-        if d >= SEALED_START:
-            raise ValueError(
-                f"Vi phạm niêm phong (Holdout Breach): nến {d.isoformat()} "
-                f">= mốc niêm phong {SEALED_START.isoformat()}"
-            )
-
-
-def clean_bars(bars: list[Bar]) -> tuple[list[Bar], int]:
-    """Bo nen co open/high/low/close <= 0. Nen volume = 0 GIU NGUYEN trong chuoi."""
-    kept: list[Bar] = []
-    dropped = 0
-    for b in bars:
-        if b.open <= 0 or b.high <= 0 or b.low <= 0 or b.close <= 0:
-            dropped += 1
-        else:
-            kept.append(b)
-    return kept, dropped
-
-
-# --- Truot (khong dung numpy) ------------------------------------------------------
-
-def rolling_mean(values: list[float], window: int) -> list[float | None]:
-    """Trung binh truot cua `window` gia tri KET THUC tai i (tong truot, khong tinh lai)."""
-    out: list[float | None] = [None] * len(values)
-    s = 0.0
-    for i, v in enumerate(values):
-        s += v
-        if i >= window:
-            s -= values[i - window]
-        if i >= window - 1:
-            out[i] = s / window
-    return out
-
-
-def rolling_max(values: list[float], window: int) -> list[float | None]:
-    """Max truot cua `window` gia tri ket thuc tai i (hang doi don dieu)."""
-    out: list[float | None] = [None] * len(values)
-    dq: deque[int] = deque()
-    for i, v in enumerate(values):
-        while dq and values[dq[-1]] <= v:
-            dq.pop()
-        dq.append(i)
-        if dq[0] <= i - window:
-            dq.popleft()
-        if i >= window - 1:
-            out[i] = values[dq[0]]
-    return out
-
-
-def rolling_min(values: list[float], window: int) -> list[float | None]:
-    """Min truot cua `window` gia tri ket thuc tai i."""
-    out: list[float | None] = [None] * len(values)
-    dq: deque[int] = deque()
-    for i, v in enumerate(values):
-        while dq and values[dq[-1]] >= v:
-            dq.pop()
-        dq.append(i)
-        if dq[0] <= i - window:
-            dq.popleft()
-        if i >= window - 1:
-            out[i] = values[dq[0]]
-    return out
-
-
-# --- Bo loc xu huong (7 dieu kien tai t-1) -----------------------------------------
-
-def _trend_from_arrays(
-    *,
-    close_i: float,
-    sma50_i: float,
-    sma150_i: float,
-    sma200_i: float,
-    sma200_prev21: float,
-    low252_i: float,
-    high252_i: float,
-) -> dict[str, bool]:
-    return {
-        "c1_close_tren_sma150_200": close_i > sma150_i and close_i > sma200_i,
-        "c2_sma150_tren_sma200": sma150_i > sma200_i,
-        "c3_sma200_di_len": sma200_i > sma200_prev21,
-        "c4_sma50_tren_sma150_200": sma50_i > sma150_i and sma50_i > sma200_i,
-        "c5_close_tren_sma50": close_i > sma50_i,
-        "c6_cach_day_252_nen": close_i >= 1.30 * low252_i,
-        "c7_gan_dinh_252_nen": close_i >= 0.75 * high252_i,
-    }
-
-
-def _all_false() -> dict[str, bool]:
-    return dict.fromkeys(TREND_KEYS, False)
-
-
-def trend_conditions(
-    bars: list[Bar],
-    t: int,
-    *,
-    sma50: list[float | None] | None = None,
-    sma150: list[float | None] | None = None,
-    sma200: list[float | None] | None = None,
-    win_low: list[float | None] | None = None,
-    win_high: list[float | None] | None = None,
-) -> dict[str, bool]:
-    """Bay dieu kien cua bo loc xu huong, tinh tai DONG CUA NEN t-1.
-
-    `t` la chi so nen tin hieu. Bo qua cac mang tinh truoc thi ham tu tinh (duong cham,
-    dung cho test); truyen vao thi dung lai (duong nhanh, dung khi chay that).
-    """
-    if t < TREND_MIN_BARS:
-        return _all_false()
-    i = t - 1
-    if sma50 is None or sma150 is None or sma200 is None or win_low is None or win_high is None:
-        closes = [b.close for b in bars]
-        highs = [b.high for b in bars]
-        lows = [b.low for b in bars]
-        sma50 = rolling_mean(closes, 50)
-        sma150 = rolling_mean(closes, 150)
-        sma200 = rolling_mean(closes, 200)
-        win_low = rolling_min(lows, RANGE_WINDOW)
-        win_high = rolling_max(highs, RANGE_WINDOW)
-
-    s50, s150, s200 = sma50[i], sma150[i], sma200[i]
-    s200_prev = sma200[i - 21]
-    lo252, hi252 = win_low[i], win_high[i]
-    if s50 is None or s150 is None or s200 is None or s200_prev is None or lo252 is None or hi252 is None:
-        return _all_false()
-    return _trend_from_arrays(
-        close_i=bars[i].close,
-        sma50_i=s50,
-        sma150_i=s150,
-        sma200_i=s200,
-        sma200_prev21=s200_prev,
-        low252_i=lo252,
-        high252_i=hi252,
-    )
 
 
 def trend_filter_ok(bars: list[Bar], t: int, **arrays: Any) -> bool:
@@ -254,20 +103,7 @@ def trend_filter_ok(bars: list[Bar], t: int, **arrays: Any) -> bool:
     return all(trend_conditions(bars, t, **arrays).values())
 
 
-# --- Thanh khoan, nen VCP, nen pha vo ---------------------------------------------
-
-def liquidity_ok(
-    bars: list[Bar],
-    t: int,
-    window: int = TURNOVER_WINDOW,
-    min_turnover: float = MIN_TURNOVER_VND,
-) -> bool:
-    """Trung binh `close x volume` cua `window` nen TRUOC t phai >= 1 ty dong."""
-    if t < window:
-        return False
-    total = sum(bars[i].close * bars[i].volume for i in range(t - window, t))
-    return total / window >= min_turnover
-
+# --- Nen VCP, nen pha vo ---------------------------------------------------------
 
 def base_depths(bars: list[Bar], t: int) -> tuple[float, float, float]:
     """Do sau tung doan 20 nen cua nen VCP: (max high - min low) / max high."""
@@ -310,17 +146,6 @@ def breakout_ok(bars: list[Bar], t: int) -> bool:
     return vmean > 0 and bars[t].volume >= BREAKOUT_VOL_MULT * vmean
 
 
-def apply_cooldown(indices: list[int], cooldown: int = COOLDOWN_BARS) -> list[int]:
-    """Sau mot su kien, khong nhan su kien moi trong `cooldown` nen tiep theo."""
-    out: list[int] = []
-    last: int | None = None
-    for i in indices:
-        if last is None or i - last > cooldown:
-            out.append(i)
-            last = i
-    return out
-
-
 def find_events(bars: list[Bar], min_turnover: float = MIN_TURNOVER_VND) -> list[int]:
     """Chi so cac nen tin hieu VCP cua MOT ma, da ap thoi gian nghi."""
     highs = [b.high for b in bars]
@@ -338,53 +163,12 @@ def find_events(bars: list[Bar], min_turnover: float = MIN_TURNOVER_VND) -> list
         for t in cand
         # liquidity_ok: CUNG bo loc voi ro doi chung (SymbolData.liq_ok, cung cua so 20 nen
         # truoc t) - thieu no thi phe VCP va phe doi chung khac vu tru (audit dot 99).
-        if liquidity_ok(bars, t, min_turnover=min_turnover)
+        if liquidity_ok(bars, t, window=TURNOVER_WINDOW, min_turnover=min_turnover)
         and trend_filter_ok(bars, t)
         and vcp_base_ok(bars, t)
         and breakout_ok(bars, t)
     ]
-    return apply_cooldown(kept)
-
-
-# --- Vao lenh, muc tieu, chi phi ---------------------------------------------------
-
-def limit_rate(exchange: str | None) -> float:
-    """Bien do tran theo san; san khong ro thi dung 0,07."""
-    return LIMIT_BY_EXCHANGE.get((exchange or "").upper(), DEFAULT_LIMIT_RATE)
-
-
-def is_ceiling_open(prev_close: float, next_open: float, exchange: str | None) -> bool:
-    """Mo cua o gia tran: open >= close[truoc] x (1 + bien do - 0,001)."""
-    return next_open >= prev_close * (1 + limit_rate(exchange) - LIMIT_EPS)
-
-
-def entry_status(bars: list[Bar], t: int, exchange: str | None) -> str:
-    """'ok' | 'ceiling' | 'zero_volume' | 'no_bar' — vao lenh tai open[t+1]."""
-    if t + 1 >= len(bars):
-        return "no_bar"
-    nxt = bars[t + 1]
-    if is_ceiling_open(bars[t].close, nxt.open, exchange):
-        return "ceiling"
-    if nxt.volume == 0:
-        return "zero_volume"
-    return "ok"
-
-
-def net_return(entry_open: float, exit_close: float) -> float:
-    """Loi nhuan rong (phi, thue, truot gia) — dung cac hang so import tu paper_broker."""
-    s = SLIPPAGE_BPS / 10_000.0
-    return (exit_close * (1 - FEE_RATE - SELL_TAX_RATE - s)) / (entry_open * (1 + FEE_RATE + s)) - 1.0
-
-
-def compute_targets(bars: list[Bar], t: int, ks: tuple[int, ...] = TARGET_KS) -> dict[int, float | None]:
-    """Loi nhuan GOP r_k = close[t+k] / open[t+1] - 1; None khi thieu nen."""
-    out: dict[int, float | None] = {}
-    if t + 1 >= len(bars):
-        return dict.fromkeys(ks, None)
-    entry = bars[t + 1].open
-    for k in ks:
-        out[k] = (bars[t + k].close / entry - 1.0) if (t + k < len(bars) and entry > 0) else None
-    return out
+    return apply_cooldown(kept, cooldown=COOLDOWN_BARS)
 
 
 # --- Doi chung cung ngay ----------------------------------------------------------
@@ -421,49 +205,7 @@ def excess_for_event(
     return baseline, r_event - baseline, n
 
 
-# --- Thong ke: bootstrap theo khoi thang ------------------------------------------
 
-def _percentile(sorted_vals: list[float], pct: float) -> float:
-    if not sorted_vals:
-        return 0.0
-    idx = (len(sorted_vals) - 1) * pct / 100.0
-    lo = math.floor(idx)
-    hi = math.ceil(idx)
-    if lo == hi:
-        return sorted_vals[lo]
-    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (idx - lo)
-
-
-def bootstrap_by_month(
-    by_month: dict[tuple[int, int], list[float]],
-    n: int = N_BOOTSTRAP,
-    seed: int = BOOTSTRAP_SEED,
-) -> dict[str, Any]:
-    """Bootstrap khoi THANG duong lich: lay mau lai cac thang co hoan lai, n lan, seed co dinh.
-
-    p = ty le mau bootstrap co trung binh <= 0 (kiem mot phia: gia thuyet trung binh > 0).
-    """
-    months = sorted(by_month.keys())
-    all_vals = [v for m in months for v in by_month[m]]
-    if not months or not all_vals:
-        return {"mean": None, "ci_low": None, "ci_high": None, "p": None, "n_months": 0}
-    mean_obs = sum(all_vals) / len(all_vals)
-    rng = random.Random(seed)
-    means: list[float] = []
-    for _ in range(n):
-        vals: list[float] = []
-        for _ in range(len(months)):
-            vals.extend(by_month[months[rng.randrange(len(months))]])
-        means.append(sum(vals) / len(vals))
-    means.sort()
-    p = sum(1 for m in means if m <= 0.0) / len(means)
-    return {
-        "mean": mean_obs,
-        "ci_low": _percentile(means, CI_LOW_PCT),
-        "ci_high": _percentile(means, CI_HIGH_PCT),
-        "p": p,
-        "n_months": len(months),
-    }
 
 
 # --- Du lieu theo ma ---------------------------------------------------------------
@@ -538,7 +280,7 @@ def compact_control_series(sd: SymbolData) -> tuple[array, array, array, array]:
             continue
         if entry_status(sd.bars, i, sd.exchange) != "ok":
             continue
-        tg = compute_targets(sd.bars, i, TARGET_KS)
+        tg = compute_targets(sd.bars, i, ks=TARGET_KS)
         if tg[5] is None and tg[10] is None and tg[20] is None:
             continue
         if tg[5] is not None:
@@ -561,22 +303,6 @@ class Event:
     r: dict[int, float | None] = field(default_factory=dict)
     r_net: dict[int, float | None] = field(default_factory=dict)
     excess: dict[int, float | None] = field(default_factory=dict)
-
-
-def load_universe(
-    storage: Storage, exclude_file: str = "exclusions.txt"
-) -> tuple[list[str], dict[str, str], int, set[str]]:
-    """Danh sach ma co nen trong bars_daily, da loai ma hong; kem ban do san."""
-    excluded: set[str] = set()
-    p = pathlib.Path(exclude_file)
-    if p.exists():
-        excluded = {s.strip().upper() for s in p.read_text(encoding="utf-8").splitlines() if s.strip()}
-    with storage.conn() as c:
-        all_syms = [r[0] for r in c.execute("SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol")]
-        exchange = {r[0]: (r[1] or "") for r in c.execute("SELECT symbol, exchange FROM symbol_universe")}
-    n_all = len(all_syms)
-    universe = [s for s in all_syms if s.upper() not in excluded]
-    return universe, exchange, n_all, excluded
 
 
 def run_screen(
@@ -618,7 +344,7 @@ def run_screen(
             if st != "ok":
                 drop[st] += 1
                 continue
-            tg = compute_targets(bars, t, TARGET_KS)
+            tg = compute_targets(bars, t, ks=TARGET_KS)
             entry_open = bars[t + 1].open
             ev = Event(
                 symbol=sym,
@@ -674,7 +400,13 @@ def run_screen(
         v = e.excess.get(MAIN_K)
         if v is not None:
             by_month[month_key(e.day)].append(v)
-    boot = bootstrap_by_month(dict(by_month), n=n_bootstrap, seed=seed)
+    boot = bootstrap_by_month(
+        dict(by_month),
+        n=n_bootstrap,
+        seed=seed,
+        ci_low_pct=CI_LOW_PCT,
+        ci_high_pct=CI_HIGH_PCT,
+    )
 
     n_valid = main_stats["n_excess"]
     ket_luan = _verdict(boot, main_stats, n_valid)

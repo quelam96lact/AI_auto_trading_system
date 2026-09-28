@@ -30,32 +30,19 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
-try:
-    from screen_vcp_daily import (
-        RANGE_WINDOW,
-        TREND_KEYS,
-        TREND_MIN_BARS,
-        bar_date,
-        clean_bars,
-        rolling_max,
-        rolling_mean,
-        rolling_min,
-        trend_conditions,
-    )
-except ImportError:
-    from scripts.screen_vcp_daily import (
-        RANGE_WINDOW,
-        TREND_KEYS,
-        TREND_MIN_BARS,
-        bar_date,
-        clean_bars,
-        rolling_max,
-        rolling_mean,
-        rolling_min,
-        trend_conditions,
-    )
-from trading.metrics import empirical_percentile_rank
 from trading.models import Bar
+from trading.stock_study import (
+    RANGE_WINDOW,
+    TREND_KEYS,
+    TREND_MIN_BARS,
+    bar_date,
+    calculate_rs_ranks,
+    clean_bars,
+    rolling_max,
+    rolling_mean,
+    rolling_min,
+    trend_conditions,
+)
 
 WARNING_BANNER = """========================================================================================
 CẢNH BÁO NIÊM PHONG (SEALED HOLDOUT NOTICE):
@@ -124,24 +111,6 @@ def calculate_rs_raw(closes: list[float]) -> float | None:
         + 0.2 * (p / p189 - 1.0)
         + 0.2 * (p / p252 - 1.0)
     )
-
-
-def calculate_rs_ranks(rs_raw_by_symbol: dict[str, float]) -> dict[str, int]:
-    """Quy đổi RS_raw thành RS_rank thang 1–99 dựa trên phân vị thực nghiệm.
-
-    Sử dụng empirical_percentile_rank từ trading.metrics trên vũ trụ đủ điều kiện.
-    RS_rank = max(1, min(99, round(percentile)))
-    """
-    if not rs_raw_by_symbol:
-        return {}
-
-    raw_values = list(rs_raw_by_symbol.values())
-    ranks: dict[str, int] = {}
-    for sym, raw_val in rs_raw_by_symbol.items():
-        pct = empirical_percentile_rank(raw_values, raw_val)
-        rank_val = max(1, min(99, round(pct)))
-        ranks[sym] = rank_val
-    return ranks
 
 
 def evaluate_sepa_single(

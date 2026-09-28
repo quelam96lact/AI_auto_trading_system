@@ -26,13 +26,15 @@ from scripts.measure_sepa_score_edge import (
 )
 from scripts.screen_vcp_daily import (
     ControlEntry,
-    apply_cooldown,
     excess_for_event,
+)
+from trading.models import Bar
+from trading.stock_study import (
+    apply_cooldown,
     rolling_max,
     rolling_mean,
     rolling_min,
 )
-from trading.models import Bar
 
 
 def _make_bar(idx: int, close: float, high: float | None = None, low: float | None = None, volume: float = 1_000_000.0) -> Bar:
@@ -178,7 +180,7 @@ def test_apply_cooldown_strictly_enforced():
     # 275: bỏ (275 - 260 = 15 <= 20)
     # 281: giữ (281 - 260 = 21 > 20, last = 281)
     # 305: giữ (305 - 281 = 24 > 20, last = 305)
-    kept = apply_cooldown(cand, cooldown)
+    kept = apply_cooldown(cand, cooldown=cooldown)
 
     # Ghim số literal
     assert kept == [260, 281, 305]

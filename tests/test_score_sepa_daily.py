@@ -16,14 +16,13 @@ import pytest
 
 from scripts.score_sepa_daily import (
     calculate_boundary_percentages,
-    calculate_rs_ranks,
     calculate_rs_raw,
     evaluate_sepa_single,
     format_single_symbol_report,
     load_untrusted_symbols,
 )
-from scripts.screen_vcp_daily import bar_date
 from trading.models import Bar
+from trading.stock_study import bar_date, calculate_rs_ranks
 
 
 def test_bar_date_vs_ts_date_and_mutation_1():
