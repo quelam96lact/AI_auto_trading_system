@@ -31,7 +31,9 @@ Sáu trên bảy mã bị hụt. Và chú ý các con số 639, 697, 698, 315, 6
 |---|---|
 | `scripts/bingx_klines.py` | **Chỉ chạy**, không sửa. Đã sửa ở đợt 116. |
 | `scripts/inventory_bingx_tradfi.py` | **Chỉ chạy**, không sửa. Nếu phải sửa mới chạy được thì **dừng và báo**. |
-| `scripts/check_bingx_tracking_hourly.py` | **Mới.** Task B. |
+| `scripts/check_bingx_tracking.py` | **Được sửa, chỉ ở 4 hàm thuần nêu tại B0.** Không đổi hành vi của `main()`, không đổi bảng in ra. |
+| `tests/test_check_bingx_tracking.py` | **Được thêm test** cho B0. Không xoá test cũ. |
+| `scripts/check_bingx_tracking_hourly.py` | **Mới.** Task B, và phải **import** hàm từ `check_bingx_tracking`, xem B0. |
 | `tests/test_check_bingx_tracking_hourly.py` | **Mới.** |
 | `docs/superpowers/research/2026-09-28-dot-117-nap-lai-nen-1h-va-do-bam-theo-moc-gio.md` | **Mới.** Báo cáo. |
 
@@ -109,6 +111,56 @@ Bốn điểm bắt buộc:
 ## Task B — Biến phép đo bám theo mốc giờ thành script có test
 
 Ở phần audit đợt 116, Claude đo bằng SQL rời trong terminal. Việc đo lại được thì mới tin được, nên phải thành script.
+
+### B0. KHÔNG viết lại thứ đã có — và sửa bốn mặc định an toàn giả trong đó
+
+Claude soát lại sau khi giao brief và thấy **`scripts/check_bingx_tracking.py` đã có đúng những hàm mà B1 cần**:
+
+| Hàm đã có | Việc |
+|---|---|
+| `compute_basis_stats` | basis trung vị, P5, P95, max, số ngày > 1% |
+| `compute_daily_returns` | chuỗi lợi suất ngày |
+| `compute_pearson_correlation` | tương quan |
+| `compute_tracking_error_annualized` | tracking error, `sqrt(252)` |
+
+**Agent phải `import` bốn hàm này, không viết lại.** Dự án này đã một lần sinh ra hai công cụ trùng nhau vì brief của Claude thiếu bước soát — đừng lặp lại. Script mới chỉ được viết thêm hai thứ: **hàm lấy chuỗi `close` theo giờ UTC** từ nến 1h, và **vòng quét 24 giờ**.
+
+Nhưng bốn hàm đó đang có **mặc định an toàn giả**, và đường đi theo giờ sẽ chạm vào chúng nhiều hơn hẳn vì dữ liệu bị chia thành 24 lát mỏng:
+
+```python
+# compute_pearson_correlation
+if n < 2 or n != len(y):
+    return 0.0          # "khong tinh duoc" tra ve y nhu "khong tuong quan"
+
+# compute_tracking_error_annualized
+if len(r_bingx) < 2 or len(r_bingx) != len(r_ext):
+    return 0.0          # TE = 0 nghia la "bam hoan hao"
+
+# compute_basis_stats
+if not bingx_prices or len(bingx_prices) != len(ext_prices):
+    return {...tat ca 0.0...}
+
+# compute_daily_returns
+if prev > 0:
+    returns.append((curr / prev) - 1.0)
+else:
+    returns.append(0.0)  # nen ban thanh loi suat 0% roi troi vao tuong quan
+```
+
+Cái cuối nặng nhất: một nến giá 0 biến thành lợi suất 0% rồi **trôi vào phép tương quan như dữ liệu thật**. Cái thứ hai gần như đảo ngược ý nghĩa: `TE = 0` đọc là "bám hoàn hảo", trong khi thực tế là "không đo được".
+
+**Việc phải làm:** cả bốn nhánh `raise ValueError` với thông điệp nói rõ là **không đo được**, chứ không trả về số. Đây là lớp lỗi đã hai lần phá cổng go-live của dự án này.
+
+Sau khi sửa:
+- **Test cũ của `check_bingx_tracking.py` phải vẫn pass.** Nếu một test cũ đang ghim chính hành vi trả `0.0` thì **báo lại chứ đừng tự đổi test**; Claude quyết. Đợt 116 đã có một test cũ ghim đúng hành vi sai và Claude phải tự sửa.
+
+  Claude đã soát trước hai điểm để agent không phải soát lại, và để agent **đừng sửa oan**:
+  - `tests/test_check_bingx_tracking.py` dòng 89 và 135 có `assert round(res["tracking_error_annual"], 4) == 0.0000`. Hai chỗ này **hợp lệ**: chúng dựng hai chuỗi trùng nhau nên TE **thật sự** bằng 0, không phải nhánh lỗi. **Không được sửa hai test này.**
+  - Bốn hàm ở trên **không có người gọi nào ngoài** `scripts/check_bingx_tracking.py` và file test của nó. Claude đã grep toàn bộ `trading/`, `scripts/`, `tests/`. Nên đổi sang `raise` là thay đổi có phạm vi kín. Agent vẫn phải chạy `gitnexus_impact` theo §3 để tự xác nhận, không lấy câu này làm thay.
+- **`check_bingx_tracking.py` chạy lại phải cho ra y nguyên bảng cũ**: EUR/USD × FRB_H10 shift 0 = 0,7345, TE 4,11%, n = 252. Khác đi thì nghĩa là có nhánh `0.0` từng được dùng thật, và đó là phát hiện phải báo.
+- Thêm test cho từng nhánh `raise`, cộng một test cho `compute_daily_returns` khi có nến giá 0.
+
+**Phá thử cho B0** (ngoài bốn phép ở B3): trả lại `return 0.0` cho `compute_tracking_error_annualized` → test phải đỏ.
 
 ### B1. Việc script phải làm
 
@@ -192,7 +244,7 @@ Theo thứ tự:
 
 ## 3. GitNexus
 
-Đợt này **không sửa symbol đang tồn tại**: Task A chỉ chạy script, Task B chỉ tạo file mới. Không cần `gitnexus_impact`.
+Task A chỉ chạy script. Nhưng **B0 có sửa bốn hàm đang tồn tại**, nên **bắt buộc** chạy `gitnexus_impact` cho cả bốn — `compute_basis_stats`, `compute_daily_returns`, `compute_pearson_correlation`, `compute_tracking_error_annualized` — và **dán blast radius vào báo cáo trước khi sửa**. Nếu hàm nào có người gọi ngoài `check_bingx_tracking.py` thì **dừng và báo**, vì lúc đó đổi sang `raise` có thể làm chết đường đi khác.
 
 Vẫn phải:
 - `gitnexus_query` để chắc chưa có script nào đã đo bám theo mốc giờ — trùng thì **báo lại, đừng viết trùng**;
@@ -200,4 +252,4 @@ Vẫn phải:
 
 Trong phiên 28/09 của Claude, MCP `gitnexus` lỗi `CONNECT_TIMEOUT`. Index cũng đang **stale** (đợt 116 báo `Indexed commit: e3fa18a`). Nếu agent gặp lỗi tương tự thì ghi vào mục §2.5 và thay bằng `grep` có ghi rõ câu lệnh — **không im lặng bỏ qua**. Vẫn **không** tự chạy `npx gitnexus analyze --force`.
 
-Kết thúc bằng đúng câu: "Tôi không commit, không push, không đặt lệnh, không gọi endpoint có ký, không sửa `trading/`, không xoá dòng nào trong `bars_crypto`, không nạp dữ liệu từ 2026-09-01, và mọi hằng số đều có nguồn."
+Kết thúc bằng đúng câu: "Tôi không commit, không push, không đặt lệnh, không gọi endpoint có ký, không sửa `trading/`, không xoá dòng nào trong `bars_crypto`, không nạp dữ liệu từ 2026-09-01, không viết lại hàm đã có, và mọi hằng số đều có nguồn."
