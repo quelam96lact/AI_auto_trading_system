@@ -284,3 +284,43 @@ Mọi ô khác trong bảng §4 (3.436 / 3.422 / −2,54% / −0,60% / KTC / p) 
 - **CHƯA có bằng chứng, trái với những gì báo cáo viết:** điểm SEPA 0–7 có hay không có sức dự báo **so với thị trường**. Phép đo này không có mốc trung tính nên không trả lời được.
 - Đây vẫn là **phép đo âm thứ mười hai**, nhưng là âm cho một câu hẹp, không phải âm cho câu "bảng điểm SEPA có ích không".
 
+## A.8. Phát hiện về rổ đối chứng lan tới đâu — và rổ trung tính ĐÃ CÓ SẴN
+
+Claude soát tiếp: nếu rổ lọc theo `trend_ok` làm sai một phép đo, nó có làm sai các đợt đo khác không?
+
+**Không. Chỉ hai đợt dùng rổ đó:**
+
+| Script | Đợt | Dùng `compact_control_series` / `excess_for_event`? |
+|---|---|---|
+| `screen_vcp_daily.py` | 99 | **Có** — và ở đó mốc **đúng**: câu hỏi là "phá vỡ VCP có thêm gì so với việc đã ở trong xu hướng" |
+| `measure_sepa_score_edge.py` | 120 | **Có** — và ở đây mốc **sai mục đích**, xem §A.2 |
+| `screen_smc_stock_daily.py` | 101 | Không — tự dựng rổ riêng |
+| `screen_momentum_portfolio.py` | — | Không |
+
+Nên **kết luận âm của đợt 99 và đợt 101 không bị ảnh hưởng.** Chỉ đợt 120 phải đọc lại.
+
+**Và đây là phần có giá trị nhất của lần soát này: rổ trung tính mà §A.6 cần đã tồn tại trong `screen_smc_stock_daily.py`.**
+
+```python
+def make_basket_entry(symbol, bars, i, exchange, min_turnover=MIN_TURNOVER_VND, ks=TARGET_KS):
+    """None neu ma nay khong duoc vao ro (duoi thanh khoan, khong vao duoc lenh, khong co du lieu)."""
+
+def basket_for_day(entries, event_symbol):
+    """Ro doi chung cua mot ngay: moi ma khac ma su kien (KHONG gom chinh ma su kien)."""
+```
+
+`make_basket_entry` loại một mã **chỉ khi**: dưới thanh khoán, không vào được lệnh, hoặc không có dữ liệu kỳ hạn. **Không có điều kiện `trend_ok`.** Đó đúng là mốc trung tính: mọi mã đủ thanh khoản và vào lệnh được trong ngày đó.
+
+Vậy brief đo lại ở §A.6 **không phải viết hàm dựng rổ mới** — phải **dùng lại** `make_basket_entry` và `basket_for_day`. Điều này đổi hẳn hình dạng brief đó: từ "viết mốc mới" thành "đổi nguồn rổ", nhỏ hơn nhiều và ít chỗ sai hơn.
+
+**Thêm một cặp trùng lặp cụ thể cho đợt trả nợ kỹ thuật §1.1:**
+
+| Trong `screen_vcp_daily.py` | Trong `screen_smc_stock_daily.py` | Ghi chú |
+|---|---|---|
+| `basket_baseline` | `baseline_for_basket` | cùng logic, cùng `MIN_CONTROL = 5` |
+| `excess_for_event` | `excess_k` | cùng logic |
+
+Hai cặp hàm này làm đúng một việc với hai cái tên. Đợt trả nợ nên gộp chúng, và **giữ ngữ nghĩa rổ ở phía người gọi** — vì chính việc rổ được quyết định bên trong `compact_control_series` (chứ không phải ở chỗ gọi) là nguyên nhân Claude không thấy nó khi viết brief 120.
+
+**Một chi tiết đã kiểm và không có vấn đề:** cả hai đường đi đều loại mã sự kiện ra khỏi rổ của chính nó (`peers = [c for c in ... if c.symbol != e.symbol]`), nên không có thiên lệch tự-đưa-mình-vào-mốc.
+
