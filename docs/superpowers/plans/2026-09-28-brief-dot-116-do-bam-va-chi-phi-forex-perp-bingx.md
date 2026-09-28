@@ -180,3 +180,15 @@ Theo thứ tự:
 - bất kỳ câu nào về lợi nhuận, về chiến lược, về việc có nên giao dịch.
 
 Kết thúc bằng đúng câu: "Tôi không commit, không push, không đặt lệnh, không gọi endpoint có ký, không sửa `trading/`, không đọc dữ liệu từ 2026-09-01, và mọi hằng số phí/funding trong báo cáo đều có URL nguồn."
+
+---
+
+## 3. GitNexus
+
+Đợt này **không sửa symbol nào đang tồn tại**: Task A chỉ chạy script có sẵn, Task B chỉ tạo file mới và **đọc** `trading.data_quality.is_dirty_bar`. Vì vậy không cần `gitnexus_impact`.
+
+Nhưng vẫn phải làm hai việc:
+- chạy `gitnexus_query` để chắc chắn chưa có script nào trong repo đã đo funding hoặc đo chi phí/biên độ cho perp — nếu có thì **báo lại, đừng viết trùng**; đợt 84 và đợt "leakage diagnostic" đã từng sinh ra hai công cụ trùng nhau vì brief của Claude thiếu bước này;
+- chạy `gitnexus_detect_changes` trước khi báo cáo, và dán output. Nếu nó cho thấy có symbol cũ bị ảnh hưởng thì **dừng và báo** — nghĩa là phạm vi đã bị vượt.
+
+Lưu ý: trong phiên của Claude hôm nay MCP `gitnexus` bị lỗi kết nối (`CONNECT_TIMEOUT`). Nếu agent cũng gặp lỗi đó thì ghi vào mục "không kiểm được" ở §2.6, và thay bằng `grep` có ghi rõ câu lệnh — không được im lặng bỏ qua.
