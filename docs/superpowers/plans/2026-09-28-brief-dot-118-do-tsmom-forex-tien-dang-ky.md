@@ -97,9 +97,17 @@ Chiến lược này **luôn ở trong thị trường**, nên đối chứng "v
 | Đã có | Ở đâu | Việc |
 |---|---|---|
 | `max_drawdown`, `sharpe`, `profit_factor`, `expectancy` | `trading/metrics.py` | **import, cấm viết lại** |
-| `empirical_percentile_rank`, `calculate_percentile` | `trading/metrics.py` | **import, cấm viết lại** |
+| `empirical_percentile_rank`, `calculate_percentile` | `trading/metrics.py` | **import, cấm viết lại.** Xem §5.2 — hai hàm này vừa đổi hành vi. |
 | `holm_adjust` | hiện nằm trong `scripts/screen_smc_stock_daily.py` | xem §5.1 |
 | `run_null_simulation`, `RandomEntryConfig` | `scripts/significance_test.py`, `trading/perp_backtest.py` | **KHÔNG dùng.** Sai hình dạng bài toán, xem §4. Ghi một dòng trong báo cáo nói rõ đã xem và vì sao không dùng. |
+
+### 5.2. Hai hàm phân vị vừa đổi hành vi — Claude đã sửa, agent chỉ cần biết
+
+Trước 28/09, `calculate_percentile([])` và `empirical_percentile_rank([], x)` **trả về `0.0`**. Với hàm thứ hai, đó là cùng lớp lỗi mặc-định-an-toàn: phân phối đối chứng rỗng nghĩa là **chưa đo được gì**, còn `0.0` đọc ra là "kết quả thật thấp hơn toàn bộ đối chứng" — một kết luận thống kê. Tuỳ cách người gọi đổi phân vị thành p-value, `0.0` có thể thành **p = 0**, tức "rất có ý nghĩa", sinh ra từ chỗ không có dữ liệu nào. Đúng hàm mà cổng §3 điều kiện 4 của đợt này dựa vào.
+
+Claude đã sửa: **cả hai `raise ValueError`** khi danh sách rỗng. Hệ quả cho agent:
+- vòng lặp đối chứng 2.000 lượt phải **thật sự** sinh ra 2.000 giá trị trước khi gọi `empirical_percentile_rank`. Nếu nó raise thì đó là lỗi thật, **đừng bọc `try/except` để đi tiếp**;
+- `empirical_percentile_rank([1.0, 2.0, 3.0], 0.0)` vẫn trả `0.0` và **vẫn đúng** — ở đó danh sách không rỗng và mục tiêu thật sự thấp hơn mọi phần tử. Đừng "sửa" chỗ đó.
 
 ### 5.1. Dời `holm_adjust` vào `trading/metrics.py`
 

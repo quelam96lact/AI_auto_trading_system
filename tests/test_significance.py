@@ -2,6 +2,8 @@ import math
 import random
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from scripts.significance_test import (
     calculate_percentile,
     empirical_percentile_rank,
@@ -360,3 +362,25 @@ def test_percentile_helper_functions():
     assert math.isclose(empirical_percentile_rank(data, 6.0), 100.0)
     # target = 0.0 -> 0 less -> 0%
     assert math.isclose(empirical_percentile_rank(data, 0.0), 0.0)
+
+
+def test_phan_vi_tren_danh_sach_rong_phai_raise_khong_tra_0():
+    """Danh sách rỗng thì hai hàm phân vị phải RAISE, không được trả 0.0.
+
+    Vì sao quan trọng: `empirical_percentile_rank` là hàm dùng để đổi phân phối
+    đối chứng thành p-value. Trả 0.0 khi rỗng nghĩa là "target thấp hơn toàn bộ
+    đối chứng" — một kết luận thống kê thật, sinh ra từ chỗ không có dữ liệu nào.
+    Tuỳ cách người gọi quy đổi, nó có thể thành p = 0, tức "rất có ý nghĩa".
+
+    Lưu ý: `empirical_percentile_rank([1,2,3,4,5], 0.0) == 0.0` vẫn ĐÚNG và phải
+    giữ, vì ở đó danh sách không rỗng và target thật sự thấp hơn mọi phần tử.
+    Test 351-362 trong file này đã ghim điều đó.
+    """
+    with pytest.raises(ValueError, match="danh sách rỗng"):
+        calculate_percentile([], 50.0)
+
+    with pytest.raises(ValueError, match="phân phối đối chứng rỗng"):
+        empirical_percentile_rank([], 1.23)
+
+    # Danh sach khong rong thi van tra 0.0 nhu cu, khong bi anh huong
+    assert empirical_percentile_rank([1.0, 2.0, 3.0], 0.0) == 0.0

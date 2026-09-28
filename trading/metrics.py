@@ -146,9 +146,14 @@ def portfolio_equity_curve(
 
 
 def calculate_percentile(values: list[float], p: float) -> float:
-    """Tính phân vị thứ p (0 đến 100) theo phương pháp nội suy tuyến tính."""
+    """Tính phân vị thứ p (0 đến 100) theo phương pháp nội suy tuyến tính.
+
+    Raises:
+        ValueError: khi `values` rỗng. KHÔNG trả 0.0: một danh sách rỗng không có
+            phân vị nào, còn 0.0 đọc ra là "phân vị bằng 0", tức một số đo thật.
+    """
     if not values:
-        return 0.0
+        raise ValueError(f"Không tính được phân vị p={p}: danh sách rỗng")
     sorted_v = sorted(values)
     n = len(sorted_v)
     if n == 1:
@@ -162,9 +167,17 @@ def calculate_percentile(values: list[float], p: float) -> float:
 
 
 def empirical_percentile_rank(values: list[float], target: float) -> float:
-    """Tính phân vị thực nghiệm của target trong null distribution (0 đến 100)."""
+    """Tính phân vị thực nghiệm của target trong null distribution (0 đến 100).
+
+    Raises:
+        ValueError: khi `values` rỗng. KHÔNG trả 0.0: phân phối đối chứng rỗng nghĩa
+            là chưa đo được gì, còn 0.0 đọc ra là "target thấp hơn toàn bộ đối chứng"
+            — một kết luận thống kê thật. Tuỳ cách người gọi đổi phân vị thành
+            p-value, 0.0 có thể thành p = 0, tức "rất có ý nghĩa" từ chỗ không có
+            dữ liệu nào.
+    """
     if not values:
-        return 0.0
+        raise ValueError("Không tính được phân vị thực nghiệm: phân phối đối chứng rỗng")
     less = sum(1 for v in values if v < target)
     equal = sum(1 for v in values if math.isclose(v, target, abs_tol=1e-9))
     return (less + 0.5 * equal) / len(values) * 100.0
