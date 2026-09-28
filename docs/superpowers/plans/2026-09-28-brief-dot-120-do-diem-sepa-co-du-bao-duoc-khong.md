@@ -36,7 +36,26 @@ Claude soát trước: **toàn bộ máy đo đã nằm trong `scripts/screen_vc
 
 Và từ `trading/metrics.py`: `holm_adjust`, `empirical_percentile_rank`, `max_drawdown`.
 
-**`scripts/screen_vcp_daily.py`: CHỈ ĐỌC, cấm sửa một dòng.** Nó đang là thư viện dùng chung cho `screen_smc_stock_daily.py` và `screen_momentum_portfolio.py`. Cần một hàm mà nó không xuất ra được thì **dừng và báo**.
+**`scripts/screen_vcp_daily.py`: CHỈ ĐỌC, cấm sửa một dòng.** Cần một hàm mà nó không xuất ra được thì **dừng và báo**.
+
+### 1.1. Nợ kỹ thuật đang phình ra, và Claude nói rõ là mình đang làm nó nặng thêm
+
+`screen_vcp_daily.py` **là một script, không phải thư viện**, nhưng nó đang bị import từ:
+
+| Người dùng | Từ đợt |
+|---|---|
+| `scripts/screen_smc_stock_daily.py` | đợt 101 |
+| `scripts/screen_momentum_portfolio.py` | — |
+| `scripts/score_sepa_daily.py` | đợt 119 |
+| **`scripts/measure_sepa_score_edge.py`** | **đợt này — người thứ tư** |
+
+Cộng 5 file test cũng import trực tiếp từ nó. Nợ này đã được ghi từ đợt 102 (commit `39c049e`: *"screen_vcp_daily đang làm thư viện chung cho ba script sàng lọc"*), và brief này **làm nó nặng thêm** bằng cách thêm người dùng thứ tư rồi lại viết "cấm sửa nó" — tức vừa dựa vào nó vừa đóng băng nó.
+
+**Agent KHÔNG được trả nợ này ở đợt này.** Lý do: dời các hàm thuần sang `trading/` sẽ chạm vào 4 script và 5 file test cùng lúc, cần phân tích ảnh hưởng riêng, và trộn nó vào một phép đo tiền đăng ký sẽ làm không ai biết kết quả đo thay đổi vì dữ liệu hay vì refactor. Hai việc phải tách.
+
+**Việc agent PHẢI làm:** ghi vào báo cáo một mục ngắn xác nhận đã đọc phần này, và nếu trong lúc import thấy hàm nào **không dùng được nếu không sửa** thì nêu tên hàm đó. Đó là dữ kiện để Claude quyết đợt trả nợ.
+
+Claude ghi nhận đây là **ứng viên brief tiếp theo** sau đợt 120: dời `bar_date`, `clean_bars`, `rolling_*`, `trend_conditions`, `liquidity_ok`, `net_return`, `compute_targets`, `basket_baseline`, `excess_for_event`, `bootstrap_by_month` sang một module trong `trading/`, cập nhật 4 script và 5 file test, không đổi hành vi, và chốt bằng việc chạy lại `screen_vcp_daily.py` cho ra **y nguyên** số của đợt 99.
 
 Mọi hằng số đã đăng ký ở trên **giữ nguyên, cấm đổi**: đổi một hằng số là biến phép đo tiền đăng ký thành phép đo có tinh chỉnh.
 
