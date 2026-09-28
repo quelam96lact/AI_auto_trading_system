@@ -25,7 +25,7 @@ def test_phan_trang_ghep_du_khong_trung():
     Hai trang liền nhau ghép lại đúng số nến, không nến nào bị lặp.
     Giả lập trang 1: nến 501..1000 (mới nhất), trang 2: nến 1..500.
     """
-    # Tạo 900 nến mẫu: trang 1 = 500 nến, trang 2 = 400 nến (< limit 500 -> dừng tự nhiên)
+    # Tao 900 nen mau: trang 1 = 500 nen, trang 2 = 400 nen, roi mot trang rong bao het
     base_ms = 1600000000000
     day_ms = 86400000
     all_sample_bars = [
@@ -62,7 +62,10 @@ def test_phan_trang_ghep_du_khong_trung():
         rate_limit_sleep=0,
     )
 
-    assert calls == 2
+    # 3 lan goi, khong phai 2: trang 2 ngan hon `limit` nhung do KHONG con la
+    # dau hieu het lich su (BingX tra trang ngan giua luc con du lieu - do 116),
+    # nen vong lap phai goi them mot lan nua va nhan trang rong moi dung.
+    assert calls == 3
     assert len(collected_bars) == 900
     # Đảm bảo không trùng timestamps
     unique_ts = {b["open_time_ms"] for b in collected_bars}
@@ -201,3 +204,54 @@ def test_loi_tan_suat_thi_lui_dan_va_khong_ne(monkeypatch):
     # Không vượt trần 600s
     for s in sleeps:
         assert s <= 600.0
+
+
+def test_trang_ngan_giua_lich_su_khong_lam_dung_som():
+    """Trang tra ve it hon `limit` KHONG duoc coi la het lich su.
+
+    Tai hien loi that phat hien trong do 116: BingX tra 724 nen o trang dau
+    (limit 1000) cho NCFXEUR2USD-USDT khung 1h, nhung lich su van lui duoc ve
+    ngay niem yet. Vong lap cu dung ngay o trang dau nen chi nap 724 nen,
+    tuong duong 42 ngay, roi bao cao nhu the do la toan bo lich su.
+
+    Vi du tinh tay: 1000 nen gio lien tuc.
+    - trang 1: 724 nen moi nhat  (index 276..999)
+    - trang 2: 276 nen con lai   (index 0..275)
+    Tong phai la 1000 nen, 2 lan goi. Neu dung som thi chi co 724.
+    """
+    base_ms = 1600000000000
+    hour_ms = 3600000
+    sample = [
+        {
+            "time": base_ms + i * hour_ms,
+            "open": "100.0",
+            "high": "110.0",
+            "low": "90.0",
+            "close": "105.0",
+            "volume": "1000.0",
+        }
+        for i in range(1000)
+    ]
+    page1 = list(reversed(sample[276:1000]))  # 724 nen, it hon limit=1000
+    page2 = list(reversed(sample[0:276]))
+
+    def mock_fetch(symbol: str, interval: str, end_time_ms: int | None = None, limit: int = 1000):
+        if end_time_ms is None:
+            return page1
+        if end_time_ms <= page1[-1]["time"]:
+            return page2
+        return []
+
+    bars, calls = collect_symbol_klines(
+        "NCFXEUR2USD-USDT",
+        "1h",
+        limit=1000,
+        fetch_fn=mock_fetch,
+        sleep_fn=lambda _s: None,
+        rate_limit_sleep=0.0,
+    )
+
+    assert len(bars) == 1000, f"dung som: chi nap {len(bars)} nen thay vi 1000"
+    assert calls == 3  # trang 1, trang 2, roi trang rong bao het
+    assert bars[0]["open_time_ms"] == base_ms
+    assert bars[-1]["open_time_ms"] == base_ms + 999 * hour_ms

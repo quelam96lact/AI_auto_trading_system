@@ -207,8 +207,11 @@ def collect_symbol_klines(
         # Nếu đã đạt mốc from_ts_ms hoặc số nến trả về < limit (đã chạm đáy lịch sử)
         if from_ts_ms is not None and min_ms <= from_ts_ms:
             break
-        if len(raw_bars) < limit:
-            break
+        # KHONG dung chi vi trang nay tra ve it hon `limit`.
+        # BingX co the tra mot trang NGAN giua luc lich su van con (do 116:
+        # NCFXEUR2USD-USDT 1h tra 724/1000 o trang dau nhung con du lieu lui ve
+        # tan ngay niem yet). Dieu kien dung dung dan la trang khong con tien
+        # ve qua khu nua, da kiem o tren bang `min_ms >= prev_min_ms`.
 
         if rate_limit_sleep > 0:
             sleep_fn(rate_limit_sleep)
