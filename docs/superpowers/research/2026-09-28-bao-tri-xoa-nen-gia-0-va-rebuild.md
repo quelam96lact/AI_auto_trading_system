@@ -181,7 +181,16 @@ return (row[0], row[1]) if row else None
 
 `close = 0` đi qua như một giá hợp lệ: `nav += qty * 0`, và mã đó **không** được đưa vào `unpriced`. Đúng lớp lỗi 0.0-đọc-thành-số-thật. NAV lại là thứ quyết định cỡ lệnh 1% rủi ro, nên hụt NAV là hụt cỡ lệnh.
 
-`read_last_close` (GUARD-1, kiểm trần lệnh thật) cũng nhận 0 — hướng này *ồn* chứ không im (trần tính từ 0 thì không mua nổi 1 lô -> CRITICAL), nên hậu quả là một CRITICAL sai, không phải một im lặng.
+`read_last_close` (GUARD-1, kiểm trần lệnh thật) cũng nhận 0. **Đính chính 28/09 sau khi đọc caller — tôi đã ghi sai chiều ở đây:** tôi viết rằng hướng này *ồn* (CRITICAL sai). Không phải. `engine/main.py:471-480`:
+
+```python
+close = storage.read_last_close(sym)
+if close is not None and (cheapest is None or close < cheapest):
+    cheapest = close
+if cheapest is not None and order_cap < cheapest * 100:   # CRITICAL
+```
+
+Một mã có `close = 0` trở thành `cheapest`, nên điều kiện thành `order_cap < 0` — **luôn sai**. GUARD-1 không báo động sai; nó **bị tắt im lặng**. Một mã giá 0 trong `cfg.symbols` là đủ để vô hiệu hoá toàn bộ cổng vốn được dựng để hô lên khi đường đặt lệnh thật đã inert. Đây là im lặng, đúng lớp lỗi nặng hơn, không phải nhiễu.
 
 ### 6.3. Phơi nhiễm thực tế hôm nay: một mã, và nó đã bị cổng khác bắt
 
@@ -191,4 +200,11 @@ Nên: **lỗ thật về nguyên tắc, phơi nhiễm bằng 0 hôm nay**, và t
 
 **Không tự sửa:** đây là code `trading/` trên đường tiền thật, cần test và phải vào brief — không phải một bản vá lúc 21:50. Đưa vào việc treo §5 thành hạng mục thứ tư:
 
-4. **Chặn nến giá 0 ở đường ghi NGÀY** (`backfill.py:350` và `:375`), **và** cho `read_latest_bar` coi `close <= 0` là "không định giá được" để mã đó vào `unpriced` thay vì được tính 0. Hai nửa phải đi cùng nhau: chặn đường ghi không dọn được 71.439 dòng cũ, còn sửa đường đọc không chặn được dòng mới.
+4. Bịt giá 0 ở **đường ĐỌC**, chi tiết trong brief đợt 121.
+
+**Đính chính 28/09 (cùng ngày, trước khi giao việc) — tôi đã đề nghị sai ở hạng mục này.** Bản đầu của hạng mục 4 viết: *"Chặn nến giá 0 ở đường ghi NGÀY (`backfill.py:350` và `:375`), và cho `read_latest_bar` coi `close <= 0` là không định giá được."* Hai chỗ sai:
+
+- **Chặn đường ghi mâu thuẫn với §6.1 của chính báo cáo này.** Ở đó tôi kết luận 71.439 dòng giá 0 là dữ liệu hợp lệ và **không được xoá**. Chặn dòng mới và xoá dòng cũ là cùng một phán quyết — không thể vừa giữ vừa chặn. Thêm nữa `write_daily` có **bốn** caller (`backfill.py:350`, `:375`, `scripts/backfill_history.py:53`, `scripts/backfill_universe.py:112`), nên đó là sửa bốn chỗ để đạt một thứ ta đã quyết là không muốn. **Đường ghi không sửa gì.**
+- **Chỗ bịt đúng là `compute_nav`, không phải `read_latest_bar`.** `compute_nav` là chỗ thắt duy nhất mọi nguồn giá đi qua (`read_latest_bar` chỉ là một `price_fn`), nó **thuần** nên test được không cần DB, và nó đã có sẵn khái niệm `unpriced` với đúng ngữ nghĩa cần dùng. Bịt ở từng reader thì phải nhớ bịt lại mỗi lần thêm reader.
+
+Việc thật của hạng mục này, đã giao trong brief đợt 121: `compute_nav` coi `price <= 0` là không định giá được, và `read_last_close` bỏ qua dòng `close <= 0` để GUARD-1 không bị tắt im lặng.
