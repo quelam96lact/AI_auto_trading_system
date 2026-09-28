@@ -426,8 +426,10 @@ Brief của Claude viết: biên độ tài sản gốc tính "trên **toàn b�
 |---|---|---|---|---|---|
 | EUR/USD | mẫu số dài hạn (agent báo) | 32,23% | 37,94% | 60,82% | 89,41% |
 | EUR/USD | **mẫu số cùng cửa sổ** | **50,71%** | **59,70%** | **95,70%** | **140,69%** |
-| USD/JPY | mẫu số dài hạn (agent báo) | 33,53% | 38,98% | 60,78% | 88,03% |
-| USD/JPY | **mẫu số cùng cửa sổ** | **41,14%** | **47,82%** | **74,56%** | **107,99%** |
+| USD/JPY | mẫu số dài hạn (agent báo) | 33,53% | 38,98–39,56% | 60,78–63,64% | 88,03–93,75% |
+| USD/JPY | **mẫu số cùng cửa sổ** | **41,14%** | **47,82–48,52%** | **74,56–78,07%** | **107,99–115,00%** |
+
+USD/JPY ghi dạng khoảng vì con số funding của mã này **không ổn định giữa các lần chạy** — xem phần I.
 
 Đây là con số nặng nhất của cả đợt: với EUR/USD, chỉ riêng phí vào-ra đã ăn **quá nửa** biên độ một ngày, và giữ 10 ngày thì chi phí **vượt** biên độ một ngày.
 
@@ -472,7 +474,7 @@ Thêm hai test cho nhánh `raise`: thiếu nến, và nến bẩn.
 
 ## G. Điều Claude KHÔNG tái lập được
 
-- **Funding EUR/USD:** agent báo 1.109 mốc lùi tới ngày niêm yết. Claude kéo lại chỉ nhận **418 mốc** (lùi tới 2026-04-14), mean abs 0,016309%/ngày so với 0,017745% của agent. Lần chạy lại script sau khi sửa lại ra 1.109 mốc cho EUR/USD nhưng **1.091** mốc cho USD/JPY (agent: 1.106). Tức lịch sử funding **không ổn định giữa các lần gọi** — khớp với hiện tượng bất nhất giữa các node mà chính agent đã báo. Chênh lệch nhỏ (0,0163–0,0180%/ngày) nên không đổi kết luận, nhưng **không được coi con số funding là chốt**; lần đo nào cũng phải in lại số mốc.
+- **Funding:** xem phần I, đã đo kỹ hơn.
 - **Hai test tỷ lệ chi phí** (`ratio`, `holding_cost`) dựng `expected` bằng cách viết lại đúng công thức trong thân test. Không phải tautology, vẫn bắt được đột biến, nhưng yếu về kiểu: nên ghim số literal. Chưa sửa.
 - **Độ trượt giá** và **sổ lệnh lịch sử**: agent nói không có, Claude không kiểm lại.
 
@@ -483,3 +485,33 @@ Thêm hai test cho nhánh `raise`: thiếu nến, và nến bẩn.
 3. Ghim số literal cho hai test tỷ lệ chi phí ở phần G.
 
 **Vẫn chưa đo chiến lược nào.** Hai cổng của đợt này: cổng bám **đạt** khi đo đúng mốc giờ; cổng chi phí **rất xấu** với EUR/USD.
+
+## I. Funding không ổn định giữa các lần gọi — đã đo, và đã bắt script phải khai ra
+
+Claude kéo lịch sử funding bằng code riêng: EUR/USD chỉ nhận **418 mốc** (lùi tới 2026-04-14) trong khi agent báo 1.109 mốc. USD/JPY thì nhận đủ 1.106 ngay lần đầu. Khớp với hiện tượng bất nhất giữa các node mà chính agent đã báo ở mục 5.1.
+
+**Đã sửa cách trình bày, không sửa được cái endpoint.** `measure_forex_perp_cost.py` giờ in một bảng riêng **trước** bảng chi phí:
+
+```
+Mã perp            |  Số mốc| Mốc đầu     | Mốc cuối    | Nến 1d từ   | Funding phủ hết nến?
+NCFXEUR2USD-USDT   |    1109| 2025-08-27  | 2026-08-31  | 2025-08-27  | ĐỦ
+NCFXUSD2JPY-USDT   |    1106| 2025-08-28  | 2026-08-31  | 2025-08-28  | ĐỦ
+```
+
+Lý do: trước đây script lấy được bao nhiêu mốc thì lấy, rồi bình quân trên đó và in ra một con số trông như thể là trung bình cả đời hợp đồng. Đó lại chính là lớp lỗi mặc-định-an-toàn. Giờ mỗi lần đo đều phải khai cửa sổ funding thực sự lấy được, và nói rõ nó có phủ hết cửa sổ nến hay không. Không lấy được mốc nào thì `raise`.
+
+**Chạy ba lần liên tiếp sau khi sửa** (cả ba lần đều báo ĐỦ, 1.109 và 1.106 mốc):
+
+| Mã | Phí vòng | Giữ 1d | Giữ 5d | Giữ 10d |
+|---|---|---|---|---|
+| EUR/USD | 50,71% ở cả 3 lần | 59,70% ở cả 3 lần | 95,70% ở cả 3 lần | 140,69% ở cả 3 lần |
+| USD/JPY | 41,14% ở cả 3 lần | 47,82% / 48,52% | 74,56% / 78,07% | **107,99% / 115,00%** |
+
+EUR/USD **ổn định hoàn toàn**. USD/JPY vẫn dao động dù số mốc y nguyên là 1.106 và cửa sổ y nguyên, nghĩa là **độ sâu lịch sử không phải nguyên nhân còn lại** — cùng một số lượng mốc mà bộ rate trả về vẫn khác nhau chút ít. Biên độ dao động khoảng ±3,5 điểm phần trăm ở mốc giữ 10 ngày.
+
+**Không đổi kết luận nào**, vì cả hai đầu của khoảng đều nói cùng một điều: giữ 10 ngày thì chi phí vượt biên độ một ngày. Nhưng từ đây trở đi, **con số funding của USD/JPY phải ghi dạng khoảng**, và mọi phép đo dùng funding phải in kèm số mốc.
+
+## J. Hai việc tự soát rồi đóng nốt
+
+- **Hai test tỷ lệ chi phí** trước đây dựng `expected` bằng cách viết lại công thức trong thân test. Đã ghim số literal (32,2269 và 58,5063), thêm trường hợp `hold_days = 0` (vào ra trong ngày thì chỉ còn phí vòng). Phá thử `hold_days` thành `hold_days + 1` thì test đỏ.
+- **Bảng 4 in bằng tiếng Việt không dấu** trong khi Bảng 1–3 cùng file có dấu. Đã sửa cho nhất quán.

@@ -17,6 +17,7 @@ import statistics
 import sys
 import time
 import urllib.request
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
@@ -466,6 +467,8 @@ def run_cost_analysis(dsn: str | None = None) -> dict[str, Any]:
         f_list = funding_data[sym]
 
         f_times = [int(x["fundingTime"]) for x in f_list]
+        if not f_times:
+            raise RuntimeError(f"Khong lay duoc mot moc funding nao cho {sym}")
         f_rates = [float(x["fundingRate"]) for x in f_list]
 
         # Chu kỳ funding
@@ -496,7 +499,7 @@ def run_cost_analysis(dsn: str | None = None) -> dict[str, Any]:
         # Tỷ lệ phí vòng / biên độ ngày gốc (theo ext_primary)
         ratio_fee_to_amp = compute_cost_to_amplitude_ratio(rt_taker_fee, ext_prim_amp)
 
-        # Mau so thu hai: bien do tai san goc CHI tren cua so BingX co du lieu
+        # Mẫu số thứ hai: biên độ tài sản gốc CHỈ trên cửa sổ BingX có dữ liệu
         ext_overlap_amp = compute_daily_amplitude_pct(cfg["ext_overlap_prices"])
         ratio_fee_to_amp_overlap = compute_cost_to_amplitude_ratio(rt_taker_fee, ext_overlap_amp)
 
@@ -522,6 +525,8 @@ def run_cost_analysis(dsn: str | None = None) -> dict[str, Any]:
             "name": cfg["name"],
             "contract_info": c_info,
             "funding_count": len(f_list),
+            "funding_first_ms": min(f_times),
+            "funding_last_ms": max(f_times),
             "funding_interval_stats": interval_stats,
             "funding_dist": f_dist,
             "roundtrip_taker_fee_pct": rt_taker_fee,
@@ -629,22 +634,46 @@ def print_cost_report(res: dict[str, Any]) -> None:
 
     print()
     print("=" * 125)
-    print("BANG 4: CUNG MOT PHEP DO, NHUNG MAU SO LAY TREN CUNG CUA SO THOI GIAN VOI BINGX")
-    print("Ly do: bien do EURUSD/USDJPY giai doan 2025-2026 thap hon trung binh dai han,")
-    print("nen mau so dai han lam ty le chi phi bi NHE di. Hai dong duoi day la cung so lieu, khac mau so.")
+    print("CỬA SỔ FUNDING THỰC SỰ LẤY ĐƯỢC — ĐỌC TRƯỚC KHI DÙNG SỐ CHI PHÍ")
+    print("BingX tra lich su funding KHONG on dinh giua cac lan goi (cac node tra do sau khac nhau).")
+    print("Moi lan do phai in lai cua so nay; neu no ngan hon cua so nen thi so chi phi CHUA phai")
+    print("trung binh ca doi hop dong, va se doi giua cac lan chay.")
+    print("=" * 125)
+    fmt_cov = "{:<19}| {:>8}| {:<12}| {:<12}| {:<12}| {:<22}"
+    print(fmt_cov.format("Mã perp", "Số mốc", "Mốc đầu", "Mốc cuối", "Nến 1d từ", "Funding phủ hết nến?"))
+    print("-" * 125)
+    for sym, d in res.items():
+        first = datetime.fromtimestamp(d["funding_first_ms"] / 1000, tz=UTC).date().isoformat()
+        last = datetime.fromtimestamp(d["funding_last_ms"] / 1000, tz=UTC).date().isoformat()
+        covers = first <= d["overlap_from"]
+        print(fmt_cov.format(
+            sym,
+            d["funding_count"],
+            first,
+            last,
+            d["overlap_from"],
+            "ĐỦ" if covers else f"THIẾU {first} trở về trước",
+        ))
+    print("-" * 125)
+
+    print()
+    print("=" * 125)
+    print("BẢNG 4: CÙNG PHÉP ĐO, NHƯNG MẪU SỐ LẤY TRÊN CÙNG CỬA SỔ THỜI GIAN VỚI BINGX")
+    print("Lý do: biên độ EURUSD/USDJPY giai đoạn 2025-2026 thấp hơn trung bình dài hạn,")
+    print("nên mẫu số dài hạn làm tỷ lệ chi phí bị NHẸ đi. Hai bảng là cùng số liệu, khác mẫu số.")
     print("=" * 125)
     fmt4 = "{:<9}| {:<22}| {:<22}| {:<11}| {:<11}| {:<11}| {:<11}"
     print(fmt4.format(
-        "Ma", "Mau so dai han", "Mau so cung cua so",
-        "Phi vong", "Giu 1d", "Giu 5d", "Giu 10d",
+        "Mã", "Mẫu số dài hạn", "Mẫu số cùng cửa sổ",
+        "Phí vòng", "Giữ 1d", "Giữ 5d", "Giữ 10d",
     ))
     print("-" * 125)
     for sym, d in res.items():
         hro = d["holding_ratios_overlap"]
         print(fmt4.format(
             d["name"],
-            f"{d['ext_primary_amp']:.4f}% (toan bo)",
-            f"{d['ext_overlap_amp']:.4f}% (tu {d['overlap_from']})",
+            f"{d['ext_primary_amp']:.4f}% (toàn bộ)",
+            f"{d['ext_overlap_amp']:.4f}% (từ {d['overlap_from']})",
             f"{d['ratio_fee_to_amp_overlap']:.2f}%",
             f"{hro[1]:.2f}%",
             f"{hro[5]:.2f}%",

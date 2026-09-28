@@ -164,11 +164,10 @@ def test_compute_cost_to_amplitude_ratio():
     - Biên độ ngày gốc = 0.3103% (FRB_H10 EURUSD)
     - Tỷ lệ = (0.1000 / 0.3103) * 100 = 32.2269%
     """
-    fee_pct = 0.1000
-    amp_pct = 0.3103
-    expected_ratio = (0.1000 / 0.3103) * 100.0
-    actual = compute_cost_to_amplitude_ratio(fee_pct, amp_pct)
-    assert pytest.approx(actual, abs=1e-4) == expected_ratio
+    # Ghim so literal, KHONG viet lai cong thuc trong than test: neu ca ham va
+    # bieu thuc trong test cung bi sua theo nhau thi phep so sanh mat tac dung.
+    actual = compute_cost_to_amplitude_ratio(0.1000, 0.3103)
+    assert pytest.approx(actual, abs=1e-4) == 32.2269
 
 
 def test_compute_holding_cost_ratio():
@@ -183,19 +182,25 @@ def test_compute_holding_cost_ratio():
     - Tỷ lệ so với biên độ ngày gốc:
       (0.181545 / 0.3103) * 100 = 58.5063%
     """
-    roundtrip = 0.1000
-    daily_funding = 0.016309
-    amp = 0.3103
-    h = 5
-
-    expected_ratio = ((roundtrip + h * daily_funding) / amp) * 100.0
+    # Ghim so literal thay vi viet lai cong thuc (xem ly do o test tren).
     actual = compute_holding_cost_ratio(
-        roundtrip_taker_fee_pct=roundtrip,
-        daily_funding_abs_pct=daily_funding,
-        daily_amplitude_pct=amp,
-        hold_days=h,
+        roundtrip_taker_fee_pct=0.1000,
+        daily_funding_abs_pct=0.016309,
+        daily_amplitude_pct=0.3103,
+        hold_days=5,
     )
-    assert pytest.approx(actual, abs=1e-4) == expected_ratio
+    assert pytest.approx(actual, abs=1e-4) == 58.5063
+
+    # H = 0 nghia la vao ra trong ngay: chi con phi vong, khong co funding.
+    assert pytest.approx(
+        compute_holding_cost_ratio(
+            roundtrip_taker_fee_pct=0.1000,
+            daily_funding_abs_pct=0.016309,
+            daily_amplitude_pct=0.3103,
+            hold_days=0,
+        ),
+        abs=1e-4,
+    ) == 32.2269
 
 
 def test_compute_atr14_series_pct():
