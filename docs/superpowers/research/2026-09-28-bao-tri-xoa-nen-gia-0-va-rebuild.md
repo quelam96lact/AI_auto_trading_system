@@ -133,3 +133,62 @@ BTC-USDT và ETH-USDT tới 08/09 (184 nến 1h mỗi mã); 18 mã còn lại t�
 1. **Trả nợ kỹ thuật `screen_vcp_daily.py`** (đã hẹn ở §A.6 đợt 120) — dời hàm thuần sang `trading/`, chốt bằng việc tái lập y nguyên số của đợt 99.
 2. **Đo lại SEPA với mốc trung tính** — dùng lại `make_basket_entry` + `basket_for_day` của `screen_smc_stock_daily.py`, không viết hàm mới (§A.8 đợt 120).
 3. **Bịt mốc niêm phong crypto cho sáu script ở §4.2** — nên gộp vào đợt trả nợ, và **mốc phải bắt buộc, không tuỳ chọn**: hàm đọc nến crypto không được có đường đi nào trả về dữ liệu không chặn trên.
+
+## 6. Tự soát sau khi commit — cùng lớp lỗi còn hở ở đường ghi nến NGÀY
+
+Câu hỏi tự soát: tôi dọn nến giá 0 trong bảng `bars`, còn các bảng nến khác thì sao? Quét cả sáu bảng:
+
+| Bảng | Dòng giá <= 0 | Tổng |
+|---|---|---|
+| `bars` | **0** (sau khi xoá) | 935.946 |
+| `bars_crypto` | 0 | 462.972 |
+| `bars_derivative` | 0 | 20.423 |
+| `bars_ext_daily` | 0 | 27.971 |
+| `binance_klines` | 0 | 759.720 |
+| **`bars_daily`** | **71.439** | 2.985.874 |
+
+### 6.1. 71.439 dòng trong `bars_daily` KHÔNG cùng lớp lỗi — không xoá
+
+| | `bars` (261 dòng) | `bars_daily` (71.439 dòng) |
+|---|---|---|
+| Số mã | 6, đều blue-chip đang giao dịch | 971, phần lớn kém thanh khoản |
+| Thời gian | 13/08–16/09/2026 | 2016-01-04 → 2024-06-12 |
+| Nguyên nhân | lỗi đường ghi của collector | ngày không có giao dịch, nguồn ghi vậy |
+
+Nhiều nhất: CMP 982, VMA 953, CMK 923, VTM 895. Cộng thêm **682.287** dòng giá hợp lệ nhưng `volume = 0` — cũng là ngày không khớp lệnh. Đây là đặc tính dữ liệu, không phải rác do ta sinh ra; xoá là sai. Các script đo đã lọc qua `clean_bars`.
+
+### 6.2. Nhưng đường ghi nến NGÀY vẫn nhận giá 0 — và NAV đọc nó TRƯỚC
+
+Đợt 109 chặn nến 0 ở stream và ở backfill **intraday**. Đường ngày thì không:
+
+```python
+# backfill.py:362 — intraday CÓ lọc
+clean_intraday = [b for b in intraday if not is_dirty_bar(b)]
+...
+# backfill.py:350 — daily_only (MARGIN-2): KHÔNG lọc
+storage.write_daily(daily)
+# backfill.py:375 — đường thường: KHÔNG lọc
+storage.write_daily(await client.daily_ohlc(sym, frm, today))
+```
+
+Và `db.py::read_latest_bar` (MARGIN-1, định giá vị thế khi tính NAV) đọc `bars_daily` **trước** `bars`:
+
+```python
+row = c.execute("SELECT ts, close FROM bars_daily WHERE symbol = %s ORDER BY ts DESC LIMIT 1", ...)
+...
+return (row[0], row[1]) if row else None
+```
+
+`close = 0` đi qua như một giá hợp lệ: `nav += qty * 0`, và mã đó **không** được đưa vào `unpriced`. Đúng lớp lỗi 0.0-đọc-thành-số-thật. NAV lại là thứ quyết định cỡ lệnh 1% rủi ro, nên hụt NAV là hụt cỡ lệnh.
+
+`read_last_close` (GUARD-1, kiểm trần lệnh thật) cũng nhận 0 — hướng này *ồn* chứ không im (trần tính từ 0 thì không mua nổi 1 lô -> CRITICAL), nên hậu quả là một CRITICAL sai, không phải một im lặng.
+
+### 6.3. Phơi nhiễm thực tế hôm nay: một mã, và nó đã bị cổng khác bắt
+
+Chỉ **một** mã có nến ngày cuối cùng giá 0: **SBC**, ngày cuối 2024-06-12. Không nằm trong sổ, và vì dữ liệu dừng 2024 nên nhánh "giá quá cũ" của NAV bắt nó trước (`unpriced`) — lỗ giá 0 không chạm tới.
+
+Nên: **lỗ thật về nguyên tắc, phơi nhiễm bằng 0 hôm nay**, và trường hợp duy nhất đang được một cổng khác che. Nhưng đường ghi vẫn mở, nên một nến ngày giá 0 mới cho mã *đang giữ* sẽ lọt và NAV im lặng tính 0 trong suốt cửa sổ còn tươi.
+
+**Không tự sửa:** đây là code `trading/` trên đường tiền thật, cần test và phải vào brief — không phải một bản vá lúc 21:50. Đưa vào việc treo §5 thành hạng mục thứ tư:
+
+4. **Chặn nến giá 0 ở đường ghi NGÀY** (`backfill.py:350` và `:375`), **và** cho `read_latest_bar` coi `close <= 0` là "không định giá được" để mã đó vào `unpriced` thay vì được tính 0. Hai nửa phải đi cùng nhau: chặn đường ghi không dọn được 71.439 dòng cũ, còn sửa đường đọc không chặn được dòng mới.
