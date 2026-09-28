@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 from datetime import date
 
+import pytest
+
 from scripts.check_bingx_tracking import (
     align_series_and_evaluate,
     compare_date_alignments,
@@ -140,3 +142,35 @@ def test_date_alignment_shift_comparison():
     assert round(res_lagged["best_corr"], 4) == 1.0000
     # While shift 0 correlation is negative (-0.95)
     assert res_lagged["shift_0_corr"] < 0.0
+
+
+def test_pure_functions_raise_on_invalid_inputs_b0():
+    """Kiểm tra 4 hàm thuần raise ValueError thay vì trả giá trị an toàn giả 0.0 (Brief 117 B0)."""
+    # 1. compute_basis_stats
+    with pytest.raises(ValueError, match="Không đo được basis"):
+        compute_basis_stats([], [100.0])
+    with pytest.raises(ValueError, match="Không đo được basis"):
+        compute_basis_stats([100.0], [100.0, 101.0])
+    with pytest.raises(ValueError, match="Không đo được basis"):
+        compute_basis_stats([100.0, 102.0], [100.0, 0.0])
+
+    # 2. compute_daily_returns
+    with pytest.raises(ValueError, match="Không đo được lợi suất"):
+        compute_daily_returns([100.0])
+    with pytest.raises(ValueError, match="Không đo được lợi suất"):
+        compute_daily_returns([100.0, 0.0, 102.0])
+
+    # 3. compute_pearson_correlation
+    with pytest.raises(ValueError, match="Không đo được tương quan"):
+        compute_pearson_correlation([0.01], [0.01])
+    with pytest.raises(ValueError, match="Không đo được tương quan"):
+        compute_pearson_correlation([0.01, 0.02], [0.01])
+    with pytest.raises(ValueError, match="Không đo được tương quan"):
+        compute_pearson_correlation([0.01, 0.01], [0.02, 0.03])
+
+    # 4. compute_tracking_error_annualized (Chốt phá thử B0)
+    with pytest.raises(ValueError, match="Không đo được tracking error"):
+        compute_tracking_error_annualized([0.01], [0.01])
+    with pytest.raises(ValueError, match="Không đo được tracking error"):
+        compute_tracking_error_annualized([0.01, 0.02], [0.01])
+

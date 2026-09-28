@@ -89,27 +89,19 @@ def compute_basis_stats(bingx_prices: list[float], ext_prices: list[float]) -> d
     - count_basis_gt_1pct: Số ngày có |basis| > 1% (0.01)
     - pct_basis_gt_1pct: Tỷ lệ % số ngày có |basis| > 1%
     """
-    if not bingx_prices or len(bingx_prices) != len(ext_prices):
-        return {
-            "median_basis": 0.0,
-            "p5_basis": 0.0,
-            "p95_basis": 0.0,
-            "max_abs_basis": 0.0,
-            "count_basis_gt_1pct": 0,
-            "pct_basis_gt_1pct": 0.0,
-        }
+    if not bingx_prices or not ext_prices:
+        raise ValueError("Không đo được basis: danh sách giá rỗng")
+    if len(bingx_prices) != len(ext_prices):
+        raise ValueError(
+            f"Không đo được basis: độ dài hai chuỗi giá không khớp ({len(bingx_prices)} != {len(ext_prices)})"
+        )
+    for i, (b, e) in enumerate(zip(bingx_prices, ext_prices, strict=True)):
+        if b <= 0 or e <= 0:
+            raise ValueError(
+                f"Không đo được basis: phát hiện giá <= 0 tại mốc {i} (bingx={b}, ext={e})"
+            )
 
-    basis_list = [(b / e - 1.0) for b, e in zip(bingx_prices, ext_prices, strict=False) if e > 0]
-    if not basis_list:
-        return {
-            "median_basis": 0.0,
-            "p5_basis": 0.0,
-            "p95_basis": 0.0,
-            "max_abs_basis": 0.0,
-            "count_basis_gt_1pct": 0,
-            "pct_basis_gt_1pct": 0.0,
-        }
-
+    basis_list = [(b / e - 1.0) for b, e in zip(bingx_prices, ext_prices, strict=True)]
     sorted_basis = sorted(basis_list)
     n = len(sorted_basis)
 
@@ -144,34 +136,43 @@ def compute_basis_stats(bingx_prices: list[float], ext_prices: list[float]) -> d
 def compute_daily_returns(prices: list[float]) -> list[float]:
     """Tính chuỗi lợi suất ngày r_t = (P_t / P_{t-1}) - 1."""
     if len(prices) < 2:
-        return []
+        raise ValueError(
+            f"Không đo được lợi suất ngày: chuỗi giá cần ít nhất 2 điểm, nhận được {len(prices)}"
+        )
     returns: list[float] = []
     for i in range(1, len(prices)):
         prev = prices[i - 1]
         curr = prices[i]
-        if prev > 0:
-            returns.append((curr / prev) - 1.0)
-        else:
-            returns.append(0.0)
+        if prev <= 0 or curr <= 0:
+            raise ValueError(
+                f"Không đo được lợi suất ngày: phát hiện giá <= 0 tại mốc {i-1} ({prev}) hoặc {i} ({curr})"
+            )
+        returns.append((curr / prev) - 1.0)
     return returns
 
 
 def compute_pearson_correlation(x: list[float], y: list[float]) -> float:
     """Tính hệ số tương quan Pearson giữa hai chuỗi số cùng độ dài."""
     n = len(x)
-    if n < 2 or n != len(y):
-        return 0.0
+    if n < 2:
+        raise ValueError(
+            f"Không đo được tương quan: chuỗi cần ít nhất 2 điểm, nhận được {n}"
+        )
+    if n != len(y):
+        raise ValueError(
+            f"Không đo được tương quan: hai chuỗi không cùng độ dài ({n} != {len(y)})"
+        )
 
     mean_x = statistics.mean(x)
     mean_y = statistics.mean(y)
 
-    cov = sum((a - mean_x) * (b - mean_y) for a, b in zip(x, y, strict=False))
+    cov = sum((a - mean_x) * (b - mean_y) for a, b in zip(x, y, strict=True))
     var_x = sum((a - mean_x) ** 2 for a in x)
     var_y = sum((b - mean_y) ** 2 for b in y)
 
     denom = math.sqrt(var_x * var_y)
     if denom == 0:
-        return 0.0
+        raise ValueError("Không đo được tương quan: phương sai bằng 0 (chuỗi giá trị không biến thiên)")
     return cov / denom
 
 
@@ -184,10 +185,16 @@ def compute_tracking_error_annualized(
 
     TE = stdev(r_bingx - r_ext) * sqrt(annual_factor).
     """
-    if len(r_bingx) < 2 or len(r_bingx) != len(r_ext):
-        return 0.0
+    if len(r_bingx) < 2:
+        raise ValueError(
+            f"Không đo được tracking error: chuỗi cần ít nhất 2 điểm, nhận được {len(r_bingx)}"
+        )
+    if len(r_bingx) != len(r_ext):
+        raise ValueError(
+            f"Không đo được tracking error: hai chuỗi không cùng độ dài ({len(r_bingx)} != {len(r_ext)})"
+        )
 
-    diffs = [b - e for b, e in zip(r_bingx, r_ext, strict=False)]
+    diffs = [b - e for b, e in zip(r_bingx, r_ext, strict=True)]
     sample_stdev = statistics.stdev(diffs)
     return sample_stdev * math.sqrt(annual_factor)
 
@@ -217,7 +224,14 @@ def align_series_and_evaluate(
         return {
             "shift_days": shift_days,
             "matched_count": len(matched_dates),
-            "basis_stats": compute_basis_stats([], []),
+            "basis_stats": {
+                "median_basis": 0.0,
+                "p5_basis": 0.0,
+                "p95_basis": 0.0,
+                "max_abs_basis": 0.0,
+                "count_basis_gt_1pct": 0,
+                "pct_basis_gt_1pct": 0.0,
+            },
             "returns_corr": 0.0,
             "tracking_error_annual": 0.0,
         }
