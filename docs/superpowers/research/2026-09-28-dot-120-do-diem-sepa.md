@@ -324,3 +324,17 @@ Hai cặp hàm này làm đúng một việc với hai cái tên. Đợt trả n
 
 **Một chi tiết đã kiểm và không có vấn đề:** cả hai đường đi đều loại mã sự kiện ra khỏi rổ của chính nó (`peers = [c for c in ... if c.symbol != e.symbol]`), nên không có thiên lệch tự-đưa-mình-vào-mốc.
 
+## A.9. Đính chính §A.8 (29/09, khi viết brief đợt 122) — hai cặp hàm KHÔNG "cùng logic"
+
+§A.8 ghi `basket_baseline` / `baseline_for_basket` và `excess_for_event` / `excess_k` là "cùng logic, cùng `MIN_CONTROL = 5`" và đề nghị gộp. Đọc kỹ thì chúng **khác nhau**:
+
+| | `screen_vcp_daily.py` (đợt 99) | `screen_smc_stock_daily.py` (đợt 101) |
+|---|---|---|
+| Kiểu phần tử rổ | `ControlEntry` — trường cố định `r5`, `r10`, `r20` | `BasketEntry` — `dict` theo k |
+| `TARGET_KS` | (5, 10, 20) | (10, 20, **40**) — `ControlEntry` không chứa nổi k = 40 |
+| Rổ không có giá trị nào thì trả | `(None, len(entries))` | `(None, 0)` |
+
+`excess` ra giống nhau khi rổ rỗng (đều `None`), nhưng số `n` trả về thì không, và kiểu phần tử thì không thay thế được cho nhau. Gộp chúng là một **quyết định thiết kế** (chọn kiểu rổ nào, rổ rỗng báo gì), không phải một phép dời. Nên brief đợt 122 **không** gộp; việc đó đi cùng đợt đo lại với mốc trung tính.
+
+Phần còn lại của §A.8 vẫn đúng: chỉ đợt 99 và 120 dùng rổ lọc `trend_ok`; `make_basket_entry` là rổ trung tính và có sẵn.
+
