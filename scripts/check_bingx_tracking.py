@@ -221,19 +221,16 @@ def align_series_and_evaluate(
             ext_prices.append(ext_by_date[target_ext_date])
 
     if len(matched_dates) < 2:
+        # KHONG tra 0.0. Con 0.0 o day doc la "khong tuong quan" va "bam hoan hao",
+        # trong khi that ra la "khong do duoc". Do la dung lop loi ma B0 (do 117) da
+        # bo o bon ham thuan, nhung no con sot lai o chinh lop goi nay.
         return {
             "shift_days": shift_days,
             "matched_count": len(matched_dates),
-            "basis_stats": {
-                "median_basis": 0.0,
-                "p5_basis": 0.0,
-                "p95_basis": 0.0,
-                "max_abs_basis": 0.0,
-                "count_basis_gt_1pct": 0,
-                "pct_basis_gt_1pct": 0.0,
-            },
-            "returns_corr": 0.0,
-            "tracking_error_annual": 0.0,
+            "measurable": False,
+            "basis_stats": None,
+            "returns_corr": None,
+            "tracking_error_annual": None,
         }
 
     basis_stats = compute_basis_stats(bingx_prices, ext_prices)
@@ -245,6 +242,7 @@ def align_series_and_evaluate(
     return {
         "shift_days": shift_days,
         "matched_count": len(matched_dates),
+        "measurable": True,
         "basis_stats": basis_stats,
         "returns_corr": returns_corr,
         "tracking_error_annual": te_annual,
@@ -264,9 +262,14 @@ def compare_date_alignments(
     res_m1 = align_series_and_evaluate(bingx_by_date, ext_by_date, shift_days=-1)
 
     evaluations = [res_0, res_p1, res_m1]
-    # Sắp xếp theo tương quan lợi suất giảm dần
-    evaluations.sort(key=lambda x: x["returns_corr"], reverse=True)
-    best = evaluations[0]
+    measurable = [e for e in evaluations if e["measurable"]]
+    if not measurable:
+        raise ValueError(
+            "Không chọn được cách căn ngày: cả ba shift (0, +1, -1) đều dưới 2 ngày chung"
+        )
+    # Sắp xếp theo tương quan lợi suất giảm dần, chỉ trong số shift đo được
+    measurable.sort(key=lambda x: x["returns_corr"], reverse=True)
+    best = measurable[0]
 
     return {
         "shift_0_corr": res_0["returns_corr"],

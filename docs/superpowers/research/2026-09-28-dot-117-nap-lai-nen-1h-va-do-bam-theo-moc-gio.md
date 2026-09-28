@@ -528,3 +528,58 @@ code. Nhưng:
   `match_and_align_dates`, `evaluate_hourly_tracking`) và bốn `timezone.utc` nên là `UTC`.
   Claude đã chạy `ruff --fix`. Đáng chú ý: `match_and_align_dates` bị import mà không dùng chỉ
   là lỗi lint — test tương ứng vẫn kiểm đúng thứ tự ghép ngày, qua `align_and_evaluate`.
+
+## 6.6. Hai lỗi Claude tìm thêm khi tự soát lại phép sửa B0 của mình
+
+### Lỗ trong chính đặc tả B0 của Claude
+
+Brief 117 §B0 nêu tên **bốn hàm thuần** phải bỏ mặc định `0.0`. Agent sửa đúng cả bốn. Nhưng Claude
+đặc tả thiếu: **lớp gọi ngay trên nó còn nguyên cùng lớp lỗi đó.**
+
+`align_series_and_evaluate` trong `scripts/check_bingx_tracking.py`:
+
+```python
+if len(matched_dates) < 2:
+    return {
+        ...
+        "basis_stats": {"median_basis": 0.0, ...},
+        "returns_corr": 0.0,
+        "tracking_error_annual": 0.0,
+    }
+```
+
+Tức dưới 2 ngày chung thì vẫn in ra "tương quan 0,0" và "tracking error 0,0%" — đọc thành
+"không tương quan" và "bám hoàn hảo", trong khi thật ra là **không đo được**. Sửa bốn hàm lá mà
+để nguyên lớp gọi thì chưa giải quyết gì.
+
+**Đã sửa:**
+- nhánh đó trả `measurable: False` với `returns_corr`, `tracking_error_annual`, `basis_stats` đều là
+  `None`; nhánh bình thường trả `measurable: True`;
+- `compare_date_alignments` chỉ xếp hạng trong số shift đo được, và **`raise`** nếu cả ba shift
+  (0, +1, −1) đều không đo được — vì lúc đó không tồn tại "cách căn ngày tốt nhất" nào để chọn.
+
+**Hai test mới**, cộng phá thử: trả lại `0.0` thì **cả hai test đỏ**.
+
+**Hồi quy:** `check_bingx_tracking.py` chạy lại vẫn ra đúng 0,7345 / 0,6104 / 0,8605;
+`check_bingx_tracking_hourly.py` vẫn ra 16:00 → 0,9776 và 0,9907, 11:00 → 0,9370.
+
+### `except ValueError: continue` bỏ qua im lặng
+
+Vòng quét 24 giờ trong `check_bingx_tracking_hourly.py` bắt `ValueError` rồi `continue`. Phần bắt lỗi
+là **đúng** — giờ thị trường đóng thì không đo được là chuyện bình thường, và nhờ nó mà script không
+chết khi chĩa vào mã chỉ giao dịch 6,5 giờ mỗi ngày như AAPL. Nhưng `continue` trần **gộp hai việc
+khác hẳn nhau vào cùng một chỗ im lặng**: giờ thiếu dữ liệu thật, và nến bẩn làm
+`compute_daily_returns` raise sau khi B0 đổi sang `raise`. Cả hai cùng biến mất khỏi bảng mà không
+để lại dấu vết.
+
+**Đã sửa:** ghi lại từng giờ bị bỏ kèm lý do, rồi in ra `[CHU Y] n/24 gio khong do duoc`. Với ba cặp
+forex hiện tại, **không giờ nào bị bỏ**, nên dòng này không xuất hiện — đúng như mong đợi.
+
+### Điều này không đổi kết luận nào
+
+Cả hai nhánh đều chưa từng chạy trong dữ liệu hiện tại: ba shift của đường đi theo ngày đều có
+200+ ngày chung, và cả 24 giờ của ba cặp forex đều đo được. Đây là bịt lỗ trước khi nó nổ, không
+phải sửa một con số đã sai.
+
+Suite sau khi sửa: **1.220 pass** (1.218 + 2 test mới), ruff sạch.
+

@@ -207,12 +207,18 @@ def scan_hourly_tracking_for_pair(
     ext_daily = load_ext_daily_dict_from_db(conn, ext_source, ext_symbol)
 
     results: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
 
     for h in range(24):
         b_hour_dict = extract_hourly_series(raw_1h, h)
         try:
             eval_res, common_dates = align_and_evaluate(b_hour_dict, ext_daily)
-        except ValueError:
+        except ValueError as exc:
+            # Bo qua gio khong do duoc, nhung PHAI ghi lai ly do. Mot `continue`
+            # tran se che ca truong hop gio thieu du lieu that (thi truong dong)
+            # lan truong hop nen ban lam compute_daily_returns raise -- hai viec
+            # khac han nhau ma cung bien mat khoi bang.
+            skipped.append({"hour": h, "reason": str(exc)})
             continue
 
         results.append({
@@ -223,6 +229,11 @@ def scan_hourly_tracking_for_pair(
             "te_annual": eval_res["tracking_error_annual"],
             "basis_stats": eval_res["basis_stats"],
         })
+
+    if skipped:
+        print(f"  [CHU Y] {len(skipped)}/24 gio khong do duoc cho {bingx_symbol} x {ext_source}:")
+        for sk in skipped:
+            print(f"    - {sk['hour']:02d}:00 UTC -> {sk['reason']}")
 
     # Sắp xếp theo tương quan giảm dần
     results.sort(key=lambda x: x["corr"], reverse=True)

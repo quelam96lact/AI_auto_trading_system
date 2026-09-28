@@ -174,3 +174,37 @@ def test_pure_functions_raise_on_invalid_inputs_b0():
     with pytest.raises(ValueError, match="Không đo được tracking error"):
         compute_tracking_error_annualized([0.01, 0.02], [0.01])
 
+
+def test_align_series_khong_do_duoc_thi_khong_tra_ve_0():
+    """Duoi 2 ngay chung thi cac chi so phai la None, KHONG phai 0.0.
+
+    Lop loi da bo o bon ham thuan (B0, do 117) con sot lai o chinh lop goi
+    align_series_and_evaluate: no tra returns_corr = 0.0 va
+    tracking_error_annual = 0.0 khi matched < 2. Doc ra thanh "khong tuong quan"
+    va "bam hoan hao", trong khi that ra la "khong do duoc".
+
+    Vi du tinh tay: BingX co 2 ngay 01/08 va 05/08; nguon ngoai chi co 03/08.
+    Voi shift = 0 thi khong ngay nao khop -> matched_count = 0 -> khong do duoc.
+    """
+    b = {date(2026, 8, 1): 100.0, date(2026, 8, 5): 101.0}
+    e = {date(2026, 8, 3): 100.0}
+
+    res = align_series_and_evaluate(b, e, shift_days=0)
+    assert res["matched_count"] == 0
+    assert res["measurable"] is False
+    assert res["returns_corr"] is None
+    assert res["tracking_error_annual"] is None
+    assert res["basis_stats"] is None
+
+
+def test_compare_date_alignments_raise_khi_khong_shift_nao_do_duoc():
+    """Ca ba shift deu khong do duoc thi phai raise, khong duoc chon bua mot cai.
+
+    BingX 01/08 va 05/08; nguon ngoai chi co 03/08. Shift 0, +1, -1 deu khong
+    tao ra du 2 ngay chung, nen khong co "cach can ngay tot nhat" nao ton tai.
+    """
+    b = {date(2026, 8, 1): 100.0, date(2026, 8, 5): 101.0}
+    e = {date(2026, 8, 3): 100.0}
+
+    with pytest.raises(ValueError, match="Không chọn được cách căn ngày"):
+        compare_date_alignments(b, e)
