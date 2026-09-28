@@ -41,7 +41,6 @@ from scripts.screen_smc_stock_daily import (
     find_fvg_events,
     find_sweep_events,
     fvg_candidates,
-    holm_adjust,
     in_is_signal,
     make_basket_entry,
     median_of,
@@ -51,6 +50,7 @@ from scripts.screen_smc_stock_daily import (
     verdict_for_event,
 )
 from trading.calendar_vn import TZ
+from trading.metrics import holm_adjust
 from trading.models import Bar
 
 T0 = date(2020, 1, 6)  # thu Hai

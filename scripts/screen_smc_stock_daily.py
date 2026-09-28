@@ -62,6 +62,7 @@ from scripts.screen_vcp_daily import (
 )
 from scripts.screen_vn30f_smc import _la_swing_high
 from trading.calendar_vn import TZ
+from trading.metrics import holm_adjust
 from trading.models import Bar
 from trading.storage.db import Storage
 
@@ -282,25 +283,6 @@ def top10_share(vals: list[float]) -> float | None:
     if total == 0:
         return None
     return sum(sorted(vals, reverse=True)[:10]) / total
-
-
-def holm_adjust(p_by_name: Mapping[str, float], alpha: float = ALPHA) -> dict[str, bool]:
-    """Hieu chinh Holm: sap p tang dan p(1) <= p(2) <= ...; so p(i) voi alpha / (m - i + 1).
-
-    Dung o gia tri dau tien khong dat; cac gia tri sau cung khong dat.
-    """
-    items = sorted(p_by_name.items(), key=lambda kv: kv[1])
-    m = len(items)
-    out: dict[str, bool] = {}
-    da_dung = False
-    for i, (name, p) in enumerate(items, start=1):
-        nguong = alpha / (m - i + 1)
-        if da_dung or p > nguong:
-            out[name] = False
-            da_dung = True
-        else:
-            out[name] = True
-    return out
 
 
 def verdict_for_event(

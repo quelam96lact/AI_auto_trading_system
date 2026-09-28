@@ -69,7 +69,7 @@ Nếu mức A âm thì **dừng, không cần chạy B và C**, và báo ngay.
 
 Claude đã truy vấn hai con số này. Mỗi cửa sổ cho khoảng **164–168 lần tái cân bằng**, dư ngưỡng 30.
 
-**Cửa sổ thứ ba, chỉ tham khảo, KHÔNG thuộc cổng:** USD/JPY 1971-01-04 … 1998-12-31 (10.536 ngày). Phải báo riêng và phải kèm đúng cảnh báo này: giai đoạn đó gồm sự sụp đổ của Bretton Woods và Hiệp định Plaza, là chế độ tiền tệ khác hẳn, có xu hướng dài bất thường thuận lợi cho momentum. **Không được đưa nó vào kết luận đạt/không đạt.**
+**Cửa sổ thứ ba, chỉ tham khảo, KHÔNG thuộc cổng:** USD/JPY 1971-01-04 … 1998-12-31 (**7.015 phiên / 10.224 ngày lịch / 336 tháng** — bản đầu của brief ghi sai là 10.536 ngày; 10.536 là số phiên của 1971→**2012**, không phải 1971→1998. Claude sửa sau khi audit đợt 118). Phải báo riêng và phải kèm đúng cảnh báo này: giai đoạn đó gồm sự sụp đổ của Bretton Woods và Hiệp định Plaza, là chế độ tiền tệ khác hẳn, có xu hướng dài bất thường thuận lợi cho momentum. **Không được đưa nó vào kết luận đạt/không đạt.**
 
 **Cổng đạt, cả bốn điều kiện:**
 1. Lợi nhuận ròng **> 0 ở CẢ HAI** cửa sổ chính, cho cùng một cặp;

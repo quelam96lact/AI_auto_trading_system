@@ -7,7 +7,7 @@ thuần túy trong module này để tính toán số đo, cấm tự sao chép 
 
 import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 
 
@@ -181,3 +181,34 @@ def empirical_percentile_rank(values: list[float], target: float) -> float:
     less = sum(1 for v in values if v < target)
     equal = sum(1 for v in values if math.isclose(v, target, abs_tol=1e-9))
     return (less + 0.5 * equal) / len(values) * 100.0
+
+
+def holm_adjust(p_by_name: Mapping[str, float], alpha: float = 0.05) -> dict[str, bool]:
+    """Hiệu chỉnh Holm (Holm-Bonferroni step-down procedure) kiểm soát FWER.
+
+    Sắp xếp p-value tăng dần p(1) <= p(2) <= ... <= p(m); so p(i) với alpha / (m - i + 1).
+    Dừng ở giá trị đầu tiên không đạt; các giá trị sau cũng không đạt.
+
+    Tham số `alpha` mặc định là 0.05, kế thừa từ hằng số ALPHA = 0.05 trong
+    scripts/screen_smc_stock_daily.py:85 (mức ý nghĩa thống kê chuẩn 5%).
+
+    Args:
+        p_by_name: Dict ánh xạ tên phép kiểm định -> p-value.
+        alpha: Mức ý nghĩa tổng thể (mặc định 0.05).
+
+    Returns:
+        dict[str, bool]: Dict ánh xạ tên phép kiểm định -> True (đạt ý nghĩa) hoặc False.
+    """
+    items = sorted(p_by_name.items(), key=lambda kv: kv[1])
+    m = len(items)
+    out: dict[str, bool] = {}
+    da_dung = False
+    for i, (name, p) in enumerate(items, start=1):
+        nguong = alpha / (m - i + 1)
+        if da_dung or p > nguong:
+            out[name] = False
+            da_dung = True
+        else:
+            out[name] = True
+    return out
+
