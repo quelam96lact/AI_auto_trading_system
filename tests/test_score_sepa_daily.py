@@ -269,3 +269,33 @@ def test_ma_khong_tin_cay_phai_duoc_danh_dau_trong_bang(monkeypatch):
     assert any(ln.startswith("AAA(!)") for ln in rows), rows
     assert any(ln.startswith(("BBB ", "BBB |")) for ln in rows), rows
 
+
+def test_duong_di_mot_ma_cung_phai_canh_bao_ma_khong_tin_cay(monkeypatch):
+    """Bang diem MOT ma cung phai canh bao, khong chi bang tong hop.
+
+    Loi Claude tim thay khi tu soat lai chinh phep sua cua minh o dot 119: lan dau
+    chi them canh bao vao bang tong hop, nen `--symbol PVP` van in 7/7 sach se
+    khong mot loi nao. Do lai la duong di NGUY HIEM HON: tra cuu mot ma la viec
+    nguoi ta lam ngay truoc khi hanh dong tren ma do.
+
+    Vi du tinh tay: chuoi 300 nen gia phang.
+      - ma ten "AAA" nam trong danh sach -> bao cao phai chua "[CHU Y]"
+      - ma ten "BBB" khong nam trong danh sach -> bao cao KHONG duoc chua "[CHU Y]"
+    """
+    import scripts.score_sepa_daily as mod
+
+    monkeypatch.setattr(mod, "load_untrusted_symbols", lambda *a, **k: {"AAA"})
+
+    base_dt = datetime(2026, 1, 1, 17, 0, tzinfo=UTC)
+    bars = [Bar("X", base_dt, 100, 100, 100, 100, 50000) for _ in range(300)]
+
+    res_a = mod.evaluate_sepa_single(bars)
+    res_a["symbol"] = "AAA"
+    rep_a = mod.format_single_symbol_report(res_a, rs_rank=80, rs_universe_size=2)
+    assert "[CHU Y]" in rep_a, rep_a
+
+    res_b = mod.evaluate_sepa_single(bars)
+    res_b["symbol"] = "BBB"
+    rep_b = mod.format_single_symbol_report(res_b, rs_rank=40, rs_universe_size=2)
+    assert "[CHU Y]" not in rep_b, rep_b
+

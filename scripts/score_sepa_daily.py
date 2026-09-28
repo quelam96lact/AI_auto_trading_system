@@ -251,6 +251,13 @@ def format_single_symbol_report(
     sym = item["symbol"]
     d_str = item["as_of"].isoformat() if item["as_of"] else "N/A"
     lines.append(f"BẢNG ĐIỂM KỸ THUẬT SEPA (MINERVINI TREND TEMPLATE) — MÃ: {sym}")
+
+    if sym.upper() in load_untrusted_symbols():
+        lines.append(
+            "[CHU Y] Ma nay nam trong danh sach du lieu dieu chinh gia KHONG tin cay "
+            "(exclusions.txt). MA150/MA200 va bien do 52 tuan deu co the SAI. "
+            "KHONG dung bang diem duoi day."
+        )
     lines.append(f"Ngày đánh giá: {d_str} (Giờ VN) | Tổng số nến sạch: {item['cleaned_bars']}")
 
     if not item["eligible_trend"]:

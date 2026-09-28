@@ -351,3 +351,35 @@ Bảy tiêu chí này chính là bộ lọc xu hướng trong phép sàng lọc 
 
 Câu "điểm SEPA cao có dự báo được lợi suất không" vẫn là một phép đo riêng, phải tiền đăng ký, phải chỉ dùng dữ liệu trước 2023 để giữ holdout, và phải có đối chứng cùng ngày.
 
+## A.7. Claude tự soát lại phép sửa của chính mình và thấy nó nửa việc
+
+Phép sửa ở §A.4 chỉ thêm cảnh báo vào **bảng tổng hợp**. Chạy thử đường đi một mã:
+
+```
+uv run python scripts/score_sepa_daily.py --symbol PVP --as-of 2026-09-25
+
+BẢNG ĐIỂM KỸ THUẬT SEPA (MINERVINI TREND TEMPLATE) — MÃ: PVP
+Giá đóng cửa: 20,500.0 VND | Điểm xu hướng SEPA: 7/7
+```
+
+**7/7 sạch sẽ, không một lời cảnh báo.** Và đó là đường đi **nguy hiểm hơn**: tra cứu một mã là việc người ta làm ngay trước khi hành động trên mã đó, còn bảng tổng hợp là để quét.
+
+**Đã sửa:** `format_single_symbol_report` cũng kiểm danh sách và in `[CHU Y]` ngay dưới dòng tiêu đề. Kiểm lại:
+
+```
+--- PVP (không tin cậy) ---
+BẢNG ĐIỂM KỸ THUẬT SEPA ... — MÃ: PVP
+[CHU Y] Ma nay nam trong danh sach du lieu dieu chinh gia KHONG tin cay ... KHONG dung bang diem duoi day.
+Giá đóng cửa: 20,500.0 VND | Điểm xu hướng SEPA: 7/7
+
+--- BFC (tin cậy) ---
+BẢNG ĐIỂM KỸ THUẬT SEPA ... — MÃ: BFC
+Giá đóng cửa: 48,350.0 VND | Điểm xu hướng SEPA: 3/7
+```
+
+Cảnh báo chỉ nổ với mã trong danh sách, không nổ với mã sạch. **Test mới** ghim cả hai chiều; **phá thử** đổi điều kiện thành `if False:` thì test đỏ, và đã in lại dòng code để chắc đột biến được áp.
+
+`exclusions.txt` đã được theo dõi trong git (`git ls-files` xác nhận), nên file đi kèm repo và nhánh "không đọc được file" sẽ không nổ oan.
+
+Suite cuối: **1.237 pass**, ruff sạch.
+
