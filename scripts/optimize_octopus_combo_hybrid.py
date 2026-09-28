@@ -26,6 +26,11 @@ from trading.pattern_backtest import run_pattern_backtest
 from trading.sampling import filter_bars_by_split
 from trading.storage.db import Storage
 
+try:
+    from seal import CRYPTO_SEALED_MAX_TS
+except ImportError:
+    from scripts.seal import CRYPTO_SEALED_MAX_TS
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -161,7 +166,8 @@ def main() -> int:
         print(f"Đang tải dữ liệu Crypto perpetual {args.interval}...", flush=True)
         with storage.conn() as c:
             rows = c.execute(
-                f"SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '{args.interval}' ORDER BY symbol, ts"
+                f"SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '{args.interval}' AND ts <= %s ORDER BY symbol, ts",
+                (CRYPTO_SEALED_MAX_TS,),
             ).fetchall()
             for r in rows:
                 data.setdefault(r[0], []).append(

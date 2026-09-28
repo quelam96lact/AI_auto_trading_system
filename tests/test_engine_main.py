@@ -590,6 +590,43 @@ async def test_engine_alerts_critical_when_real_nav_too_small(storage, monkeypat
     ), f"phai alert CRITICAL noi ro tran (4.292) va gia lo re nhat (2.200.000), thuc te: {alerts_seen}"
 
 
+async def test_engine_alerts_critical_when_zero_price_symbol_in_cfg(storage, monkeypatch):
+    """Brief 121 Task B: GUARD-1 khong bi tat im lang khi cfg.symbols co mot
+    ma gia 0 (cheapest khong duoc nhan 0.0). Ma hop le re nhat la ENGT gia 22.000,
+    tran lenh 4.292 < 1 lo ENGT 2.200.000 -> van phai alert CRITICAL."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg))
+    )
+
+    _seed_nav(storage, 21459)
+    cfg = make_cfg(
+        real_order_account=RTS_ACCOUNT,
+        real_trading_enabled=True,
+        symbols=["ZERO_SYM", "ENGT"],
+    )
+    ts = datetime(2026, 7, 15, 15, 30, tzinfo=TZ)
+    # ZERO_SYM co close = 0.0 o ca bars va bars_daily
+    storage.write_bars([
+        Bar("ZERO_SYM", ts, 0.0, 0.0, 0.0, 0.0, 0),
+        Bar("ENGT", ts, 22000.0, 22000.0, 22000.0, 22000.0, 1000),
+    ])
+    storage.write_daily([
+        Bar("ZERO_SYM", ts, 0.0, 0.0, 0.0, 0.0, 0),
+    ])
+
+    bars = make_bars([10])
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert any(
+        level == "CRITICAL" and "INERT" in msg and "4,292" in msg and "2,200,000" in msg
+        for level, msg in alerts_seen
+    ), f"GUARD-1 phai alert CRITICAL voi ENGT du co ma ZERO_SYM gia 0, thuc te: {alerts_seen}"
+
+
 async def test_engine_silent_when_trading_disabled_and_nav_tiny(storage, monkeypatch):
     """GUARD-2 (NAV-CI): real_trading_enabled=False + NAV nho = trang thai
     dang chay -> phai IM LANG hoan toan. Neu test nay fail nghia la ta vua

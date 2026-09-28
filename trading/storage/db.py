@@ -354,12 +354,12 @@ class Storage:
         im lang (khong the ket luan, canh bao sai se lam nhon canh bao that)."""
         with self.conn() as c:
             row = c.execute(
-                "SELECT close FROM bars WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                "SELECT close FROM bars WHERE symbol = %s AND close > 0 ORDER BY ts DESC LIMIT 1",
                 (symbol,),
             ).fetchone()
             if row is None:
                 row = c.execute(
-                    "SELECT close FROM bars_daily WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                    "SELECT close FROM bars_daily WHERE symbol = %s AND close > 0 ORDER BY ts DESC LIMIT 1",
                     (symbol,),
                 ).fetchone()
         return row[0] if row else None
@@ -878,6 +878,9 @@ class Storage:
                 unpriced.append(symbol)  # khong co gia -> tinh 0
                 continue
             price, ts = got
+            if price <= 0:
+                unpriced.append(symbol)  # gia <= 0 -> khong phai gia -> tinh 0
+                continue
             if price_age_ok is not None:
                 if not price_age_ok(ts, now):
                     unpriced.append(symbol)  # gia qua cu -> tinh 0

@@ -589,12 +589,64 @@ def test_compute_nav_fresh_price_within_threshold():
     assert unpriced == []
 
 
+def test_compute_nav_zero_price_unpriced_and_not_added():
+    """Brief 121 Task A: price_fn tra (0.0, ts_tuoi) -> symbol phai vao
+    unpriced VA nav khong cong gi (tinh 0 tuong minh, khong im lang)."""
+    nav, unpriced = Storage.compute_nav(
+        100_000.0, 0.0, {"SBC": 500},
+        lambda sym: (0.0, datetime(2026, 8, 14, tzinfo=TZ)),
+        _nav_now(),
+    )
+    assert nav == 100_000.0
+    assert unpriced == ["SBC"]
+
+
+def test_compute_nav_negative_price_unpriced():
+    """Brief 121 Task A ca bien: price = -1 cung phai vao unpriced."""
+    nav, unpriced = Storage.compute_nav(
+        50_000.0, 0.0, {"XXX": 200},
+        lambda sym: (-1.0, datetime(2026, 8, 14, tzinfo=TZ)),
+        _nav_now(),
+    )
+    assert nav == 50_000.0
+    assert unpriced == ["XXX"]
+
+
 def test_parse_margin_ratio_variants():
     """MARGIN-1 kiem chung 4: '50%' -> 50.0; dang la -> None (khong doan)."""
     assert Storage.parse_margin_ratio("50%") == 50.0
     assert Storage.parse_margin_ratio("0%") == 0.0
     assert Storage.parse_margin_ratio("abc") is None
     assert Storage.parse_margin_ratio(None) is None
+
+
+# ============ Brief 121 Task B: read_last_close bo qua close = 0 ============
+
+
+def test_read_last_close_skips_zero_in_bars(storage):
+    """Brief 121 Task B: bang bars co dong close=0 (moi nhat) va dong close
+    hop le (cu hon) -> read_last_close phai tra gia hop le, KHONG tra 0."""
+    ts_valid = datetime(2026, 7, 10, 15, 0, tzinfo=TZ)
+    ts_zero = datetime(2026, 7, 11, 15, 0, tzinfo=TZ)
+    storage.write_bars([
+        Bar("TEST_B1", ts_valid, 50.0, 55.0, 48.0, 52.0, 1000),
+        Bar("TEST_B1", ts_zero, 0.0, 0.0, 0.0, 0.0, 0),
+    ])
+    result = storage.read_last_close("TEST_B1")
+    assert result == 52.0, f"phai tra 52.0 (dong hop le), khong tra 0.0, thuc te: {result}"
+
+
+def test_read_last_close_skips_zero_in_bars_daily(storage):
+    """Brief 121 Task B fallback: bars rong, bars_daily co dong close=0
+    (moi nhat) va dong close hop le -> phai tra gia hop le."""
+    ts_valid = datetime(2026, 6, 20, 0, 0, tzinfo=TZ)
+    ts_zero = datetime(2026, 6, 21, 0, 0, tzinfo=TZ)
+    storage.write_daily([
+        Bar("TEST_B2", ts_valid, 30.0, 35.0, 28.0, 32.0, 500),
+        Bar("TEST_B2", ts_zero, 0.0, 0.0, 0.0, 0.0, 0),
+    ])
+    result = storage.read_last_close("TEST_B2")
+    assert result == 32.0, f"phai tra 32.0 (daily hop le), khong tra 0.0, thuc te: {result}"
 
 
 # ============ backtest-grafana: bang backtest_runs / equity / fills ============

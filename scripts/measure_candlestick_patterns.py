@@ -29,6 +29,11 @@ from trading.models import Bar
 from trading.patterns import combo_signal, is_doji, is_hammer
 from trading.storage.db import Storage
 
+try:
+    from seal import CRYPTO_SEALED_MAX_TS
+except ImportError:
+    from scripts.seal import CRYPTO_SEALED_MAX_TS
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -244,7 +249,8 @@ def main() -> int:
         crypto_1d_bars = {}
         with storage.conn() as c:
             rows = c.execute(
-                'SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1d\' ORDER BY symbol, ts'
+                'SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1d\' AND ts <= %s ORDER BY symbol, ts',
+                (CRYPTO_SEALED_MAX_TS,),
             ).fetchall()
             for r in rows:
                 bar = Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx")
@@ -257,7 +263,8 @@ def main() -> int:
         crypto_1h_bars = {}
         with storage.conn() as c:
             rows = c.execute(
-                'SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1h\' ORDER BY symbol, ts'
+                'SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE "interval" = \'1h\' AND ts <= %s ORDER BY symbol, ts',
+                (CRYPTO_SEALED_MAX_TS,),
             ).fetchall()
             for r in rows:
                 bar = Bar(symbol=r[0], ts=r[1], open=float(r[2]), high=float(r[3]), low=float(r[4]), close=float(r[5]), volume=int(r[6]), source="bingx")

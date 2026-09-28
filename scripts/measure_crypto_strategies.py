@@ -26,6 +26,11 @@ from trading.models import Bar
 from trading.risk import RiskManager
 from trading.trailing_stop import TrailingStopManager
 
+try:
+    from seal import CRYPTO_SEALED_MAX_TS
+except ImportError:
+    from scripts.seal import CRYPTO_SEALED_MAX_TS
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -52,6 +57,12 @@ def read_crypto_bars(
     if from_date:
         query += " AND ts >= %s"
         params.append(from_date)
+    # Moc niem phong: LUON co mat. to_date chi THEM mot dieu kien nua nen chi
+    # thu hep duoc, khong bao gio mo rong. Ca hai de Postgres so sanh theo kieu
+    # timestamptz - KHONG so sanh chuoi: "2026-08-31 23:00:00-05:00" nho hon
+    # moc theo thu tu chu nhung la 04:00 UTC ngay 01/09, da VUOT moc.
+    query += " AND ts <= %s"
+    params.append(CRYPTO_SEALED_MAX_TS)
     if to_date:
         query += " AND ts <= %s"
         params.append(to_date)

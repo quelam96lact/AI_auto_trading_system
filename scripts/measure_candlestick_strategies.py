@@ -26,6 +26,11 @@ from trading.paper_broker import FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS
 from trading.pattern_backtest import PatternBacktestReport, run_pattern_backtest
 from trading.storage.db import Storage
 
+try:
+    from seal import CRYPTO_SEALED_MAX_TS
+except ImportError:
+    from scripts.seal import CRYPTO_SEALED_MAX_TS
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -209,7 +214,8 @@ def main() -> int:
         crypto_1d = {}
         with storage.conn() as c:
             rows = c.execute(
-                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1d' ORDER BY symbol, ts"
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1d' AND ts <= %s ORDER BY symbol, ts",
+                (CRYPTO_SEALED_MAX_TS,),
             ).fetchall()
             for r in rows:
                 crypto_1d.setdefault(r[0], []).append(
@@ -228,7 +234,8 @@ def main() -> int:
         crypto_1h = {}
         with storage.conn() as c:
             rows = c.execute(
-                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1h' ORDER BY symbol, ts"
+                "SELECT symbol, ts, open, high, low, close, volume FROM bars_crypto WHERE \"interval\" = '1h' AND ts <= %s ORDER BY symbol, ts",
+                (CRYPTO_SEALED_MAX_TS,),
             ).fetchall()
             for r in rows:
                 crypto_1h.setdefault(r[0], []).append(
