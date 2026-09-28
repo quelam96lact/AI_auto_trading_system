@@ -52,14 +52,18 @@ from trading.calendar_vn import TZ
 from trading.metrics import holm_adjust
 from trading.models import Bar
 from trading.stock_study import (
+    BasketEntry,
     apply_cooldown,
     bar_date,
+    basket_for_day,
     bootstrap_by_month,
     clean_bars,
     compute_targets,
     entry_status,
+    excess_k,
     liquidity_ok,
     load_universe,
+    make_basket_entry,
     month_key,
     net_return,
     validate_sealed_bars,
@@ -209,62 +213,6 @@ def count_drops(tg: Mapping[int, float | None], drop: dict[str, int], ks: tuple[
     for k in missing_ks(tg, ks):
         _dem(drop, f"thieu_du_lieu_{k}")
 
-
-# --- Ro doi chung cung ngay (cau truc MOI: luu {k: r_k} cho 10/20/40) ---------------
-
-@dataclass(frozen=True, slots=True)
-class BasketEntry:
-    """Mot ma trong ro doi chung cua mot ngay (r = None nghia la khung do khong co du lieu)."""
-
-    symbol: str
-    r: dict[int, float | None]
-
-    def r_of(self, k: int) -> float | None:
-        return self.r.get(k)
-
-
-def make_basket_entry(
-    symbol: str,
-    bars: list[Bar],
-    i: int,
-    exchange: str | None,
-    min_turnover: float = MIN_TURNOVER_VND,
-    ks: tuple[int, ...] = TARGET_KS,
-) -> BasketEntry | None:
-    """None neu ma nay khong duoc vao ro (duoi thanh khoan, khong vao duoc lenh, khong co du lieu)."""
-    if not liquidity_ok(bars, i, window=TURNOVER_WINDOW, min_turnover=min_turnover):
-        return None
-    if entry_status(bars, i, exchange) != "ok":
-        return None
-    tg = compute_targets(bars, i, ks=ks)
-    if all(tg.get(k) is None for k in ks):
-        return None
-    return BasketEntry(symbol, dict(tg))
-
-
-def basket_for_day(entries: Mapping[str, BasketEntry], event_symbol: str) -> list[BasketEntry]:
-    """Ro doi chung cua mot ngay: moi ma khac ma su kien (KHONG gom chinh ma su kien)."""
-    return [e for sym, e in entries.items() if sym != event_symbol]
-
-
-def baseline_for_basket(entries: list[BasketEntry], k: int) -> tuple[float | None, int]:
-    """(baseline_k, so ma duoc tinh) — chi tinh cac ma co r_k (du du lieu vao/thoat)."""
-    vals = [v for v in (e.r_of(k) for e in entries) if v is not None]
-    if not vals:
-        return None, 0
-    return sum(vals) / len(vals), len(vals)
-
-
-def excess_k(
-    r_event: float | None, entries: list[BasketEntry], k: int
-) -> tuple[float | None, float | None, int]:
-    """(baseline_k, excess_k, so ma trong ro); excess = None khi ro < 5 ma hoac thieu du lieu."""
-    baseline, n = baseline_for_basket(entries, k)
-    if r_event is None or baseline is None or n < MIN_CONTROL:
-        return baseline, None, n
-    return baseline, r_event - baseline, n
-
-
 # --- Thong ke ------------------------------------------------------------------------
 
 def median_of(vals: list[float]) -> float | None:
@@ -396,14 +344,22 @@ def run_screen(
             od = bar_date(bars[i]).toordinal()
             if od not in event_day_ords:
                 continue
-            e = make_basket_entry(sym, bars, i, ex)
+            e = make_basket_entry(
+                sym,
+                bars,
+                i,
+                ex,
+                min_turnover=MIN_TURNOVER_VND,
+                window=TURNOVER_WINDOW,
+                ks=TARGET_KS,
+            )
             if e is not None:
                 basket_by_day[od][sym] = e
 
     for ev in events:
         entries = basket_for_day(basket_by_day.get(ev.day.toordinal(), {}), ev.symbol)
         for k in TARGET_KS:
-            baseline, excess, _n = excess_k(ev.r.get(k), entries, k)
+            baseline, excess, _n = excess_k(ev.r.get(k), entries, k, min_control=MIN_CONTROL)
             ev.baseline[k] = baseline
             ev.excess[k] = excess
             if excess is None:

@@ -71,17 +71,21 @@ from trading.models import Bar
 from trading.stock_study import (
     TREND_KEYS,
     TREND_MIN_BARS,
+    BasketEntry,
     apply_cooldown,
     bar_date,
+    basket_for_day,
     bootstrap_by_month,
     calculate_rs_ranks,
     clean_bars,
     compute_targets,
     entry_status,
+    excess_k,
     is_ceiling_open,
     limit_rate,
     liquidity_ok,
     load_universe,
+    make_basket_entry,
     month_key,
     net_return,
     rolling_max,
@@ -127,6 +131,7 @@ __all__ = [
     "empirical_percentile_rank",
     "entry_status",
     "evaluate_gate",
+    "evaluate_gate_mean",
     "excess_for_event",
     "find_score_events",
     "format_rs_table",
@@ -317,6 +322,41 @@ def evaluate_gate(
     return passed, details
 
 
+def evaluate_gate_mean(
+    mean_excess_k20: float | None,
+    n_events: int,
+    boot_ci: tuple[float | None, float | None],
+    holm_pass: bool,
+    median_excess_k20: float | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Kiểm tra cả 4 điều kiện của cổng chính cho rổ trung tính (§2.4):
+
+    CẢ BỐN điều kiện đều dùng TRUNG BÌNH:
+    1. trung bình excess K=20 > 0;
+    2. ít nhất MIN_EVENTS = 100 sự kiện hợp lệ;
+    3. cận dưới KTC 95% của bootstrap_by_month > 0;
+    4. đạt sau Holm (m = 1: p_adjusted < 0.05).
+    """
+    cond1 = mean_excess_k20 is not None and mean_excess_k20 > 0
+    cond2 = n_events >= MIN_EVENTS
+    cond3 = (
+        boot_ci[0] is not None
+        and boot_ci[1] is not None
+        and boot_ci[0] > 0
+    )
+    cond4 = holm_pass
+
+    passed = cond1 and cond2 and cond3 and cond4
+    details = {
+        "cond1_mean_gt_0": cond1,
+        "cond2_min_events": cond2,
+        "cond3_ci_excludes_0": cond3,
+        "cond4_holm_pass": cond4,
+        "passed_all": passed,
+    }
+    return passed, details
+
+
 def resolve_universe(
     storage: Storage,
     exclude_file: str = "exclusions.txt",
@@ -339,8 +379,11 @@ def run_sepa_measurement(
     limit: int = 0,
     n_bootstrap: int = N_BOOTSTRAP,
     seed: int = BOOTSTRAP_SEED,
+    basket: str = "trend",
 ) -> dict[str, Any]:
     """Chạy toàn bộ pipeline đo điểm SEPA."""
+    if basket not in ("trend", "neutral"):
+        raise ValueError(f"Chế độ rổ không hợp lệ: {basket} (chỉ hỗ trợ 'trend' hoặc 'neutral')")
     t0 = time.perf_counter()
 
     # 1. Nạp danh sách vũ trụ
@@ -355,6 +398,7 @@ def run_sepa_measurement(
     scores_by_sym: dict[str, list[int]] = {}
     rs_raw_by_sym: dict[str, list[float | None]] = {}
     store_control: list[tuple[str, Any, Any, Any, Any]] = []
+    all_bars_by_sym: dict[str, tuple[list[Bar], str]] = {}
 
     symbols_kept = 0
     n_junk = 0
@@ -369,10 +413,12 @@ def run_sepa_measurement(
         validate_sealed_bars(bars)
         bars, junk = clean_bars(bars)
         n_junk += junk
+        ex = exchange.get(sym, "")
+        if basket == "neutral":
+            all_bars_by_sym[sym] = (bars, ex)
         if len(bars) < TREND_MIN_BARS + 1:
             continue
         symbols_kept += 1
-        ex = exchange.get(sym, "")
         sd = SymbolData.build(sym, ex, bars)
         scores = compute_score_series(
             bars, sd.sma50, sd.sma150, sd.sma200, sd.win_low, sd.win_high
@@ -382,7 +428,8 @@ def run_sepa_measurement(
         sd_by_sym[sym] = sd
         scores_by_sym[sym] = scores
         rs_raw_by_sym[sym] = rs_raws
-        store_control.append((sym, *compact_control_series(sd)))
+        if basket == "trend":
+            store_control.append((sym, *compact_control_series(sd)))
 
         for idx, b in enumerate(bars):
             raw_v = rs_raws[idx]
@@ -472,33 +519,70 @@ def run_sepa_measurement(
                 events_state_by_score[s].append(ev)
                 all_events_for_control.append(ev)
 
-    # 5. Xây dựng rổ đối chứng cùng ngày
+    # 5. Xây dựng rổ đối chứng cùng ngày & 6. Tính excess return
     event_day_ords = {e.day.toordinal() for e in all_events_for_control}
-    control_by_day: dict[int, list[ControlEntry]] = defaultdict(list)
-    for sym, days_ord, r5, r10, r20 in store_control:
-        for i, od in enumerate(days_ord):
-            if od not in event_day_ords:
-                continue
-            if math.isnan(r5[i]) and math.isnan(r10[i]) and math.isnan(r20[i]):
-                continue
-            control_by_day[od].append(
-                ControlEntry(
-                    symbol=sym,
-                    r5=None if math.isnan(r5[i]) else r5[i],
-                    r10=None if math.isnan(r10[i]) else r10[i],
-                    r20=None if math.isnan(r20[i]) else r20[i],
+    neutral_basket_by_day: dict[int, dict[str, BasketEntry]] = defaultdict(dict)
+
+    if basket == "trend":
+        # 5. Xây dựng rổ đối chứng cùng ngày (đợt 120: rổ chỉ gồm mã 7/7)
+        control_by_day: dict[int, list[ControlEntry]] = defaultdict(list)
+        for sym, days_ord, r5, r10, r20 in store_control:
+            for i, od in enumerate(days_ord):
+                if od not in event_day_ords:
+                    continue
+                if math.isnan(r5[i]) and math.isnan(r10[i]) and math.isnan(r20[i]):
+                    continue
+                control_by_day[od].append(
+                    ControlEntry(
+                        symbol=sym,
+                        r5=None if math.isnan(r5[i]) else r5[i],
+                        r10=None if math.isnan(r10[i]) else r10[i],
+                        r20=None if math.isnan(r20[i]) else r20[i],
+                    )
                 )
-            )
 
-    # 6. Tính excess return cho tất cả sự kiện
-    def populate_excess(events_list: list[SepaEvent]) -> None:
-        for e in events_list:
-            peers = [c for c in control_by_day.get(e.day.toordinal(), []) if c.symbol != e.symbol]
-            assign_event_excess(e, peers, TARGET_KS)
+        # 6. Tính excess return cho tất cả sự kiện (đợt 120)
+        def populate_excess_trend(events_list: list[SepaEvent]) -> None:
+            for e in events_list:
+                peers = [c for c in control_by_day.get(e.day.toordinal(), []) if c.symbol != e.symbol]
+                assign_event_excess(e, peers, TARGET_KS)
 
-    for s in range(8):
-        populate_excess(events_transition_by_score[s])
-        populate_excess(events_state_by_score[s])
+        for s in range(8):
+            populate_excess_trend(events_transition_by_score[s])
+            populate_excess_trend(events_state_by_score[s])
+    else:
+        # 5. Xây dựng rổ đối chứng trung tính (đợt 123)
+        for sym, (bars, ex) in all_bars_by_sym.items():
+            for i in range(len(bars)):
+                od = bar_date(bars[i]).toordinal()
+                if od not in event_day_ords:
+                    continue
+                entry = make_basket_entry(
+                    sym,
+                    bars,
+                    i,
+                    ex,
+                    min_turnover=MIN_TURNOVER_VND,
+                    window=TURNOVER_WINDOW,
+                    ks=TARGET_KS,
+                )
+                if entry is not None:
+                    neutral_basket_by_day[od][sym] = entry
+
+        # 6. Tính excess return với rổ trung tính (đợt 123)
+        def populate_excess_neutral(events_list: list[SepaEvent]) -> None:
+            for e in events_list:
+                d_ord = e.day.toordinal()
+                day_entries = neutral_basket_by_day.get(d_ord, {})
+                peers = basket_for_day(day_entries, e.symbol)
+                e.excess = {}
+                for k in TARGET_KS:
+                    _base, excess, _n = excess_k(e.r.get(k), peers, k, min_control=MIN_CONTROL)
+                    e.excess[k] = excess
+
+        for s in range(8):
+            populate_excess_neutral(events_transition_by_score[s])
+            populate_excess_neutral(events_state_by_score[s])
 
     # 7. Thống kê và bootstrap cho từng nhóm
     def summarize_group(evs: list[SepaEvent]) -> dict[str, Any]:
@@ -539,16 +623,50 @@ def run_sepa_measurement(
     holm_dict = holm_adjust({"score7_transition_k20": p_val}) if p_val is not None else {"score7_transition_k20": False}
     holm_pass = holm_dict.get("score7_transition_k20", False)
 
-    gate_passed, gate_details = evaluate_gate(
-        median_excess_k20=p_k20_stats["median_excess"],
-        n_events=p_k20_stats["n_excess"],
-        boot_ci=(p_boot["ci_low"], p_boot["ci_high"]),
-        holm_pass=holm_pass,
-    )
+    if basket == "trend":
+        gate_passed, gate_details = evaluate_gate(
+            median_excess_k20=p_k20_stats["median_excess"],
+            n_events=p_k20_stats["n_excess"],
+            boot_ci=(p_boot["ci_low"], p_boot["ci_high"]),
+            holm_pass=holm_pass,
+        )
+    else:
+        gate_passed, gate_details = evaluate_gate_mean(
+            mean_excess_k20=p_k20_stats["mean_excess"],
+            n_events=p_k20_stats["n_excess"],
+            boot_ci=(p_boot["ci_low"], p_boot["ci_high"]),
+            holm_pass=holm_pass,
+        )
+
+    # Thống kê thứ cấp (§2.4)
+    evs_h1 = [
+        e for e in evs_score7
+        if date(2016, 1, 4) <= e.day <= date(2019, 12, 31) and e.excess.get(MAIN_K) is not None
+    ]
+    evs_h2 = [
+        e for e in evs_score7
+        if date(2020, 1, 1) <= e.day <= date(2022, 11, 30) and e.excess.get(MAIN_K) is not None
+    ]
+    mean_h1 = (sum(e.excess[MAIN_K] for e in evs_h1) / len(evs_h1)) if evs_h1 else None  # type: ignore[arg-type]
+    mean_h2 = (sum(e.excess[MAIN_K] for e in evs_h2) / len(evs_h2)) if evs_h2 else None  # type: ignore[arg-type]
+
+    rnet_vals = [e.r_net[MAIN_K] for e in evs_score7 if e.r_net.get(MAIN_K) is not None]
+    mean_rnet = (sum(rnet_vals) / len(rnet_vals)) if rnet_vals else None  # type: ignore[arg-type]
+
+    if basket == "neutral":
+        basket_sizes = [len(neutral_basket_by_day[od]) for od in event_day_ords]
+        basket_stats = {
+            "mean_size": (sum(basket_sizes) / len(basket_sizes)) if basket_sizes else 0.0,
+            "min_size": min(basket_sizes) if basket_sizes else 0,
+            "max_size": max(basket_sizes) if basket_sizes else 0,
+        }
+    else:
+        basket_stats = None
 
     t_end = time.perf_counter()
 
     return {
+        "basket": basket,
         "n_all_symbols": n_all,
         "n_excluded": len(excluded),
         "n_universe": len(universe),
@@ -563,6 +681,13 @@ def run_sepa_measurement(
         "gate_details": gate_details,
         "p_val": p_val,
         "holm_pass": holm_pass,
+        "split_time": {
+            "h1": {"n": len(evs_h1), "mean_excess_k20": mean_h1},
+            "h2": {"n": len(evs_h2), "mean_excess_k20": mean_h2},
+        },
+        "rnet_k20": {"n": len(rnet_vals), "mean": mean_rnet},
+        "basket_stats": basket_stats,
+        "neutral_basket_by_day": neutral_basket_by_day if basket == "neutral" else None,
         "seconds_total": t_end - t0,
         "seconds_read": read_done - t0,
     }
@@ -663,19 +788,25 @@ def format_state_table(res: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Đo lường lợi thế điểm SEPA (Brief đợt 120)")
+    ap = argparse.ArgumentParser(description="Đo lường lợi thế điểm SEPA (Brief đợt 120 & 123)")
     ap.add_argument("--dsn", default=None, help="DSN Postgres (mặc định lấy từ .env)")
     ap.add_argument("--exclude-file", default="exclusions.txt")
     ap.add_argument("--no-exclusions", action="store_true", help="Không loại mã trong exclusions.txt")
     ap.add_argument("--limit", type=int, default=0, help="Giới hạn số mã (0 = tất cả)")
-    ap.add_argument("--output-dir", default="docs/superpowers/research/dot-120-output")
+    ap.add_argument(
+        "--basket",
+        choices=["trend", "neutral"],
+        default="trend",
+        help="Chế độ rổ: trend (đợt 120, rổ chỉ 7/7) hoặc neutral (đợt 123, rổ trung tính)",
+    )
+    ap.add_argument("--output-dir", default=None, help="Thư mục ghi kết quả")
     ap.add_argument("--bootstrap-seed", type=int, default=BOOTSTRAP_SEED)
     ap.add_argument("--n-bootstrap", type=int, default=N_BOOTSTRAP)
     args = ap.parse_args()
 
     storage = Storage(resolve_dsn(args.dsn))
 
-    print(f"=== BẮT ĐẦU CHẠY PHÉP ĐO ĐIỂM SEPA (no_exclusions={args.no_exclusions}) ===")
+    print(f"=== BẮT ĐẦU CHẠY PHÉP ĐO ĐIỂM SEPA (basket={args.basket}, no_exclusions={args.no_exclusions}) ===")
     res = run_sepa_measurement(
         storage=storage,
         exclude_file=args.exclude_file,
@@ -683,6 +814,7 @@ def main() -> None:
         limit=args.limit,
         n_bootstrap=args.n_bootstrap,
         seed=args.bootstrap_seed,
+        basket=args.basket,
     )
 
     tbl_summary = format_summary_table(res)
@@ -693,17 +825,45 @@ def main() -> None:
     print("\n" + tbl_rs)
     print("\n" + tbl_state)
 
-    print("\n=== KẾT QUẢ CỔNG CHÍNH (Score 7/7 Transition tại K=20) ===")
     gd = res["gate_details"]
-    print(f"- (1) Trung vị excess K=20 > 0: {gd['cond1_median_gt_0']} ({_fmt(res['summary_transitions'][7]['stats'][20]['median_excess'])})")
-    print(f"- (2) Số sự kiện hợp lệ >= 100: {gd['cond2_min_events']} ({res['summary_transitions'][7]['stats'][20]['n_excess']})")
     b7 = res["summary_transitions"][7]["boot"]
-    print(f"- (3) KTC 95% bootstrap loại 0: {gd['cond3_ci_excludes_0']} ([{_fmt(b7['ci_low'])}, {_fmt(b7['ci_high'])}])")
-    print(f"- (4) Đạt sau Holm (m=1): {gd['cond4_holm_pass']} (p_val = {_fmt(res['p_val'], '.4f')})")
-    print(f"=> KẾT LUẬN CỔNG: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
+
+    if args.basket == "trend":
+        print("\n=== KẾT QUẢ CỔNG CHÍNH (Score 7/7 Transition tại K=20) ===")
+        print(f"- (1) Trung vị excess K=20 > 0: {gd['cond1_median_gt_0']} ({_fmt(res['summary_transitions'][7]['stats'][20]['median_excess'])})")
+        print(f"- (2) Số sự kiện hợp lệ >= 100: {gd['cond2_min_events']} ({res['summary_transitions'][7]['stats'][20]['n_excess']})")
+        print(f"- (3) KTC 95% bootstrap loại 0: {gd['cond3_ci_excludes_0']} ([{_fmt(b7['ci_low'])}, {_fmt(b7['ci_high'])}])")
+        print(f"- (4) Đạt sau Holm (m=1): {gd['cond4_holm_pass']} (p_val = {_fmt(res['p_val'], '.4f')})")
+        print(f"=> KẾT LUẬN CỔNG: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
+    else:
+        print("\n=== KẾT QUẢ CỔNG CHÍNH — RỔ TRUNG TÍNH (Score 7/7 Transition tại K=20) ===")
+        print(f"- (1) Trung bình excess K=20 > 0: {gd['cond1_mean_gt_0']} ({_fmt(res['summary_transitions'][7]['stats'][20]['mean_excess'])})")
+        print(f"- (2) Số sự kiện hợp lệ >= 100: {gd['cond2_min_events']} ({res['summary_transitions'][7]['stats'][20]['n_excess']})")
+        print(f"- (3) KTC 95% bootstrap loại 0: {gd['cond3_ci_excludes_0']} ([{_fmt(b7['ci_low'])}, {_fmt(b7['ci_high'])}])")
+        print(f"- (4) Đạt sau Holm (m=1): {gd['cond4_holm_pass']} (p_val = {_fmt(res['p_val'], '.4f')})")
+        print(f"=> KẾT LUẬN CỔNG: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
+
+        print("\n=== THỐNG KÊ THỨ CẤP (RỔ TRUNG TÍNH) ===")
+        b_stats = res.get("basket_stats")
+        if b_stats:
+            print(f"- Kích thước rổ trung tính: trung bình {b_stats['mean_size']:.1f} mã/ngày (min: {b_stats['min_size']}, max: {b_stats['max_size']})")
+        st = res.get("split_time", {})
+        h1 = st.get("h1", {})
+        h2 = st.get("h2", {})
+        print("- Chia đôi thời gian (Score 7 Transition K=20):")
+        print(f"  + 2016-01-04 -> 2019-12-31: N = {h1.get('n', 0)}, Mean Excess = {_fmt(h1.get('mean_excess_k20'))}")
+        print(f"  + 2020-01-01 -> 2022-11-30: N = {h2.get('n', 0)}, Mean Excess = {_fmt(h2.get('mean_excess_k20'))}")
+        rnet = res.get("rnet_k20", {})
+        print(f"- Lợi suất ròng (r_net) K=20 trung bình nhóm 7/7: {_fmt(rnet.get('mean'))} (N = {rnet.get('n', 0)})")
 
     # Ghi ra file
-    out_dir = pathlib.Path(args.output_dir)
+    if args.output_dir is not None:
+        out_dir = pathlib.Path(args.output_dir)
+    elif args.basket == "neutral":
+        out_dir = pathlib.Path("docs/superpowers/research/dot-123-output")
+    else:
+        out_dir = pathlib.Path("docs/superpowers/research/dot-120-output")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "_no_exclusions" if args.no_exclusions else "_with_exclusions"
 
@@ -719,10 +879,29 @@ def main() -> None:
     full_content.append(f"Số mã hợp lệ: {res['n_symbols_kept']}, số nến rác bỏ: {res['n_junk_bars']}")
     full_content.append(f"Thời gian: {res['seconds_total']:.1f}s (đọc dữ liệu: {res['seconds_read']:.1f}s)\n")
     full_content.append(summary_content)
-    full_content.append("\n=== KẾT LUẬN CỔNG ===")
-    full_content.append(f"Cổng chính: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
-    for k, v in gd.items():
-        full_content.append(f"  {k}: {v}")
+
+    if args.basket == "trend":
+        full_content.append("\n=== KẾT LUẬN CỔNG ===")
+        full_content.append(f"Cổng chính: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
+        for k, v in gd.items():
+            full_content.append(f"  {k}: {v}")
+    else:
+        full_content.append("\n=== KẾT LUẬN CỔNG (RỔ TRUNG TÍNH) ===")
+        full_content.append(f"Cổng chính: {'ĐẠT' if res['gate_passed'] else 'KHÔNG ĐẠT'}")
+        for k, v in gd.items():
+            full_content.append(f"  {k}: {v}")
+        full_content.append("\n=== THỐNG KÊ THỨ CẤP (RỔ TRUNG TÍNH) ===")
+        b_stats = res.get("basket_stats")
+        if b_stats:
+            full_content.append(f"- Kích thước rổ trung tính: trung bình {b_stats['mean_size']:.1f} mã/ngày (min: {b_stats['min_size']}, max: {b_stats['max_size']})")
+        st = res.get("split_time", {})
+        h1 = st.get("h1", {})
+        h2 = st.get("h2", {})
+        full_content.append("- Chia đôi thời gian (Score 7 Transition K=20):")
+        full_content.append(f"  + 2016-01-04 -> 2019-12-31: N = {h1.get('n', 0)}, Mean Excess = {_fmt(h1.get('mean_excess_k20'))}")
+        full_content.append(f"  + 2020-01-01 -> 2022-11-30: N = {h2.get('n', 0)}, Mean Excess = {_fmt(h2.get('mean_excess_k20'))}")
+        rnet = res.get("rnet_k20", {})
+        full_content.append(f"- Lợi suất ròng (r_net) K=20 trung bình nhóm 7/7: {_fmt(rnet.get('mean'))} (N = {rnet.get('n', 0)})")
 
     full_output_file.write_text("\n".join(full_content), encoding="utf-8")
     print(f"\nĐã ghi kết quả ra: {summary_file} và {full_output_file}")

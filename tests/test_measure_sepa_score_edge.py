@@ -13,7 +13,7 @@ Tuân thủ nghiêm ngặt:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from scripts.measure_sepa_score_edge import (
     SepaEvent,
@@ -21,16 +21,27 @@ from scripts.measure_sepa_score_edge import (
     compute_rolling_rs_raw,
     compute_score_series,
     evaluate_gate,
+    evaluate_gate_mean,
     find_score_events,
     resolve_universe,
+    run_sepa_measurement,
 )
 from scripts.screen_vcp_daily import (
+    MIN_TURNOVER_VND,
+    TARGET_KS,
+    TURNOVER_WINDOW,
     ControlEntry,
+    SymbolData,
     excess_for_event,
 )
+from trading.calendar_vn import TZ
 from trading.models import Bar
 from trading.stock_study import (
+    TREND_MIN_BARS,
+    BasketEntry,
     apply_cooldown,
+    basket_for_day,
+    make_basket_entry,
     rolling_max,
     rolling_mean,
     rolling_min,
@@ -317,3 +328,201 @@ def test_compute_rolling_rs_raw_hand_calculated():
     val = rs_raw[252]
     assert val is not None
     assert round(val, 4) == 0.75
+
+
+# --- Tests 3a - 3f: Các bài test rổ trung tính và evaluate_gate_mean (Brief đợt 123) ---
+
+def _make_daily_bar_seq(sym: str, n: int, start_date: date, p: float = 20_000.0, vol: float = 100_000.0) -> list[Bar]:
+    return [
+        Bar(
+            symbol=sym,
+            ts=datetime.combine(start_date + timedelta(days=i), datetime.min.time(), tzinfo=TZ),
+            open=p,
+            high=p * 1.01,
+            low=p * 0.99,
+            close=p,
+            volume=vol,
+            source="test",
+        )
+        for i in range(n)
+    ]
+
+
+class _MockDailyStorage:
+    def __init__(self, data: dict[str, list[Bar]]):
+        self.data = data
+
+    class _Conn:
+        def __init__(self, syms: list[str]):
+            self.syms = syms
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def execute(self, sql: str):
+            if "bars_daily" in sql:
+                return [(s,) for s in self.syms]
+            return [(s, "HOSE") for s in self.syms]
+
+    def conn(self):
+        return self._Conn(list(self.data.keys()))
+
+    def read_daily_bars(self, sym: str, s: datetime, e: datetime) -> list[Bar]:
+        return list(self.data.get(sym, []))
+
+
+def test_3a_neutral_basket_contains_non_trend_symbol():
+    """Cổng 3a: Rổ trung tính CHỨA một mã KHÔNG đạt trend_ok nhưng đủ thanh khoản và vào được lệnh.
+
+    Đột biến 1: Trong chế độ neutral, chỉ cho vào rổ các mã có sd.trend_ok(i) đúng -> test 3a phải RED.
+    """
+    start_d = date(2020, 1, 6)
+    bars_evt = _make_daily_bar_seq("AAA", 300, start_d, p=20_000.0, vol=100_000.0)
+    bars_down = _make_daily_bar_seq("BBB", 300, start_d, p=25_000.0, vol=100_000.0)
+
+    # BBB là chuỗi nến đi ngang nên không đạt 7/7 trend_ok (trend_ok = False)
+    sd_down = SymbolData.build("BBB", "HOSE", bars_down)
+    assert not sd_down.trend_ok(252)
+
+    # make_basket_entry trực tiếp vẫn nhận BBB
+    e_down = make_basket_entry(
+        "BBB",
+        bars_down,
+        252,
+        "HOSE",
+        min_turnover=MIN_TURNOVER_VND,
+        window=TURNOVER_WINDOW,
+        ks=TARGET_KS,
+    )
+    assert e_down is not None
+
+    # Chạy qua run_sepa_measurement ở chế độ neutral
+    storage = _MockDailyStorage({"AAA": bars_evt, "BBB": bars_down})
+    res = run_sepa_measurement(storage, no_exclusions=True, basket="neutral")
+    first_day = min(res["neutral_basket_by_day"].keys())
+
+    # Rổ trung tính của ngày đầu tiên PHẢI chứa BBB (dù trend_ok = False)
+    assert "BBB" in res["neutral_basket_by_day"][first_day]
+
+
+def test_3b_neutral_basket_excludes_low_liquidity_symbol():
+    """Cổng 3b: Rổ trung tính KHÔNG chứa mã dưới ngưỡng thanh khoản."""
+    start_d = date(2020, 1, 6)
+    # vol = 10 -> turnover = 20_000 * 10 = 200_000 VND << 1_000_000_000 VND
+    bars_low = _make_daily_bar_seq("LOW", 50, start_d, p=20_000.0, vol=10.0)
+    e = make_basket_entry(
+        "LOW",
+        bars_low,
+        25,
+        "HOSE",
+        min_turnover=MIN_TURNOVER_VND,
+        window=TURNOVER_WINDOW,
+        ks=TARGET_KS,
+    )
+    assert e is None
+
+
+def test_3c_neutral_basket_excludes_ceiling_open_symbol():
+    """Cổng 3c: Rổ trung tính KHÔNG chứa mã mở trần ở phiên sau."""
+    start_d = date(2020, 1, 6)
+    bars = _make_daily_bar_seq("CEIL", 50, start_d, p=20_000.0, vol=100_000.0)
+    # Sửa phiên sau (i=26) mở trần: sàn HOSE biên độ 7% -> open = 20000 * 1.07 = 21400
+    bars[26] = Bar(
+        symbol="CEIL",
+        ts=bars[26].ts,
+        open=20_000.0 * 1.07,
+        high=20_000.0 * 1.07,
+        low=20_000.0 * 1.05,
+        close=20_000.0 * 1.07,
+        volume=100_000.0,
+        source="test",
+    )
+    e = make_basket_entry(
+        "CEIL",
+        bars,
+        25,
+        "HOSE",
+        min_turnover=MIN_TURNOVER_VND,
+        window=TURNOVER_WINDOW,
+        ks=TARGET_KS,
+    )
+    assert e is None
+
+
+def test_3d_basket_for_day_excludes_event_symbol():
+    """Cổng 3d: Rổ của một sự kiện KHÔNG chứa chính mã sự kiện.
+
+    Đột biến 2: basket_for_day giữ lại chính mã sự kiện -> test 3d phải RED.
+    """
+    entries = {
+        "AAA": BasketEntry("AAA", {5: 0.01, 10: 0.02, 20: 0.03}),
+        "BBB": BasketEntry("BBB", {5: 0.02, 10: 0.03, 20: 0.04}),
+        "CCC": BasketEntry("CCC", {5: 0.03, 10: 0.04, 20: 0.05}),
+    }
+    basket = basket_for_day(entries, "AAA")
+    symbols = [e.symbol for e in basket]
+    assert "AAA" not in symbols
+    assert set(symbols) == {"BBB", "CCC"}
+
+
+def test_3e_neutral_basket_contains_short_series_symbol():
+    """Cổng 3e: Rổ trung tính CHỨA một mã có ít hơn 253 nến nhưng đủ điều kiện a.
+
+    Đột biến 4: Vòng đọc dữ liệu vẫn continue với mã < 253 nến ở chế độ neutral -> test 3e phải RED.
+    """
+    start_d = date(2020, 1, 6)
+    bars_evt = _make_daily_bar_seq("AAA", 300, start_d, p=20_000.0, vol=100_000.0)
+    # CCC chỉ có 40 nến (< 253 nến TREND_MIN_BARS + 1)
+    bars_short = _make_daily_bar_seq("CCC", 40, start_d + timedelta(days=230), p=30_000.0, vol=100_000.0)
+    assert len(bars_short) < TREND_MIN_BARS + 1
+
+    # make_basket_entry trực tiếp thành công cho CCC
+    e_short = make_basket_entry(
+        "CCC",
+        bars_short,
+        22,
+        "HOSE",
+        min_turnover=MIN_TURNOVER_VND,
+        window=TURNOVER_WINDOW,
+        ks=TARGET_KS,
+    )
+    assert e_short is not None
+
+    # Chạy qua run_sepa_measurement
+    storage = _MockDailyStorage({"AAA": bars_evt, "CCC": bars_short})
+    res = run_sepa_measurement(storage, no_exclusions=True, basket="neutral")
+    first_day = min(res["neutral_basket_by_day"].keys())
+
+    # CCC PHẢI có mặt trong rổ trung tính của ngày sự kiện đầu tiên
+    assert "CCC" in res["neutral_basket_by_day"][first_day]
+
+
+def test_3f_evaluate_gate_mean_condition_1_uses_mean():
+    """Cổng 3f: evaluate_gate_mean với dữ liệu có trung bình > 0 nhưng trung vị < 0, điều kiện 1 ĐÚNG.
+
+    Đột biến 3: evaluate_gate_mean điều kiện 1 dùng trung vị -> test 3f phải RED.
+    """
+    passed, details = evaluate_gate_mean(
+        mean_excess_k20=0.015,
+        n_events=120,
+        boot_ci=(0.005, 0.035),
+        holm_pass=True,
+        median_excess_k20=-0.025,
+    )
+    assert passed is True
+    assert details["cond1_mean_gt_0"] is True
+
+    # Khi trung bình excess K=20 <= 0, điều kiện 1 phải SAI (dù trung vị có > 0)
+    p2, d2 = evaluate_gate_mean(
+        mean_excess_k20=-0.005,
+        n_events=120,
+        boot_ci=(0.005, 0.035),
+        holm_pass=True,
+        median_excess_k20=0.030,
+    )
+    assert p2 is False
+    assert d2["cond1_mean_gt_0"] is False
+

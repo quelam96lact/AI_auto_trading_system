@@ -29,20 +29,16 @@ from scripts.screen_smc_stock_daily import (
     MIN_TURNOVER_VND,
     SWEEP_N,
     TARGET_KS,
-    BasketEntry,
-    baseline_for_basket,
-    basket_for_day,
+    TURNOVER_WINDOW,
     bos_candidates,
     confirmed_swing_levels,
     count_drops,
-    excess_k,
     find_all_events,
     find_bos_events,
     find_fvg_events,
     find_sweep_events,
     fvg_candidates,
     in_is_signal,
-    make_basket_entry,
     median_of,
     missing_ks,
     sweep_candidates,
@@ -52,7 +48,14 @@ from scripts.screen_smc_stock_daily import (
 from trading.calendar_vn import TZ
 from trading.metrics import holm_adjust
 from trading.models import Bar
-from trading.stock_study import bar_date
+from trading.stock_study import (
+    BasketEntry,
+    bar_date,
+    baseline_for_basket,
+    basket_for_day,
+    excess_k,
+    make_basket_entry,
+)
 
 T0 = date(2020, 1, 6)  # thu Hai
 
@@ -331,7 +334,15 @@ def test_7a_ro_chi_gom_ma_dat_thanh_khoan_va_khong_co_ma_su_kien():
     entries = {}
     for sym, bars in (("AAA", _liquid_bars()), ("BBB", _liquid_bars()),
                       ("CCC", _liquid_bars()), ("DDD", _liquid_bars(vol=1000.0))):
-        e = make_basket_entry(sym, bars, 25, "HOSE")
+        e = make_basket_entry(
+            sym,
+            bars,
+            25,
+            "HOSE",
+            min_turnover=MIN_TURNOVER_VND,
+            window=TURNOVER_WINDOW,
+            ks=TARGET_KS,
+        )
         if e is not None:
             entries[sym] = e
     assert set(entries) == {"AAA", "BBB", "CCC"}          # DDD bi loai vi duoi nguong thanh khoan
@@ -347,7 +358,7 @@ def test_7b_ro_duoi_5_ma_thi_bo_khoi_phep_so_vuot_troi():
     baseline, n = baseline_for_basket(basket, MAIN_K)
     assert n == 2
     assert baseline is not None
-    _b, excess, n2 = excess_k(0.10, basket, MAIN_K)
+    _b, excess, n2 = excess_k(0.10, basket, MAIN_K, min_control=MIN_CONTROL)
     assert excess is None and n2 == 2                     # ro < 5 -> khong so vuot troi
 
 
@@ -357,7 +368,7 @@ def test_7c_ro_du_5_ma_thi_tinh_duoc_excess_bang_trung_binh_tinh_tay():
     basket = basket_for_day(entries, "AAA")
     baseline, n = baseline_for_basket(basket, MAIN_K)
     assert n == 5 and baseline == pytest.approx(0.02)
-    _b, excess, _n = excess_k(0.10, basket, MAIN_K)
+    _b, excess, _n = excess_k(0.10, basket, MAIN_K, min_control=MIN_CONTROL)
     assert excess == pytest.approx(0.08)                  # 0,10 - 0,02
 
 
@@ -424,8 +435,10 @@ def test_9b_nen_ts_2022_10_31_17h_UTC_la_ngay_01_11_gio_VN_nam_ngoai_IS():
 def test_10_ghim_lan_chay_that_dung_nguong_1_ty():
     assert MIN_TURNOVER_VND == 1_000_000_000.0
     assert MIN_TURNOVER_VND == vcp.MIN_TURNOVER_VND           # khong duoc lech voi dot 99
-    for fn in (find_sweep_events, find_bos_events, find_fvg_events, find_all_events, make_basket_entry):
+    for fn in (find_sweep_events, find_bos_events, find_fvg_events, find_all_events):
         assert inspect.signature(fn).parameters["min_turnover"].default == 1_000_000_000.0, fn.__name__
+    p = inspect.signature(make_basket_entry).parameters["min_turnover"]
+    assert p.default is inspect.Parameter.empty
 
 
 def test_11_su_kien_duoi_nguong_thanh_khoan_KHONG_duoc_tinh():

@@ -14,6 +14,8 @@ from __future__ import annotations
 import pathlib
 import random
 from collections import deque
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -351,3 +353,65 @@ def calculate_rs_ranks(rs_raw_by_symbol: dict[str, float]) -> dict[str, int]:
         rank_val = max(1, min(99, round(pct)))
         ranks[sym] = rank_val
     return ranks
+
+
+# --- Ro doi chung trung tinh (khong loc xu huong) -----------------------------------
+
+@dataclass(frozen=True, slots=True)
+class BasketEntry:
+    """Mot ma trong ro doi chung cua mot ngay (r = None nghia la khung do khong co du lieu)."""
+
+    symbol: str
+    r: dict[int, float | None]
+
+    def r_of(self, k: int) -> float | None:
+        return self.r.get(k)
+
+
+def make_basket_entry(
+    symbol: str,
+    bars: list[Bar],
+    i: int,
+    exchange: str | None,
+    *,
+    min_turnover: float,
+    window: int,
+    ks: tuple[int, ...],
+) -> BasketEntry | None:
+    """None neu ma nay khong duoc vao ro (duoi thanh khoan, khong vao duoc lenh, khong co du lieu)."""
+    if not liquidity_ok(bars, i, window=window, min_turnover=min_turnover):
+        return None
+    if entry_status(bars, i, exchange) != "ok":
+        return None
+    tg = compute_targets(bars, i, ks=ks)
+    if all(tg.get(k) is None for k in ks):
+        return None
+    return BasketEntry(symbol, dict(tg))
+
+
+def basket_for_day(entries: Mapping[str, BasketEntry], event_symbol: str) -> list[BasketEntry]:
+    """Ro doi chung cua mot ngay: moi ma khac ma su kien (KHONG gom chinh ma su kien)."""
+    return [e for sym, e in entries.items() if sym != event_symbol]
+
+
+def baseline_for_basket(entries: list[BasketEntry], k: int) -> tuple[float | None, int]:
+    """(baseline_k, so ma duoc tinh) — chi tinh cac ma co r_k (du du lieu vao/thoat)."""
+    vals = [v for v in (e.r_of(k) for e in entries) if v is not None]
+    if not vals:
+        return None, 0
+    return sum(vals) / len(vals), len(vals)
+
+
+def excess_k(
+    r_event: float | None,
+    entries: list[BasketEntry],
+    k: int,
+    *,
+    min_control: int,
+) -> tuple[float | None, float | None, int]:
+    """(baseline_k, excess_k, so ma trong ro); excess = None khi ro < min_control hoac thieu du lieu."""
+    baseline, n = baseline_for_basket(entries, k)
+    if r_event is None or baseline is None or n < min_control:
+        return baseline, None, n
+    return baseline, r_event - baseline, n
+
