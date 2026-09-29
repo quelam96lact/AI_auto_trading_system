@@ -476,3 +476,26 @@ Cần tạo **ba** scheduled task trên Windows (tạo scheduled task là việc
 
 Trên VPS thì hai dòng cron ở §9 đã đủ, không cần thao tác gì thêm.
 
+### A.7. Tự soát sau commit: `README_VPS_UBUNTU.md` giữ BẢN SAO khối cron, và nó đã lệch
+
+Câu hỏi "file liên quan có cần sửa giống không" dẫn tới một lỗi **có sẵn từ trước**, không phải do đợt này sinh ra.
+
+`docs/README_VPS_UBUNTU.md` không trỏ sang `DEPLOYMENT.md` §9 mà giữ **một bản sao** khối cron. Claude đếm tập job của hai bên:
+
+```
+README: 9 job        sched.sh: 12 job
+chi co trong sched.sh: container-health, orderbook-daily-check, orderbook-recorder
+```
+
+Ai dựng VPS theo file này sẽ thiếu **ba** job mà không có dấu hiệu nào — trong đó `orderbook-recorder` là job **ghi dữ liệu** sổ lệnh VN30F trong phiên, tức mất dữ liệu vĩnh viễn, không phải chỉ mất giám sát. Đợt 131 đồng bộ hai dòng `backup` theo brief, nên phần lệch cũ vẫn còn nguyên.
+
+`test_deployment_doc.py` **không** bắt được: nó chỉ đọc `DEPLOYMENT.md`.
+
+**Claude sửa theo đúng nguyên tắc của chính repo** (`sched.sh` đầu file: *"mot cong thuc hai ban thi som muon lech"*, `4ea4c8d`) — và ở đây nó đã lệch thật, nên không vá bản sao mà **bỏ** bản sao: mục 5 của README giờ trỏ sang `DEPLOYMENT.md` §9, kèm hai dòng lệnh `crontab -e` / `crontab -l` và ghi lại vì sao bản sao bị bỏ. README vốn đã tự nhận là "đường đi ngắn" và dặn "luôn đối chiếu với DEPLOYMENT.md", nên đây đúng vai của nó.
+
+Sửa thêm một dòng cùng lỗi ở mục nghiệm thu: *"Cron thực sự tạo log cho cả 7 job: …"* kèm danh sách cứng — đổi thành "mọi job có trong `scripts/sched.sh`", và chỉ cách lấy danh sách đúng (gọi `sched.sh` với tham số sai thì nó in đủ tên job).
+
+Sau khi sửa, README **không còn** dòng `sched.sh <job>` nào, nên không thể lệch nữa.
+
+**Còn lại, ghi nhận:** `NAV_MAX_AGE_HOURS = 24` ở `check_golive_gate.py` trông cùng hình dạng với lỗi ngưỡng ở §A.2, nhưng Claude đọc chú thích trước khi động vào: nó ghi rõ *"khớp ngưỡng > 24h trong trading/engine/main.py:229"*, tức là **quyết định có chủ ý** khớp với engine, và nó cho ra **WARN** chứ không im lặng. Khác hẳn lỗi ở §A.2 (im hoàn toàn). **Không sửa.** Ba ngưỡng của `heartbeat_check.py` cũng an toàn: khi hỏng thật, tuổi tăng vô hạn nên vẫn bị bắt, chỉ chậm tối đa một nhịp.
+

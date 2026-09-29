@@ -129,43 +129,24 @@ Sau đó vào `http://localhost:3000` trên máy cá nhân và đăng nhập b�
 Grafana đã đặt. Nếu cần truy cập từ Internet, xem chi tiết cấu hình nginx + Certbot
 tại [DEPLOYMENT.md §4](../DEPLOYMENT.md#4-tls-for-grafana).
 
-## 5. Lịch vận hành bắt buộc (7 Job tự động)
+## 5. Lịch vận hành bắt buộc
 
-Thêm các job sau vào crontab của **người dùng triển khai** (không dùng root nếu
-Docker đang chạy bằng người dùng này). Tất cả đều gọi một cổng chung
-`scripts/sched.sh`, giúp Windows và Ubuntu không lệch câu lệnh (xem
-[DEPLOYMENT.md §9](../DEPLOYMENT.md#9-dead-mans-switch-heartbeat)).
+**Khối cron nằm ở một nơi duy nhất: [DEPLOYMENT.md §9](../DEPLOYMENT.md#9-dead-mans-switch-heartbeat).**
+Chép nguyên khối đó (gồm cả dòng `CRON_TZ=Asia/Ho_Chi_Minh`) vào `crontab -e`.
+
+Trước đây file này giữ một **bản sao** của khối cron, và nó đã lệch thật: bản sao
+chỉ còn 9 job trong khi `scripts/sched.sh` có 12 — thiếu `orderbook-recorder`
+(ghi sổ lệnh VN30F trong phiên), `orderbook-daily-check` và `container-health`.
+Ai dựng VPS theo bản sao này sẽ thiếu job mà không có dấu hiệu nào. Đó đúng là
+bài học "một công thức hai bản thì sớm muộn lệch" (`4ea4c8d`) mà `sched.sh` đã
+ghi ở đầu file, nên bản sao đã được bỏ.
+
+`test_deployment_doc.py` buộc tập job trong `DEPLOYMENT.md` **bằng** tập job
+trong `scripts/sched.sh`, nên khối ở đó không lệch âm thầm được.
 
 ```bash
-crontab -e
-```
-
-```cron
-# 1. Kiểm tra token trước phiên và heartbeat trong phiên (08:00–15:55, mỗi 5 phút, T2–T6)
-*/5 8-15 * * 1-5 /opt/trading/scripts/sched.sh heartbeat
-
-# 2. Phát hiện image container cũ hơn commit git trước phiên (08:00, T2–T6)
-0 8 * * 1-5 /opt/trading/scripts/sched.sh deploy-drift
-
-# 3. Giám sát NATS consumer của engine trong giờ giao dịch (mỗi 5 phút, 09:00–15:10, T2–T6)
-*/5 9-15 * * 1-5 /opt/trading/scripts/sched.sh engine-consumer
-
-# 4. Kiểm tra độ phủ nến luồng thời gian thực sau khi chốt phiên chiều (15:10, T2–T6)
-10 15 * * 1-5 /opt/trading/scripts/sched.sh stream-health
-
-# 5. Kiểm tra engine câm không sinh tín hiệu sau phiên giao dịch (15:15, T2–T6)
-15 15 * * 1-5 /opt/trading/scripts/sched.sh engine-cam
-
-# 6. Backfill lịch sử nến ngày vũ trụ cổ phiếu ban đêm (20:30, T2–T6)
-30 20 * * 1-5 /opt/trading/scripts/sched.sh backfill
-
-# 7. Kiểm tra toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
-# (Lý do: backfill đêm ghi bar daily lúc 20:30; chạy trước lúc đó thì dữ liệu ngày luôn rỗng)
-0 21 * * 1-5 /opt/trading/scripts/sched.sh daily-check
-
-# Sao lưu cơ sở dữ liệu hàng đêm (02:00 hàng ngày) và kiểm tra tính toàn vẹn (03:00 hàng ngày)
-0 2 * * * cd /opt/trading && scripts/sched.sh backup
-0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
+crontab -e     # dán khối cron từ DEPLOYMENT.md §9
+crontab -l     # kiểm lại: phải đủ 12 dòng job
 ```
 
 Tạo thư mục backup và kiểm tra crontab:
@@ -211,7 +192,7 @@ Chỉ coi VPS sẵn sàng cho paper trading khi tất cả mục sau đều đ�
 - `.env` có mode `600`; mật khẩu mặc định đã bị thay.
 - Thư mục `logs/` có quyền `10001:10001` và file `logs/bars_closed.log` được ghi thành công.
 - Telegram nhận được cảnh báo thử từ heartbeat/dead-man switch.
-- Cron thực sự tạo log cho cả 7 job: `heartbeat`, `deploy-drift`, `engine-consumer`, `stream-health`, `engine-cam`, `backfill` và `daily-check`.
+- Cron thực sự tạo log trong `logs/` cho **mọi** job có trong `scripts/sched.sh` (đừng chép danh sách ra đây — nó đã lệch một lần; lấy danh sách bằng `scripts/sched.sh` gọi sai tham số, nó in đủ tên job).
 - Có backup mới và restore thử thành công.
 - `real_trading_enabled` vẫn là `false`.
 
