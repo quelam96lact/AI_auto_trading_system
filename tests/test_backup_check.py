@@ -232,3 +232,25 @@ def test_backup_vua_chay_xong_KHONG_bao_oan():
         min_size_mb=80.0,
     )
     assert alerts == [], alerts
+
+def test_default_backup_dir_doc_tu_TRADING_BACKUP_DIR(monkeypatch):
+    """Mặc định thư mục sao lưu phải đọc TRADING_BACKUP_DIR (.env) trước đường dẫn Ubuntu.
+
+    Đo thật 29/09: khi chưa có cơ chế này, gọi job đúng như lịch sẽ gọi (không tham
+    số) thì trên Windows `scripts.backup_check` nhận `/var/backups/trading-db` — vừa không tồn tại,
+    vừa bị Git Bash dịch thành `C:\\Program Files\\Git\\var\\...`. Hậu quả đã đo:
+    backup-check gửi CẢNH BÁO GIẢ mỗi ngày, disk-check thoát 2 và không kiểm đĩa,
+    orderbook-backup chết ở `mkdir /var`. `run_if_docker_up.sh` nạp .env TRƯỚC khi
+    chạy job, nên biến này tới được job.
+    """
+    import importlib
+
+    import scripts.backup_check as m
+
+    monkeypatch.setenv("TRADING_BACKUP_DIR", "/tmp/bk-cua-toi")
+    importlib.reload(m)
+    assert m.DEFAULT_BACKUP_DIR == "/tmp/bk-cua-toi"
+
+    monkeypatch.delenv("TRADING_BACKUP_DIR", raising=False)
+    importlib.reload(m)
+    assert m.DEFAULT_BACKUP_DIR == "/var/backups/trading-db"
