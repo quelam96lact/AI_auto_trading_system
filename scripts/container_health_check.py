@@ -195,21 +195,56 @@ def evaluate_container_health(
     new_state: dict[str, dict[str, Any]] = dict(previous_state)
 
     for name, stat in stats_map.items():
+        prev = previous_state.get(name)
+
         if stat.read_error:
-            alerts.append(f"[CRITICAL] {name}: lỗi đọc container ({stat.read_error})")
+            prev_err = prev.get("read_error") if prev else None
+            if prev_err != stat.read_error:
+                alerts.append(f"[CRITICAL] {name}: lỗi đọc container ({stat.read_error})")
+            else:
+                info_logs.append(
+                    f"[container-health] INFO: {name} vẫn lỗi đọc ({stat.read_error}) từ lần trước (đã báo)"
+                )
+            new_state[name] = {
+                "id": prev.get("id", "") if prev else "",
+                "restart_count": prev.get("restart_count", 0) if prev else 0,
+                "oom_kill": prev.get("oom_kill") if prev else None,
+                "mem_max": prev.get("mem_max") if prev else None,
+                "status": stat.status,
+                "oom_killed": prev.get("oom_killed", False) if prev else False,
+                "started_at": prev.get("started_at", "") if prev else "",
+                "read_error": stat.read_error,
+            }
             continue
 
-        prev = previous_state.get(name)
+        # Giữ lại mốc cũ nếu memory.events lần này không đọc được (tránh mù OOM lần sau)
+        effective_oom_kill = stat.oom_kill
+        effective_mem_max = stat.mem_max
+
+        if prev and prev.get("id") == stat.container_id:
+            if stat.oom_kill is None and prev.get("oom_kill") is not None:
+                effective_oom_kill = prev.get("oom_kill")
+                info_logs.append(
+                    f"[container-health] {name}: không đọc được memory.events oom_kill, "
+                    f"giữ lại mốc cũ ({effective_oom_kill})"
+                )
+            if stat.mem_max is None and prev.get("mem_max") is not None:
+                effective_mem_max = prev.get("mem_max")
+                info_logs.append(
+                    f"[container-health] {name}: không đọc được memory.events max, "
+                    f"giữ lại mốc cũ ({effective_mem_max})"
+                )
 
         # Trạng thái hiện tại sẽ ghi nếu hợp lệ
         current_record: dict[str, Any] = {
             "id": stat.container_id,
             "restart_count": stat.restart_count,
-            "oom_kill": stat.oom_kill,
-            "mem_max": stat.mem_max,
+            "oom_kill": effective_oom_kill,
+            "mem_max": effective_mem_max,
             "status": stat.status,
             "oom_killed": stat.oom_killed,
             "started_at": stat.started_at,
+            "read_error": None,
         }
 
         # 1. Lần chạy đầu (chưa có trạng thái)

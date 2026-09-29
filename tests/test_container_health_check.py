@@ -409,3 +409,86 @@ def test_su_co_MOI_van_bao_du_da_co_su_co_cu():
     assert any("kernel kill tiến trình con" in a for a in alerts), alerts
     assert not any("State.OOMKilled" in a for a in alerts), alerts
 
+
+def test_read_error_khong_reo_lai_khi_khong_doi():
+    """read_error chỉ báo khi chuyển trạng thái; lỗi kéo dài thì ghi log, không reo lại (đợt 131 Việc 7)."""
+    stat = _make_stat(status="missing", read_error="container không tồn tại")
+    prev_normal = {
+        "test-1": {
+            "id": "cid_1234567890",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "read_error": None,
+        }
+    }
+    # Lần 1: chuyển từ bình thường sang lỗi đọc -> phải cảnh báo
+    alerts1, state1, _ = evaluate_container_health({"test-1": stat}, previous_state=prev_normal)
+    assert any("lỗi đọc container" in a for a in alerts1), alerts1
+    assert state1["test-1"]["read_error"] == "container không tồn tại"
+
+    # Lần 2: cùng lỗi kéo dài -> chỉ log, KHÔNG cảnh báo lại
+    alerts2, _, info2 = evaluate_container_health({"test-1": stat}, previous_state=state1)
+    assert not any("lỗi đọc container" in a for a in alerts2), alerts2
+    assert any("vẫn lỗi đọc" in i for i in info2), info2
+
+
+def test_memory_events_unreadable_keeps_old_baseline_catches_later_oom():
+    """memory.events đọc hỏng một lần: giữ mốc cũ, không bị mù OOM ở lần sau (đợt 131 Việc 7)."""
+    prev = {
+        "test-1": {
+            "id": "cid_1234567890",
+            "restart_count": 0,
+            "oom_kill": 2,
+            "mem_max": 100,
+            "status": "running",
+        }
+    }
+    # Lần 1: đọc cgroup hỏng (oom_kill=None) -> phải giữ lại mốc cũ 2
+    stat_unreadable = _make_stat(oom_kill=None, mem_max=None)
+    alerts1, state1, info1 = evaluate_container_health({"test-1": stat_unreadable}, previous_state=prev)
+    assert len(alerts1) == 0
+    assert state1["test-1"]["oom_kill"] == 2
+    assert state1["test-1"]["mem_max"] == 100
+    assert any("không đọc được memory.events oom_kill, giữ lại mốc cũ (2)" in i for i in info1)
+
+    # Lần 2: sau đó tiến trình bị OOM (oom_kill tăng lên 3) -> phải so được với mốc 2 và báo động
+    stat_oom = _make_stat(oom_kill=3, mem_max=120)
+    alerts2, state2, _ = evaluate_container_health({"test-1": stat_oom}, previous_state=state1)
+    assert any("memory.events oom_kill tăng 1, từ 2 lên 3" in a for a in alerts2), alerts2
+    assert state2["test-1"]["oom_kill"] == 3
+
+
+def test_su_co_MOI_van_bao_khi_read_error_dang_keo_dai():
+    """Sự cố mới trên container khác vẫn phải báo động dù container kia đang lỗi kéo dài (đợt 131 Việc 7)."""
+    prev_state = {
+        "service-1": {
+            "id": "",
+            "restart_count": 0,
+            "oom_kill": None,
+            "mem_max": None,
+            "status": "missing",
+            "read_error": "daemon timeout",
+        },
+        "service-2": {
+            "id": "cid_222222",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "read_error": None,
+        },
+    }
+    stats = {
+        "service-1": _make_stat(name="service-1", status="missing", read_error="daemon timeout"),
+        "service-2": _make_stat(name="service-2", container_id="cid_222222", restart_count=1),
+    }
+    alerts, _, info = evaluate_container_health(stats, previous_state=prev_state)
+    # service-2 phải được cảnh báo
+    assert any("service-2: container tự khởi động lại 1 lần" in a for a in alerts), alerts
+    # service-1 không được cảnh báo lại vì lỗi cũ kéo dài
+    assert not any("service-1" in a for a in alerts), alerts
+    assert any("service-1 vẫn lỗi đọc" in i for i in info), info
+
+

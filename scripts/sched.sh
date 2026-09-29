@@ -13,6 +13,8 @@
 #   scripts/sched.sh stream-health
 #   scripts/sched.sh orderbook-recorder
 #   scripts/sched.sh orderbook-daily-check
+#   scripts/sched.sh backup
+#   scripts/sched.sh backup-check
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -98,8 +100,29 @@ case "${1:-}" in
       uv run python scripts/check_orderbook_daily.py \
       "$@"
     ;;
+  backup)
+    shift || true
+    DEFAULT_BACKUP_DIR="/var/backups/trading-db"
+    BACKUP_DIR="${1:-$DEFAULT_BACKUP_DIR}"
+    exec "$RUN" backup.log backup \
+      bash scripts/backup_db.sh "$BACKUP_DIR"
+    ;;
+  backup-check)
+    shift || true
+    DEFAULT_BACKUP_DIR="/var/backups/trading-db"
+    if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+      BACKUP_DIR="$1"
+      shift || true
+    else
+      BACKUP_DIR="$DEFAULT_BACKUP_DIR"
+    fi
+    exec "$RUN" backup-check.log backup-check \
+      uv run python scripts/backup_check.py \
+      --backup-dir "$BACKUP_DIR" \
+      "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check}" >&2
     exit 2
     ;;
 esac

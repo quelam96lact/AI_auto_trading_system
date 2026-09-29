@@ -147,20 +147,19 @@ for the services themselves.
 
 ### Sao lưu cơ sở dữ liệu hàng ngày
 
-`scripts/backup_db.sh` runs `pg_dump` inside the `postgres` container, gzips
-it, and prunes backups older than 14 days (override with
-`BACKUP_RETENTION_DAYS`). Schedule it via cron on the host:
+`scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump` và `.sql.gz`). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
 
 ```bash
 chmod +x scripts/backup_db.sh
-sudo crontab -e
-# add:
+# KHONG cai dong cron o day — no da nam trong khoi cron §9 (job 11 va 12).
+# Cai ca hai noi = backup chay HAI LAN moi dem (dung loi trung dong cron ma
+# dot 125 da phai sua o §9.5).
+#
+# Tham khao (da co trong khoi cron §9):
 # `cd /opt/trading` la BAT BUOC: script goi `docker compose exec`, ma lenh do tim
 # docker-compose.yml o THU MUC HIEN TAI. Cron chay voi cwd = home cua user
-# (thuong /root) nen thieu `cd` se bao "no configuration file provided" va
-# backup that bai NGAY DEM DAU — khong co canh bao Telegram cho backup, nen
-# se khong ai biet cho toi luc CAN restore.
-0 2 * * * cd /opt/trading && ./scripts/backup_db.sh /var/backups/trading-db >> /var/log/trading-backup.log 2>&1
+# (thuong /root) nen thieu `cd` se bao "no configuration file provided".
+# 0 2 * * * cd /opt/trading && scripts/sched.sh backup
 ```
 
 ### Sao lưu thư mục sổ lệnh `data/orderbook/`
@@ -181,30 +180,36 @@ sudo mkdir -p /var/backups/trading-db
 > **Bẫy chết người khi sao lưu TimescaleDB (`pg_dump -t`):**
 > Trong TimescaleDB, dữ liệu của các hypertable (như bảng `bars`, `bars_daily`) không nằm trực tiếp trong bảng gốc mà được phân chia thành các chunk table nằm trong schema nội bộ `_timescaledb_internal`. Nếu chạy `pg_dump -t bars`, pg_dump chỉ xuất schema catalog của bảng mẹ mà **KHÔNG DUMP DỮ LIỆU CÁC CHUNK**, dẫn tới khi restore bảng sẽ hoàn toàn rỗng (0 dòng) mà không hề có thông báo lỗi!
 > 
-> BẮT BUỘC sao lưu toàn bộ cơ sở dữ liệu ở định dạng custom archive (`-Fc`):
+> BẮT BUỘC sao lưu toàn bộ cơ sở dữ liệu ở định dạng custom archive (`-Fc`). Lưu ý KHÔNG dùng toán tử pipe `>` trên host Windows/PowerShell vì sẽ làm hỏng dữ liệu nhị phân:
 > ```bash
-> docker compose exec -T postgres pg_dump -U trading -Fc trading > /var/backups/trading-db/trading_manual.dump
+> docker compose exec -T postgres pg_dump -U trading -Fc -f /tmp/trading_manual.dump trading
+> docker compose cp postgres:/tmp/trading_manual.dump /var/backups/trading-db/trading_manual.dump
+> docker compose exec -T postgres rm -f /tmp/trading_manual.dump
 > ```
 > Nguồn tài liệu chính thức: https://docs.timescale.com/use-timescale/latest/backup-restore/pg-dump-and-restore/
+> 
+> **Cảnh báo `continuous_agg`:** Khi chạy `pg_dump`, Postgres in cảnh báo `warning: there are circular foreign-key constraints on this table: continuous_agg`. Đây là catalog nội bộ của TimescaleDB, hoàn toàn vô hại với định dạng `-Fc` khi kết hợp cùng `timescaledb_pre_restore()` và `timescaledb_post_restore()` (đã kiểm chứng đối soát khớp 100% dữ liệu ở đợt 131).
 
-**Quy trình khôi phục (Restore) TimescaleDB đúng chuẩn:**
+**Quy trình khôi phục bản sao lưu đêm TimescaleDB (đã diễn tập đợt 131):**
 
-Theo tài liệu TimescaleDB, việc restore hypertable bắt buộc phải tạm ngắt các trigger nội bộ trước khi nạp dữ liệu và bật lại sau khi nạp:
+Khi cần khôi phục dữ liệu từ bản sao lưu đêm (`trading_YYYYMMDD_HHMMSS.dump`) vào DB rỗng:
 
 ```bash
 # 1. Gọi pre_restore trước khi khôi phục dữ liệu:
 docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_pre_restore();"
 
-# 2. Khôi phục dữ liệu từ file dump custom archive — vào DB RỖNG, CÙNG phiên bản TimescaleDB
-#    (xem §11 Bước 5 cho cách ghim phiên bản và kiểm DB rỗng):
-docker compose cp /var/backups/trading-db/trading_manual.dump postgres:/tmp/trading_manual.dump
-docker compose exec -T postgres pg_restore -U trading -d trading --no-owner /tmp/trading_manual.dump
+# 2. Chép file dump vào container rồi restore với cờ --no-owner:
+docker compose cp /var/backups/trading-db/trading_20260929_020000.dump postgres:/tmp/trading_restore.dump
+docker compose exec -T postgres pg_restore -U trading -d trading --no-owner /tmp/trading_restore.dump
 
 # 3. Gọi post_restore sau khi khôi phục xong để kích hoạt lại catalog và chỉ mục:
 docker compose exec -T postgres psql -U trading -d trading -c "SELECT timescaledb_post_restore();"
+
+# 4. Xoá file dump tạm trong container:
+docker compose exec -T postgres rm -f /tmp/trading_restore.dump
 ```
 
-**Bắt buộc kiểm tra số dòng các bảng chính trước và sau khi khôi phục:**
+**Bắt buộc kiểm tra số dòng các bảng chính và checksum sau khi khôi phục:**
 
 Chạy truy vấn đối soát để đảm bảo dữ liệu không bị thất thoát:
 
@@ -212,11 +217,18 @@ Chạy truy vấn đối soát để đảm bảo dữ liệu không bị thất
 docker compose exec -T postgres psql -U trading -d trading -c "
 SELECT 'bars' AS tbl, count(*) FROM bars
 UNION ALL SELECT 'bars_daily', count(*) FROM bars_daily
+UNION ALL SELECT 'bars_derivative', count(*) FROM bars_derivative
 UNION ALL SELECT 'orders', count(*) FROM orders
 UNION ALL SELECT 'positions', count(*) FROM positions
-UNION ALL SELECT 'engine_state', count(*) FROM engine_state
-UNION ALL SELECT 'real_order_fills', count(*) FROM real_order_fills;
+UNION ALL SELECT 'symbol_universe', count(*) FROM symbol_universe
+UNION ALL SELECT 'account_nav_snapshot', count(*) FROM account_nav_snapshot
+UNION ALL SELECT 'bars_crypto', count(*) FROM bars_crypto;
 "
+
+# Kiểm tra checksum bảng bars_daily (chuẩn đợt 128):
+docker compose exec -T postgres psql -U trading -d trading -Atc \
+  "SELECT sum(hashtextextended(symbol||ts::text||open::text||high::text||low::text||close::text||volume::text||source, 0)) FROM bars_daily;"
+```
 ```
 
 ## 7. Resource limits
@@ -388,14 +400,22 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 9. Kiểm tra tính toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
 # BẮT BUỘC 21:00: backfill đêm nạp nến lúc 20:30; kiểm trước giờ đó thì bảng nến ngày luôn rỗng!
 0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check
+
+# 10. Sao lưu cơ sở dữ liệu TimescaleDB ban đêm (02:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
+# BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
+0 2 * * * cd /opt/trading && scripts/sched.sh backup
+
+# 11. Kiểm tra tính toàn vẹn và độ tươi của bản sao lưu DB (03:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
+# BẮT BUỘC chạy sau job backup (02:00) ít nhất 30-60 phút để đảm bảo dump đã hoàn tất.
+0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Chín task tương ứng với chín dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười hai task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả chín gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười hai gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -403,6 +423,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 |---|---|---|
 | `trading-heartbeat-check` | 5 phút/lần, 08:00–15:00, T2–T6 (lặp 7h) | `wscript.exe //B //Nologo "D:\...\scripts\run_hidden.vbs" heartbeat` |
 | `trading-deploy-drift` | 08:00 T2–T6 | cùng vbs, tham số `deploy-drift` |
+| `trading-container-health` | 10 phút/lần, 24/7 | cùng vbs, tham số `container-health` |
 | `trading-orderbook-recorder` | 08:40 T2–T6 (tự dừng 14:46) | cùng vbs, tham số `orderbook-recorder` |
 | `trading-engine-consumer` | 5 phút/lần, 09:00–15:10, T2–T6 (lặp 6h10m) | cùng vbs, tham số `engine-consumer` |
 | `trading-stream-health` | 15:10 T2–T6 | cùng vbs, tham số `stream-health` |
@@ -410,6 +431,8 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-orderbook-daily-check` | 15:30 T2–T6 | cùng vbs, tham số `orderbook-daily-check` |
 | `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
 | `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
+| `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
+| `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 
 #### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
 

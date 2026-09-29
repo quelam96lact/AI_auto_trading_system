@@ -163,8 +163,9 @@ crontab -e
 # (Lý do: backfill đêm ghi bar daily lúc 20:30; chạy trước lúc đó thì dữ liệu ngày luôn rỗng)
 0 21 * * 1-5 /opt/trading/scripts/sched.sh daily-check
 
-# Sao lưu cơ sở dữ liệu hàng đêm (02:00 hàng ngày)
-0 2 * * * cd /opt/trading && ./scripts/backup_db.sh /var/backups/trading-db >> /var/log/trading-backup.log 2>&1
+# Sao lưu cơ sở dữ liệu hàng đêm (02:00 hàng ngày) và kiểm tra tính toàn vẹn (03:00 hàng ngày)
+0 2 * * * cd /opt/trading && scripts/sched.sh backup
+0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
 ```
 
 Tạo thư mục backup và kiểm tra crontab:
