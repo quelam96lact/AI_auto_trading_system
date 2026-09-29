@@ -57,10 +57,10 @@ if [ -e "$OUT_FILE" ]; then
   OUT_FILE="${BACKUP_DIR}/orderbook_$(date +%Y%m%d_%H%M%S).tar.gz"
 fi
 
-tar -czf "$OUT_FILE" -C "$ROOT" -T "$LIST"
+tar --force-local -czf "$OUT_FILE" -C "$ROOT" -T "$LIST"
 
 # An empty archive with a valid name would make backup_check believe a backup exists.
-if ! COUNT="$(tar -tzf "$OUT_FILE" | wc -l)" || [ "$COUNT" -le 0 ]; then
+if ! COUNT="$(tar --force-local -tzf "$OUT_FILE" | wc -l)" || [ "$COUNT" -le 0 ]; then
   echo "ERROR: verification failed for ${OUT_FILE} (unreadable or 0 files). Removing it." >&2
   rm -f "$OUT_FILE"
   exit 1

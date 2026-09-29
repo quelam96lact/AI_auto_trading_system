@@ -9,7 +9,7 @@
 ' khong can elevated.
 '
 ' Dung: wscript.exe //B //Nologo run_hidden.vbs <job>
-'   voi <job> = heartbeat | daily-check | backfill | deploy-drift | engine-cam | engine-consumer | stream-health
+'   voi <job> = mot nhan case trong scripts/sched.sh (nguon duy nhat, khong chep lai danh sach o day)
 
 Option Explicit
 
