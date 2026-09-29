@@ -19,9 +19,10 @@ sudo timedatectl set-timezone Asia/Ho_Chi_Minh
 timedatectl   # Xác nhận: Time zone: Asia/Ho_Chi_Minh (+07, +0700)
 
 # 2. Cài đặt Docker, Compose plugin, UFW và các tiện ích cần thiết
-# (Áp dụng cho Ubuntu 24.04 LTS. Trên Ubuntu 22.04 LTS, các gói tương tự nhưng
-# docker-compose-plugin có thể cần thêm repository chính thức nếu bản apt quá cũ).
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin ufw curl git ca-certificates
+# (Áp dụng cho Ubuntu 24.04 LTS: gói docker-compose-v2 cung cấp lệnh 'docker compose' từ kho
+# apt chuẩn của Ubuntu. Nếu cài từ kho chính thức download.docker.com thì dùng docker-compose-plugin.
+# Cài thêm logrotate cho mục §8).
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 ufw curl git ca-certificates logrotate
 sudo systemctl enable --now docker
 
 # 3. Cài đặt uv trên host (công cụ quản lý môi trường Python cho các cron job trên host)
@@ -59,6 +60,11 @@ mkdir -p logs && sudo chown 10001:10001 logs
 # Thư mục này được ghi trực tiếp bởi cron job trên host (chạy dưới quyền user hiện tại).
 # Phân quyền 775 để user hiện tại và cron đều ghi được:
 mkdir -p data/orderbook && chmod 775 data/orderbook
+
+# Phân quyền thực thi cho các script vận hành và cron job trên host
+# (BẮT BUỘC: git checkout/archive không đảm bảo cờ executable cho scripts/*.sh;
+# thiếu lệnh này thì sched.sh và run_if_docker_up.sh sẽ báo Permission denied ở cron).
+chmod +x scripts/*.sh
 ```
 
 **Ước tính dung lượng sổ lệnh (`data/orderbook/`):**
@@ -456,15 +462,16 @@ mã phải được backfill thủ công. Không chạy định kỳ thì dữ l
 backtest lặng lẽ dùng dữ liệu cũ (sự cố 08/2026: bars_daily dừng ở 07/08 trong
 khi hôm nay là 18/08 — 11 ngày lệch, không ai nhìn).
 
-Chạy bằng cron **trên host**, sau giờ đóng cửa, ngày trong tuần:
+Chạy bằng cron **trên host**, sau giờ đóng cửa, ngày trong tuần.
+*(Lưu ý: Dòng cron này ĐÃ ĐƯỢC BAO GỒM trong khối 9 job ở §9 — nếu đã cài §9 thì KHÔNG thêm lại vào crontab để tránh chạy lặp hai lần lúc 20:30).*
 
 ```bash
-sudo crontab -e
-# backfill bars_daily toàn vũ trụ — 20:30 thứ 2 - thứ 6 hàng tuần.
+# Tham khảo (đã có trong khối cron §9):
+# 30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
+#
 # Lần chạy ĐẦU sau thời gian dài không chạy sẽ NẶNG: nhiều ngày × ~1.594 mã,
 # có thể chạm SSI rate-limit. Giới hạn phạm vi nếu cần: thêm --symbols A,B,C
 # (vài mã ưu tiên) hoặc --limit N (N mã đầu) — chạy nhiều đêm cho kịp.
-30 20 * * 1-5 /opt/trading/scripts/sched.sh backfill
 ```
 
 Lưu ý:

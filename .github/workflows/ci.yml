@@ -8,6 +8,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Ma tran HAI phien ban, vi co HAI ly do deu dung:
+    # - 3.11 khop may dev (3.11.15). Truoc day chi ghim 3.12 -> CI chay tren
+    #   interpreter khac han may dev, sai lech lo ra muon (ly do cu, giu nguyen).
+    # - 3.12 khop PRODUCTION: Dockerfile `FROM python:3.12-slim` va host VPS
+    #   `uv sync --python 3.12` (DEPLOYMENT.md §2). Chi ghim 3.11 thi KHONG noi nao
+    #   chay test tren dung phien ban dang chay that (brief dot 125).
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -15,9 +25,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          # Ghim 3.11 cho khop may dev (3.11.15). Truoc day ghim 3.12 -> CI
-          # chay tren interpreter khac han cho dev, sai lech se lo ra muon.
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install deps
         run: uv sync --extra dev --frozen
@@ -73,7 +81,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install deps
         run: uv sync --extra dev --frozen
