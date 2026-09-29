@@ -62,7 +62,10 @@ fi
 
 # 1b. .env khong duoc mang CRLF (Brief 126 §3): chep tu Windows sang dính \r lam
 # hong bien moi truong. Khong sua ngam; bao loi ra log va stderr roi thoat 2.
-if grep -q $'\r' "$REPO/.env"; then
+# -U BAT BUOC: grep cua Git Bash (MSYS2) mo file o text-mode va NUOT \r cuoi dong,
+# nen `grep -q $'\r'` tren Windows KHONG BAO GIO thay CRLF (do 29/09, dot 127).
+# Tren Linux -U khong doi gi.
+if grep -qU $'\r' "$REPO/.env"; then
   msg="$(date '+%Y-%m-%d %H:%M:%S') $LABEL ERROR: .env chua ky tu CRLF (\\r). Chay 'sed -i s/\\r$// .env' truoc khi tiep tuc."
   echo "$msg" >> "$LOG"
   echo "$msg" >&2

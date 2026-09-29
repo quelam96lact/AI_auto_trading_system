@@ -757,6 +757,9 @@ docker compose up -d postgres
 docker compose exec postgres pg_isready -U trading
 docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT extversion FROM pg_extension WHERE extname='timescaledb';"
 # -> PHẢI bằng số ở Bước 3. Khác thì dừng lại, sửa override.
+#    Ra RỖNG (hoặc lỗi kết nối) ngay sau khi volume mới được tạo: Postgres còn đang khởi tạo
+#    lần đầu (pg_isready đã báo sẵn sàng từ máy chủ tạm) — chờ 5 giây rồi chạy lại lệnh trên,
+#    ĐỪNG coi rỗng là "sai phiên bản" (diễn tập đợt 127).
 docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public';"
 # -> PHẢI là 0 (DB rỗng). Không phải 0 thì dừng lại: đang restore đè lên dữ liệu có sẵn.
 
