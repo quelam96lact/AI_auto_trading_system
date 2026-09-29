@@ -17,6 +17,7 @@
 #   scripts/sched.sh backup-check
 #   scripts/sched.sh orderbook-backup
 #   scripts/sched.sh disk-check
+#   scripts/sched.sh host-preflight
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -135,8 +136,12 @@ case "${1:-}" in
     exec "$RUN" disk-check.log disk-check \
       uv run python scripts/disk_check.py "$@"
     ;;
+  host-preflight)
+    shift || true
+    exec "$RUN" host-preflight.log host-preflight       uv run python scripts/host_preflight.py "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight}" >&2
     exit 2
     ;;
 esac

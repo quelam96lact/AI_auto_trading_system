@@ -333,6 +333,12 @@ docker builder prune -f --filter until=168h    # build cache cũ hơn 7 ngày
 
 ## 8. Log rotation
 
+**Lớp chính (đợt 133): khối `logging` nằm TRONG `docker-compose.yml`** (`json-file`, `max-size: 10m`,
+`max-file: 3`, qua neo YAML `x-logging`, áp cho cả 6 service). Cấu hình nằm trong repo thì không thể
+quên và áp cho cả VPS. Giới hạn chỉ có hiệu lực sau khi container được **tạo lại** (`docker compose up -d`);
+`restart` không đủ. Mức thực tế không lớn (~0,25 GB/năm ngoài giờ phiên) — đây là việc dọn cho gọn.
+
+**Lớp phụ: `daemon.json`** cho các container **không** thuộc compose (và làm mặc định của máy).
 Docker's default `json-file` log driver is unbounded. Add to
 `/etc/docker/daemon.json` (creates it if absent) and restart Docker:
 
@@ -429,7 +435,7 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# Cài đặt đầy đủ 14 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# Cài đặt đầy đủ 15 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
 # BẮT BUỘC: Đặt CRON_TZ để cron chạy chuẩn theo giờ Việt Nam
 CRON_TZ=Asia/Ho_Chi_Minh
 
@@ -498,14 +504,20 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 24/7 CÓ CHỦ Ý: đĩa đầy không chọn giờ, cuối tuần vẫn ghi log và sao lưu. Mỗi 6 giờ vì đĩa đầy
 # theo ngày/tuần chứ không theo phút, còn 10 GB là còn vài tuần đệm — 4 tin/ngày là đủ sớm mà không spam.
 0 */6 * * * cd /opt/trading && scripts/sched.sh disk-check
+
+# 14. Kiểm các bước làm tay trên host (mỗi tuần một lần, Chủ nhật 07:00 — đợt 133)
+# Mỗi tuần một lần là đủ: cấu hình host (cron, daemon.json, ufw, múi giờ, quyền .env) hiếm khi đổi;
+# chạy dày chỉ thêm nhiễu. Chủ nhật sáng để lệch cấu hình (ai đó sửa tay giữa tuần) lộ ra trước phiên thứ Hai.
+# Job này CHỈ ĐỌC và in bảng ĐẠT/HỎNG/BỎ QUA; BỎ QUA không phải ĐẠT (xem log host-preflight.log).
+0 7 * * 0 cd /opt/trading && scripts/sched.sh host-preflight
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười bốn task tương ứng với các dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười lăm task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả mười bốn gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười lăm gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -525,6 +537,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
 | `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |
+| `trading-host-preflight` | Chủ nhật 07:00 (hàng tuần) | cùng vbs, tham số `host-preflight` |
 
 #### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
 
@@ -949,8 +962,17 @@ docker compose up -d --build
 # Kiểm tra trạng thái các container:
 docker compose ps
 
-# Cài đặt 14 cron job vào crontab theo hướng dẫn tại §9:
+# Cài đặt 15 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
+```
+
+**Chạy `host-preflight` ngay sau Bước 8, trước khi coi là xong** (đợt 133): nó kiểm các bước làm tay
+mà không gì khác kiểm (cron + `CRON_TZ`, `daemon.json`, logrotate, `chmod 600 .env` và không có ``,
+múi giờ, `ufw`, thư mục sao lưu, đĩa, cờ thực thi, đồng hồ). Đọc bảng: mọi dòng phải `ĐẠT`; dòng `BỎ QUA`
+không phải `ĐẠT` — nó có nghĩa là công cụ không đo được, phải tự kiểm tay.
+```bash
+cd /opt/trading && scripts/sched.sh host-preflight   # bảng in ra logs/host-preflight.log
+uv run python scripts/host_preflight.py              # hoặc chạy trực tiếp để xem bảng
 ```
 
 #### Bước 8b: Chứng minh cảnh báo Telegram tới nơi

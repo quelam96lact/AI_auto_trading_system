@@ -1,3 +1,11 @@
+# Gioi han log container (dot 133): cau hinh nam TRONG repo nen khong the quen va ap cho ca VPS.
+# Chi co hieu luc sau khi container duoc TAO LAI (docker compose up -d), khong phai restart.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -32,6 +40,7 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 1g
     cpus: 1.0
   nats:
@@ -40,6 +49,7 @@ services:
     ports: ["127.0.0.1:4222:4222"]
     volumes: [natsdata:/data]
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 256m
     cpus: 0.5
   # ISO-1: NATS RIÊNG cho test (cổng 4223) — tách khỏi stack thật để suite
@@ -54,6 +64,7 @@ services:
     ports: ["127.0.0.1:4223:4222"]
     volumes: [natsdata-test:/data]
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 256m
     cpus: 0.5
     profiles: ["test"]
@@ -78,6 +89,7 @@ services:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 512m
     cpus: 1.0
     volumes:
@@ -99,6 +111,7 @@ services:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 512m
     cpus: 1.0
     volumes:
@@ -116,6 +129,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     restart: unless-stopped
+    logging: *default-logging
     mem_limit: 512m
     cpus: 0.5
 volumes:
