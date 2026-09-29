@@ -1,7 +1,7 @@
 # Brief đợt 132 — sao lưu sổ lệnh phình theo bình phương, và không ai canh dung lượng đĩa
 
 **Base commit:** `a1d41b5`.
-**Người thực thi:** agent — **trọn bộ việc 1–4**, gồm cả nối vào lịch chạy. **Claude:** audit, commit, push.
+**Người thực thi:** agent — **trọn bộ việc 1–5**, gồm cả nối vào lịch chạy. **Claude:** audit, commit, push.
 
 ---
 
@@ -98,6 +98,23 @@ Lý do cần cả hai: đĩa 500 GB thì 10% là 50 GB (quá sớm), đĩa 40 GB
 
 **Cổng:** `uv run pytest tests/test_deployment_doc.py` xanh (nó buộc tập job hai bên bằng nhau). `bash -n` sạch. Gọi `sched.sh` với job sai phải in đủ **14** job.
 
+## §4b. Việc 5 — ghi rõ HAI họ mã thoát, để không ai gộp nhầm
+
+Claude tự soát và thấy repo đang có **hai** hợp đồng mã thoát khác nhau cho các job cảnh báo. Cả hai đều đúng, nhưng chỗ khác nhau **không được ghi ở đâu cả**, nên script thứ tư rất dễ chọn nhầm.
+
+| Họ | Ai dùng | `1` nghĩa là | Khi gửi Telegram hỏng |
+|---|---|---|---|
+| **Theo phát hiện** | `deploy_drift_check.py`, `check_silent_engine.py` (qua `_alert_common.alert_and_fail`) | *có vấn đề được phát hiện* | vẫn trả **1** |
+| **Theo gửi được hay không** (đợt 126) | `docker_down_alert.py`, `container_health_check.py`, `backup_check.py` | *đã gửi thành công* | trả **2** |
+
+**CẤM đổi `alert_and_fail` để nó trả 2.** `tests/test_deploy_drift_check.py:86` khẳng định `rc == 1` kèm chú thích *"gui hong van phai bao lech"* — đó là **quyết định có chủ ý, đã có test ghim**. Với `deploy-drift`, `1` mã hoá *"có lệch triển khai"*, không phải *"đã gửi xong"*.
+
+**Việc:**
+- `disk_check.py` (việc 1) thuộc họ **thứ hai** (như `backup_check.py`): gửi hỏng → **2**. Nếu tái dùng được `_alert_common.alert_and_fail` mà vẫn giữ đúng hợp đồng này thì tái dùng; **không** thì nói rõ vì sao trong báo cáo, và **không** sửa helper.
+- Bổ sung vào docstring của `scripts/_alert_common.py` một đoạn ngắn nêu đúng bảng trên, kèm câu: *"Trước khi gộp hai họ này làm một, đọc `test_deploy_drift_check.py:86`."* Đây là việc **chỉ thêm chú thích**, không đổi một dòng code nào của helper.
+
+**Cổng:** `tests/test_alert_common.py` và `tests/test_deploy_drift_check.py` phải **xanh y nguyên**, không sửa một dòng nào trong hai file đó. `git diff scripts/_alert_common.py` chỉ được chạm docstring.
+
 ## §5. Tiêu chí chung
 
 ```
@@ -112,9 +129,9 @@ git ls-files -s cho mọi *.sh đã sửa/tạo         → 100755
 
 ## §6. Phạm vi
 
-**Được sửa/tạo:** `scripts/disk_check.py`, `scripts/backup_orderbook.sh`, `tests/test_disk_check.py` (mới); `scripts/sched.sh` (**chỉ** thêm hai case + chú thích + dòng `dung:`); `DEPLOYMENT.md` (§6 xoá dòng tar cũ, §7 mô hình dung lượng + dọn rác Docker, §9 hai dòng cron); báo cáo `docs/superpowers/research/2026-09-29-dot-132-qua-bom-dia.md`.
+**Được sửa/tạo:** `scripts/disk_check.py`, `scripts/backup_orderbook.sh`, `tests/test_disk_check.py` (mới); `scripts/_alert_common.py` (**chỉ docstring**, việc 5); `scripts/sched.sh` (**chỉ** thêm hai case + chú thích + dòng `dung:`); `DEPLOYMENT.md` (§6 xoá dòng tar cũ, §7 mô hình dung lượng + dọn rác Docker, §9 hai dòng cron); báo cáo `docs/superpowers/research/2026-09-29-dot-132-qua-bom-dia.md`.
 
-**KHÔNG được đụng:** `trading/`; `scripts/backup_db.sh`, `scripts/backup_check.py`, `scripts/container_health_check.py` (vừa xong đợt 131); `docker-compose.yml`; `.githooks/`; các case sẵn có trong `sched.sh`; test của đợt khác; **`data/orderbook/` — không xoá, không sửa, không di chuyển file nào** (đây là dữ liệu nghiên cứu, chỉ được ĐỌC); mọi container đang chạy.
+**KHÔNG được đụng:** `trading/`; `scripts/backup_db.sh`, `scripts/backup_check.py`, `scripts/container_health_check.py` (vừa xong đợt 131); **phần code** của `scripts/_alert_common.py`, và `tests/test_alert_common.py`, `tests/test_deploy_drift_check.py`, `scripts/deploy_drift_check.py`, `scripts/check_silent_engine.py` (xem việc 5); `docker-compose.yml`; `.githooks/`; các case sẵn có trong `sched.sh`; test của đợt khác; **`data/orderbook/` — không xoá, không sửa, không di chuyển file nào** (đây là dữ liệu nghiên cứu, chỉ được ĐỌC); mọi container đang chạy.
 
 ## §7. Điều cấm
 
@@ -134,5 +151,6 @@ git ls-files -s cho mọi *.sh đã sửa/tạo         → 100755
 3. Việc 3: đầu ra `docker system df` và danh sách dangling **nguyên văn**, cộng bằng chứng `:previous` không nằm trong đó.
 4. Việc 4: diff, `test_deployment_doc.py` xanh, dòng `dung:` đủ 14 job, và bảng mô hình dung lượng đã ghi vào §7.
 5. Tên job và lịch đề xuất cho scheduled task Windows.
-6. Những gì **không** kiểm được, và vì sao.
-7. Chỗ nào brief sai hoặc mơ hồ. **Nếu brief đảo một quyết định có chủ ý nào** (đọc chú thích trước khi sửa), **báo ngay**.
+6. Việc 5: bảng hai họ mã thoát đã ghi vào docstring, `git diff scripts/_alert_common.py` chứng minh chỉ chạm docstring, và hai file test kia xanh y nguyên.
+7. Những gì **không** kiểm được, và vì sao.
+8. Chỗ nào brief sai hoặc mơ hồ. **Nếu brief đảo một quyết định có chủ ý nào** (đọc chú thích trước khi sửa), **báo ngay**.
