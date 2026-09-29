@@ -226,6 +226,18 @@ cpu, collector/engine 512m/1 cpu each, grafana 512m/0.5 cpu, nats 256m/0.5
 cpu) as a starting point against runaway memory/CPU use. Adjust based on
 observed usage (`docker stats`) once running for a few days.
 
+**Postgres memory tuning (dot 129, 2026-09-29):** `timescaledb-tune` probes
+the *host* RAM at `initdb` time, not the container limit — on a 16 GB machine
+it sets `shared_buffers ≈ 1.9 GB`, far above the 1 g container ceiling. To
+override both the on-disk `postgresql.conf` *and* any future `initdb`, the
+`postgres` service now passes `-c` flags via `command:`. These flags win over
+`postgresql.conf` and `postgresql.auto.conf`. If you change `mem_limit`,
+update the `-c` values at the same time: `shared_buffers = 25 %` of the new
+limit, `effective_cache_size = 75 %`, `maintenance_work_mem` capped at 128 MB
+(enough for index builds on `bars_daily`). `max_parallel_workers_per_gather`
+and `max_parallel_maintenance_workers` are set to 0 because the container has
+only 1 CPU; parallelism only wastes shared memory there.
+
 ## 8. Log rotation
 
 Docker's default `json-file` log driver is unbounded. Add to

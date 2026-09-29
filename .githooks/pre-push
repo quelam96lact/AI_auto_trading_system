@@ -2,15 +2,63 @@
 # Chan push len main neu ruff hoac test do.
 # Branch protection tren GitHub can goi Pro cho repo private, nen chan tai may.
 # Thoat hiem khi that su can: git push --no-verify
-while read -r _local_ref _local_sha remote_ref _remote_sha; do
-    case "$remote_ref" in
+#
+# Dot 129 (2026-09-29): chay ruff va pytest tren dung commit duoc push (worktree
+# tach biet), khong phai tren working tree. Tranh hai truong hop sai cu:
+#   - Do gia: file chua commit cua agent lam hook chan push cua Claude.
+#   - Xanh gia (nguy hiem): sua file roi quen git add -> hook kiem ban da sua,
+#     commit len GitHub van la ban hong.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+while IFS= read -r line; do
+    set -- $line
+    _local_ref="$1"
+    _local_sha="$2"
+    _remote_ref="$3"
+    # _remote_sha="$4" (khong dung)
+
+    case "$_remote_ref" in
         refs/heads/main) ;;
         *) continue ;;
     esac
 
-    echo "pre-push: kiem tra truoc khi day len main..."
+    # Bo qua khi xoa nhanh (sha toan so 0)
+    case "$_local_sha" in
+        0000000000000000000000000000000000000000) continue ;;
+    esac
 
-    if ! uv run ruff check trading tests scripts; then
+    echo "pre-push: kiem tra commit $_local_sha truoc khi day len main..."
+
+    # Tao worktree tach biet ra ngoai repo de tranh lang nhang working tree
+    tmp="$(mktemp -d)"
+    # trap: don dep ca khi thanh cong, that bai, hoac bi ngat (SIGINT/SIGTERM)
+    # shellcheck disable=SC2064
+    # `worktree prune` o cuoi: neu `remove` that bai (2>/dev/null nen im lang) thi
+    # `rm -rf` van xoa thu muc, de lai BAN GHI dang ky mo coi, va moi lan push tich
+    # thêm mot ban ghi (da thay mot ban ghi nhu vay 29/09). prune tu don rac do.
+    trap "git -C '$REPO_ROOT' worktree remove --force '$tmp' 2>/dev/null; rm -rf '$tmp'; git -C '$REPO_ROOT' worktree prune" EXIT INT TERM
+
+    git -C "$REPO_ROOT" worktree add --detach "$tmp" "$_local_sha" < /dev/null
+
+    # uv sync trong worktree (frozen: khong cho phep cap nhat lockfile)
+    # Uu tien interpreter tu .venv cua repo goc neu co; neu khong thi chon 3.11
+    # de tranh uv tu chon python moi nhat tren may (vi du 3.14 chua co wheel psycopg)
+    if [ -d "$REPO_ROOT/.venv" ]; then
+        PY_SPEC="$REPO_ROOT/.venv"
+    else
+        PY_SPEC="3.11"
+    fi
+
+    if ! (cd "$tmp" && uv sync --frozen --extra dev --python "$PY_SPEC" < /dev/null); then
+        echo "pre-push: uv sync THAT BAI -> huy push." >&2
+        exit 1
+    fi
+
+    # Ruff kiem chinh xac code trong commit (khong phai working tree)
+    if ! (cd "$tmp" && uv run ruff check trading tests scripts < /dev/null); then
         echo "pre-push: RUFF DO -> huy push." >&2
         exit 1
     fi
@@ -18,9 +66,13 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
     # Kiem tra xem nats-test co dang chay khong (docker ps lay ten container).
     # Neu co: chay TOAN BO pytest (gom moi test integration / duong tien that).
     # Neu khong: chay khong co integration, in CANH BAO ro rang.
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'nats-test'; then
+    # `< /dev/null` phai dat o docker ps (lenh DAU duong ong, cai co the an stdin
+    # cua vong while). Dat o grep thi grep doc /dev/null chu KHONG doc duong ong,
+    # nen luon "khong thay nats-test" -> AM THAM bo qua 142 test integration
+    # (loi dot 129, Claude bat duoc 29/09 nho con so 1284 trong bao cao T4).
+    if docker ps --format '{{.Names}}' < /dev/null 2>/dev/null | grep -q 'nats-test'; then
         echo "pre-push: nats-test dang chay — chay TOAN BO pytest (gom integration)..."
-        if ! uv run pytest -q; then
+        if ! (cd "$tmp" && uv run pytest -q < /dev/null); then
             echo "pre-push: TEST DO -> huy push." >&2
             exit 1
         fi
@@ -29,7 +81,7 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
         echo "pre-push: Cac test bi bo gom: compute_nav, read_last_close, GUARD-1, vi the..." >&2
         echo "pre-push: De bat ha tang: docker compose --profile test up -d nats-test" >&2
         echo "pre-push: (Push KHONG bi chan — dung --no-verify de bat buoc bo qua)" >&2
-        if ! uv run pytest -m "not integration" -q; then
+        if ! (cd "$tmp" && uv run pytest -m "not integration" -q < /dev/null); then
             echo "pre-push: UNIT TEST DO -> huy push." >&2
             exit 1
         fi

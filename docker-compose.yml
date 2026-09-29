@@ -1,6 +1,25 @@
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
+    # Dot 129 (2026-09-29): co -c thang mem_limit va postgresql.conf (ke ca volume da co
+    # va initdb moi tren VPS). timescaledb-tune do RAM may chu khong phai gioi han
+    # container, sinh shared_buffers ~1,9 GB trong khi mem_limit chi la 1g — se bi
+    # kernel kill khi co truy van doc them ~150 MB. Neu doi mem_limit, doi cac gia tri nay
+    # cung luc (shared_buffers = 25%, effective_cache_size = 75% cua mem_limit).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - max_parallel_maintenance_workers=0
     environment:
       POSTGRES_USER: trading
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
