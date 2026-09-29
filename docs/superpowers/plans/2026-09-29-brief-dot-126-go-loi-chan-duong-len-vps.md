@@ -9,7 +9,7 @@
 
 Đợt 125 diễn tập `DEPLOYMENT.md` trong `ubuntu:24.04` sạch, và Claude audit. Đã vá: gói `docker-compose-v2`, **cờ thực thi trong git** cho 5 script (trước đó `100644`, nên trên VPS cả chín cron job sẽ chết), dòng cron `backfill` lặp, và CI chạy ma trận 3.11 + 3.12 (cả ba job xanh ở `59a88be`).
 
-Còn lại năm việc. **Mỗi việc là một cách hệ thống trên VPS hỏng mà không ai biết.** Đợt này gỡ chúng.
+Còn lại sáu việc. **Mỗi việc là một cách hệ thống trên VPS hỏng mà không ai biết.** Đợt này gỡ chúng.
 
 | # | Việc | Hậu quả nếu không làm |
 |---|---|---|
@@ -18,6 +18,7 @@ Còn lại năm việc. **Mỗi việc là một cách hệ thống trên VPS h�
 | 3 | `.env` chép từ Windows sang là CRLF | mọi giá trị, kể cả token, dính `\r` |
 | 4 | `logs/` bị tạo lại với `root:root` | container mất log **im lặng** |
 | 5 | CI chạy `ubuntu-latest`, sẽ thành Ubuntu 26 từ 19/10/2026 | CI kiểm hệ điều hành khác VPS (24.04) |
+| 6 | Quy trình triển khai và **rollback** ở `DEPLOYMENT.md` §10 viết cứng tên image, và nuốt lỗi bằng `\|\| true` | ngày cần quay về bản cũ trên VPS thì **không có bản cũ nào để quay về** |
 
 Làm theo thứ tự. Mỗi việc có cổng riêng; một việc kẹt thì báo lại và làm tiếp việc sau.
 
@@ -118,6 +119,25 @@ CI in cảnh báo: *"The ubuntu-latest label will migrate to Ubuntu 26 beginning
 
 ---
 
+## §5b. Việc 6 — tên image viết cứng trong quy trình triển khai và rollback
+
+*(Claude bổ sung sau khi tự soát brief: cùng lớp lỗi với việc 1, nhưng nằm trong tài liệu, ở đúng quy trình quan trọng nhất.)*
+
+`DEPLOYMENT.md` §10:
+
+| Dòng | Lệnh | Trên VPS (`/opt/trading`) |
+|---|---|---|
+| 511–512 | `docker tag ai_auto_trading_system-collector:latest ai_auto_trading_system-collector:previous 2>/dev/null \|\| true` (và engine) | image tên là `trading-collector`, nên lệnh hỏng, và **`\|\| true` nuốt lỗi**: không tag `:previous` nào được tạo, không ai biết |
+| 525–526 | `docker tag ai_auto_trading_system-collector:previous ...:latest` (rollback) | hỏng đúng lúc cần: không có `:previous` để quay về |
+| 540–541 | `docker inspect ... ai_auto_trading_system-collector-1`, `docker image inspect ai_auto_trading_system-collector` | phép kiểm sau triển khai báo lỗi "No such object" |
+
+**Việc:**
+- Viết lại các lệnh đó để **không phụ thuộc tên thư mục**: lấy tên container qua `docker compose ps -q <service>`, lấy tên image qua `docker compose images` hoặc `docker compose config --images`, hoặc suy từ `COMPOSE_PROJECT_NAME` / tên thư mục **đúng như** `run_if_docker_up.sh:83`. Chọn một cách, ghi lý do.
+- **Bỏ việc nuốt lỗi im lặng.** `|| true` có lý do: lần triển khai **đầu tiên** chưa có image `:latest` để lưu. Giữ được ý đó mà không im lặng, ví dụ: kiểm image có tồn tại không, có thì tag, không có thì **in rõ** "lần đầu, không có bản cũ để lưu", còn tag hỏng vì lý do khác thì phải hiện lỗi.
+- Dòng 403 chỉ là câu giải thích có nhắc cả hai tên; để nguyên.
+
+**Cổng (chỉ lệnh ĐỌC trên máy này, không tag, không build):** chạy các lệnh **đọc** mới (`docker compose ps -q collector`, `docker compose config --images`, `docker image inspect <tên suy ra>`) trong thư mục repo hiện tại, và phải ra đúng tên đang chạy (`ai_auto_trading_system-*`). Trong container diễn tập (không có Docker), kiểm cú pháp bằng `bash -n` cho khối lệnh đã sửa. `test_deployment_doc.py` phải xanh. **Không** chạy `docker tag`, **không** build, **không** rollback thật.
+
 ## §6. Môi trường kiểm cho việc 1–4
 
 Dùng lại cách của đợt 125: container `ubuntu:24.04` `--rm`, mã nguồn lấy bằng `git archive`.
@@ -147,7 +167,7 @@ Toàn bộ suite -m "not integration" trong container, repo ở /opt/trading →
 
 ## §8. Phạm vi
 
-**Được sửa:** `scripts/stream_health_check.py`, `scripts/measure_session_stream_metrics.py`, `scripts/docker_down_alert.py`, `scripts/run_if_docker_up.sh`, `scripts/probe_dead_man_switch.py` (**chỉ** docstring), `.github/workflows/ci.yml` (**chỉ** `runs-on`), `DEPLOYMENT.md` (**chỉ** §11 cho việc 2c và 3), các test liên quan.
+**Được sửa:** `scripts/stream_health_check.py`, `scripts/measure_session_stream_metrics.py`, `scripts/docker_down_alert.py`, `scripts/run_if_docker_up.sh`, `scripts/probe_dead_man_switch.py` (**chỉ** docstring), `.github/workflows/ci.yml` (**chỉ** `runs-on`), `DEPLOYMENT.md` (**chỉ** §11 cho việc 2c và 3, và §10 cho việc 6), các test liên quan.
 
 **KHÔNG được đụng:** `trading/`; `scripts/sched.sh`; `scripts/deploy_drift_check.py` (chỉ được import từ nó); quy tắc tên container trong `run_if_docker_up.sh:77–85` (bản sao có chủ ý); `docker-compose.yml`, `Dockerfile`; `.env` thật; mọi container đang chạy.
 
@@ -162,7 +182,7 @@ Toàn bộ suite -m "not integration" trong container, repo ở /opt/trading →
 
 ## §10. Báo cáo phải có
 
-1. Với mỗi việc 1–5: diff, output cổng nguyên văn, và bảng phá thử với thông điệp lỗi thật.
+1. Với mỗi việc 1–6: diff, output cổng nguyên văn, và bảng phá thử với thông điệp lỗi thật.
 2. Kết quả thí nghiệm `env_file` CRLF của việc 3.
 3. Những gì **không** kiểm được, và vì sao.
 4. Chỗ nào brief sai hoặc mơ hồ. Brief của Claude đã sai ở đợt 125 (đảo ngược quyết định `ci.yml` 3.11 mà không đọc chú thích); nếu brief này đảo một quyết định có chủ ý nào khác, **báo ngay**.
