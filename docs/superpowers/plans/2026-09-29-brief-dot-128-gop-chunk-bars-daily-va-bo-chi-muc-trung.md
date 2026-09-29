@@ -85,6 +85,7 @@ Xoá đúng bốn lệnh trong `scripts/bingx_klines.py` và `scripts/binance_vi
 
 ## §2. Việc Claude làm trên DB thật (KHÔNG phải agent), cửa sổ thứ Bảy 03/10
 
+0. **Điều kiện tiên quyết (thêm ngày 29/09):** cấu hình bộ nhớ postgres của **đợt 129** đã được áp lên stack thật. Kiểm `SHOW shared_buffers` ra `256MB`, và `shmem` trong `/sys/fs/cgroup/memory.stat` của container thấp. Chưa áp thì **KHÔNG gộp chunk**: với `shared_buffers` ≈ 1,9 GB trong giới hạn 1 GiB, phép gộp (đọc và ghi lại 474 MB) có thể khiến kernel kill postgres giữa chừng.
 1. Sao lưu `pg_dump -Fc` **ra ngoài repo**, đếm dòng mốc.
 2. `set_chunk_time_interval` cho `bars` và `bars_derivative` (30 ngày; chỉ ảnh hưởng chunk mới).
 3. `scripts/merge_bars_daily_chunks.py --dsn ... --apply --i-am-claude-in-maintenance-window`.
