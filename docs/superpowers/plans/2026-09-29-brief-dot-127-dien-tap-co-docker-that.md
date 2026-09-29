@@ -123,8 +123,8 @@ Trích **ba khối bash** của §10 từ `DEPLOYMENT.md` bằng script, giống
 1. Ghi lại `ID_CU = docker image inspect trading-engine:latest --format '{{.Id}}'`.
 2. Trong **bản clone diễn tập**, không phải repo thật, thêm một dòng chú thích `# REHEARSAL127_MARKER` vào `trading/engine/main.py`.
 3. Chạy **khối 1**: phải in "Đã lưu ... :previous" cho hai service, rồi build và up. Rồi `docker image inspect trading-engine:previous --format '{{.Id}}'` phải **bằng `ID_CU`**.
-4. Chạy **khối 3** (hai hash phải bằng nhau), cộng lệnh grep chuỗi đặc trưng ở §10 mục 2 với chuỗi `REHEARSAL127_MARKER`: phải tìm thấy.
-5. Chạy **khối 2** (rollback). Image của `trading-engine-1` phải **bằng `ID_CU`**, và grep `REHEARSAL127_MARKER` trong container phải **không** thấy.
+4. Chạy **khối 3** (hai hash phải bằng nhau). Rồi grep marker **trong engine**. Lệnh ở §10 mục 2 nhắm **collector** và `trading.collector.main`, nên nguyên văn sẽ **không bao giờ** thấy marker nằm ở `trading/engine/main.py`. Đổi đúng hai chỗ đó: `docker compose exec engine sh -c 'grep -n REHEARSAL127_MARKER $(python -c "import trading.engine.main as m; print(m.__file__)")'`. Phải tìm thấy. Đây là chỗ lệch có chủ ý; **không** sửa §10 vì nó.
+5. Chạy **khối 2** (rollback). Image của `trading-engine-1` phải **bằng `ID_CU`**, và cùng lệnh grep ở mục 4 phải **không** thấy.
 6. **Âm tính:** chạy khối 1 với dòng `PROJECT_NAME=` bị thay bằng `PROJECT_NAME="trading_"` (thay trong **bản trích**, không sửa tài liệu). Phải in `LỖI` và `DỪNG`, và **không** build: `docker images` không có image mới.
 
 ### §B.6. §11 — sao lưu và khôi phục TimescaleDB, THẬT
