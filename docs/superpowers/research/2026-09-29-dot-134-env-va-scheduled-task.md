@@ -140,3 +140,15 @@ tar --force-local -czf "D:/.../y.tar.gz" ...   -> OK, 128 byte
 - `host-preflight` (brief 133) chưa làm nên chưa có task; xong đợt đó sẽ là task thứ **15**.
 - Ba đêm theo dõi NAV: **đêm 1 (29/09) sạch** — 36 dòng trong khung 22:00–23:28, 0 dòng `nav <= 0`, không cảnh báo CONFIRM-1. Còn đêm 30/09 và 01/10.
 
+### A.8. Lỗ còn lại (Claude tự soát sau khi commit): không ai canh bản sao lưu SỔ LỆNH
+
+`scripts/backup_check.py:207` chỉ tìm `trading_*.dump` và `trading_*.sql.gz` — tức **chỉ bản sao lưu DB**. Job `orderbook-backup` do đợt 132 thêm vào tạo ra `orderbook_*.tar.gz`, và **không có gì kiểm nó**. Nếu job đó hỏng âm thầm nhiều tuần, không cảnh báo nào nổ.
+
+Bất đối xứng này do chính đợt 132 tạo ra (thêm bên sản xuất mà không mở rộng bên kiểm), và audit đợt 132 của Claude **không bắt được**.
+
+**Mức nghiêm trọng: vừa.** Bản gốc `data/orderbook/` vẫn còn, nên mất bản sao lưu chưa phải mất dữ liệu — trừ khi ổ đĩa hỏng đúng lúc.
+
+**Vì sao Claude KHÔNG sửa ngay bây giờ:** ngưỡng tuổi cho bản sao lưu sổ lệnh **không thể** dùng lại con số 23 giờ của bản sao lưu DB. Sổ lệnh chỉ sinh ra vào **ngày giao dịch**, nên một quy tắc 23 giờ sẽ **kêu oan mỗi cuối tuần và mỗi ngày lễ** — đúng loại báo động giả mà đợt 132 và 134 vừa mất hai lượt để dọn. Làm đúng thì phải dùng `trading.calendar_vn.is_trading_day`, và đó là một quyết định thiết kế cần viết brief tử tế chứ không nên sửa vội lúc 00:30.
+
+Giao đợt sau.
+
