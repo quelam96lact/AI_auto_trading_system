@@ -354,6 +354,14 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # lại trong vài giây nên heartbeat (ngưỡng 300 giây) lọt qua, và postgres có thể bị kernel kill
 # MỘT tiến trình con mà container không hề restart — dấu vết duy nhất là bộ đếm oom_kill trong
 # cgroup. Khung đêm 22:00–01:30 và cuối tuần cũng phải được phủ.
+#
+# Khi BẢO TRÌ có chủ ý (đo thật 29/09, cùng container):
+#   docker compose up -d --build  -> container được TẠO LẠI (Id đổi)      -> KHÔNG báo
+#   docker compose restart X      -> Id và RestartCount không đổi          -> KHÔNG báo
+#   docker compose stop X         -> Status=exited                         -> BÁO CRITICAL một lần
+# Nên nếu để một container DỪNG qua mốc 10 phút (ví dụ §11 Bước 5 chỉ bật postgres),
+# sẽ có một tin Telegram — đúng hành vi, không phải lỗi. Muốn im thì tạm bỏ dòng cron này
+# trong cửa sổ bảo trì rồi cài lại.
 */10 * * * * cd /opt/trading && scripts/sched.sh container-health
 
 # 3. Ghi dữ liệu sổ lệnh và dòng lệnh VN30F phái sinh thời gian thực (08:40, T2–T6)
