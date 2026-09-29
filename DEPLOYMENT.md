@@ -63,7 +63,7 @@ mkdir -p data/orderbook && chmod 775 data/orderbook
 
 # Phân quyền thực thi cho các script vận hành và cron job trên host
 # (BẮT BUỘC: git checkout/archive không đảm bảo cờ executable cho scripts/*.sh;
-# thiếu lệnh này thì sched.sh và run_if_docker_up.sh sẽ báo Permission denied ở cron).
+# thiếu lệnh này thì các script sched.sh, run_if_docker_up.sh sẽ báo Permission denied ở cron).
 chmod +x scripts/*.sh
 ```
 
