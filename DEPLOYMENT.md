@@ -336,7 +336,7 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# Cài đặt đầy đủ 9 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# Cài đặt đầy đủ 10 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
 # BẮT BUỘC: Đặt CRON_TZ để cron chạy chuẩn theo giờ Việt Nam
 CRON_TZ=Asia/Ho_Chi_Minh
 
@@ -348,6 +348,13 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 # 2. Phát hiện image container cũ hơn commit git trước phiên giao dịch (08:00, T2–T6)
 0 8 * * 1-5 cd /opt/trading && scripts/sched.sh deploy-drift
+
+# 2b. Container tự khởi động lại / bị kernel kill vì hết bộ nhớ (mỗi 10 phút, 24/7 — đợt 130)
+# 24/7 CÓ CHỦ Ý, không giới hạn giờ phiên: `restart: unless-stopped` làm container chết tự lên
+# lại trong vài giây nên heartbeat (ngưỡng 300 giây) lọt qua, và postgres có thể bị kernel kill
+# MỘT tiến trình con mà container không hề restart — dấu vết duy nhất là bộ đếm oom_kill trong
+# cgroup. Khung đêm 22:00–01:30 và cuối tuần cũng phải được phủ.
+*/10 * * * * cd /opt/trading && scripts/sched.sh container-health
 
 # 3. Ghi dữ liệu sổ lệnh và dòng lệnh VN30F phái sinh thời gian thực (08:40, T2–T6)
 # Script tự dừng lúc 14:46 (--until 14:46). Ghi dữ liệu vào data/orderbook/

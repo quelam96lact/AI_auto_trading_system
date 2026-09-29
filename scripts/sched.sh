@@ -7,6 +7,7 @@
 #   scripts/sched.sh daily-check
 #   scripts/sched.sh backfill
 #   scripts/sched.sh deploy-drift
+#   scripts/sched.sh container-health
 #   scripts/sched.sh engine-cam
 #   scripts/sched.sh engine-consumer
 #   scripts/sched.sh stream-health
@@ -64,6 +65,10 @@ case "${1:-}" in
     exec "$RUN" deploy-drift.log deploy-drift \
       uv run python scripts/deploy_drift_check.py
     ;;
+  container-health)
+    exec "$RUN" container-health.log container-health \
+      uv run python -m scripts.container_health_check
+    ;;
   engine-cam)
     exec "$RUN" engine-cam.log engine-cam \
       uv run python scripts/check_silent_engine.py
@@ -94,7 +99,7 @@ case "${1:-}" in
       "$@"
     ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check}" >&2
     exit 2
     ;;
 esac
