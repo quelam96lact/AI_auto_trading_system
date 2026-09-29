@@ -9,7 +9,7 @@ Script nay duoc goi TU nhanh Docker-chet cua cong, tu quyet dinh co keu khong.
 send_telegram chi dung urllib + 2 bien moi truong (trading/telegram.py:8) —
 khong cham DB, khong cham Docker, nen chay duoc DUNG LUC Docker chet.
 
-Exit code: luon 0 (chuong bao khong duoc nem — FEE-ALARM-2).
+Exit code: 0 neu khong can keu hoac gui thanh cong; 2 neu can keu ma gui that bai hoac loi (chuong bao khong duoc nem — FEE-ALARM-2, Brief 126).
 """
 
 import os
@@ -128,7 +128,11 @@ def run_alert(
     stamp_file: str = SPAM_GUARD_FILE,
 ) -> int:
     """Mot lan kiem: quyet dinh, keu neu can. KHONG BAO GIO nem — chuong bao
-    chet cam con te hon khong co chuong bao (FEE-ALARM-2). Tra 0 luon."""
+    chet cam con te hon khong co chuong bao (FEE-ALARM-2).
+    Brief 126:
+    - Tra 0: khong can keu (ngoai gio, ngay nghi, chong spam) hoac da gui thanh cong.
+    - Tra 2: can keu nhung gui that bai (send tra False / None / nem loi) hoac loi ngoai cung.
+    """
     try:
         last = _read_last_alert(stamp_file)
         if not should_alert(now, holidays, last):
@@ -145,18 +149,18 @@ def run_alert(
                 _print_safe(
                     "[docker-down-alert] gui Telegram that bai: send tra ve False hoac None"
                 )
-                return 0
+                return 2
         except Exception as e:
             _print_safe(
                 f"[docker-down-alert] gui Telegram loi: {type(e).__name__}: {e}"
             )
-            return 0
+            return 2
         return 0
     except Exception as e:
         # Lop ngoai cung: loi khong lo truoc (vi du load config hong) cung
-        # khong duoc giet chuong — in dau vet roi tra 0.
+        # khong duoc giet chuong — in dau vet roi tra 2 (Brief 126).
         _print_safe(f"[docker-down-alert] loi khong lo truoc: {type(e).__name__}: {e}")
-        return 0
+        return 2
 
 
 def main() -> int:
@@ -170,7 +174,7 @@ def main() -> int:
         return run_alert(datetime.now(TZ), load_holidays())
     except Exception as e:
         _print_safe(f"[docker-down-alert] loi khoi dong: {type(e).__name__}: {e}")
-        return 0
+        return 2
 
 
 if __name__ == "__main__":

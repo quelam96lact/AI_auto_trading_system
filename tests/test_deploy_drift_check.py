@@ -95,9 +95,13 @@ def test_gui_telegram_hong_van_de_lai_dau_vet(monkeypatch, capsys):
 
 def test_get_container_name_default_repo_basename(monkeypatch):
     """Khi không set COMPOSE_PROJECT_NAME, tên container lấy theo thư mục repo (chữ thường)."""
+    import re
+    from pathlib import Path
+
     monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    repo_name = re.sub(r"[^a-z0-9_-]", "_", Path(__file__).resolve().parents[1].name.lower())
     name = deploy_drift_check.get_container_name("collector")
-    assert name == "ai_auto_trading_system-collector-1"
+    assert name == f"{repo_name}-collector-1"
 
 
 def test_get_container_name_with_env_compose_project_name(monkeypatch):

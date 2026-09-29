@@ -15,6 +15,13 @@ Chay (PowerShell, tai goc repo, sau khi da nap .env vao bien moi truong):
       Set-Item -Path "env:$($k.Trim())" -Value $v.Trim()
   }
   uv run python scripts/probe_dead_man_switch.py
+
+Chay (Bash / Ubuntu / VPS, tai goc repo):
+
+  set -a
+  . ./.env
+  set +a
+  uv run python scripts/probe_dead_man_switch.py
 """
 
 import os

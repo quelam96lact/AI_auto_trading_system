@@ -513,3 +513,27 @@ collector-1  | 2026-09-14T02:30:00.000000Z collector-1 | 2026-09-14T02:30:00Z ba
     assert res.bars == 3
     assert res.lines == 3
     assert res.fallback_lines == 3
+
+
+def test_22_fetch_docker_collector_logs_respects_compose_project_name(monkeypatch):
+    """22. Brief 126 Việc 1: fetch_docker_collector_logs dùng get_container_name('collector') khi fallback."""
+    from scripts.stream_health_check import fetch_docker_collector_logs
+
+    called_cmds = []
+
+    def mock_run(cmd, **kwargs):
+        called_cmds.append(cmd)
+        if cmd[0:3] == ["docker", "compose", "logs"]:
+            return type("SubprocessResult", (), {"returncode": 1, "stdout": "", "stderr": "error"})()
+        if cmd[0:3] == ["docker", "logs", "-t"]:
+            return type("SubprocessResult", (), {"returncode": 0, "stdout": "dummy logs", "stderr": ""})()
+        return type("SubprocessResult", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "trading")
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    logs = fetch_docker_collector_logs()
+    assert logs == "dummy logs"
+    assert len(called_cmds) == 2
+    assert called_cmds[1] == ["docker", "logs", "-t", "trading-collector-1"]
+

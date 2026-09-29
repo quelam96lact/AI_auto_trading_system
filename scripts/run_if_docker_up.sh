@@ -35,7 +35,12 @@ LOG="$REPO/logs/$1"
 LABEL="$2"
 shift 2
 
-mkdir -p "$REPO/logs"
+if [ ! -d "$REPO/logs" ]; then
+  mkdir -p "$REPO/logs"
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    chown 10001:10001 "$REPO/logs"
+  fi
+fi
 
 # Xoay log theo kich thuoc TRUOC khi ghi dong nao (brief agent B phan 1).
 # Mot cong thuc mot noi: Windows Task Scheduler VA cron Ubuntu deu goi job qua
@@ -47,10 +52,21 @@ mkdir -p "$REPO/logs"
 rotate_log "$LOG"
 
 # 1. .env phai co — khong co thi khong co gi de chay ca (ke ca docker_down_alert
-# can token de gui). Giu nguyen hanh vi cu.
+# can token de gui). Khong co .env thi ghi log va in stderr roi thoat 2 (Brief 126).
 if [ ! -f "$REPO/.env" ]; then
-  date "+%Y-%m-%d %H:%M:%S $LABEL SKIP: khong tim thay .env" >> "$LOG"
-  exit 0
+  msg="$(date '+%Y-%m-%d %H:%M:%S') $LABEL SKIP: khong tim thay .env"
+  echo "$msg" >> "$LOG"
+  echo "$msg" >&2
+  exit 2
+fi
+
+# 1b. .env khong duoc mang CRLF (Brief 126 §3): chep tu Windows sang dính \r lam
+# hong bien moi truong. Khong sua ngam; bao loi ra log va stderr roi thoat 2.
+if grep -q $'\r' "$REPO/.env"; then
+  msg="$(date '+%Y-%m-%d %H:%M:%S') $LABEL ERROR: .env chua ky tu CRLF (\\r). Chay 'sed -i s/\\r$// .env' truoc khi tiep tuc."
+  echo "$msg" >> "$LOG"
+  echo "$msg" >&2
+  exit 2
 fi
 
 # 2. Nap .env TRUOC kiem Docker (brief dot 8): nhanh Docker-chet goi

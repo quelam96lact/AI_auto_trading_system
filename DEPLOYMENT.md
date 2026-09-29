@@ -507,9 +507,17 @@ postgres/nats/grafana, không xoá volume).
 **Quy tắc bắt buộc:** Gắn tag cuốn chiếu `:previous` TRƯỚC KHI BUILD để luôn có một điểm lui an toàn:
 
 ```bash
-# 1. BẮT BUỘC TRƯỚC KHI BUILD: lưu ảnh hiện tại thành :previous
-docker tag ai_auto_trading_system-collector:latest ai_auto_trading_system-collector:previous 2>/dev/null || true
-docker tag ai_auto_trading_system-engine:latest    ai_auto_trading_system-engine:previous    2>/dev/null || true
+# 1. BẮT BUỘC TRƯỚC KHI BUILD: lưu ảnh hiện tại thành :previous (suy tên từ project/thư mục)
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+for svc in collector engine; do
+  img="${PROJECT_NAME}-${svc}"
+  if docker image inspect "${img}:latest" >/dev/null 2>&1; then
+    docker tag "${img}:latest" "${img}:previous"
+    echo "Đã lưu ${img}:latest thành ${img}:previous"
+  else
+    echo "Chưa có ảnh ${img}:latest (lần đầu triển khai), bỏ qua lưu :previous"
+  fi
+done
 
 # 2. Build và khởi động lại chỉ 2 service (không đụng nats/postgres)
 docker compose build collector engine
@@ -522,8 +530,11 @@ Nếu bản triển khai mới gặp sự cố (crash loop, lỗi logic, báo đ
 
 ```bash
 # Hoàn nguyên tag :previous thành :latest và restart
-docker tag ai_auto_trading_system-collector:previous ai_auto_trading_system-collector:latest
-docker tag ai_auto_trading_system-engine:previous    ai_auto_trading_system-engine:latest
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+for svc in collector engine; do
+  img="${PROJECT_NAME}-${svc}"
+  docker tag "${img}:previous" "${img}:latest"
+done
 docker compose up -d --no-deps collector engine
 ```
 
@@ -537,8 +548,9 @@ Sau khi deploy, kiểm tra 2 lớp:
 
 1. **Khớp image ID giữa container và tag image:**
 ```bash
-docker inspect -f "{{.Image}}" ai_auto_trading_system-collector-1
-docker image inspect ai_auto_trading_system-collector --format "{{.Id}}"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+docker inspect -f "{{.Image}}" "$(docker compose ps -q collector)"
+docker image inspect "${PROJECT_NAME}-collector:latest" --format "{{.Id}}"
 # Hai chuỗi hash phải HOÀN TOÀN BẰNG NHAU.
 ```
 
@@ -692,16 +704,26 @@ docker compose exec -T postgres psql -U trading -d trading -Atc "SELECT extversi
 tar -czvf orderbook_migration.tar.gz data/orderbook
 ```
 
-#### Bước 4: Chép file sao lưu sang VPS Ubuntu
-Sử dụng SCP hoặc SFTP để chuyển 2 file sang thư mục `/tmp` của VPS:
+#### Bước 4: Chép file sao lưu và cấu hình sang VPS Ubuntu
+Sử dụng SCP hoặc SFTP để chuyển các file sang VPS:
 ```powershell
+# Chép file dump DB và sổ lệnh sang thư mục /tmp của VPS:
 scp backup_migration.dump orderbook_migration.tar.gz <ĐIỀN: USER>@<ĐIỀN: VPS_IP>:/tmp/
+
+# Chép file cấu hình bảo mật .env từ Windows sang /opt/trading trên VPS:
+scp .env <ĐIỀN: USER>@<ĐIỀN: VPS_IP>:/opt/trading/.env
 ```
 
 #### Bước 5: Khôi phục dữ liệu trên VPS Ubuntu
 Đăng nhập SSH vào VPS (`ssh <ĐIỀN: USER>@<ĐIỀN: VPS_IP>`):
 ```bash
 cd /opt/trading
+
+# (0) Phân quyền bảo mật và chuẩn hoá dòng cho file .env:
+chmod 600 .env
+sed -i 's/\r$//' .env
+# Giải thích: Do .env được chép từ máy Windows sang mang định dạng xuống dòng CRLF (\r\n),
+# lệnh sed trên loại bỏ ký tự \r thừa để tránh làm hỏng các biến môi trường (token SSI, Telegram).
 
 # (a) GHIM phiên bản TimescaleDB bằng đúng số đã ghi ở Bước 3 (compose dùng tag `latest-pg16`,
 #     VPS kéo về hôm nay có thể là bản mới hơn — TimescaleDB yêu cầu khôi phục trên CÙNG phiên bản).
@@ -768,6 +790,16 @@ docker compose ps
 # Cài đặt 9 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```
+
+#### Bước 8b: Chứng minh cảnh báo Telegram tới nơi
+Chạy probe để xác nhận thông báo Telegram hoạt động thực sự từ VPS trước khi hoàn tất chuyển đổi (Brief 126 §2c):
+```bash
+cd /opt/trading
+set -a && . ./.env && set +a
+uv run python scripts/probe_dead_man_switch.py
+```
+> [!IMPORTANT]
+> **Yêu cầu chủ dự án xác nhận:** Kiểm tra ứng dụng Telegram trên điện thoại. Chủ dự án BẮT BUỘC phải nhận được tin nhắn probe và xác nhận thành công trước khi coi việc chuyển máy là hoàn tất.
 
 #### Bước 9: Kiểm tra cổng go-live an toàn
 Xác minh chắc chắn lệnh thật chưa bị vô tình bật trên VPS:

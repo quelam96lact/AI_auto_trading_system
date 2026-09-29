@@ -52,14 +52,15 @@ def test_da_gui_trong_30_phut_thi_im(tmp_path):
 
 
 def test_gui_hong_khong_lam_chet_script(tmp_path, capsys):
-    """send_telegram nem exception -> van tra 0 va de lai dau vet stdout."""
+    """send_telegram nem exception -> tra 2 (Brief 126 §2b) va de lai dau vet stdout."""
 
     def boom(text):
         raise RuntimeError("telegram chet")
 
     now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
     rc = run_alert(now, frozenset(), send=boom, stamp_file=str(tmp_path / "stamp"))
-    assert rc == 0
+    # Brief 126 §2b: can keu nhung gui exception -> tra 2 de run_if_docker_up ghi ALERT_EXIT=2
+    assert rc == 2
     out = capsys.readouterr().out
     assert "gui Telegram loi" in out  # dau vet CU THE cua loi gui, khong phai
     # loi chung chung — neu bo try/except trong, exception bi lop ngoai cung
@@ -71,7 +72,8 @@ def test_gui_telegram_that_bai_khong_ghi_dau_stamp(tmp_path, capsys):
     now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
     stamp = tmp_path / "stamp"
     rc = run_alert(now, frozenset(), send=lambda text: False, stamp_file=str(stamp))
-    assert rc == 0
+    # Brief 126 §2b: can keu nhung send tra ve False -> tra 2 de he thong biet gui that bai
+    assert rc == 2
     assert not stamp.exists()
     out = capsys.readouterr().out
     assert "gui Telegram that bai" in out
@@ -91,6 +93,7 @@ def test_send_tra_none_bi_coi_la_that_bai(tmp_path):
     now = datetime(2026, 9, 3, 9, 15, tzinfo=TZ)
     stamp = tmp_path / "stamp"
     rc = run_alert(now, frozenset(), send=lambda text: None, stamp_file=str(stamp))
-    assert rc == 0
+    # Brief 126 §2b: can keu nhung send tra ve None -> coi la that bai, tra 2
+    assert rc == 2
     assert not stamp.exists()
 

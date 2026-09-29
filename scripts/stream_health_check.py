@@ -42,6 +42,11 @@ from zoneinfo import ZoneInfo
 
 from trading.calendar_vn import is_trading_day
 
+try:
+    from scripts.deploy_drift_check import get_container_name
+except ImportError:
+    from deploy_drift_check import get_container_name
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -151,8 +156,9 @@ def fetch_docker_collector_logs() -> str:
         check=False,
     )
     if res.returncode != 0 or not res.stdout:
+        container_name = get_container_name("collector")
         res_fb = subprocess.run(
-            ["docker", "logs", "-t", "ai_auto_trading_system-collector-1"],
+            ["docker", "logs", "-t", container_name],
             capture_output=True,
             text=True,
             encoding="utf-8",

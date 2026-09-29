@@ -27,6 +27,11 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
+try:
+    from scripts.deploy_drift_check import get_container_name
+except ImportError:
+    from deploy_drift_check import get_container_name
+
 from trading.metrics import calculate_percentile
 
 TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -71,8 +76,9 @@ def fetch_collector_logs_since(since: str = "4h") -> str:
     )
     logs = (res.stdout or "") + (("\n" + res.stderr) if res.stderr else "")
     if not logs.strip():
+        container_name = get_container_name("collector")
         res_fb = subprocess.run(
-            ["docker", "logs", "-t", "--since", since, "ai_auto_trading_system-collector-1"],
+            ["docker", "logs", "-t", "--since", since, container_name],
             capture_output=True,
             text=True,
             encoding="utf-8",
