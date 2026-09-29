@@ -53,8 +53,6 @@ def init_crypto_schema(conn: psycopg.Connection) -> None:
                 created_at TIMESTAMPTZ DEFAULT now(),
                 PRIMARY KEY (symbol, interval, ts)
             );
-            CREATE INDEX IF NOT EXISTS idx_bars_crypto_sym_int_ts
-                ON bars_crypto (symbol, interval, ts);
         """)
     conn.commit()
 

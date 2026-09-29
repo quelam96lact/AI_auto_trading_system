@@ -59,8 +59,6 @@ def init_binance_schema(conn: psycopg.Connection) -> None:
                 created_at TIMESTAMPTZ DEFAULT now(),
                 PRIMARY KEY (symbol, interval, ts)
             );
-            CREATE INDEX IF NOT EXISTS idx_binance_klines_sym_int_ts
-                ON binance_klines (symbol, interval, ts);
 
             CREATE TABLE IF NOT EXISTS binance_funding (
                 symbol TEXT NOT NULL,
@@ -70,8 +68,6 @@ def init_binance_schema(conn: psycopg.Connection) -> None:
                 created_at TIMESTAMPTZ DEFAULT now(),
                 PRIMARY KEY (symbol, funding_time)
             );
-            CREATE INDEX IF NOT EXISTS idx_binance_funding_sym_time
-                ON binance_funding (symbol, funding_time);
 
             CREATE TABLE IF NOT EXISTS binance_metrics (
                 symbol TEXT NOT NULL,
@@ -85,8 +81,6 @@ def init_binance_schema(conn: psycopg.Connection) -> None:
                 created_at TIMESTAMPTZ DEFAULT now(),
                 PRIMARY KEY (symbol, ts)
             );
-            CREATE INDEX IF NOT EXISTS idx_binance_metrics_sym_ts
-                ON binance_metrics (symbol, ts);
 
             CREATE TABLE IF NOT EXISTS binance_orderflow_1h (
                 symbol TEXT NOT NULL,

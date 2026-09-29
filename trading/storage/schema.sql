@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS bars (
   source text NOT NULL DEFAULT 'ssi',
   PRIMARY KEY (symbol, ts)
 );
-SELECT create_hypertable('bars', 'ts', if_not_exists => TRUE);
+-- Dot 128 (2026-09-29): chunk 30 ngay cho bars 5m (tranh bung no chunk tren VPS).
+SELECT create_hypertable('bars', 'ts', chunk_time_interval => INTERVAL '30 days', if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS bars_derivative (
   symbol text NOT NULL,
@@ -24,7 +25,8 @@ CREATE TABLE IF NOT EXISTS bars_derivative (
   source text NOT NULL DEFAULT 'ssi',
   PRIMARY KEY (symbol, ts)
 );
-SELECT create_hypertable('bars_derivative', 'ts', if_not_exists => TRUE);
+-- Dot 128 (2026-09-29): chunk 30 ngay cho bars_derivative (tranh bung no chunk tren VPS).
+SELECT create_hypertable('bars_derivative', 'ts', chunk_time_interval => INTERVAL '30 days', if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS bars_daily (
   symbol text NOT NULL,
@@ -38,7 +40,9 @@ CREATE TABLE IF NOT EXISTS bars_daily (
   PRIMARY KEY (symbol, ts)
 );
 
-SELECT create_hypertable('bars_daily', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
+-- Dot 128 (2026-09-29): chunk 1 nam (~60 MB/chunk) de tranh bung no chunk (560 -> ~11).
+-- if_not_exists => TRUE khong doi DB da co; DB cu can scripts/merge_bars_daily_chunks.py (xem §2 brief dot 128).
+SELECT create_hypertable('bars_daily', 'ts', chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE, migrate_data => TRUE);
 
 CREATE TABLE IF NOT EXISTS symbol_universe (
   symbol text PRIMARY KEY,
