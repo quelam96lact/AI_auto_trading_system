@@ -1,7 +1,7 @@
 # Brief đợt 131 — bản sao lưu chưa ai khôi phục thử, và nó hỏng thì không ai biết
 
 **Base commit:** `b6f97cf`.
-**Người thực thi:** agent. **Người nối vào lịch, audit, commit, push:** Claude.
+**Người thực thi:** agent — **trọn bộ việc 1–7**, gồm cả nối vào lịch chạy và tạo bản sao lưu thật. **Claude:** audit, commit, push (xem §8).
 
 ---
 
@@ -102,36 +102,83 @@ Quyết định này **không** phụ thuộc kết quả việc 1, vì có ba l
 - Đổi phần mô tả sang định dạng mới.
 - **Ghi quy trình khôi phục bản sao lưu ĐÊM đã được kiểm thật** ở việc 2 (các bước `pre_restore` → `pg_restore` → `post_restore`, kèm bước đối soát số dòng). Hiện §6 **không** có quy trình khôi phục nào cho bản sao lưu đêm; §11 chỉ nói về dump chuyển máy.
 - Nêu cảnh báo `continuous_agg` là **đã biết và vô hại với `-Fc`** nếu việc 2 chứng minh vậy; nếu vẫn còn ảnh hưởng thì ghi đúng ảnh hưởng.
-- **Không** đụng khối cron ở §6/§9: Claude nối lịch (§6b).
+- Khối cron thì sửa ở **việc 5**, không sửa rải rác ở đây.
 
-## §5. Việc của Claude sau audit (agent KHÔNG làm)
+## §5. Việc 5 — nối vào lịch chạy
 
-1. Thêm case `backup` và `backup-check` vào `scripts/sched.sh` (qua `run_if_docker_up.sh`).
-2. Thêm dòng cron vào `DEPLOYMENT.md`; `test_deployment_doc.py` bắt buộc hai chỗ khớp.
-3. Nhờ chủ dự án tạo scheduled task trên Windows — **hiện chưa có task nào cho backup, nên trên laptop bản sao lưu chưa từng chạy.**
-4. Chạy một lần sao lưu thật trên máy này để có bản đầu tiên, **trước** khi gộp chunk thứ Bảy.
+Trước đây Claude giữ phần này; chủ dự án yêu cầu agent làm trọn.
 
-## §6. Phạm vi
+- `scripts/sched.sh`: thêm case `backup` và `backup-check`, gọi qua `run_if_docker_up.sh` **đúng khuôn** các case sẵn có. Cập nhật cả khối chú thích đầu file và dòng `dung:` ở case `*)`.
+  - `backup` truyền thư mục sao lưu: trên VPS là `/var/backups/trading-db`. **Không** viết cứng đường dẫn Windows vào `sched.sh`.
+  - `backup-check` gọi `backup_check.py` với cùng thư mục đó.
+- `DEPLOYMENT.md`: thêm hai dòng cron. `backup` giữ **02:00** như §6 đang ghi; `backup-check` chạy **sau đó** (đề xuất 03:00, nêu lý do trong chú thích). Hai job này chạy **hằng ngày, kể cả cuối tuần** — dữ liệu ngày thứ Sáu vẫn cần được sao lưu qua cuối tuần.
+- **Chuyển dòng cron `backup` sẵn có ở §6 thành gọi qua `sched.sh`** để nó được cổng Docker và ghi log như 10 job còn lại. Giữ nguyên câu giải thích `cd /opt/trading` là **BẮT BUỘC** (nó vẫn đúng) và đoạn cảnh báo về `pg_dump -t`.
+- Đồng bộ luôn `docs/README_VPS_UBUNTU.md:167` nếu nó vẫn ghi dòng cron kiểu cũ.
 
-**Được sửa/tạo:** `scripts/backup_db.sh`; `scripts/backup_check.py` (mới); `tests/test_backup_check.py` (mới); `DEPLOYMENT.md` (**chỉ** §6, không đụng khối cron); báo cáo `docs/superpowers/research/2026-09-29-dot-131-ban-sao-luu.md`.
+**Cổng:** `uv run pytest tests/test_deployment_doc.py` xanh — test này bắt buộc tập job trong `sched.sh` **bằng** tập job trong `DEPLOYMENT.md`, nên thiếu một bên là đỏ. `bash -n scripts/sched.sh` sạch. Gọi `scripts/sched.sh` với một job không tồn tại phải in đủ **12** job trong dòng `dung:`.
 
-**KHÔNG được đụng:** `scripts/sched.sh` (Claude nối sau); `trading/`; `docker-compose.yml`; `.githooks/`; mọi test có sẵn; DB `trading` (chỉ **đọc**: `pg_dump`, `psql -Atc` đếm; mọi lệnh ghi chỉ vào `bk131`/`bk131b`); mọi container đang chạy (không `up`/`restart`/`stop`/`down`).
+## §6. Việc 6 — tạo bản sao lưu THẬT đầu tiên trên máy này
 
-## §7. Điều cấm
+Hiện **chưa có bản sao lưu DB nào**. Phải có một bản trước khi Claude gộp chunk thứ Bảy.
+
+- Ghi vào `D:/My_Vault_Obsidian/Project/_backups/db/` — **ngoài repo** (yêu cầu của chủ dự án), và là **thư mục con riêng** để lệnh xoá theo hạn không bao giờ chạm các file rời có sẵn trong `_backups/` (`bars_daily_backup_20260830.csv.gz`, v.v.).
+- Chạy qua `scripts/sched.sh backup <thư mục đó>` để kiểm luôn đường dây thật.
+- **Trước và sau**, liệt kê `_backups/` (mức trên) và chứng minh **không file nào bị mất**.
+- Rồi chạy `scripts/sched.sh backup-check <thư mục đó>`: phải **im** và mã thoát 0.
+- Bản này **giữ lại**, không xoá. Dán `ls -l` và kích thước.
+
+## §7. Việc 7 — hai lỗ đợt 130 đã ghi nhận, giờ bịt
+
+Audit đợt 130 (§A.6 của báo cáo đó) ghi nhận hai chỗ, giờ sửa trong `scripts/container_health_check.py`:
+
+1. **`read_error` báo động mọi lần chạy.** Nhánh đó `continue` **trước khi** ghi trạng thái, nên container biến mất sẽ gửi Telegram mỗi 10 phút, mãi mãi. Sửa theo **cùng cách** đã dùng cho `OOMKilled` và `Status` ở đợt 130: chỉ báo khi **chuyển** trạng thái, kéo dài thì ghi log. Cần lưu trạng thái lỗi vào bản ghi để so được.
+2. **`memory.events` không đọc được một lần thì mù lần sau.** Khi đọc hỏng, trạng thái lưu `oom_kill = None`, nên lần sau không có mốc để so và **một lần OOM có thể lọt**. Sửa: khi lần này không đọc được, **giữ lại** giá trị `oom_kill`/`mem_max` cũ trong trạng thái thay vì ghi `None` lên, và ghi log rõ là đang dùng mốc cũ. Như vậy lần sau vẫn so được.
+
+**Cổng:** mỗi mục một test; cộng một test chứng minh **sự cố mới vẫn báo** khi sự cố cũ đang kéo dài (cùng loại với test Claude đã thêm ở đợt 130). Phá thử từng mục, dán thông điệp đỏ nguyên văn. Toàn bộ 18 test sẵn có phải vẫn xanh.
+
+## §8. Việc còn lại KHÔNG chuyển được cho agent
+
+Hai thứ này do chính quy tắc của chủ dự án, không phải Claude giữ việc:
+1. **Commit và push:** chỉ Claude làm (CLAUDE.md, phân vai planner/executor).
+2. **Tạo scheduled task trên Windows:** việc của chủ dự án. Sau đợt này cần **hai** task mới: `container-health` (đợt 130) và `backup` + `backup-check`. Agent **ghi rõ vào báo cáo** tên job và lịch đề xuất để chủ dự án tạo, **không** tự tạo.
+
+## §9. Phạm vi
+
+**Được sửa/tạo:** `scripts/backup_db.sh`; `scripts/backup_check.py` (mới); `tests/test_backup_check.py` (mới); `scripts/container_health_check.py` và `tests/test_container_health_check.py` (**chỉ** việc 7); `scripts/sched.sh` (**chỉ** thêm hai case + chú thích + dòng `dung:`); `DEPLOYMENT.md` (§6, và khối cron §9 cho việc 5); `docs/README_VPS_UBUNTU.md` (**chỉ** dòng cron backup); báo cáo `docs/superpowers/research/2026-09-29-dot-131-ban-sao-luu.md`.
+
+**KHÔNG được đụng:** `trading/`; `docker-compose.yml`; `.githooks/`; `config/`; các case sẵn có trong `sched.sh`; các phần khác của `DEPLOYMENT.md`; test của đợt khác; DB `trading` (chỉ **đọc**: `pg_dump`, `psql -Atc` đếm; mọi lệnh ghi chỉ vào `bk131`/`bk131b`); mọi container đang chạy (không `up`/`restart`/`stop`/`down`); các file rời sẵn có trong `_backups/`.
+
+## §10. Điều cấm
 
 - **Không commit, không push.** Không rebuild, không restart container.
 - **Không ghi, không `ALTER`, không `DROP` gì trên DB `trading`.** DB nháp phải `DROP` khi xong.
-- Không ghi vào `/var/backups/trading-db` hay `_backups/` — mọi phép thử dùng thư mục tạm.
+- Mọi **phép thử** dùng thư mục tạm. Chỉ **việc 6** được ghi thật, và chỉ vào `_backups/db/`; không chạm các file rời ở mức trên.
 - Không gửi Telegram thật: dùng `--dry-run` hoặc hàm gửi giả.
 - Không đọc `.env` thật; không in bí mật; không kết nối SSI.
 - Cấm `git checkout`, `git restore`, `git stash` (trừ `git stash create`).
 - Không tạo, sửa, xoá scheduled task.
 - **Không chạy `merge_bars_daily_chunks.py` với DSN của DB `trading`** (kể cả dry-run có cờ): việc đó là của Claude thứ Bảy.
 
-## §8. Báo cáo phải có
+## §11. Tiêu chí chung
+
+```
+uv run pytest -q   (TOÀN BỘ, nats-test chạy)   → ≥ 1.444 passed + test mới, 0 failed
+uv run ruff check trading tests scripts        → sạch
+uv run pytest tests/test_deployment_doc.py      → xanh
+bash -n cho mọi *.sh đã sửa                     → sạch
+git ls-files -s scripts/backup_db.sh scripts/sched.sh → vẫn 100755
+```
+
+`npx gitnexus detect-changes --repo AI_auto_trading_system` ở cuối; `impact` trước nếu sửa symbol có người gọi.
+
+## §12. Báo cáo phải có
 
 1. Việc 1: **nguyên văn** stdout/stderr và bảng đối soát, kèm kết luận một trong ba khả năng.
 2. Việc 2: diff, kích thước thực tế, **bảng đối soát sau khi khôi phục thật** (phải bằng tuyệt đối), hai phá thử với đầu ra nguyên văn.
 3. Việc 3: bảng test ↔ điều kiện, phá thử, và hai lần chạy thật `--dry-run`.
-4. Những gì **không** kiểm được, và vì sao.
+4. Việc 5: diff, đầu ra `test_deployment_doc.py`, và dòng `dung:` có đủ 12 job.
+5. Việc 6: `ls -l` trước và sau của `_backups/` **và** `_backups/db/`, kích thước bản sao lưu, kết quả `backup-check`.
+6. Việc 7: bảng test ↔ hai lỗ, phá thử, và xác nhận 18 test cũ vẫn xanh.
+7. **Tên job và lịch đề xuất cho scheduled task Windows** mà chủ dự án cần tạo (xem §8).
+8. Những gì **không** kiểm được, và vì sao.
 5. Chỗ nào brief sai hoặc mơ hồ. **Nếu brief đảo một quyết định có chủ ý nào** (đọc chú thích trong `backup_db.sh` và §6 trước khi sửa), **báo ngay**.
