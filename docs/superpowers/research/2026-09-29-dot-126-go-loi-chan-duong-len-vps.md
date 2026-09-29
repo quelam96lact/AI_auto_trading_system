@@ -402,3 +402,22 @@ Bài học cho brief sau: cổng của việc 6 đã yêu cầu "phải ra đún
 - `test_get_container_name_default_repo_basename` giờ tính kỳ vọng bằng **cùng regex** với hàm. Test không còn phụ thuộc thư mục clone, nhưng cũng không bắt được lỗi trong chính regex. Chấp nhận, vì lệnh tay đã kiểm ở trên.
 - **Còn thiếu:** các nhánh mới của `run_if_docker_up.sh` (thiếu `.env` → 2, CRLF → 2, chown) chỉ được kiểm trong container diễn tập, **không có test tự động**. Ghi lại cho đợt sau, không chặn.
 
+### A.4. Tự soát sau commit 3ddf24c: bản sửa của Claude vẫn còn hai kẽ hở, đã vá
+
+1. **Vẫn tự suy tên.** Bản sửa ở A.2 dùng công thức `sed` giống `run_if_docker_up.sh:99`. Nhưng `docker compose` tự đọc `COMPOSE_PROJECT_NAME` từ **file `.env`**, còn khối lệnh gõ tay thì không nạp file đó. Hiện chưa nơi nào đặt biến này (đã grep `.env`, `.env.example`, `docker-compose.yml`), nhưng nếu sau này có người đặt, §10 sẽ lệch tên. **Sửa:** cả ba khối lấy tên từ chính compose: `PROJECT_NAME="$(docker compose config | sed -n 's/^name: //p')"`. `sed -n` chỉ in dòng `name:`, không in phần config chứa bí mật. Hai bản sao của quy tắc trong `run_if_docker_up.sh` và `deploy_drift_check.py` giữ nguyên, vì chúng có lý do riêng (cổng Docker phải chạy được khi Python hỏng).
+2. **"DỪNG" chỉ là chữ.** Dán nguyên khối vào terminal thì `docker compose build` vẫn chạy sau thông báo lỗi. **Sửa:** cờ `SAVE_OK`. Build/up chỉ chạy khi đã lưu được `:previous`, hoặc khi thật sự là lần đầu (chưa có image **và** chưa có container nào, kiểm bằng `docker compose ps -aq`).
+
+**Kiểm:** trích **đúng ba khối bash từ `DEPLOYMENT.md`** bằng script, thay lệnh ghi (`docker tag`, `compose build`, `compose up`) bằng `echo`, giữ nguyên lệnh đọc, rồi chạy:
+
+```
+===== khoi 1 =====  WOULD docker tag ai_auto_trading_system-collector:latest ...:previous (va engine), roi WOULD build/up
+===== khoi 2 =====  WOULD docker tag ...:previous ...:latest (hai service), WOULD up
+===== khoi 3 =====  sha256:ed10d454... == sha256:ed10d454...
+===== AM TINH (PROJECT_NAME="trading_") =====
+LỖI: đã có container collector nhưng không thấy ảnh trading_-collector:latest.
+LỖI: đã có container engine nhưng không thấy ảnh trading_-engine:latest.
+DỪNG: chưa lưu được :previous, KHÔNG build. Sửa lỗi ở trên rồi chạy lại.
+```
+
+`bash -n` sạch trên ba khối.
+

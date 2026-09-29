@@ -507,21 +507,38 @@ postgres/nats/grafana, không xoá volume).
 **Quy tắc bắt buộc:** Gắn tag cuốn chiếu `:previous` TRƯỚC KHI BUILD để luôn có một điểm lui an toàn:
 
 ```bash
-# 1. BẮT BUỘC TRƯỚC KHI BUILD: lưu ảnh hiện tại thành :previous (suy tên từ project/thư mục)
-PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+# 1. BẮT BUỘC TRƯỚC KHI BUILD: lưu ảnh hiện tại thành :previous
+# Tên project do CHÍNH compose quyết định (đã tính .env, biến môi trường, tên thư mục),
+# không tự suy lại — tự suy từng ra sai tên (`trading_`) và bỏ qua :previous im lặng.
+# sed -n chỉ in dòng name:, không in phần config chứa bí mật.
+PROJECT_NAME="$(docker compose config | sed -n 's/^name: //p')"
+SAVE_OK=1
+[ -n "$PROJECT_NAME" ] || { echo "LỖI: không đọc được tên project từ docker compose config." >&2; SAVE_OK=0; }
 for svc in collector engine; do
   img="${PROJECT_NAME}-${svc}"
   if docker image inspect "${img}:latest" >/dev/null 2>&1; then
-    docker tag "${img}:latest" "${img}:previous"
-    echo "Đã lưu ${img}:latest thành ${img}:previous"
+    if docker tag "${img}:latest" "${img}:previous"; then
+      echo "Đã lưu ${img}:latest thành ${img}:previous"
+    else
+      SAVE_OK=0
+    fi
+  elif [ -n "$(docker compose ps -aq "$svc")" ]; then
+    # Có container mà không thấy image => KHÔNG phải lần đầu; bỏ qua ở đây
+    # nghĩa là không có bản cũ để rollback.
+    echo "LỖI: đã có container ${svc} nhưng không thấy ảnh ${img}:latest." >&2
+    SAVE_OK=0
   else
-    echo "Chưa có ảnh ${img}:latest (lần đầu triển khai), bỏ qua lưu :previous"
+    echo "Chưa có ảnh ${img}:latest và ${svc} chưa chạy (lần đầu triển khai), bỏ qua lưu :previous"
   fi
 done
 
-# 2. Build và khởi động lại chỉ 2 service (không đụng nats/postgres)
-docker compose build collector engine
-docker compose up -d --no-deps collector engine
+# 2. Build và khởi động lại chỉ 2 service (không đụng nats/postgres) — CHỈ khi bước 1 ổn,
+# kể cả khi dán nguyên khối này vào terminal.
+if [ "$SAVE_OK" = 1 ]; then
+  docker compose build collector engine && docker compose up -d --no-deps collector engine
+else
+  echo "DỪNG: chưa lưu được :previous, KHÔNG build. Sửa lỗi ở trên rồi chạy lại." >&2
+fi
 ```
 
 ### Quy trình quay về (Rollback khi bản mới lỗi)
@@ -529,8 +546,8 @@ docker compose up -d --no-deps collector engine
 Nếu bản triển khai mới gặp sự cố (crash loop, lỗi logic, báo động Telegram):
 
 ```bash
-# Hoàn nguyên tag :previous thành :latest và restart
-PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+# Hoàn nguyên tag :previous thành :latest và restart (tên project lấy như bước lưu ở trên)
+PROJECT_NAME="$(docker compose config | sed -n 's/^name: //p')"
 for svc in collector engine; do
   img="${PROJECT_NAME}-${svc}"
   docker tag "${img}:previous" "${img}:latest"
@@ -548,7 +565,7 @@ Sau khi deploy, kiểm tra 2 lớp:
 
 1. **Khớp image ID giữa container và tag image:**
 ```bash
-PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
+PROJECT_NAME="$(docker compose config | sed -n 's/^name: //p')"   # như bước lưu :previous
 docker inspect -f "{{.Image}}" "$(docker compose ps -q collector)"
 docker image inspect "${PROJECT_NAME}-collector:latest" --format "{{.Id}}"
 # Hai chuỗi hash phải HOÀN TOÀN BẰNG NHAU.
