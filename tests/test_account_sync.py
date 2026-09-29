@@ -25,6 +25,9 @@ class FakeStorage:
         self.balance_calls = []
         self.position_calls = []
         self.sync_recorded = []
+        # CONFIRM-1: giả lập snapshot trước (mặc định: rỗng / None)
+        self._prev_positions: dict = {}           # {account_no: {symbol: ...}}
+        self._prev_balance: tuple | None = None   # (withdrawable, total_debt, ts) hoặc None
 
     def save_account_balance(self, **kwargs):
         self.balance_calls.append(kwargs)
@@ -51,6 +54,14 @@ class FakeStorage:
 
     def update_real_order_fill(self, *a, **k):
         return 0
+
+    # CONFIRM-1: stub cho _sync_positions
+    def read_real_positions(self, account_no):
+        return self._prev_positions.get(account_no, {})
+
+    # CONFIRM-1: stub cho _sync_balance
+    def read_account_balance_with_debt(self, account_no):
+        return self._prev_balance
 
 
 async def test_sync_balance_maps_real_api_fields():
@@ -792,3 +803,211 @@ async def test_reconcile_loi_khong_lam_cu_suc_mua_va_nav(monkeypatch):
     await account_sync.sync_account_data(cfg, FakeStorage())
 
     assert calls == ["balance", "positions", "buying_power", "nav", "reconcile"], calls
+
+# =============================================================================
+# CONFIRM-1 tests (Brief 124, Phần B): xác nhận hai lần trước khi ghi rỗng/0
+# =============================================================================
+
+import trading.collector.account_sync as _acct_sync_mod
+
+
+def _reset_confirm1():
+    """Reset trạng thái CONFIRM-1 cấp module trước mỗi test để đảm bảo độc lập."""
+    _acct_sync_mod._pending_empty_positions.clear()
+    _acct_sync_mod._pending_zero_balance.clear()
+
+
+def _fake_portfolio_none():
+    async def _none():
+        return None
+    return SimpleNamespace(get_equity_positions=lambda acct: _none())
+
+
+def _fake_portfolio_with(*symbols):
+    from types import SimpleNamespace as SN
+    positions = [SN(symbol=s, quantity=100, cost_price=50.0, sellable_quantity=100) for s in symbols]
+    async def _get(acct):
+        return positions
+    return SimpleNamespace(get_equity_positions=_get)
+
+
+def _fake_auth_balance(acct_bal, total_debt, withdrawable):
+    equity = {
+        "accountBalance": str(acct_bal),
+        "totalDebt": str(total_debt),
+        "withdrawable": str(withdrawable),
+    }
+    return SimpleNamespace(rest_client=FakeRestClient({"equity": equity}))
+
+
+@pytest.mark.asyncio
+async def test_b1_sudden_empty_positions_not_written_first_time():
+    """b1: snapshot trước 6 mã, SSI trả None -> KHÔNG ghi, KHÔNG record_position_sync, có WARN."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {s: object() for s in ["HPG", "VCB", "MBB", "TCB", "BID", "VHM"]}
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert storage.position_calls == [], "b1: KHÔNG được ghi vị thế lần đầu"
+    assert storage.sync_recorded == [], "b1: KHÔNG được gọi record_position_sync lần đầu"
+    assert any("CONFIRM-1" in msg for _, msg in alerts), "b1: phải có WARN CONFIRM-1"
+
+
+@pytest.mark.asyncio
+async def test_b2_sudden_empty_confirmed_on_second_sync():
+    """b2: lần đầu pending, lần thứ hai vẫn None -> ghi + record_position_sync + WARN xác nhận."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object(), "VCB": object()}
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+        assert storage.position_calls == []
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert len(storage.position_calls) == 1, "b2: lần 2 phải ghi vị thế rỗng"
+    assert storage.position_calls[0][2] == [], "b2: ghi danh sách rỗng"
+    assert len(storage.sync_recorded) == 1, "b2: lần 2 phải gọi record_position_sync"
+    assert any("xác nhận" in msg for _, msg in alerts), "b2: WARN 'xác nhận' sau lần 2"
+
+
+@pytest.mark.asyncio
+async def test_b3_always_empty_account_writes_immediately():
+    """b3: tài khoản 0434221 luôn rỗng (snapshot trước rỗng) -> ghi ngay (SYNC-1)."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "0434221", ts, storage)
+    assert storage.position_calls == [("0434221", ts, [])], "b3: tài khoản luôn rỗng phải ghi ngay"
+    assert storage.sync_recorded == [("0434221", ts)], "b3: record_position_sync phải được gọi"
+
+
+@pytest.mark.asyncio
+async def test_b4_positions_return_after_empty_clears_pending():
+    """b4: lần đầu None (pending), lần sau SSI trả 2 mã -> gỡ cờ, ghi bình thường."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object(), "VCB": object()}
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda *a, **k: None
+    try:
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+        assert _acct_sync_mod._pending_empty_positions.get("ACC") is True
+        await account_sync._sync_positions(_fake_portfolio_with("HPG", "VCB"), "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert not _acct_sync_mod._pending_empty_positions.get("ACC"), "b4: cờ phải được gỡ"
+    assert len(storage.position_calls) == 1
+    assert len(storage.position_calls[0][2]) == 2, "b4: phải ghi 2 vị thế"
+    assert len(storage.sync_recorded) == 1
+
+
+@pytest.mark.asyncio
+async def test_b5_zero_balance_not_written_first_time():
+    """b5: số dư trước khác 0, SSI trả ba trường = 0 -> KHÔNG ghi lần đầu, có WARN."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_balance = (500000.0, 31000000.0)
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        await account_sync._sync_balance(_fake_auth_balance(0, 0, 0), "cid", "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert storage.balance_calls == [], "b5: KHÔNG được ghi số dư khi ba trường = 0 lần đầu"
+    assert any("CONFIRM-1" in msg for _, msg in alerts), "b5: phải có WARN CONFIRM-1"
+
+
+@pytest.mark.asyncio
+async def test_b6_nav_old_positions_preserved_when_empty_pending():
+    """b6: tái hiện 23:23:56 — vị thế SSI trả None, snapshot trước 6 mã.
+    Lần đầu không ghi -> read_real_positions vẫn trả snapshot cũ -> NAV không tính âm."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object(), "VCB": object()}
+    ts = datetime(2026, 9, 28, 23, 23, 56, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda *a, **k: None
+    try:
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    prev = storage.read_real_positions("ACC")
+    assert "HPG" in prev, "b6: snapshot cũ phải còn nguyên sau khi hoãn lần đầu"
+    assert storage.position_calls == [], "b6: KHÔNG ghi vị thế lần đầu"
+
+
+@pytest.mark.asyncio
+async def test_b7_single_zero_field_writes_normally():
+    """b7: withdrawable=0 thật của margin (chỉ một trường = 0) -> ghi bình thường.
+    Điều kiện CONFIRM-1 chỉ bắt khi CẢ BA trường = 0."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_balance = (0.0, 31000000.0)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-31000000, total_debt=31000000, withdrawable=0),
+        "cid", "ACC", datetime(2026, 9, 28, 23, 0, tzinfo=_TZ), storage,
+    )
+    assert len(storage.balance_calls) == 1, "b7: withdrawable=0 thật -> phải ghi bình thường"
+
+
+@pytest.mark.asyncio
+async def test_b_break1_always_empty_must_write_immediately():
+    """Phá thử B1: tài khoản luôn rỗng (prev rỗng) -> phải ghi ngay lần đầu."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "0434221", ts, storage)
+    assert storage.position_calls != [], "B1: tài khoản luôn rỗng phải ghi ngay, không được hoãn"
+
+
+@pytest.mark.asyncio
+async def test_b_break2_sudden_empty_must_not_write_first_time():
+    """Phá thử B2: rỗng đột ngột lần đầu -> KHÔNG ghi."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object()}
+    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda *a, **k: None
+    try:
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert storage.position_calls == [], "B2: lần đầu rỗng đột ngột KHÔNG được ghi ngay"
+
+
+@pytest.mark.asyncio
+async def test_b_break3_only_one_zero_field_must_not_be_blocked():
+    """Phá thử B3: chỉ một trường = 0 -> KHÔNG bị chặn."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_balance = (0.0, 31000000.0)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-31000000, total_debt=31000000, withdrawable=0),
+        "cid", "ACC", datetime(2026, 9, 28, 23, 0, tzinfo=_TZ), storage,
+    )
+    assert len(storage.balance_calls) == 1, "B3: withdrawable=0 thật không phải CONFIRM-1"

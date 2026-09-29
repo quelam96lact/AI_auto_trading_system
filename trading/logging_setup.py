@@ -1,7 +1,10 @@
 """Module thiết lập logging dùng chung cho collector và engine.
 
-Cung cấp hàm attach_durable_alert_handler để gắn RotatingFileHandler vào
-logger cha "trading", ghi log ra volume mount /app/logs một cách bền vững.
+Cung cấp:
+- attach_durable_alert_handler: gắn RotatingFileHandler vào logger cha "trading",
+  ghi log ra volume mount /app/logs một cách bền vững.
+- silence_ssi_sdk_secrets: nâng level logger ssi_sdk.transport.websocket lên WARNING
+  để chặn token SSI rò ra log (LOG-1).
 """
 
 import logging
@@ -72,3 +75,23 @@ def attach_durable_alert_handler(
         trading_logger.addHandler(handler)
     except Exception:
         pass
+
+
+def silence_ssi_sdk_secrets() -> None:
+    """Nâng level logger ssi_sdk.transport.websocket lên WARNING để chặn token rò (LOG-1).
+
+    LOG-1: bịt access token rò ra log. ssi_sdk.transport.websocket_client.py:76
+    log `logger.info("Connecting to WebSocket with headers: %s", self._headers)`
+    — self._headers chứa `Authorization: Bearer <token>` plaintext (token sống
+    15 phút nhưng log được giữ lâu hơn). Nâng level logger NÀY lên WARNING
+    (không phải filter regex — một dòng setLevel giải quyết trọn vẹn, regex
+    phải bảo trì và hỏng lặng lẽ khi SDK đổi format). Đánh đổi: mất dòng
+    INFO "WebSocket connected to wss://..." — chấp nhận vì lỗi kết nối vẫn
+    hiện ("SSIFeed connection error") và collector có heartbeat riêng trong
+    bảng heartbeat. KHÔNG đụng logger ssi_sdk.services.token_manager — nó log
+    "Token refreshed successfully", hữu ích và không chứa secret.
+
+    Gọi sau mọi chỗ cấu hình logging khác và trước khi tạo AsyncStream / AsyncAuth
+    để tránh bị basicConfig hay SDK tự khởi tạo đè lại.
+    """
+    logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)

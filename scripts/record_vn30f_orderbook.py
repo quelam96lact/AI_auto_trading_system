@@ -51,6 +51,7 @@ from trading.alerts import alert
 from trading.calendar_vn import TZ, is_trading_day
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import load_config
+from trading.logging_setup import silence_ssi_sdk_secrets
 from trading.storage.db import Storage
 
 # Các mốc giờ phiên giao dịch phái sinh Việt Nam.
@@ -473,6 +474,10 @@ async def record_orderbook_stream(
     """Kết nối WebSocket SSI và ghi nhận dòng tin QUOTE / TRADE."""
     _load_dotenv()
     app_cfg = load_config(config_path)
+    # LOG-1: chặn token SSI rò ra log. Gọi sau load_config và trước mọi SDK object
+    # (ensure_authenticated, AsyncStream) để tránh bị basicConfig hay SDK đè lại.
+    # Xem trading.logging_setup.silence_ssi_sdk_secrets() để hiểu lý do thiết kế.
+    silence_ssi_sdk_secrets()
     now_vn = datetime.now(TZ)
     today = now_vn.date()
 

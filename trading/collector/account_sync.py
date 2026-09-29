@@ -12,6 +12,13 @@ from trading.storage.db import Storage
 # Khử trùng lặp alert CRITICAL cho lệnh thật không rõ trạng thái (đúng 1 alert / dòng / ngày)
 _alerted_unmatched_fills: set[tuple[int, date]] = set()
 
+# CONFIRM-1: trạng thái chờ xác nhận khi SSI trả rỗng đột ngột.
+# Giữ trong bộ nhớ tiến trình — mất khi collector restart (an toàn: lần rỗng
+# đầu tiên sau restart sẽ bị hoãn thêm 1 nhịp, tức ~5 phút). Test phải reset
+# về {} trước khi chạy để đảm bảo độc lập giữa các test.
+_pending_empty_positions: dict[str, bool] = {}   # account_no -> True khi đang chờ
+_pending_zero_balance: dict[str, bool] = {}       # account_no -> True khi đang chờ
+
 
 async def sync_account_data(cfg: Config, storage: Storage) -> None:
     from ssi_sdk.services.portfolio import AsyncPortfolioService
@@ -83,12 +90,46 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
             missing_fields=missing,
         )
         return
+
+    acct_bal = float(equity["accountBalance"])
+    total_debt = float(equity["totalDebt"])
+    withdrawable = float(equity["withdrawable"])
+
+    # CONFIRM-1 (Phần B, đợt 124): cả ba trường = 0 đồng thời là dấu hiệu bảo trì SSI
+    # (đo được 14 lần trong lịch sử, luôn cả hai tài khoản cùng lúc, không thể thật).
+    # Điều kiện bắt: CẢ BA = 0 (không phải bất kỳ một trường = 0 — b7: withdrawable=0
+    # thật cho tài khoản margin, không được bắt nhầm).
+    # Áp quy tắc xác nhận hai lần tương tự _sync_positions.
+    if acct_bal == 0.0 and total_debt == 0.0 and withdrawable == 0.0:
+        prev_bal = storage.read_account_balance_with_debt(account_no)
+        prev_nonzero = prev_bal is not None and (prev_bal[0] != 0.0 or prev_bal[1] != 0.0)
+        if prev_nonzero:
+            if not _pending_zero_balance.get(account_no):
+                _pending_zero_balance[account_no] = True
+                alert(
+                    "WARN",
+                    "CONFIRM-1: số dư cả ba trường = 0 đột ngột (SSI bảo trì?), chờ xác nhận",
+                    account_no=account_no,
+                )
+                return  # KHÔNG ghi
+            else:
+                _pending_zero_balance.pop(account_no, None)
+                alert(
+                    "WARN",
+                    "CONFIRM-1: xác nhận số dư = 0 sau hai nhịp liên tiếp",
+                    account_no=account_no,
+                )
+        else:
+            _pending_zero_balance.pop(account_no, None)
+    else:
+        _pending_zero_balance.pop(account_no, None)
+
     storage.save_account_balance(
         account_no=account_no,
         ts=ts,
-        account_balance=float(equity["accountBalance"]),
-        total_debt=float(equity["totalDebt"]),
-        withdrawable=float(equity["withdrawable"]),
+        account_balance=acct_bal,
+        total_debt=total_debt,
+        withdrawable=withdrawable,
         buy_unmatched=float(equity.get("buyUnmatched") or 0),
         sell_unmatched=float(equity.get("sellUnmatched") or 0),
     )
@@ -110,6 +151,41 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
         }
         for p in positions
     ]
+
+    # CONFIRM-1 (Phần B, đợt 124): chặn "rỗng đột ngột" do bảo trì SSI.
+    # Chỉ hoãn khi danh mục mới rỗng VÀ snapshot gần nhất không rỗng.
+    # Tài khoản luôn rỗng (0434221): prev_positions rỗng -> ghi ngay (SYNC-1).
+    # Cái giá: bán sạch thật -> ghi chậm 1 nhịp (~5 phút). Trong 5 phút,
+    # nếu engine sinh lệnh SELL thì SSI từ chối (không có cổ phiếu) -> an toàn.
+    # Ngược lại, rỗng giả trong phiên làm NAV âm, cổng vốn chặn BUY -> tai hại.
+    if not rows:
+        prev_positions = storage.read_real_positions(account_no)
+        if prev_positions:
+            # Snapshot trước không rỗng: kiểm tra xem đây là lần đầu hay thứ hai
+            if not _pending_empty_positions.get(account_no):
+                # Lần đầu: hoãn, đặt cờ, alert WARN
+                _pending_empty_positions[account_no] = True
+                alert(
+                    "WARN",
+                    "CONFIRM-1: danh mục vừa trống đột ngột (SSI trả None/rỗng), chờ xác nhận lần tiếp",
+                    account_no=account_no,
+                    prev_symbols=len(prev_positions),
+                )
+                return  # KHÔNG ghi, KHÔNG gọi record_position_sync
+            else:
+                # Lần thứ hai liên tiếp rỗng: xác nhận thật, ghi bình thường
+                _pending_empty_positions.pop(account_no, None)
+                alert(
+                    "WARN",
+                    "CONFIRM-1: xác nhận danh mục rỗng sau hai nhịp liên tiếp",
+                    account_no=account_no,
+                )
+        else:
+            # Snapshot trước cũng rỗng (tài khoản 0434221): ghi ngay
+            _pending_empty_positions.pop(account_no, None)
+    else:
+        _pending_empty_positions.pop(account_no, None)
+
     storage.save_account_positions(account_no, ts, rows)  # no-op khi rong
     # SYNC-LOG-1: ghi su kien dong bo LUON khi fetch thanh cong (CA KHI danh
     # muc RONG) — de read_real_positions phan biet "chua dong bo" voi "da dong

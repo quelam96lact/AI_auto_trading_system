@@ -18,7 +18,7 @@ from trading.collector.parser import parse_interval_message
 from trading.collector.watchdog import Watchdog
 from trading.config import load_config
 from trading.data_quality import is_dirty_bar
-from trading.logging_setup import attach_durable_alert_handler
+from trading.logging_setup import attach_durable_alert_handler, silence_ssi_sdk_secrets
 from trading.storage.db import Storage
 
 EOD_HOUR, EOD_MINUTE = 15, 5  # EOD gap repair job
@@ -504,17 +504,9 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
 
 def _configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    # LOG-1: bịt access token rò ra log. ssi_sdk.transport.websocket_client.py:76
-    # log `logger.info("Connecting to WebSocket with headers: %s", self._headers)`
-    # — self._headers chứa `Authorization: Bearer <token>` plaintext (token sống
-    # 15 phút nhưng log được giữ lâu hơn). Nâng level logger NÀY lên WARNING
-    # (không phải filter regex — một dòng setLevel giải quyết trọn vẹn, regex
-    # phải bảo trì và hỏng lặng lẽ khi SDK đổi format). Đánh đổi: mất dòng
-    # INFO "WebSocket connected to wss://..." — chấp nhận vì lỗi kết nối vẫn
-    # hiện ("SSIFeed connection error") và collector có heartbeat riêng trong
-    # bảng heartbeat. KHÔNG đụng logger ssi_sdk.services.token_manager — nó log
-    # "Token refreshed successfully", hữu ích và không chứa secret.
-    logging.getLogger("ssi_sdk.transport.websocket").setLevel(logging.WARNING)
+    # LOG-1: xem trading.logging_setup.silence_ssi_sdk_secrets() để hiểu lý do
+    # chặn logger ssi_sdk.transport.websocket và tại sao không dùng filter regex.
+    silence_ssi_sdk_secrets()
 
     # Brief 52 / Brief 63 / Brief 66: Gắn RotatingFileHandler vào logger cha "trading"
     attach_durable_alert_handler()

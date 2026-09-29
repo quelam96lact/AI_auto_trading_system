@@ -448,11 +448,15 @@ def test_real_positions_empty_after_sync_with_empty_portfolio(storage):
     import asyncio
     from types import SimpleNamespace
 
+    import trading.collector.account_sync as acct_sync
     from trading.collector.account_sync import _sync_positions
+
+    acct_sync._pending_empty_positions.pop("ACC_TEST", None)
 
     async def _run():
         ts1 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
         ts2 = ts1 + timedelta(minutes=35)
+        ts3 = ts2 + timedelta(minutes=5)
 
         async def _with_vcb():
             return [
@@ -465,7 +469,10 @@ def test_real_positions_empty_after_sync_with_empty_portfolio(storage):
         portfolio1 = SimpleNamespace(get_equity_positions=lambda a: _with_vcb())
         await _sync_positions(portfolio1, "ACC_TEST", ts1, storage)
         portfolio2 = SimpleNamespace(get_equity_positions=lambda a: _empty())
+        # CONFIRM-1 (Brief 124): nhịp 1 hoãn chờ xác nhận
         await _sync_positions(portfolio2, "ACC_TEST", ts2, storage)
+        # CONFIRM-1 (Brief 124): nhịp 2 xác nhận rỗng và ghi nhận đồng bộ
+        await _sync_positions(portfolio2, "ACC_TEST", ts3, storage)
 
         return storage.read_real_positions("ACC_TEST")
 

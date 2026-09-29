@@ -1,5 +1,5 @@
 #!/bin/sh
-# Chan push len main neu ruff hoac unit test do.
+# Chan push len main neu ruff hoac test do.
 # Branch protection tren GitHub can goi Pro cho repo private, nen chan tai may.
 # Thoat hiem khi that su can: git push --no-verify
 while read -r _local_ref _local_sha remote_ref _remote_sha; do
@@ -15,9 +15,24 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
         exit 1
     fi
 
-    if ! uv run pytest -m "not integration" -q; then
-        echo "pre-push: TEST DO -> huy push." >&2
-        exit 1
+    # Kiem tra xem nats-test co dang chay khong (docker ps lay ten container).
+    # Neu co: chay TOAN BO pytest (gom moi test integration / duong tien that).
+    # Neu khong: chay khong co integration, in CANH BAO ro rang.
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'nats-test'; then
+        echo "pre-push: nats-test dang chay — chay TOAN BO pytest (gom integration)..."
+        if ! uv run pytest -q; then
+            echo "pre-push: TEST DO -> huy push." >&2
+            exit 1
+        fi
+    else
+        echo "pre-push: CANH BAO: nats-test KHONG chay — BO QUA moi test integration (so luong: xem dong deselected ben duoi)." >&2
+        echo "pre-push: Cac test bi bo gom: compute_nav, read_last_close, GUARD-1, vi the..." >&2
+        echo "pre-push: De bat ha tang: docker compose --profile test up -d nats-test" >&2
+        echo "pre-push: (Push KHONG bi chan — dung --no-verify de bat buoc bo qua)" >&2
+        if ! uv run pytest -m "not integration" -q; then
+            echo "pre-push: UNIT TEST DO -> huy push." >&2
+            exit 1
+        fi
     fi
 
     echo "pre-push: sach, cho push."

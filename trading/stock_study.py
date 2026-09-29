@@ -83,13 +83,19 @@ def clean_bars(bars: list[Bar]) -> tuple[list[Bar], int]:
 
 
 def load_universe(
-    storage: Storage, exclude_file: str = "exclusions.txt"
+    storage: Storage, exclude_file: str | None = "exclusions.txt"
 ) -> tuple[list[str], dict[str, str], int, set[str]]:
-    """Danh sách mã có nến trong bars_daily, đã loại mã hỏng; kèm bản đồ sàn."""
+    """Danh sách mã có nến trong bars_daily, đã loại mã hỏng; kèm bản đồ sàn.
+
+    exclude_file=None hoặc "" -> không loại mã nào, không chạm filesystem.
+    Trên Windows, pathlib.Path("").exists() trả True (trỏ vào ".") rồi read_text()
+    ném PermissionError — bẫy đã làm agent đợt 120 phải né (vá đợt 124).
+    """
     excluded: set[str] = set()
-    p = pathlib.Path(exclude_file)
-    if p.exists():
-        excluded = {s.strip().upper() for s in p.read_text(encoding="utf-8").splitlines() if s.strip()}
+    if exclude_file:
+        p = pathlib.Path(exclude_file)
+        if p.exists():
+            excluded = {s.strip().upper() for s in p.read_text(encoding="utf-8").splitlines() if s.strip()}
     with storage.conn() as c:
         all_syms = [r[0] for r in c.execute("SELECT DISTINCT symbol FROM bars_daily ORDER BY symbol")]
         exchange = {r[0]: (r[1] or "") for r in c.execute("SELECT symbol, exchange FROM symbol_universe")}
