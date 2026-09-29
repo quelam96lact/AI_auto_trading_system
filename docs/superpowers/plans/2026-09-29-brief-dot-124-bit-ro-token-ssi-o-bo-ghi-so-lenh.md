@@ -196,7 +196,7 @@ Phần B chạm đường NAV và vị thế của lệnh thật, nên `gitnexus
 - Không đặt, sửa, huỷ lệnh; không bật `real_trading_enabled`; không chạy `--send`.
 - **Không in, không ghi lại bất kỳ token, key, secret nào.** Chỉ báo số đếm.
 - Không đọc nội dung `.env`. Cấm `git checkout`, `git restore`, `git stash`.
-- **Không tạo, sửa, xoá scheduled task** (việc của chủ dự án, xem phụ lục).
+- **Không tạo, sửa, xoá scheduled task** (việc của chủ dự án).
 
 ## Báo cáo phải có
 
@@ -208,35 +208,9 @@ Phần B chạm đường NAV và vị thế của lệnh thật, nên `gitnexus
 
 ## Phụ lục — việc của CHỦ DỰ ÁN, không giao agent
 
-### P.1. Năm task không chạy khi máy dùng pin
+**Đã bỏ khỏi đợt này mọi việc về NGUỒN** (cấu hình pin của scheduled task, máy ngủ làm Docker dừng): hệ thống chạy thật sẽ ở **VPS 24/7**, chỉ dừng khi bảo trì cuối tuần; laptop hiện tại là môi trường tạm (chủ dự án chốt 29/09/2026).
 
-Máy chạy dự án là laptop (có pin). Năm task được đặt **"không khởi động khi dùng pin" và "dừng khi chuyển sang pin"**:
-
-`trading-engine-cam`, `trading-engine-consumer`, `trading-orderbook-daily-check`, `trading-orderbook-recorder`, `trading-stream-health`.
-
-Bốn task còn lại (`backfill-universe`, `daily-data-check`, `deploy-drift`, `heartbeat-check`) đã được đặt `False`. Lại đúng kiểu sửa một nơi, sót nơi khác. Hệ quả: rút sạc trong giờ phiên thì bộ ghi sổ lệnh bị dừng và các chuông giám sát engine **im lặng không chạy**. Mã `0x8007042B` (tiến trình bị kết thúc bất thường) của bộ ghi ngày 28/09 **có thể** do việc này, nhưng Claude chưa xác minh.
-
-Lệnh đề xuất (chạy trong PowerShell của chính người dùng sở hữu task):
-
-```powershell
-foreach ($n in 'trading-engine-cam','trading-engine-consumer','trading-orderbook-daily-check','trading-orderbook-recorder','trading-stream-health') {
-  $t = Get-ScheduledTask -TaskName $n
-  $t.Settings.DisallowStartIfOnBatteries = $false
-  $t.Settings.StopIfGoingOnBatteries = $false
-  Set-ScheduledTask -InputObject $t | Out-Null
-}
-Get-ScheduledTask | Where-Object TaskName -like 'trading-*' | ForEach-Object { '{0,-32} StopOnBatt={1} NoStartOnBatt={2}' -f $_.TaskName, $_.Settings.StopIfGoingOnBatteries, $_.Settings.DisallowStartIfOnBatteries }
-```
-
-Kỳ vọng: cả chín dòng đều `False False`.
-
-### P.2. Job đêm bỏ qua khi Docker không chạy
-
-"`SKIP: docker chua chay`" đã xảy ra **ít nhất 8 lần** (02, 03, 07, 14, 16, 21, 23 và 28/09). Đợt 51 đã tìm ra gốc: **máy ngủ**, kèm khuyến nghị `powercfg /change standby-timeout-dc 0` và chuyển sang VPS. Lần 28/09 làm mất nến ngày cho khoảng 166 mã tới khi Claude nạp bù tay. Không có hại lâu dài: backfill đêm sau vẫn kéo lại `BACKFILL_DAYS` ngày gần nhất.
-
-Thêm cơ chế thử lại trong `run_if_docker_up.sh` **không** chữa được máy ngủ, nên đợt này **không** làm. Gốc vẫn là điện nguồn / VPS, là quyết định của chủ dự án.
-
-### P.3. Script spike bật DEBUG
+### P.1. Script spike bật DEBUG
 
 Xem Phần A: chúng in cả phản hồi xác thực (tức token) ra console khi chạy. Có tắt hay không là quyết định của chủ dự án.
 
