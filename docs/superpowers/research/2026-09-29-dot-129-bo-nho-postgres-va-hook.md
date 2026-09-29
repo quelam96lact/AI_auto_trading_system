@@ -485,3 +485,28 @@ Số đo của agent hợp lý và **đúng chiều**: `shmem` 654 MB → 275 MB
 - Hook nay mất thêm thời gian cho `uv sync` (agent đo 4,9 s) và chạy toàn bộ suite trong worktree: khoảng 65–70 s mỗi lần push. Chấp nhận được.
 - Nhánh dự phòng `--python 3.11` khi repo gốc chưa có `.venv` là agent tự thêm, không có trong brief. Hợp lý (uv có thể chọn 3.14 chưa có wheel psycopg), giữ lại.
 
+### A.6. Claude đã áp việc 1 lên stack thật (29/09, 19:26)
+
+`docker compose up -d postgres`. Tham số đọc lại từ `pg_settings` đúng cả sáu. Số đo cgroup **cùng container, cùng `mem_limit: 1g`**:
+
+| | Trước | Sau |
+|---|---|---|
+| `memory.peak` | 1.073.750.016 (sát trần) | **62.631.936** |
+| `memory.events max` | 10.195 | **0** |
+| `shmem` | 877 MB | **35 MB** |
+
+Dữ liệu còn nguyên: `bars_daily` 2.986.048 dòng, 560 chunk. Không dòng ERROR/Traceback nào trong collector và engine.
+
+**Collector ghi lại được sau khi postgres khởi động lại:** hai dòng NAV lúc `19:31:03` cho cả hai tài khoản (`0434221` = 5.021.712, `0434226` = 195.553.721), khớp giá trị trước khi restart.
+
+**Bẫy đo lường Claude tự vấp và tự sửa:** phép kiểm đầu đếm `ts > now() - interval '3 minutes'` và ra `n=2`, trông như đã ghi mới. Thật ra đó là **hai dòng cũ của hai tài khoản cùng một `ts` 19:26:00**. Nhịp NAV là 5 phút, nên cửa sổ tương đối dễ đếm lại dòng cũ. Phép kiểm đúng là so với `docker inspect -f '{{.State.StartedAt}}'`; theo mốc đó, số dòng là **0** cho tới 19:31. Đã ghi vào [[postgres-bo-nho-vuot-gioi-han-container]].
+
+Điều kiện tiên quyết ở brief đợt 128 §2 bước 0 (cho phép gộp chunk thứ Bảy) **đã đạt**.
+
+### A.7. Hai rủi ro Claude tự nghĩ ra rồi loại bằng phép đo
+
+1. **`< /dev/null` có còn chỗ nào sai?** Không. Chỉ dòng 73 nằm trong **đường ống**; năm chỗ còn lại (`worktree add`, `uv sync`, `ruff`, hai `pytest`) là lệnh đơn nên vô hại. `run_if_docker_up.sh:107` cũng có `| grep -q .` nhưng **không** có `< /dev/null`, và script đó không nằm trong vòng `while read`, nên không bị.
+2. **`git worktree prune` ở cuối trap có ghi đè mã thoát không?** Nếu có thì hook sẽ trả 0 và **cho push dù test đỏ** — đúng lớp lỗi vừa sửa. Đo: một script `set -e` thoát 1 với EXIT trap kết thúc bằng lệnh thành công vẫn trả **1**. Khớp với T2 của Claude (push bị chặn khi trap đã có `prune`).
+
+`.githooks/` chỉ có một file (`pre-push`), nên không hook nào khác cần sửa theo.
+
