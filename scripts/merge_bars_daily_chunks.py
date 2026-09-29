@@ -172,6 +172,16 @@ def main() -> None:
     with psycopg.connect(dsn, autocommit=True) as conn:
         if args.apply:
             bridge_chunk_gaps(conn)
+        else:
+            # Dry-run CHỈ ĐỌC, nhưng phải báo trước việc --apply sẽ GHI một dòng tạm
+            # (trong transaction) để lấp khoảng trống — kế hoạch in ra bên dưới là
+            # TRƯỚC khi lấp, nên năm có khoảng trống sẽ có thêm 1 chunk khi apply.
+            with conn.cursor() as cur:
+                cur.execute(_GAPS_SQL)
+                for r_end, n_start in cur.fetchall():
+                    print(
+                        f"[DRY-RUN] Khoảng trống {r_end} -> {n_start}: --apply sẽ lấp bằng chunk rỗng."
+                    )
 
         chunks = fetch_bars_daily_chunks(conn)
         total_before = len(chunks)
