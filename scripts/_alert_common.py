@@ -14,6 +14,19 @@ Telegram không hề đi là một cách im lặng tệ hơn cả không có chu
 là biến toàn cục của CHÍNH NÓ — test hiện có (`test_deploy_drift_check.py`)
 monkeypatch theo module gọi, và một lần tách khiến monkeypatch trượt sẽ làm
 suite gửi Telegram thật.
+
+HAI HỌ mã thoát cho job cảnh báo (đợt 132) — cả hai đều đúng, đừng gộp nhầm:
+
+| Họ                        | Ai dùng                                            | `1` nghĩa là                  | Gửi Telegram hỏng |
+|---------------------------|----------------------------------------------------|-------------------------------|-------------------|
+| Theo phát hiện            | deploy_drift_check.py, check_silent_engine.py      | có vấn đề được phát hiện      | vẫn trả 1         |
+|                           | (qua `alert_and_fail` ở đây)                       |                               |                   |
+| Theo gửi được hay không   | docker_down_alert.py, container_health_check.py,   | đã gửi thành công             | trả 2             |
+| (đợt 126)                 | backup_check.py, disk_check.py                     |                               |                   |
+
+`alert_and_fail` thuộc họ thứ nhất và luôn trả 1: với `deploy-drift`, 1 mã hoá
+"có lệch triển khai", không phải "đã gửi xong". Đó là quyết định có chủ ý, đã có
+test ghim. Trước khi gộp hai họ này làm một, đọc `test_deploy_drift_check.py:86`.
 """
 
 from collections.abc import Callable

@@ -4,7 +4,9 @@
 # Intended to run via sched.sh on host (Windows Task Scheduler or Ubuntu cron).
 set -euo pipefail
 
-BACKUP_DIR="${1:-/var/backups/trading-db}"
+# TRADING_BACKUP_DIR (.env) truoc, roi moi den mac dinh Ubuntu. Tren Windows
+# "/var/backups/trading-db" khong ton tai va se chet o mkdir (do that 29/09).
+BACKUP_DIR="${1:-${TRADING_BACKUP_DIR:-/var/backups/trading-db}}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_FILE="${BACKUP_DIR}/trading_${TIMESTAMP}.dump"

@@ -162,6 +162,28 @@ chmod +x scripts/backup_db.sh
 # 0 2 * * * cd /opt/trading && scripts/sched.sh backup
 ```
 
+#### `TRADING_BACKUP_DIR` — nơi để bản sao lưu
+
+Bốn job sao lưu (`backup`, `backup-check`, `orderbook-backup`, `disk-check`) tìm thư mục
+sao lưu theo thứ tự: **tham số dòng lệnh** → **`TRADING_BACKUP_DIR` trong `.env`** →
+mặc định `/var/backups/trading-db`.
+
+- **VPS Ubuntu:** để trống, mặc định đã đúng.
+- **Windows: BẮT BUỘC đặt** `TRADING_BACKUP_DIR` (hoặc truyền tham số cho mọi task).
+  Đường dẫn Ubuntu vừa không tồn tại, vừa bị Git Bash dịch thành
+  `C:\Program Files\Git\var\backups\trading-db`.
+
+Đo thật 29/09 khi chưa có biến này, gọi đúng như lịch sẽ gọi:
+
+| Job | Hậu quả |
+|---|---|
+| `backup-check` | gửi **CẢNH BÁO GIẢ** mỗi ngày: *"Thư mục sao lưu không tồn tại"* |
+| `disk-check` | thoát 2 và **không bao giờ kiểm đĩa** — đúng việc nó được lập lịch để làm |
+| `orderbook-backup` | chết: `mkdir: cannot create directory '/var': Permission denied` |
+
+`run_if_docker_up.sh` nạp `.env` **trước** khi chạy job, nên job thấy biến này;
+`sched.sh` thì **không** (nó chạy trước bước nạp), nên đừng suy mặc định ở đó.
+
 ### Sao lưu thư mục sổ lệnh `data/orderbook/`
 
 Thư mục `data/orderbook/` chứa toàn bộ dữ liệu khớp lệnh và sổ lệnh phái sinh thời gian thực ghi được mỗi ngày. Cần tạo thư mục `/var/backups/trading-db` và sao lưu định kỳ:
@@ -170,9 +192,18 @@ Thư mục `data/orderbook/` chứa toàn bộ dữ liệu khớp lệnh và s�
 # Tạo thư mục chứa backup trên host:
 sudo mkdir -p /var/backups/trading-db
 
-# Thêm vào crontab để sao lưu dữ liệu sổ lệnh lúc 02:30 hàng ngày:
-30 2 * * * tar -czf /var/backups/trading-db/orderbook_$(date +\%Y\%m\%d).tar.gz -C /opt/trading data/orderbook
+# KHÔNG cài dòng cron ở đây — job `orderbook-backup` (02:30 hàng ngày) đã nằm trong khối cron §9
+# (job 12). Cài ở hai nơi = hai bản lệch nhau (bài học đợt 131).
 ```
+
+**Vì sao không còn `tar -czf ... data/orderbook` mỗi đêm (đợt 132):** lệnh cũ nén lại
+**toàn bộ** thư mục mỗi đêm mà không có gì xoá file cũ, nên bản ngày N chứa lại ngày 1..N —
+tổng dung lượng tăng theo **bình phương** số phiên (~217 GB sau một năm cho ~2,9 GB dữ liệu).
+`scripts/backup_orderbook.sh` chỉ đóng gói các file **chưa từng được sao lưu** (mới hơn bản
+`orderbook_*.tar.gz` mới nhất) nên tổng tăng **tuyến tính**, kèm hạn xoá `BACKUP_RETENTION_DAYS`
+(mặc định 14). Ngày nghỉ không có file mới thì không tạo gì và thoát 0. Bản lưu có đường dẫn
+`data/orderbook/...`, khôi phục bằng đúng lệnh ở §11 Bước 5 (`tar -xzvf ... -C /opt/trading/`).
+Lưu ý: hạn xoá 14 ngày nghĩa là kho sao lưu chỉ giữ ~14 ngày gần nhất; bản gốc là `data/orderbook/`.
 
 ### Quy chuẩn sao lưu & khôi phục TimescaleDB (Tài liệu chính thức)
 
@@ -249,6 +280,56 @@ limit, `effective_cache_size = 75 %`, `maintenance_work_mem` capped at 128 MB
 (enough for index builds on `bars_daily`). `max_parallel_workers_per_gather`
 and `max_parallel_maintenance_workers` are set to 0 because the container has
 only 1 CPU; parallelism only wastes shared memory there.
+
+### Mô hình dung lượng đĩa (đợt 132)
+
+Không có dòng code nào canh đĩa trước đợt 132; job `disk-check` (§9) giờ báo Telegram khi còn
+trống dưới 10 GB **hoặc** dưới 10%. Số đo thật 29/09: `data/orderbook` 25 MB, tốc độ ~10–15 MB/phiên;
+`tar -czf` lên file đã là `.gz` chỉ nén còn 0,59.
+
+Tổng dung lượng các file tar theo cách **cũ** (nén cả thư mục mỗi đêm, 12 MB/phiên, hệ số 0,59):
+
+| Số phiên | `data/orderbook` | **Tổng các file tar (cũ)** |
+|---|---|---|
+| 20 (~1 tháng) | 0,2 GB | **1,5 GB** |
+| 60 (~3 tháng) | 0,7 GB | **12,7 GB** |
+| 125 (~6 tháng) | 1,5 GB | **54 GB** |
+| 250 (~1 năm) | 2,9 GB | **217 GB** |
+
+Với `backup_orderbook.sh` (tăng tuyến tính, giữ 14 ngày) kho sao lưu sổ lệnh chỉ còn ~0,2 GB.
+
+**VPS cần tối thiểu bao nhiêu GB** (trạng thái ổn định sau 1 năm, hạn xoá 14 ngày):
+
+| Khoản | GB |
+|---|---|
+| Hệ điều hành + Docker | ~10 |
+| Docker image (3,2) + build cache (0,8, dọn theo §10) | ~4 |
+| Volume DB (1,8 hiện tại, tăng dần) | ~3 |
+| `data/orderbook` sau 1 năm | ~3 |
+| Sao lưu DB: 100 MB × 14 ngày | ~1,4 |
+| Sao lưu sổ lệnh (14 ngày) + log | ~1 |
+| **Cộng** | **~22** |
+| Chỗ trống tối thiểu để `disk-check` không kêu | +10 |
+
+=> **Tối thiểu ~40 GB; khuyến nghị 60–80 GB** cho năm đầu. Gói 20–25 GB sẽ đầy trong vài tháng.
+
+### Dọn rác Docker an toàn
+
+Mỗi lần triển khai theo §10 sinh image mới; image cũ thành *dangling* và build cache tích dần
+(máy dev 29/09: 6 image dangling, 118 mục build cache 827 MB). Đặt ở §7 vì đây là việc tài nguyên
+đĩa, chạy tay sau khi §10 đã kiểm xong (không phải một bước của quy trình triển khai):
+
+```bash
+docker image prune -f                          # CHỈ image dangling, không đụng tag nào
+docker builder prune -f --filter until=168h    # build cache cũ hơn 7 ngày
+```
+
+> [!CAUTION]
+> **CẤM `docker image prune -a`** (và `docker system prune -a`): nó xoá **mọi** image không có
+> container đang dùng — kể cả `:previous`, tức là xoá mất đường lui rollback của §10.
+> Đã kiểm 29/09: `ai_auto_trading_system-collector:previous` và `-engine:previous` **không** nằm
+> trong danh sách dangling, nên `image prune -f` (không `-a`) giữ nguyên. `docker image prune`
+> bản 29.8.0 không có `--dry-run`, nên phép kiểm trước khi chạy là `docker image ls --filter dangling=true`.
 
 ## 8. Log rotation
 
@@ -348,7 +429,7 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# Cài đặt đầy đủ 10 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# Cài đặt đầy đủ 14 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
 # BẮT BUỘC: Đặt CRON_TZ để cron chạy chuẩn theo giờ Việt Nam
 CRON_TZ=Asia/Ho_Chi_Minh
 
@@ -408,14 +489,23 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 11. Kiểm tra tính toàn vẹn và độ tươi của bản sao lưu DB (03:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC chạy sau job backup (02:00) ít nhất 30-60 phút để đảm bảo dump đã hoàn tất.
 0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
+
+# 12. Sao lưu sổ lệnh data/orderbook/ TĂNG DẦN (02:30 hàng ngày, 24/7 — đợt 132)
+# Chỉ đóng gói file chưa sao lưu (xem §6); thay dòng `tar -czf` toàn thư mục cũ. 02:30 vì sau backup DB (02:00).
+30 2 * * * cd /opt/trading && scripts/sched.sh orderbook-backup
+
+# 13. Cảnh báo đĩa sắp đầy (mỗi 6 giờ, 24/7 — đợt 132)
+# 24/7 CÓ CHỦ Ý: đĩa đầy không chọn giờ, cuối tuần vẫn ghi log và sao lưu. Mỗi 6 giờ vì đĩa đầy
+# theo ngày/tuần chứ không theo phút, còn 10 GB là còn vài tuần đệm — 4 tin/ngày là đủ sớm mà không spam.
+0 */6 * * * cd /opt/trading && scripts/sched.sh disk-check
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười hai task tương ứng với các dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười bốn task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả mười hai gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười bốn gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -433,6 +523,8 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
+| `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
+| `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |
 
 #### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
 
@@ -857,7 +949,7 @@ docker compose up -d --build
 # Kiểm tra trạng thái các container:
 docker compose ps
 
-# Cài đặt 9 cron job vào crontab theo hướng dẫn tại §9:
+# Cài đặt 14 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```
 

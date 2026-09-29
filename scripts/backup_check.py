@@ -16,6 +16,7 @@ Mã thoát:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,12 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_BACKUP_DIR = "/var/backups/trading-db"
+# Thu muc sao luu. MAC DINH chi dung cho VPS Ubuntu; tren Windows duong dan nay
+# vua KHONG ton tai, vua bi Git Bash dich thanh "C:\\Program Files\\Git\\var\\..."
+# (do 29/09: backup-check gui CANH BAO GIA moi ngay, disk-check thoat 2 va khong
+# he kiem dia). Dat TRADING_BACKUP_DIR trong .env de cai dat nao cung dung duong
+# dan cua chinh no; run_if_docker_up.sh nap .env TRUOC khi chay job nen job thay.
+DEFAULT_BACKUP_DIR = os.environ.get("TRADING_BACKUP_DIR") or "/var/backups/trading-db"
 
 # 23h, KHONG phai 26h. Phep tinh: job backup chay 02:00, job check chay 03:00.
 #   - backup thanh cong -> ban moi nhat 1 gio tuoi.

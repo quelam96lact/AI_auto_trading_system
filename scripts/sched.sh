@@ -15,6 +15,8 @@
 #   scripts/sched.sh orderbook-daily-check
 #   scripts/sched.sh backup
 #   scripts/sched.sh backup-check
+#   scripts/sched.sh orderbook-backup
+#   scripts/sched.sh disk-check
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -102,27 +104,39 @@ case "${1:-}" in
     ;;
   backup)
     shift || true
-    DEFAULT_BACKUP_DIR="/var/backups/trading-db"
-    BACKUP_DIR="${1:-$DEFAULT_BACKUP_DIR}"
+  # Thu muc sao luu: tham so 1 neu co, khong thi de CHINH SCRIPT tu suy tu
+  # TRADING_BACKUP_DIR (.env). KHONG suy o day: sched.sh chay TRUOC khi
+  # run_if_docker_up.sh nap .env, nen o day chua thay bien do. Bia mac dinh
+  # "/var/backups/trading-db" o day la nguyen nhan cua ba loi do that 29/09 tren
+  # Windows: backup-check gui CANH BAO GIA moi ngay, disk-check thoat 2 va khong
+  # he kiem dia, orderbook-backup chet vi "mkdir /var: Permission denied".
     exec "$RUN" backup.log backup \
-      bash scripts/backup_db.sh "$BACKUP_DIR"
+      bash scripts/backup_db.sh "$@"
     ;;
   backup-check)
     shift || true
-    DEFAULT_BACKUP_DIR="/var/backups/trading-db"
+    # Tham so vi tri (khong bat dau bang -) doi thanh --backup-dir cho argparse.
     if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
-      BACKUP_DIR="$1"
-      shift || true
-    else
-      BACKUP_DIR="$DEFAULT_BACKUP_DIR"
+      set -- --backup-dir "$@"
     fi
     exec "$RUN" backup-check.log backup-check \
-      uv run python scripts/backup_check.py \
-      --backup-dir "$BACKUP_DIR" \
-      "$@"
+      uv run python scripts/backup_check.py "$@"
+    ;;
+  orderbook-backup)
+    shift || true
+    exec "$RUN" orderbook-backup.log orderbook-backup \
+      bash scripts/backup_orderbook.sh "$@"
+    ;;
+  disk-check)
+    shift || true
+    if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+      set -- --backup-dir "$@"
+    fi
+    exec "$RUN" disk-check.log disk-check \
+      uv run python scripts/disk_check.py "$@"
     ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check}" >&2
     exit 2
     ;;
 esac
