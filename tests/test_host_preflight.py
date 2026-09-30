@@ -6,6 +6,7 @@ Moi test dung su kien gia — khong can host that.
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 from scripts.host_preflight import (
@@ -48,6 +49,7 @@ def good_facts() -> dict:
         "exec_flags": {"nonexec": []},
         "real_trading": {"found": True, "value": "false"},
         "clock": {"synced": True},
+        "holidays_confirmed": {"found": True, "value": "2999-12-31"},
         "published_ports": {
             "source": "compose",
             "ports": [
@@ -480,3 +482,91 @@ def test_collect_ports_qua_compose_config_json(tmp_path):
     got = collect_published_ports(tmp_path, runner=lambda cmd: (0, payload, ""))
     assert got["source"] == "compose"
     assert got["ports"] == [{"service": "postgres", "host_ip": "127.0.0.1", "published": "5432", "target": 5432}]
+
+
+# 13. holidays_confirmed (dot 136): da CO NGUOI XAC NHAN lich nghi toi ngay nao.
+# KHONG do bang max(holidays): max hien la 2027-09-02 nen se DAT trong khi Tet 2027 van khuyet.
+TODAY = date(2026, 9, 30)
+
+
+def _hc(value, today=TODAY):
+    facts = good_facts()
+    facts["holidays_confirmed"] = value
+    return next(x for x in evaluate(facts, JOBS, today=today) if x.key == "holidays_confirmed")
+
+
+def test_holidays_con_du_ngay_dat_va_nem_so_ngay_con_lai():
+    r = _hc({"found": True, "value": "2026-12-31"})
+    assert r.status == OK
+    assert "92" in r.detail
+
+
+def test_holidays_sat_han_hong_nem_gia_tri_va_viec_can_lam():
+    r = _hc({"found": True, "value": "2026-12-31"}, today=date(2026, 11, 2))  # con 59 ngay
+    assert r.status == FAIL
+    assert "2026-12-31" in r.detail and "config.yaml" in r.detail
+
+
+def test_holidays_dung_ranh_gioi_60_ngay():
+    assert _hc({"found": True, "value": "2026-12-31"}, today=date(2026, 11, 1)).status == OK  # con 60
+    assert _hc({"found": True, "value": "2026-12-31"}, today=date(2026, 11, 2)).status == FAIL  # con 59
+
+
+def test_holidays_da_qua_han_hong():
+    assert _hc({"found": True, "value": "2026-12-31"}, today=date(2027, 1, 5)).status == FAIL
+
+
+def test_holidays_thieu_khoa_hong_khong_phai_bo_qua():
+    assert _hc({"found": False, "value": ""}).status == FAIL
+
+
+def test_holidays_gia_tri_khong_phan_tich_duoc_hong():
+    assert _hc({"found": True, "value": "khong-phai-ngay"}).status == FAIL
+
+
+def test_holidays_khong_doc_duoc_file_bo_qua_kem_ly_do():
+    r = _hc({"skip": "không đọc được config/config.yaml"})
+    assert r.status == SKIP and "config.yaml" in r.detail
+
+
+def _repo_with_config(tmp_path, text):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "sched.sh").write_text('case "$1" in\n  heartbeat)\n    ;;\nesac\n')
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.yaml").write_text(text)
+    return tmp_path
+
+
+def test_collect_khong_do_bang_max_holidays(tmp_path, capsys):
+    """holidays voi toi 2027-09-02 nhung xac nhan chi toi 2026-10-15 -> van HONG (khong DAT vi max)."""
+    repo = _repo_with_config(
+        tmp_path,
+        "real_trading_enabled: false\nholidays: ['2026-09-02', '2027-09-02']\nholidays_confirmed_through: '2026-10-15'\n",
+    )
+    main(["--repo", str(repo), "--json"])
+    data = json.loads(capsys.readouterr().out)
+    row = next(r for r in data["results"] if r["key"] == "holidays_confirmed")
+    assert row["status"] == FAIL
+    assert "2026-10-15" in row["detail"]
+
+
+def test_collect_doc_duoc_ngay_khong_dat_trong_dau_nhay(tmp_path, capsys):
+    repo = _repo_with_config(tmp_path, "holidays_confirmed_through: 2999-12-31\n")
+    main(["--repo", str(repo), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "holidays_confirmed")
+    assert row["status"] == OK
+
+
+def test_collect_thieu_khoa_trong_config_hong(tmp_path, capsys):
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+    main(["--repo", str(repo), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "holidays_confirmed")
+    assert row["status"] == FAIL
+
+
+def test_collect_khong_co_config_bo_qua(tmp_path, capsys):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "sched.sh").write_text('case "$1" in\n  heartbeat)\n    ;;\nesac\n')
+    main(["--repo", str(tmp_path), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "holidays_confirmed")
+    assert row["status"] == SKIP

@@ -18,6 +18,7 @@
 #   scripts/sched.sh orderbook-backup
 #   scripts/sched.sh disk-check
 #   scripts/sched.sh host-preflight
+#   scripts/sched.sh restore-drill
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -140,8 +141,13 @@ case "${1:-}" in
     shift || true
     exec "$RUN" host-preflight.log host-preflight       uv run python scripts/host_preflight.py "$@"
     ;;
+  restore-drill)
+    shift || true
+    exec "$RUN" restore-drill.log restore-drill \
+      uv run python scripts/restore_drill.py "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill}" >&2
     exit 2
     ;;
 esac

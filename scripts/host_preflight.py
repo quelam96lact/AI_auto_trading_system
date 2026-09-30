@@ -29,9 +29,12 @@ import subprocess
 import sys
 import traceback
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import yaml
+
+from trading.calendar_vn import TZ as VN_TZ
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -47,6 +50,7 @@ DEFAULT_MIN_FREE_GB = 10.0
 DEFAULT_MIN_TOTAL_GB = 40.0  # DEPLOYMENT.md §7: VPS tối thiểu ~40 GB
 TZ = "Asia/Ho_Chi_Minh"
 CLOSED_PORTS = (5432, 3000)  # Postgres, Grafana: không được mở ra ngoài
+HOLIDAYS_MIN_DAYS = 60  # lịch nghỉ phải được xác nhận tới ít nhất hôm nay + 60 ngày
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 UFW_NOTE = (
     "LƯU Ý: ufw KHÔNG chi phối cổng do Docker publish (Docker chèn luật iptables riêng, đi vòng "
@@ -213,6 +217,35 @@ def _check_published_ports(f: dict | None) -> Result:
     return Result(key, name, OK, f"{len(f.get('ports', []))} cổng, tất cả bind loopback ({src})")
 
 
+def _check_holidays_confirmed(f: dict | None, today: date) -> Result:
+    """Đã CÓ NGƯỜI XÁC NHẬN lịch nghỉ tới ngày nào (khoá `holidays_confirmed_through`).
+
+    KHÔNG đo bằng max(holidays): max hiện là 2027-09-02 nên phép kiểm kiểu "danh sách có vươn
+    tới 60 ngày nữa không" sẽ ĐẠT trong khi Tết 2027 vẫn khuyết (đèn xanh giả)."""
+    key, name = "holidays_confirmed", f"lịch nghỉ được xác nhận tới ≥ hôm nay + {HOLIDAYS_MIN_DAYS} ngày"
+    if (r := _skip(key, name, f)) is not None:
+        return r
+    assert f is not None
+    if not f.get("found"):
+        return Result(key, name, FAIL, "config/config.yaml thiếu khoá holidays_confirmed_through (chủ dự án điền)")
+    raw = str(f.get("value"))
+    try:
+        confirmed = date.fromisoformat(raw)
+    except ValueError:
+        return Result(key, name, FAIL, f"holidays_confirmed_through={raw!r} không phải ngày YYYY-MM-DD")
+    remaining = (confirmed - today).days
+    if confirmed < today + timedelta(days=HOLIDAYS_MIN_DAYS):
+        return Result(
+            key,
+            name,
+            FAIL,
+            f"holidays_confirmed_through={confirmed.isoformat()} chỉ còn {remaining} ngày "
+            f"(cần ≥ {HOLIDAYS_MIN_DAYS}): cập nhật `holidays` và `holidays_confirmed_through` "
+            "trong config/config.yaml theo thông báo của Chính phủ",
+        )
+    return Result(key, name, OK, f"xác nhận tới {confirmed.isoformat()}, còn {remaining} ngày")
+
+
 def _check_disk(f: dict | None, min_free_gb: float, min_total_gb: float) -> Result:
     key, name = "disk", f"đĩa: trống ≥ {min_free_gb:.0f} GB và tổng ≥ {min_total_gb:.0f} GB"
     if (r := _skip(key, name, f)) is not None:
@@ -268,8 +301,12 @@ def evaluate(
     sched_jobs: set[str],
     min_free_gb: float = DEFAULT_MIN_FREE_GB,
     min_total_gb: float = DEFAULT_MIN_TOTAL_GB,
+    today: date | None = None,
 ) -> list[Result]:
-    """Hàm quyết định thuần: sự kiện đã đo -> danh sách kết quả."""
+    """Hàm quyết định thuần: sự kiện đã đo -> danh sách kết quả.
+
+    `today` tiêm được để test không phụ thuộc ngày thật."""
+    today = today or datetime.now(VN_TZ).date()
     return [
         _check_backup_dir(facts.get("backup_dir")),
         _check_cron(facts.get("cron"), sched_jobs),
@@ -284,6 +321,7 @@ def evaluate(
         _check_real_trading(facts.get("real_trading")),
         _check_clock(facts.get("clock")),
         _check_published_ports(facts.get("published_ports")),
+        _check_holidays_confirmed(facts.get("holidays_confirmed"), today),
     ]
 
 
@@ -493,6 +531,16 @@ def collect_facts(repo: Path) -> dict:
         facts["real_trading"] = {"found": bool(m), "value": m.group(1) if m else ""}
     except OSError as e:
         facts["real_trading"] = {"skip": f"không đọc được config/config.yaml: {e}"}
+
+    # 13. lịch nghỉ đã được xác nhận tới đâu (đọc khoá, không suy từ max(holidays))
+    try:
+        raw_cfg = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+        if not isinstance(raw_cfg, dict):
+            raise TypeError("config.yaml không phải mapping")
+        v = raw_cfg.get("holidays_confirmed_through")
+        facts["holidays_confirmed"] = {"found": v is not None, "value": "" if v is None else str(v)}
+    except (OSError, TypeError, yaml.YAMLError) as e:
+        facts["holidays_confirmed"] = {"skip": f"không đọc được config/config.yaml: {e}"}
 
     # 12. cổng Docker publish (bỏ qua ufw): chạy compose trong repo
     cwd = os.getcwd()

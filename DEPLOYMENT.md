@@ -147,6 +147,20 @@ for the services themselves.
 
 ### Sao lưu cơ sở dữ liệu hàng ngày
 
+> [!WARNING]
+> **`pg_restore -l` không chứng minh phục hồi được (đợt 136, đo 30/09).** Nó chỉ đọc **mục lục ở đầu file**,
+> không đọc dữ liệu. Cắt một bản dump thật (104.656.147 byte) còn 90% rồi đo:
+>
+> | Phép | Kết quả trên bản đã mất 10% dữ liệu |
+> |---|---|
+> | `pg_restore -l` | **exit 0**, đúng 3.224 dòng mục lục — y như bản nguyên |
+> | ngưỡng kích thước 80 MB | 89,8 MB → **qua** |
+> | `evaluate_backup_health(...)` | **`[]`** — không một cảnh báo nào |
+> | `pg_restore` phục hồi thật | **exit 1**, `could not read from input file: end of file` |
+>
+> Bản phục hồi dở dang còn *trông gần đủ* (`bars` 99,99%) trong khi `orders` = 0. Vì vậy có job
+> `restore-drill` (§9, Chủ nhật 04:00): phục hồi thật vào database nháp rồi đối chiếu **từng bảng** với nguồn.
+
 `scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump` và `.sql.gz`). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
 
 ```bash
@@ -435,7 +449,7 @@ Chạy bằng cron **trên host**, không phải trong container:
 
 ```bash
 sudo crontab -e
-# Cài đặt đầy đủ 15 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
+# Cài đặt đầy đủ 16 job vận hành tự động (tất cả gọi qua scripts/sched.sh):
 # BẮT BUỘC: Đặt CRON_TZ để cron chạy chuẩn theo giờ Việt Nam
 CRON_TZ=Asia/Ho_Chi_Minh
 
@@ -513,14 +527,22 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # chạy dày chỉ thêm nhiễu. Chủ nhật sáng để lệch cấu hình (ai đó sửa tay giữa tuần) lộ ra trước phiên thứ Hai.
 # Job này CHỈ ĐỌC và in bảng ĐẠT/HỎNG/BỎ QUA; BỎ QUA không phải ĐẠT (xem log host-preflight.log).
 0 7 * * 0 cd /opt/trading && scripts/sched.sh host-preflight
+
+# 15. Diễn tập phục hồi THẬT bản sao lưu DB mới nhất (mỗi tuần một lần, Chủ nhật 04:00 — đợt 136)
+# Vì sao `backup-check` (pg_restore -l) không đủ: xem §6 "pg_restore -l không chứng minh phục hồi được".
+# Chủ nhật 04:00: sau backup 02:00 và backup-check 03:00, trước host-preflight 07:00. CHỦ NHẬT vì dump chụp
+# lúc 02:00 còn nguồn thì tiếp tục nhận dữ liệu; Chủ nhật không có phiên nên độ trôi gần bằng 0 (đo thật:
+# `bars` lệch 134/936.217 = 0,014%), nên so số dòng theo băng 99% mà không báo oan.
+# Job TẠO rồi XOÁ database nháp `trading_restore_drill` (không bao giờ đụng `trading`), cần trống >= 3x dump.
+0 4 * * 0 cd /opt/trading && scripts/sched.sh restore-drill
 ```
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười lăm task tương ứng với các dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười sáu task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả mười lăm gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười sáu gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -541,6 +563,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
 | `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |
 | `trading-host-preflight` | Chủ nhật 07:00 (hàng tuần) | cùng vbs, tham số `host-preflight` |
+| `trading-restore-drill` | Chủ nhật 04:00 (hàng tuần) | cùng vbs, tham số `restore-drill` |
 
 #### Vì sao qua `wscript.exe` chứ không gọi thẳng `bash.exe`
 
@@ -965,7 +988,7 @@ docker compose up -d --build
 # Kiểm tra trạng thái các container:
 docker compose ps
 
-# Cài đặt 15 cron job vào crontab theo hướng dẫn tại §9:
+# Cài đặt 16 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```
 
