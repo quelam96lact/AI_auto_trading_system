@@ -139,7 +139,8 @@ case "${1:-}" in
     ;;
   host-preflight)
     shift || true
-    exec "$RUN" host-preflight.log host-preflight       uv run python scripts/host_preflight.py "$@"
+    exec "$RUN" host-preflight.log host-preflight \
+      uv run python scripts/host_preflight.py "$@"
     ;;
   restore-drill)
     shift || true

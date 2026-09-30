@@ -159,9 +159,10 @@ for the services themselves.
 > | `pg_restore` phục hồi thật | **exit 1**, `could not read from input file: end of file` |
 >
 > Bản phục hồi dở dang còn *trông gần đủ* (`bars` 99,99%) trong khi `orders` = 0. Vì vậy có job
-> `restore-drill` (§9, Chủ nhật 04:00): phục hồi thật vào database nháp rồi đối chiếu **từng bảng** với nguồn.
+> `restore-drill` (§9, Chủ nhật 04:00): phục hồi thật vào database nháp rồi đối chiếu **từng bảng** với
+> **bản kê số dòng `.counts` chụp lúc dump** (không phải với database đang sống — xem mô tả `backup_db.sh` dưới đây).
 
-`scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump` và `.sql.gz`). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
+`scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump`, `.sql.gz` và `.counts`). Ngay **trước** `pg_dump` nó ghi thêm **bản kê số dòng** `trading_<ts>.counts` cạnh file `.dump` (mỗi dòng `ten_bang<TAB>so_dong`, mọi bảng `public` liệt kê từ catalog); bản kê chỉ được giữ khi dump đã qua xác minh — dump hỏng thì bản kê bị xoá. `restore-drill` đối chiếu bản phục hồi với bản kê này (`phục_hồi >= bản_kê`, không dung sai). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
 
 ```bash
 chmod +x scripts/backup_db.sh
@@ -530,9 +531,9 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 # 15. Diễn tập phục hồi THẬT bản sao lưu DB mới nhất (mỗi tuần một lần, Chủ nhật 04:00 — đợt 136)
 # Vì sao `backup-check` (pg_restore -l) không đủ: xem §6 "pg_restore -l không chứng minh phục hồi được".
-# Chủ nhật 04:00: sau backup 02:00 và backup-check 03:00, trước host-preflight 07:00. CHỦ NHẬT vì dump chụp
-# lúc 02:00 còn nguồn thì tiếp tục nhận dữ liệu; Chủ nhật không có phiên nên độ trôi gần bằng 0 (đo thật:
-# `bars` lệch 134/936.217 = 0,014%), nên so số dòng theo băng 99% mà không báo oan.
+# Chủ nhật 04:00: sau backup 02:00 và backup-check 03:00, trước host-preflight 07:00; CHỦ NHẬT vì ít tải
+# (diễn tập phục hồi ~100 MB và tạo/xoá một database nháp, không nên chạy giữa phiên).
+# So với bản kê `.counts` chụp lúc dump (đợt 137), KHÔNG so với nguồn sống, nên giờ chạy không ảnh hưởng kết quả.
 # Job TẠO rồi XOÁ database nháp `trading_restore_drill` (không bao giờ đụng `trading`), cần trống >= 3x dump.
 0 4 * * 0 cd /opt/trading && scripts/sched.sh restore-drill
 ```
