@@ -31,6 +31,8 @@ import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import yaml
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -45,6 +47,11 @@ DEFAULT_MIN_FREE_GB = 10.0
 DEFAULT_MIN_TOTAL_GB = 40.0  # DEPLOYMENT.md §7: VPS tối thiểu ~40 GB
 TZ = "Asia/Ho_Chi_Minh"
 CLOSED_PORTS = (5432, 3000)  # Postgres, Grafana: không được mở ra ngoài
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+UFW_NOTE = (
+    "LƯU Ý: ufw KHÔNG chi phối cổng do Docker publish (Docker chèn luật iptables riêng, đi vòng "
+    "qua ufw) — ĐẠT ở đây không có nghĩa cổng đã kín; xem phép kiểm published_ports"
+)
 
 
 @dataclass(frozen=True)
@@ -172,7 +179,7 @@ def _check_ufw(f: dict | None) -> Result:
     assert f is not None
     text = str(f.get("text", ""))
     if not re.search(r"^Status:\s*active", text, re.MULTILINE | re.IGNORECASE):
-        return Result(key, name, FAIL, "ufw không ở trạng thái active")
+        return Result(key, name, FAIL, f"ufw không ở trạng thái active. {UFW_NOTE}")
     opened = []
     for ln in text.splitlines():
         parts = ln.split()
@@ -182,8 +189,28 @@ def _check_ufw(f: dict | None) -> Result:
         if head and int(head.group(1)) in CLOSED_PORTS:
             opened.append(head.group(1))
     if opened:
-        return Result(key, name, FAIL, f"cổng mở cho mọi nguồn: {', '.join(sorted(set(opened)))}")
-    return Result(key, name, OK, "active, không cổng cấm nào mở cho mọi nguồn")
+        return Result(key, name, FAIL, f"cổng mở cho mọi nguồn: {', '.join(sorted(set(opened)))}. {UFW_NOTE}")
+    return Result(key, name, OK, f"active, không cổng cấm nào mở cho mọi nguồn. {UFW_NOTE}")
+
+
+def _check_published_ports(f: dict | None) -> Result:
+    key, name = "published_ports", "mọi cổng Docker publish bind 127.0.0.1"
+    if (r := _skip(key, name, f)) is not None:
+        return r
+    assert f is not None
+    src = (
+        "nguồn: docker compose config"
+        if f.get("source") == "compose"
+        else "nguồn: đọc trực tiếp từ file compose, KHÔNG qua docker compose"
+    )
+    bad = [
+        f"{p['service']}:{p.get('published') or p.get('target')} (bind {p.get('host_ip') or 'mọi giao diện'})"
+        for p in f.get("ports", [])
+        if (p.get("host_ip") or "") not in LOOPBACK
+    ]
+    if bad:
+        return Result(key, name, FAIL, f"cổng lộ ra ngoài: {', '.join(bad)} ({src})")
+    return Result(key, name, OK, f"{len(f.get('ports', []))} cổng, tất cả bind loopback ({src})")
 
 
 def _check_disk(f: dict | None, min_free_gb: float, min_total_gb: float) -> Result:
@@ -256,6 +283,7 @@ def evaluate(
         _check_exec_flags(facts.get("exec_flags")),
         _check_real_trading(facts.get("real_trading")),
         _check_clock(facts.get("clock")),
+        _check_published_ports(facts.get("published_ports")),
     ]
 
 
@@ -303,6 +331,78 @@ def _timedatectl(prop: str) -> str | None:
     if res is None or res[0] != 0:
         return None
     return res[1].strip()
+
+
+def parse_port_spec(spec: str) -> tuple[str | None, str | None, str]:
+    """`[ip:]published:target[/proto]` -> (host_ip|None, published|None, target)."""
+    spec = spec.split("/", 1)[0]
+    ip: str | None = None
+    if spec.startswith("["):
+        end = spec.index("]")
+        ip = spec[1:end]
+        spec = spec[end + 2 :]  # bỏ "]:"
+        parts = spec.split(":")
+    else:
+        parts = spec.split(":")
+        if len(parts) == 3:
+            ip, parts = parts[0], parts[1:]
+    if len(parts) == 1:
+        return ip, None, parts[0]
+    return ip, parts[0], parts[1]
+
+
+def collect_published_ports(repo: Path, runner=None) -> dict:
+    """Cổng Docker publish. Ưu tiên `docker compose config` (đã gộp override — trên VPS
+    §11 Bước 5 tạo một file override); không gọi được thì đọc THẲNG file compose và ghi
+    nguồn. Chỉ BỎ QUA khi không đọc được cả hai: đây là phép kiểm an ninh, Docker chưa
+    chạy không phải lý do để bỏ qua."""
+    runner = runner or _run
+    ports: list[dict] = []
+    try:
+        res = runner(["docker", "compose", "--profile", "*", "config", "--format", "json"])
+        if res is not None and res[0] == 0:
+            services = json.loads(res[1]).get("services", {})
+            for svc, cfg in services.items():
+                for p in (cfg or {}).get("ports") or []:
+                    ports.append(
+                        {
+                            "service": svc,
+                            "host_ip": p.get("host_ip"),
+                            "published": p.get("published"),
+                            "target": p.get("target"),
+                        }
+                    )
+            return {"source": "compose", "ports": ports}
+    except Exception:
+        ports = []
+
+    files = [
+        repo / n
+        for n in ("docker-compose.yml", "docker-compose.override.yml", "docker-compose.override.yaml")
+        if (repo / n).is_file()
+    ]
+    if not files:
+        return {"skip": "không gọi được docker compose và không có file docker-compose*.yml để đọc"}
+    try:
+        for fp in files:
+            data = yaml.safe_load(fp.read_text(encoding="utf-8")) or {}
+            for svc, cfg in (data.get("services") or {}).items():
+                for p in (cfg or {}).get("ports") or []:
+                    if isinstance(p, dict):
+                        ports.append(
+                            {
+                                "service": svc,
+                                "host_ip": p.get("host_ip"),
+                                "published": p.get("published"),
+                                "target": p.get("target"),
+                            }
+                        )
+                    else:
+                        ip, pub, tgt = parse_port_spec(str(p))
+                        ports.append({"service": svc, "host_ip": ip, "published": pub, "target": tgt})
+    except Exception as e:
+        return {"skip": f"không gọi được docker compose và không đọc được file compose: {type(e).__name__}"}
+    return {"source": "file", "ports": ports}
 
 
 def collect_facts(repo: Path) -> dict:
@@ -393,6 +493,14 @@ def collect_facts(repo: Path) -> dict:
         facts["real_trading"] = {"found": bool(m), "value": m.group(1) if m else ""}
     except OSError as e:
         facts["real_trading"] = {"skip": f"không đọc được config/config.yaml: {e}"}
+
+    # 12. cổng Docker publish (bỏ qua ufw): chạy compose trong repo
+    cwd = os.getcwd()
+    try:
+        os.chdir(repo)
+        facts["published_ports"] = collect_published_ports(repo)
+    finally:
+        os.chdir(cwd)
 
     return facts
 

@@ -13,9 +13,11 @@ from scripts.host_preflight import (
     OK,
     SKIP,
     Result,
+    collect_published_ports,
     evaluate,
     exit_code,
     main,
+    parse_port_spec,
     summarize,
 )
 
@@ -46,6 +48,13 @@ def good_facts() -> dict:
         "exec_flags": {"nonexec": []},
         "real_trading": {"found": True, "value": "false"},
         "clock": {"synced": True},
+        "published_ports": {
+            "source": "compose",
+            "ports": [
+                {"service": "postgres", "host_ip": "127.0.0.1", "published": "5432", "target": 5432},
+                {"service": "grafana", "host_ip": "127.0.0.1", "published": "3000", "target": 3000},
+            ],
+        },
     }
 
 
@@ -361,3 +370,113 @@ def test_main_dem_cr_that_trong_env(tmp_path, capsys):
     env_crlf = next(r for r in data["results"] if r["key"] == "env_crlf")
     assert env_crlf["status"] == FAIL
     assert rc == 1
+
+
+# 12. published_ports (dot 135): kiem THANG cong Docker publish, khong tin ufw
+def _ports(*items, source="compose"):
+    return {
+        "source": source,
+        "ports": [
+            {"service": svc, "host_ip": ip, "published": pub, "target": pub} for svc, ip, pub in items
+        ],
+    }
+
+
+def test_ports_tat_ca_loopback_dat():
+    r = run(lambda f: f.__setitem__("published_ports", _ports(("postgres", "127.0.0.1", "5432"), ("nats", "::1", "4222"))))
+    assert status_of(r, "published_ports") == OK
+
+
+def test_ports_mot_cong_0_0_0_0_hong_va_neu_service():
+    r = run(lambda f: f.__setitem__("published_ports", _ports(("grafana", "127.0.0.1", "3000"), ("postgres", "0.0.0.0", "5432"))))
+    res = next(x for x in r if x.key == "published_ports")
+    assert res.status == FAIL
+    assert "postgres" in res.detail and "5432" in res.detail
+    assert "grafana" not in res.detail
+
+
+def test_ports_ipv6_moi_giao_dien_hong():
+    r = run(lambda f: f.__setitem__("published_ports", _ports(("postgres", "::", "5432"))))
+    assert status_of(r, "published_ports") == FAIL
+
+
+def test_ports_khong_ghi_dia_chi_hong():
+    for ip in (None, ""):
+        r = run(lambda f, ip=ip: f.__setitem__("published_ports", _ports(("postgres", ip, "5432"))))
+        assert status_of(r, "published_ports") == FAIL
+
+
+def test_ports_doc_tu_file_van_ket_luan_va_ghi_nguon():
+    r = run(lambda f: f.__setitem__("published_ports", _ports(("postgres", "0.0.0.0", "5432"), source="file")))
+    res = next(x for x in r if x.key == "published_ports")
+    assert res.status == FAIL
+    assert "file" in res.detail
+    ok = run(lambda f: f.__setitem__("published_ports", _ports(("postgres", "127.0.0.1", "5432"), source="file")))
+    res_ok = next(x for x in ok if x.key == "published_ports")
+    assert res_ok.status == OK
+    assert "file" in res_ok.detail
+
+
+def test_ports_khong_doc_duoc_gi_bo_qua_kem_ly_do():
+    r = run(lambda f: f.__setitem__("published_ports", {"skip": "không có docker compose lẫn file compose"}))
+    res = next(x for x in r if x.key == "published_ports")
+    assert res.status == SKIP
+    assert "compose" in res.detail
+
+
+def test_ufw_dat_phai_noi_ro_khong_chi_phoi_cong_docker():
+    res = next(x for x in evaluate(good_facts(), JOBS) if x.key == "ufw")
+    assert res.status == OK
+    assert "Docker" in res.detail and "published_ports" in res.detail
+
+
+def test_parse_port_spec():
+    assert parse_port_spec("127.0.0.1:5432:5432") == ("127.0.0.1", "5432", "5432")
+    assert parse_port_spec("5432:5432") == (None, "5432", "5432")
+    assert parse_port_spec("5432") == (None, None, "5432")
+    assert parse_port_spec("0.0.0.0:3000:3000/tcp") == ("0.0.0.0", "3000", "3000")
+    assert parse_port_spec("[::1]:4222:4222") == ("::1", "4222", "4222")
+    assert parse_port_spec("[::]:4222:4222") == ("::", "4222", "4222")
+
+
+def _no_docker(cmd):
+    return None
+
+
+def test_collect_ports_compose_vang_doc_tu_file_va_gop_override(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n"
+        "  postgres:\n"
+        '    ports: ["127.0.0.1:5432:5432"]\n'
+        "  grafana:\n"
+        '    ports: ["3000:3000"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "docker-compose.override.yml").write_text(
+        "services:\n"
+        "  postgres:\n"
+        '    ports: ["0.0.0.0:5433:5432"]\n',
+        encoding="utf-8",
+    )
+    got = collect_published_ports(tmp_path, runner=_no_docker)
+    assert got["source"] == "file"
+    pairs = {(p["service"], p["host_ip"], p["published"]) for p in got["ports"]}
+    assert ("postgres", "127.0.0.1", "5432") in pairs
+    assert ("postgres", "0.0.0.0", "5433") in pairs  # override khong bi bo sot
+    assert ("grafana", None, "3000") in pairs
+    r = run(lambda f: f.__setitem__("published_ports", got))
+    assert status_of(r, "published_ports") == FAIL
+
+
+def test_collect_ports_khong_compose_khong_file_bo_qua(tmp_path):
+    got = collect_published_ports(tmp_path, runner=_no_docker)
+    assert got.get("skip")
+
+
+def test_collect_ports_qua_compose_config_json(tmp_path):
+    payload = json.dumps(
+        {"services": {"postgres": {"ports": [{"host_ip": "127.0.0.1", "published": "5432", "target": 5432}]}, "engine": {}}}
+    )
+    got = collect_published_ports(tmp_path, runner=lambda cmd: (0, payload, ""))
+    assert got["source"] == "compose"
+    assert got["ports"] == [{"service": "postgres", "host_ip": "127.0.0.1", "published": "5432", "target": 5432}]

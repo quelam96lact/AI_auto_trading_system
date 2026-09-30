@@ -159,7 +159,7 @@ def test_main_dry_run_silent_on_valid_dir(tmp_path):
 
     with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
         code = main(
-            ["--dry-run", "--backup-dir", str(tmp_path), "--min-size-mb", "80.0"]
+            ["--dry-run", "--backup-dir", str(tmp_path), "--min-size-mb", "80.0", "--no-orderbook"]
         )
         assert code == 0
 
@@ -254,3 +254,138 @@ def test_default_backup_dir_doc_tu_TRADING_BACKUP_DIR(monkeypatch):
     monkeypatch.delenv("TRADING_BACKUP_DIR", raising=False)
     importlib.reload(m)
     assert m.DEFAULT_BACKUP_DIR == "/var/backups/trading-db"
+
+
+# ---------------------------------------------------------------------------
+# Dot 135: ban sao luu SO LENH (orderbook_*.tar.gz) — tuoi theo LICH GIAO DICH.
+# ---------------------------------------------------------------------------
+import tarfile
+from datetime import date, datetime
+
+from scripts.backup_check import (
+    check_orderbook_tar,
+    evaluate_orderbook_backup,
+)
+from trading.calendar_vn import TZ, previous_trading_day
+
+HOLS = frozenset({date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)})
+
+
+def _ts(y, m, d, hh, mm):
+    return datetime(y, m, d, hh, mm, tzinfo=TZ).timestamp()
+
+
+def _ob(mtime):
+    return BackupFileInfo(
+        name="orderbook_x.tar.gz", path="/b/orderbook_x.tar.gz", size_bytes=1, mtime=mtime
+    )
+
+
+def _eval(now, latest, integrity="OK", holidays=HOLS):
+    return evaluate_orderbook_backup(
+        latest_file=latest,
+        integrity_status=integrity,
+        now=now,
+        holidays=holidays,
+        backup_dir="/b",
+    )
+
+
+def test_previous_trading_day_khong_gom_chinh_ngay_d():
+    """Chung minh ham tra ngay TRUOC d: thu Hai 28/09 -> thu Sau 25/09, khong phai 28/09."""
+    assert previous_trading_day(date(2026, 9, 28), HOLS) == date(2026, 9, 25)
+    assert previous_trading_day(date(2026, 9, 29), HOLS) == date(2026, 9, 28)
+    # sau ky nghi 31/08-02/09: 03/09 -> thu Sau 28/08
+    assert previous_trading_day(date(2026, 9, 3), HOLS) == date(2026, 8, 28)
+
+
+def test_lich_thu_ba_03h_ban_thu_ba_0230_IM():
+    now = datetime(2026, 9, 29, 3, 0, tzinfo=TZ)
+    assert _eval(now, _ob(_ts(2026, 9, 29, 2, 30))) == []
+
+
+def test_lich_chu_nhat_03h_ban_thu_bay_0230_IM():
+    now = datetime(2026, 9, 27, 3, 0, tzinfo=TZ)
+    assert _eval(now, _ob(_ts(2026, 9, 26, 2, 30))) == []
+
+
+def test_lich_thu_hai_03h_ban_thu_bay_0230_IM():
+    """Dong QUAN TRONG NHAT: ban 48,5 gio tuoi van la dung, khong duoc bao oan."""
+    now = datetime(2026, 9, 28, 3, 0, tzinfo=TZ)
+    assert _eval(now, _ob(_ts(2026, 9, 26, 2, 30))) == []
+
+
+def test_lich_sau_ky_nghi_dai_IM():
+    now = datetime(2026, 9, 3, 3, 0, tzinfo=TZ)
+    assert _eval(now, _ob(_ts(2026, 8, 29, 2, 30))) == []
+
+
+def test_job_thu_bay_hong_PHAI_bao_va_neu_ngay_D():
+    """Thu Hai 03:00, job thu Bay hong -> ban moi nhat la thu Sau 02:30 (truoc 14:46) -> bao."""
+    now = datetime(2026, 9, 28, 3, 0, tzinfo=TZ)
+    alerts = _eval(now, _ob(_ts(2026, 9, 25, 2, 30)))
+    assert len(alerts) == 1
+    assert "2026-09-25" in alerts[0]
+    assert "[CRITICAL]" in alerts[0]
+
+
+def test_khong_co_ban_so_lenh_nao_PHAI_bao():
+    alerts = _eval(datetime(2026, 9, 29, 3, 0, tzinfo=TZ), None)
+    assert len(alerts) == 1
+    assert "sổ lệnh" in alerts[0]
+
+
+def test_ban_so_lenh_hong_toan_ven_PHAI_bao():
+    now = datetime(2026, 9, 29, 3, 0, tzinfo=TZ)
+    alerts = _eval(now, _ob(_ts(2026, 9, 29, 2, 30)), integrity="FAIL: 0 file")
+    assert len(alerts) == 1
+    assert "0 file" in alerts[0]
+
+
+def test_ban_so_lenh_nho_KHONG_bi_bao_vi_kich_thuoc():
+    """Khong co nguong kich thuoc (orderbook-daily-check lo chat luong du lieu)."""
+    now = datetime(2026, 9, 29, 3, 0, tzinfo=TZ)
+    small = BackupFileInfo("orderbook_x.tar.gz", "/b/x", 10, _ts(2026, 9, 29, 2, 30))
+    assert _eval(now, small) == []
+
+
+def test_check_orderbook_tar_doc_duoc_va_dem_file(tmp_path):
+    src = tmp_path / "a.jsonl.gz"
+    src.write_bytes(b"x")
+    good = tmp_path / "orderbook_good.tar.gz"
+    with tarfile.open(good, "w:gz") as t:
+        t.add(src, arcname="data/orderbook/A/a.jsonl.gz")
+    assert check_orderbook_tar(good) == "OK"
+
+    empty = tmp_path / "orderbook_empty.tar.gz"
+    with tarfile.open(empty, "w:gz"):
+        pass
+    assert check_orderbook_tar(empty).startswith("FAIL")
+
+    bad = tmp_path / "orderbook_bad.tar.gz"
+    bad.write_bytes(b"khong phai tar")
+    assert check_orderbook_tar(bad).startswith("FAIL")
+
+
+def _dump(tmp_path):
+    f = tmp_path / "trading_20260929_020000.dump"
+    f.write_bytes(b"PGDMP" + b"\x00" * (90 * 1024 * 1024))
+
+
+def test_main_thu_muc_chi_co_dump_PHAI_bao_thieu_so_lenh(tmp_path, capsys):
+    _dump(tmp_path)
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        code = main(["--dry-run", "--backup-dir", str(tmp_path)])
+    assert code == 1
+    assert "sổ lệnh" in capsys.readouterr().out
+
+
+def test_main_co_ca_dump_va_ban_so_lenh_moi_thi_IM(tmp_path):
+    _dump(tmp_path)
+    src = tmp_path / "a.jsonl.gz"
+    src.write_bytes(b"x")
+    tar = tmp_path / "orderbook_20260929.tar.gz"
+    with tarfile.open(tar, "w:gz") as t:
+        t.add(src, arcname="data/orderbook/A/a.jsonl.gz")
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        assert main(["--dry-run", "--backup-dir", str(tmp_path)]) == 0

@@ -11,6 +11,14 @@ Mã thoát:
   0: Mọi thứ ổn (file tươi, đủ lớn, kiểm tra toàn vẹn đạt).
   1: Có cảnh báo và đã gửi thành công (hoặc in ra khi --dry-run).
   2: Sai cấu hình, lỗi hệ thống, hoặc cảnh báo cần gửi mà gửi hỏng.
+
+Đợt 135: canh cả bản sao lưu SỔ LỆNH (`orderbook_*.tar.gz` do `backup_orderbook.sh`
+sinh ra) — trước đó job đó hỏng thì không cảnh báo nào nổ. HAI LOẠI SAO LƯU CÓ HAI
+QUY TẮC KHÁC NHAU VÌ BẢN CHẤT KHÁC NHAU, đừng gộp lại:
+  - DB: dump MỖI ĐÊM kể cả cuối tuần -> ngưỡng tuổi cố định 23 giờ (xem dưới).
+  - Sổ lệnh: chỉ sinh ra vào NGÀY GIAO DỊCH, job chỉ tạo file khi có dữ liệu mới
+    -> tuổi hợp lệ dao động 0,5 giờ (thứ Ba) tới 48,5 giờ (thứ Hai) và hơn 8 ngày
+    sau kỳ nghỉ Tết. Không ngưỡng cố định nào đúng cả bốn; dùng LỊCH GIAO DỊCH.
 """
 
 from __future__ import annotations
@@ -20,12 +28,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import traceback
+from datetime import date, datetime
+from datetime import time as dtime
 from pathlib import Path
 from typing import NamedTuple
 
+import yaml
+
 from trading.alerts import _print_safe
+from trading.calendar_vn import TZ, previous_trading_day
 from trading.telegram import send_telegram
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -50,6 +64,12 @@ DEFAULT_BACKUP_DIR = os.environ.get("TRADING_BACKUP_DIR") or "/var/backups/tradi
 # Doi gio cua hai job thi phai tinh lai so nay.
 DEFAULT_MAX_AGE_HOURS = 23.0
 DEFAULT_MIN_SIZE_MB = 80.0
+
+
+# Phiên giao dịch kết thúc 14:46 giờ VN (recorder tự dừng lúc đó). Bản sao lưu sổ lệnh
+# hợp lệ phải được tạo SAU mốc này của ngày giao dịch gần nhất trước hôm nay.
+ORDERBOOK_SESSION_END = dtime(14, 46)
+DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
 
 
 class BackupFileInfo(NamedTuple):
@@ -114,6 +134,65 @@ def evaluate_backup_health(
         )
 
     return alerts
+
+
+def evaluate_orderbook_backup(
+    latest_file: BackupFileInfo | None,
+    integrity_status: str,
+    now: datetime,
+    holidays: frozenset[date] | set[date],
+    backup_dir: str = DEFAULT_BACKUP_DIR,
+) -> list[str]:
+    """Hàm thuần cho bản sao lưu SỔ LỆNH. Không có ngưỡng kích thước (cố ý).
+
+    Tuổi theo lịch: D = ngày giao dịch gần nhất TRƯỚC hôm nay (`previous_trading_day`
+    không gồm hôm nay). Bản mới nhất phải có mtime SAU khi phiên ngày D kết thúc
+    (14:46 giờ VN). Không kiểm kích thước: phiên mà bộ ghi chết sớm để lại file nhỏ
+    vẫn là bản sao lưu ĐÚNG của dữ liệu đã có; chất lượng dữ liệu là việc của
+    `orderbook-daily-check`, thêm ngưỡng ở đây sẽ báo trùng và báo oan.
+
+    integrity_status: "OK" hoặc "FAIL: <lý do>".
+    """
+    if latest_file is None:
+        return [f"[CRITICAL] Không tìm thấy bản sao lưu sổ lệnh (orderbook_*.tar.gz) nào trong {backup_dir}"]
+
+    alerts: list[str] = []
+    now = now.astimezone(TZ)
+    d = previous_trading_day(now.date(), frozenset(holidays))
+    cutoff = datetime.combine(d, ORDERBOOK_SESSION_END, tzinfo=TZ)
+    latest_dt = datetime.fromtimestamp(latest_file.mtime, tz=TZ)
+    if latest_dt <= cutoff:
+        age_hours = (now - latest_dt).total_seconds() / 3600.0
+        alerts.append(
+            f"[CRITICAL] Bản sao lưu sổ lệnh mới nhất ({latest_file.name}) quá cũ: {age_hours:.1f}h, "
+            f"được tạo trước khi phiên ngày giao dịch {d.isoformat()} kết thúc "
+            f"({cutoff.strftime('%Y-%m-%d %H:%M')}) — dữ liệu ngày {d.isoformat()} chưa được sao lưu"
+        )
+    if integrity_status != "OK":
+        alerts.append(f"[CRITICAL] Bản sao lưu sổ lệnh {latest_file.name} hỏng: {integrity_status}")
+    return alerts
+
+
+def check_orderbook_tar(file_path: Path) -> str:
+    """Đọc được và có > 0 file bên trong. "OK" hoặc "FAIL: <lý do>".
+
+    Dùng `tarfile` thay cho `tar -tzf`: cùng phép kiểm, không phụ thuộc `tar` trên PATH
+    và không dính lỗi `D:/...` bị `tar` hiểu là `host:path` trên Windows (đợt 134).
+    """
+    try:
+        with tarfile.open(file_path, "r:gz") as t:
+            n = sum(1 for _ in t)
+    except Exception as e:
+        return f"FAIL: {type(e).__name__}: {e}"
+    if n <= 0:
+        return "FAIL: archive không chứa file nào"
+    return "OK"
+
+
+def load_holidays(config_path: Path) -> frozenset[date]:
+    with open(config_path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    return frozenset(date.fromisoformat(str(h)) for h in (raw.get("holidays") or []))
 
 
 def check_pg_restore(file_path: Path) -> str:
@@ -188,6 +267,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="In cảnh báo ra stdout thay vì gửi Telegram",
     )
+    parser.add_argument(
+        "--no-orderbook",
+        action="store_true",
+        help="Bỏ kiểm bản sao lưu sổ lệnh (mặc định: có kiểm)",
+    )
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG),
+        help="config.yaml để đọc danh sách ngày lễ (kiểm sổ lệnh theo lịch giao dịch)",
+    )
     args = parser.parse_args(argv)
 
     backup_dir = Path(args.backup_dir)
@@ -241,6 +330,37 @@ def main(argv: list[str] | None = None) -> int:
                 max_age_hours=args.max_age_hours,
                 min_size_mb=args.min_size_mb,
             )
+
+    if not args.no_orderbook and backup_dir.is_dir():
+        try:
+            holidays = load_holidays(Path(args.config))
+        except Exception as e:
+            holidays = frozenset()
+            alerts.append(
+                f"[CRITICAL] Không đọc được ngày lễ từ {args.config} ({type(e).__name__}): "
+                "kiểm sổ lệnh chạy chỉ theo T2–T6, có thể báo oan sau kỳ nghỉ"
+            )
+        ob_files = [
+            f
+            for f in backup_dir.iterdir()
+            if f.is_file() and f.name.startswith("orderbook_") and f.name.endswith(".tar.gz")
+        ]
+        if ob_files:
+            latest_ob = max(ob_files, key=lambda f: f.stat().st_mtime)
+            st = latest_ob.stat()
+            ob_info: BackupFileInfo | None = BackupFileInfo(
+                latest_ob.name, str(latest_ob), st.st_size, st.st_mtime
+            )
+            integrity = check_orderbook_tar(latest_ob)
+        else:
+            ob_info, integrity = None, "OK"
+        alerts += evaluate_orderbook_backup(
+            latest_file=ob_info,
+            integrity_status=integrity,
+            now=datetime.now(TZ),
+            holidays=holidays,
+            backup_dir=str(backup_dir),
+        )
 
     if alerts:
         msg = "\n".join(alerts)

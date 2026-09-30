@@ -494,6 +494,9 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 # 11. Kiểm tra tính toàn vẹn và độ tươi của bản sao lưu DB (03:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC chạy sau job backup (02:00) ít nhất 30-60 phút để đảm bảo dump đã hoàn tất.
+# Đợt 135: job này cũng canh bản sao lưu SỔ LỆNH (orderbook_*.tar.gz). Tuổi hợp lệ theo LỊCH GIAO DỊCH
+# (bản mới nhất phải tạo sau 14:46 của ngày giao dịch gần nhất trước hôm nay), không dùng ngưỡng cố định:
+# thứ Hai 03:00 bản 48,5 giờ tuổi vẫn đúng. Bản sao lưu DB giữ ngưỡng 23 giờ (dump mỗi đêm).
 0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
 
 # 12. Sao lưu sổ lệnh data/orderbook/ TĂNG DẦN (02:30 hàng ngày, 24/7 — đợt 132)
@@ -968,7 +971,8 @@ sudo crontab -e
 
 **Chạy `host-preflight` ngay sau Bước 8, trước khi coi là xong** (đợt 133): nó kiểm các bước làm tay
 mà không gì khác kiểm (cron + `CRON_TZ`, `daemon.json`, logrotate, `chmod 600 .env` và không có ``,
-múi giờ, `ufw`, thư mục sao lưu, đĩa, cờ thực thi, đồng hồ). Đọc bảng: mọi dòng phải `ĐẠT`; dòng `BỎ QUA`
+múi giờ, `ufw`, thư mục sao lưu, đĩa, cờ thực thi, đồng hồ, và — đợt 135 — cổng Docker publish có bind
+`127.0.0.1` không, đọc thẳng từ `docker compose config` vì `ufw` không chi phối cổng Docker). Đọc bảng: mọi dòng phải `ĐẠT`; dòng `BỎ QUA`
 không phải `ĐẠT` — nó có nghĩa là công cụ không đo được, phải tự kiểm tay.
 ```bash
 cd /opt/trading && scripts/sched.sh host-preflight   # bảng in ra logs/host-preflight.log
