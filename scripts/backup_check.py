@@ -154,7 +154,9 @@ def evaluate_orderbook_backup(
     integrity_status: "OK" hoặc "FAIL: <lý do>".
     """
     if latest_file is None:
-        return [f"[CRITICAL] Không tìm thấy bản sao lưu sổ lệnh (orderbook_*.tar.gz) nào trong {backup_dir}"]
+        return [
+            f"[CRITICAL] Không tìm thấy bản sao lưu sổ lệnh (orderbook_*.tar.gz) nào trong {backup_dir}"
+        ]
 
     alerts: list[str] = []
     now = now.astimezone(TZ)
@@ -169,8 +171,34 @@ def evaluate_orderbook_backup(
             f"({cutoff.strftime('%Y-%m-%d %H:%M')}) — dữ liệu ngày {d.isoformat()} chưa được sao lưu"
         )
     if integrity_status != "OK":
-        alerts.append(f"[CRITICAL] Bản sao lưu sổ lệnh {latest_file.name} hỏng: {integrity_status}")
+        alerts.append(
+            f"[CRITICAL] Bản sao lưu sổ lệnh {latest_file.name} hỏng: {integrity_status}"
+        )
     return alerts
+
+
+def evaluate_counts_statement(
+    latest_file: BackupFileInfo | None, counts_size: int | None
+) -> list[str]:
+    """Bản sao lưu DB `.dump` mới nhất phải có bản kê số dòng `.counts` (đợt 138).
+
+    Chỉ kiểm TỒN TẠI và KHÁC RỖNG; nội dung là việc của `restore_drill.py` (phân tích ở cả hai
+    nơi là báo trùng). Lý do có phép kiểm này: `backup_db.sh` chỉ CẢNH BÁO rồi vẫn dump khi lập bản
+    kê lỗi (bản kê là công cụ kiểm, lỗi của nó không được giết bản sao lưu), nên ngoài diễn tập
+    Chủ nhật không gì khác nhìn `.counts` — thiếu sáu đêm liền cũng không ai biết.
+
+    Bản `.sql.gz` cũ (định dạng trước đợt 137) không bị đòi bản kê.
+    counts_size: kích thước byte của `.counts` cùng tên gốc, None nếu không có file.
+    """
+    if latest_file is None or not latest_file.name.endswith(".dump"):
+        return []
+    if not counts_size:
+        msg = (
+            f"[CRITICAL] Bản sao lưu {latest_file.name} không có bản kê số dòng — "
+            "diễn tập phục hồi Chủ nhật sẽ không kiểm được nó"
+        )
+        return [msg]
+    return []
 
 
 def check_orderbook_tar(file_path: Path) -> str:
@@ -273,6 +301,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Bỏ kiểm bản sao lưu sổ lệnh (mặc định: có kiểm)",
     )
     parser.add_argument(
+        "--no-counts",
+        action="store_true",
+        help="Bỏ kiểm bản kê số dòng .counts của bản dump DB (mặc định: có kiểm)",
+    )
+    parser.add_argument(
         "--config",
         default=str(DEFAULT_CONFIG),
         help="config.yaml để đọc danh sách ngày lễ (kiểm sổ lệnh theo lịch giao dịch)",
@@ -330,6 +363,12 @@ def main(argv: list[str] | None = None) -> int:
                 max_age_hours=args.max_age_hours,
                 min_size_mb=args.min_size_mb,
             )
+            if not args.no_counts:
+                counts_file = latest_p.with_suffix(".counts")
+                counts_size = (
+                    counts_file.stat().st_size if counts_file.is_file() else None
+                )
+                alerts += evaluate_counts_statement(latest_info, counts_size)
 
     if not args.no_orderbook and backup_dir.is_dir():
         try:
@@ -343,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         ob_files = [
             f
             for f in backup_dir.iterdir()
-            if f.is_file() and f.name.startswith("orderbook_") and f.name.endswith(".tar.gz")
+            if f.is_file()
+            and f.name.startswith("orderbook_")
+            and f.name.endswith(".tar.gz")
         ]
         if ob_files:
             latest_ob = max(ob_files, key=lambda f: f.stat().st_mtime)

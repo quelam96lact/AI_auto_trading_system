@@ -25,6 +25,7 @@ echo "$*" >> "$FAKE_LOG"
 case "$*" in
   *psql*)
     if [ "${FAKE_PSQL_RC:-0}" != 0 ]; then echo "psql boom" >&2; exit "$FAKE_PSQL_RC"; fi
+    if [ -n "${FAKE_PSQL_EMPTY:-}" ]; then exit 0; fi
     printf 'bars\\t100\\norders\\t5\\n'
     ;;
   *pg_dump*)
@@ -135,12 +136,34 @@ def test_xac_minh_pg_restore_hong_khong_con_dump_lan_ban_ke(tmp_path):
     assert _files(bak, ".counts") == []
 
 
-def test_lap_ban_ke_hong_thi_khong_pg_dump_va_khong_con_ban_ke_viet_do(tmp_path):
+def test_lap_ban_ke_loi_van_dump_canh_bao_khong_giet_ban_sao_luu(tmp_path):
+    """Brief 138: ban ke chi la cong cu KIEM ban sao luu; loi cua no khong duoc giet luon dump.
+    (Doi thanh loi cung o dot 137 da bi dao nguoc — test dot 137 cu doi hoi khong pg_dump.)
+    """
     bin_dir, bak, log = _setup(tmp_path)
     r = _run(tmp_path, bak, bin_dir, log, FAKE_PSQL_RC="1")
+    assert r.returncode == 0, r.stderr
+    assert len(_files(bak, ".dump")) == 1
+    assert _files(bak, ".counts") == [] and _files(bak, ".tmp") == []
+    assert "WARNING" in r.stderr
+    assert any("pg_dump" in ln for ln in _log_lines(log))
+
+
+def test_ban_ke_rong_van_dump_canh_bao_khong_de_lai_file_rong(tmp_path):
+    bin_dir, bak, log = _setup(tmp_path)
+    r = _run(tmp_path, bak, bin_dir, log, FAKE_PSQL_EMPTY="1")
+    assert r.returncode == 0, r.stderr
+    assert len(_files(bak, ".dump")) == 1
+    assert _files(bak, ".counts") == [] and _files(bak, ".tmp") == []
+    assert "WARNING" in r.stderr
+
+
+def test_ban_ke_loi_roi_dump_hong_van_thoat_khac_0_va_khong_con_ban_ke(tmp_path):
+    """Hai loi cung luc: dump hong van la loi cung."""
+    bin_dir, bak, log = _setup(tmp_path)
+    r = _run(tmp_path, bak, bin_dir, log, FAKE_PSQL_RC="1", FAKE_DUMP_RC="1")
     assert r.returncode != 0
     assert _files(bak, ".counts") == [] and _files(bak, ".tmp") == []
-    assert not any("pg_dump" in ln for ln in _log_lines(log))
 
 
 def test_ban_ke_cu_hon_han_giu_bi_xoa_ban_moi_thi_giu(tmp_path):

@@ -9,7 +9,8 @@
 # against the live database (the live one keeps growing: comparing against it made
 # a GOOD dump look 96.5% complete 18 hours later, brief dot 137). Rows can only be
 # added between the snapshot and pg_dump's own snapshot, so restored >= statement.
-# A statement without its dump is misleading junk: any failure removes it.
+# A statement without its dump is misleading junk: a dump/verify failure removes it. The
+# reverse does not hold: failing to build the statement only warns, the dump still runs.
 set -euo pipefail
 
 # TRADING_BACKUP_DIR (.env) truoc, roi moi den mac dinh Ubuntu. Tren Windows
@@ -43,12 +44,16 @@ SQL
 COUNTS_SQL="${COUNTS_SQL//$'\n'/ }"
 
 # Write to a temp file then rename: never leave a half-written statement behind.
-MSYS_NO_PATHCONV=1 docker compose exec -T postgres psql -U trading -d trading -At -F $'\t' -v ON_ERROR_STOP=1 -c "$COUNTS_SQL" | tr -d '\r' > "${COUNTS_FILE}.tmp"
-if [ ! -s "${COUNTS_FILE}.tmp" ]; then
-  echo "ERROR: row-count statement is empty (no tables listed)." >&2
-  exit 1
+# The statement is only a TOOL to check the backup, so a failure to build it must NEVER kill
+# the backup itself (brief dot 138): warn, leave no .counts, carry on with pg_dump. Whoever
+# notices is backup_check.py (a .dump without .counts -> CRITICAL) and the Sunday restore drill,
+# not this script's exit code. The `if` also keeps `set -e` / `pipefail` from aborting the file.
+if MSYS_NO_PATHCONV=1 docker compose exec -T postgres psql -U trading -d trading -At -F $'\t' -v ON_ERROR_STOP=1 -c "$COUNTS_SQL" | tr -d '\r' > "${COUNTS_FILE}.tmp" && [ -s "${COUNTS_FILE}.tmp" ]; then
+  mv "${COUNTS_FILE}.tmp" "$COUNTS_FILE"
+else
+  echo "WARNING: could not build the row-count statement (psql failed or listed no tables); continuing with the dump WITHOUT ${COUNTS_FILE}." >&2
+  rm -f "${COUNTS_FILE}.tmp"
 fi
-mv "${COUNTS_FILE}.tmp" "$COUNTS_FILE"
 
 # Dump inside container to avoid binary stream issues over shell pipe
 # MSYS_NO_PATHCONV=1 prevents Git Bash on Windows from rewriting /tmp to AppData/Local/Temp
@@ -72,7 +77,11 @@ if ! verify_dump "$OUT_FILE"; then
 fi
 
 BACKUP_OK=1
-echo "Backup written to ${OUT_FILE} ($(du -h "$OUT_FILE" | cut -f1)) + row-count statement ${COUNTS_FILE}"
+if [ -f "$COUNTS_FILE" ]; then
+  echo "Backup written to ${OUT_FILE} ($(du -h "$OUT_FILE" | cut -f1)) + row-count statement ${COUNTS_FILE}"
+else
+  echo "Backup written to ${OUT_FILE} ($(du -h "$OUT_FILE" | cut -f1)) WITHOUT a row-count statement (see WARNING above)"
+fi
 
 find "$BACKUP_DIR" \( -name 'trading_*.dump' -o -name 'trading_*.sql.gz' -o -name 'trading_*.counts' \) -mtime "+${RETENTION_DAYS}" -delete
 

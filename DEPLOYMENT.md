@@ -162,7 +162,7 @@ for the services themselves.
 > `restore-drill` (§9, Chủ nhật 04:00): phục hồi thật vào database nháp rồi đối chiếu **từng bảng** với
 > **bản kê số dòng `.counts` chụp lúc dump** (không phải với database đang sống — xem mô tả `backup_db.sh` dưới đây).
 
-`scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump`, `.sql.gz` và `.counts`). Ngay **trước** `pg_dump` nó ghi thêm **bản kê số dòng** `trading_<ts>.counts` cạnh file `.dump` (mỗi dòng `ten_bang<TAB>so_dong`, mọi bảng `public` liệt kê từ catalog); bản kê chỉ được giữ khi dump đã qua xác minh — dump hỏng thì bản kê bị xoá. `restore-drill` đối chiếu bản phục hồi với bản kê này (`phục_hồi >= bản_kê`, không dung sai). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
+`scripts/backup_db.sh` xuất dữ liệu TimescaleDB dạng custom archive (`-Fc`) bên trong container `postgres`, sao chép ra host bằng `docker compose cp`, kiểm tra tính toàn vẹn bằng `pg_restore -l`, và dọn dẹp các bản sao lưu cũ hơn 14 ngày (ghi đè bằng `BACKUP_RETENTION_DAYS`, phủ cả đuôi `.dump`, `.sql.gz` và `.counts`). Ngay **trước** `pg_dump` nó ghi thêm **bản kê số dòng** `trading_<ts>.counts` cạnh file `.dump` (mỗi dòng `ten_bang<TAB>so_dong`, mọi bảng `public` liệt kê từ catalog); bản kê chỉ được giữ khi dump đã qua xác minh — dump hỏng thì bản kê bị xoá. Ngược lại, **lập bản kê lỗi không được giết bản sao lưu** (đợt 138): script chỉ in `WARNING` ra stderr, không tạo `.counts`, rồi vẫn `pg_dump` và thoát 0; người báo là `backup-check` (dump `.dump` mới nhất thiếu hoặc có `.counts` rỗng → CRITICAL) và diễn tập Chủ nhật. `restore-drill` đối chiếu bản phục hồi với bản kê này (`phục_hồi >= bản_kê`, không dung sai). Được lên lịch qua `scripts/sched.sh` trên host để được cổng Docker và xoay log tự động (xem §9):
 
 ```bash
 chmod +x scripts/backup_db.sh
@@ -512,6 +512,8 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # Đợt 135: job này cũng canh bản sao lưu SỔ LỆNH (orderbook_*.tar.gz). Tuổi hợp lệ theo LỊCH GIAO DỊCH
 # (bản mới nhất phải tạo sau 14:46 của ngày giao dịch gần nhất trước hôm nay), không dùng ngưỡng cố định:
 # thứ Hai 03:00 bản 48,5 giờ tuổi vẫn đúng. Bản sao lưu DB giữ ngưỡng 23 giờ (dump mỗi đêm).
+# Đợt 138: bản dump DB `.dump` mới nhất phải có bản kê `.counts` (chỉ kiểm tồn tại và khác rỗng;
+# nội dung do `restore-drill` phán xử). `.sql.gz` cũ không bị đòi bản kê.
 0 3 * * * cd /opt/trading && scripts/sched.sh backup-check
 
 # 12. Sao lưu sổ lệnh data/orderbook/ TĂNG DẦN (02:30 hàng ngày, 24/7 — đợt 132)

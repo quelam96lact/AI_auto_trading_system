@@ -159,7 +159,15 @@ def test_main_dry_run_silent_on_valid_dir(tmp_path):
 
     with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
         code = main(
-            ["--dry-run", "--backup-dir", str(tmp_path), "--min-size-mb", "80.0", "--no-orderbook"]
+            [
+                "--dry-run",
+                "--backup-dir",
+                str(tmp_path),
+                "--min-size-mb",
+                "80.0",
+                "--no-orderbook",
+                "--no-counts",
+            ]
         )
         assert code == 0
 
@@ -233,6 +241,7 @@ def test_backup_vua_chay_xong_KHONG_bao_oan():
     )
     assert alerts == [], alerts
 
+
 def test_default_backup_dir_doc_tu_TRADING_BACKUP_DIR(monkeypatch):
     """Mặc định thư mục sao lưu phải đọc TRADING_BACKUP_DIR (.env) trước đường dẫn Ubuntu.
 
@@ -277,7 +286,10 @@ def _ts(y, m, d, hh, mm):
 
 def _ob(mtime):
     return BackupFileInfo(
-        name="orderbook_x.tar.gz", path="/b/orderbook_x.tar.gz", size_bytes=1, mtime=mtime
+        name="orderbook_x.tar.gz",
+        path="/b/orderbook_x.tar.gz",
+        size_bytes=1,
+        mtime=mtime,
     )
 
 
@@ -384,8 +396,98 @@ def test_main_co_ca_dump_va_ban_so_lenh_moi_thi_IM(tmp_path):
     _dump(tmp_path)
     src = tmp_path / "a.jsonl.gz"
     src.write_bytes(b"x")
+    (tmp_path / "trading_20260929_020000.counts").write_text(
+        "bars\t1\n", encoding="utf-8"
+    )
     tar = tmp_path / "orderbook_20260929.tar.gz"
     with tarfile.open(tar, "w:gz") as t:
         t.add(src, arcname="data/orderbook/A/a.jsonl.gz")
     with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
         assert main(["--dry-run", "--backup-dir", str(tmp_path)]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Dot 138: ban sao luu DB `.dump` moi nhat phai co ban ke `.counts` (ton tai, khac rong).
+# Chi kiem ton tai va khac rong — noi dung la viec cua restore_drill.py (lam hai lan la bao trung).
+# ---------------------------------------------------------------------------
+from scripts.backup_check import evaluate_counts_statement
+
+
+def _bf(name):
+    return BackupFileInfo(
+        name=name, path="/b/" + name, size_bytes=100 * 1024 * 1024, mtime=0.0
+    )
+
+
+def test_counts_dump_co_ban_ke_IM():
+    assert evaluate_counts_statement(_bf("trading_20260930_221525.dump"), 670) == []
+
+
+def test_counts_dump_thieu_ban_ke_BAO_neu_ten():
+    a = evaluate_counts_statement(_bf("trading_20260930_221525.dump"), None)
+    assert len(a) == 1
+    assert "[CRITICAL]" in a[0] and "trading_20260930_221525.dump" in a[0]
+    assert "bản kê" in a[0] and "Chủ nhật" in a[0]
+
+
+def test_counts_dump_ban_ke_rong_BAO():
+    assert len(evaluate_counts_statement(_bf("trading_20260930_221525.dump"), 0)) == 1
+
+
+def test_counts_sql_gz_cu_khong_co_ban_ke_IM():
+    """Dinh dang cu (truoc dot 137): khong dong hoi ban ke."""
+    assert evaluate_counts_statement(_bf("trading_20260920_020000.sql.gz"), None) == []
+
+
+def test_counts_khong_co_ban_sao_luu_nao_khong_bao_them():
+    assert evaluate_counts_statement(None, None) == []
+
+
+def _write_dump(d, stem="trading_20260930_221525"):
+    (d / f"{stem}.dump").write_bytes(b"PGDMP" + b"\x00" * (90 * 1024 * 1024))
+
+
+def test_main_dump_moi_thieu_ban_ke_PHAI_bao(tmp_path, capsys):
+    _write_dump(tmp_path)
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        code = main(["--dry-run", "--backup-dir", str(tmp_path), "--no-orderbook"])
+    assert code == 1
+    assert "bản kê" in capsys.readouterr().out
+
+
+def test_main_dump_moi_co_ban_ke_thi_IM(tmp_path):
+    _write_dump(tmp_path)
+    (tmp_path / "trading_20260930_221525.counts").write_text(
+        "bars\t1\n", encoding="utf-8"
+    )
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        assert main(["--dry-run", "--backup-dir", str(tmp_path), "--no-orderbook"]) == 0
+
+
+def test_main_ban_ke_rong_PHAI_bao(tmp_path):
+    _write_dump(tmp_path)
+    (tmp_path / "trading_20260930_221525.counts").write_text("", encoding="utf-8")
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        assert main(["--dry-run", "--backup-dir", str(tmp_path), "--no-orderbook"]) == 1
+
+
+def test_main_sql_gz_moi_nhat_khong_ban_ke_IM(tmp_path):
+    f = tmp_path / "trading_20260920_020000.sql.gz"
+    f.write_bytes(b"\x1f\x8b" + b"\x00" * (90 * 1024 * 1024))
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        assert main(["--dry-run", "--backup-dir", str(tmp_path), "--no-orderbook"]) == 0
+
+
+def test_main_ban_ke_cua_dump_CU_khong_cuu_dump_moi(tmp_path):
+    """Ban ke phai CUNG TEN GOC voi dump moi nhat, khong phai bat ky .counts nao."""
+    import os
+
+    old = tmp_path / "trading_20260929_020000.dump"
+    old.write_bytes(b"PGDMP" + b"\x00" * (90 * 1024 * 1024))
+    (tmp_path / "trading_20260929_020000.counts").write_text(
+        "bars\t1\n", encoding="utf-8"
+    )
+    os.utime(old, (1, 1))
+    _write_dump(tmp_path)  # moi nhat, khong co .counts
+    with patch("scripts.backup_check.check_pg_restore", return_value="OK"):
+        assert main(["--dry-run", "--backup-dir", str(tmp_path), "--no-orderbook"]) == 1
