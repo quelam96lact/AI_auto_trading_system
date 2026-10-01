@@ -996,13 +996,20 @@ sudo crontab -e
 ```
 
 **Chạy `host-preflight` ngay sau Bước 8, trước khi coi là xong** (đợt 133): nó kiểm các bước làm tay
-mà không gì khác kiểm (cron + `CRON_TZ`, `daemon.json`, logrotate, `chmod 600 .env` và không có ``,
-múi giờ, `ufw`, thư mục sao lưu, đĩa, cờ thực thi, đồng hồ, và — đợt 135 — cổng Docker publish có bind
-`127.0.0.1` không, đọc thẳng từ `docker compose config` vì `ufw` không chi phối cổng Docker). Đọc bảng: mọi dòng phải `ĐẠT`; dòng `BỎ QUA`
-không phải `ĐẠT` — nó có nghĩa là công cụ không đo được, phải tự kiểm tay.
+mà không gì khác kiểm (cron + `CRON_TZ`, `daemon.json`, logrotate, `chmod 600 .env` và không có ký tự CR,
+múi giờ, `ufw`, thư mục sao lưu, đĩa, cờ thực thi, đồng hồ; đợt 135: cổng Docker publish có bind
+`127.0.0.1` không, đọc thẳng từ `docker compose config` vì `ufw` không chi phối cổng Docker; đợt 139:
+cổng **đang nghe thật** qua `ss -ltnH`). Đọc bảng: mọi dòng phải `ĐẠT`; dòng `BỎ QUA` không phải `ĐẠT` —
+nó có nghĩa là công cụ không đo được, phải tự kiểm tay.
+
+**Chạy bằng `sudo`, đúng danh tính của cron** (đợt 139, đo thật trong container Ubuntu): cron §9 được cài
+bằng `sudo crontab -e`, tức crontab của **root**, nên job `host-preflight` chạy dưới root. Chạy tay không
+`sudo` thì `crontab -l` đọc crontab của tài khoản thường (rỗng) — công cụ sẽ ra `BỎ QUA` ở phép crontab và in
+cảnh báo "chạy dưới uid=..." ở cuối bảng; các phép phụ thuộc danh tính (crontab, thư mục sao lưu ghi được)
+chỉ khớp với lần chạy cron khi chạy dưới root.
 ```bash
-cd /opt/trading && scripts/sched.sh host-preflight   # bảng in ra logs/host-preflight.log
-uv run python scripts/host_preflight.py              # hoặc chạy trực tiếp để xem bảng
+cd /opt/trading && sudo scripts/sched.sh host-preflight   # bảng in ra logs/host-preflight.log
+sudo uv run python scripts/host_preflight.py              # hoặc chạy trực tiếp để xem bảng
 ```
 
 #### Bước 8b: Chứng minh cảnh báo Telegram tới nơi

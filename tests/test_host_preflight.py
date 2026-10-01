@@ -50,6 +50,7 @@ def good_facts() -> dict:
         "real_trading": {"found": True, "value": "false"},
         "clock": {"synced": True},
         "holidays_confirmed": {"found": True, "value": "2999-12-31"},
+        "published_listening": {"ss_text": "", "ports": [5432, 3000], "ports_source": "CLOSED_PORTS"},
         "published_ports": {
             "source": "compose",
             "ports": [
@@ -570,3 +571,270 @@ def test_collect_khong_co_config_bo_qua(tmp_path, capsys):
     main(["--repo", str(tmp_path), "--json"])
     row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "holidays_confirmed")
     assert row["status"] == SKIP
+
+
+# ---------------------------------------------------------------------------
+# Dot 139: cac ca bat duoc khi chay THAT trong container Linux duoi hai danh tinh (root / trader).
+# Chuoi dau ra THAT cua `crontab -l` / `sudo -n` lay tu container ubuntu:24.04:
+#   trader: `crontab -l`                       -> stderr "no crontab for trader", rc=1
+#   trader: `sudo -n crontab -l -u root` (khong sudoers) -> stderr "sudo: a password is required", rc=1
+# ---------------------------------------------------------------------------
+from scripts.host_preflight import (
+    collect_cron,
+    is_executable_mode,
+    render_table,
+)
+
+REAL_NO_CRONTAB = (1, "", "no crontab for trader\n")
+REAL_SUDO_DENIED = (1, "", "sudo: a password is required\n")
+
+
+def _runner(table):
+    def run_(cmd):
+        return table.get(tuple(cmd))
+
+    return run_
+
+
+CRON_CMD = ("crontab", "-l")
+SUDO_ROOT_CMD = ("sudo", "-n", "crontab", "-l", "-u", "root")
+
+
+def _cron_result(facts):
+    return next(x for x in evaluate({"cron": facts}, JOBS, today=TODAY) if x.key == "cron")
+
+
+def test_cron_root_doc_crontab_cua_chinh_no():
+    f = collect_cron(_runner({CRON_CMD: (0, CRON_OK, "")}), euid=0)
+    assert _cron_result(f).status == OK
+
+
+def test_cron_root_khong_co_crontab_van_HONG():
+    f = collect_cron(_runner({CRON_CMD: (1, "", "no crontab for root\n")}), euid=0)
+    assert _cron_result(f).status == FAIL
+
+
+def test_cron_tai_khoan_thuong_khong_co_crontab_khong_co_sudo_la_BO_QUA_khong_phai_HONG_oan():
+    """Phat hien that: chay tay nhu tai lieu day (khong sudo) -> crontab -l doc nham crontab cua
+    tai khoan thuong (rong) va bao HONG oan. Khong do duoc crontab cua root thi phai BO QUA."""
+    f = collect_cron(_runner({CRON_CMD: REAL_NO_CRONTAB, SUDO_ROOT_CMD: REAL_SUDO_DENIED}), euid=1001)
+    res = _cron_result(f)
+    assert res.status == SKIP
+    assert "root" in res.detail and "sudo" in res.detail
+
+
+def test_cron_tai_khoan_thuong_khong_co_lenh_sudo_cung_BO_QUA():
+    f = collect_cron(_runner({CRON_CMD: REAL_NO_CRONTAB}), euid=1001)  # sudo -> None (khong co)
+    assert _cron_result(f).status == SKIP
+
+
+def test_cron_tai_khoan_thuong_sudo_khong_mat_khau_doc_duoc_crontab_cua_root():
+    f = collect_cron(_runner({CRON_CMD: REAL_NO_CRONTAB, SUDO_ROOT_CMD: (0, CRON_OK, "")}), euid=1001)
+    res = _cron_result(f)
+    assert res.status == OK
+    assert "root" in res.detail
+
+
+def test_cron_tai_khoan_thuong_sudo_doc_duoc_nhung_thieu_job_van_HONG():
+    bad = CRON_OK.replace("sched.sh backup", "sched.sh xxx")
+    f = collect_cron(_runner({CRON_CMD: REAL_NO_CRONTAB, SUDO_ROOT_CMD: (0, bad, "")}), euid=1001)
+    assert _cron_result(f).status == FAIL
+
+
+def test_cron_tai_khoan_thuong_co_crontab_rieng_day_du_thi_dat_kem_ghi_chu():
+    f = collect_cron(_runner({CRON_CMD: (0, CRON_OK, ""), SUDO_ROOT_CMD: REAL_SUDO_DENIED}), euid=1001)
+    res = _cron_result(f)
+    assert res.status == OK
+    assert "không phải root" in res.detail
+
+
+def test_cron_khong_co_lenh_crontab_bo_qua():
+    assert _cron_result(collect_cron(_runner({}), euid=0)).status == SKIP
+
+
+def test_is_executable_mode_do_bit_khong_phu_thuoc_danh_tinh():
+    """Phat hien that: os.access(X_OK) cho mode 010 ra DAT duoi root nhung khong duoi chu so huu.
+    Do thang bit: co BAT KY bit x nao -> thuc thi duoc (root/cron chay duoc)."""
+    assert is_executable_mode(0o755) and is_executable_mode(0o100)
+    assert is_executable_mode(0o010) and is_executable_mode(0o001)
+    assert not is_executable_mode(0o644) and not is_executable_mode(0o000)
+
+
+def test_render_table_canh_bao_khi_khong_chay_duoi_root():
+    text = render_table(evaluate(good_facts(), JOBS, today=TODAY), euid=1001)
+    assert "uid=1001" in text and "root" in text and "sudo" in text
+
+
+def test_render_table_khong_canh_bao_khi_la_root_hoac_khong_ro():
+    results = evaluate(good_facts(), JOBS, today=TODAY)
+    assert "uid=" not in render_table(results, euid=0)
+    assert "uid=" not in render_table(results)
+
+
+def test_main_env_khong_doc_duoc_quyen_khong_chet_ma_BO_QUA(tmp_path, capsys, monkeypatch):
+    """Phat hien that: .env thuoc root mode 600, chay duoi trader -> PermissionError, cong cu chet
+    voi traceback. Phai thanh BO QUA kem ly do."""
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+    (repo / ".env").write_bytes(b"A=1\n")
+    real = Path.read_bytes
+
+    def deny(self):
+        if self.name == ".env":
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", deny)
+    rc = main(["--repo", str(repo), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "env_crlf")
+    assert row["status"] == SKIP and "quyền" in row["detail"]
+    assert rc in (0, 1)
+
+
+def test_main_sched_sh_khong_doc_duoc_thoat_2_khong_traceback(tmp_path, capsys, monkeypatch):
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+
+    def boom(_path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("scripts.host_preflight.sched_job_labels", boom)
+    assert main(["--repo", str(repo), "--json"]) == 2
+    assert "sched.sh" in capsys.readouterr().err
+
+
+def test_main_json_co_truong_euid(tmp_path, capsys):
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+    main(["--repo", str(repo), "--json"])
+    assert "euid" in json.loads(capsys.readouterr().out)
+
+
+# ---------------------------------------------------------------------------
+# Phep 14 (dot 139): cong DANG NGHE that (ss -ltnH). Chuoi dau ra THAT bat duoc trong container
+# ubuntu:24.04 (iproute2), khong tu bia dinh dang.
+# ---------------------------------------------------------------------------
+from scripts.host_preflight import listening_ports, parse_ss_listen
+
+SS_V4_ALL = "LISTEN 0      5      0.0.0.0:3000 0.0.0.0:*\n"
+SS_V4_LO = "LISTEN 0      5      127.0.0.1:3000 0.0.0.0:*\n"
+SS_V6_DUAL = "LISTEN 0      5      *:3000 *:*\n"  # http.server --bind ::  (dual-stack)
+SS_V6_LO = "LISTEN 0      5      [::1]:3000 [::]:*\n"
+SS_V6_ONLY = "LISTEN 0      5      [::]:3000 [::]:*\n"  # socket IPV6_V6ONLY bind ::
+SS_IFACE_LO = "LISTEN 0      5      127.0.0.53%lo:3000 0.0.0.0:*\n"  # nhu systemd-resolved
+SS_REAL_IP = "LISTEN 0      5      172.17.0.2:3000 0.0.0.0:*\n"
+SS_EXTRA_COL = 'LISTEN 0      5      0.0.0.0:3000 0.0.0.0:* users:(("python3",pid=3164,fd=3))\n'
+SS_NOTHING = ""
+
+
+def _pl(ss_text, ports=(5432, 3000), source="CLOSED_PORTS"):
+    facts = good_facts()
+    facts["published_listening"] = {"ss_text": ss_text, "ports": list(ports), "ports_source": source}
+    return next(x for x in evaluate(facts, JOBS, today=TODAY) if x.key == "published_listening")
+
+
+def test_ss_loopback_v4_dat():
+    assert _pl(SS_V4_LO).status == OK
+
+
+def test_ss_loopback_v6_ngoac_vuong_dat():
+    assert _pl(SS_V6_LO).status == OK
+
+
+def test_ss_iface_lo_van_la_loopback_dat():
+    assert _pl(SS_IFACE_LO).status == OK
+
+
+def test_ss_0_0_0_0_hong_nem_cong_va_dia_chi():
+    r = _pl(SS_V4_ALL)
+    assert r.status == FAIL
+    assert "3000" in r.detail and "0.0.0.0" in r.detail
+
+
+def test_ss_sao_dual_stack_hong():
+    r = _pl(SS_V6_DUAL)
+    assert r.status == FAIL and "*" in r.detail
+
+
+def test_ss_v6_moi_giao_dien_ngoac_vuong_hong():
+    """[::] khong phai loopback — pha thu coi no la loopback phai lam test nay do."""
+    r = _pl(SS_V6_ONLY)
+    assert r.status == FAIL and "::" in r.detail
+
+
+def test_ss_ip_that_hong():
+    r = _pl(SS_REAL_IP)
+    assert r.status == FAIL and "172.17.0.2" in r.detail
+
+
+def test_ss_co_cot_process_thua_van_phan_tich_dung():
+    assert _pl(SS_EXTRA_COL).status == FAIL
+
+
+def test_ss_khong_nghe_gi_dat_nhung_noi_thang_khong_co_tien_trinh():
+    r = _pl(SS_NOTHING)
+    assert r.status == OK
+    assert "không có tiến trình nào nghe" in r.detail and "container có đang chạy không" in r.detail
+
+
+def test_ss_chi_xet_cac_cong_cua_du_an_khong_xet_cong_khac():
+    other = "LISTEN 0      128    0.0.0.0:22 0.0.0.0:*\n"
+    assert _pl(other + SS_V4_LO).status == OK
+
+
+def test_ss_nhieu_dong_mot_loopback_mot_lo_ra_ngoai_van_hong():
+    r = _pl(SS_V4_LO + "LISTEN 0      5      0.0.0.0:5432 0.0.0.0:*\n")
+    assert r.status == FAIL and "5432" in r.detail
+
+
+def test_ss_khong_co_lenh_ss_bo_qua():
+    facts = good_facts()
+    facts["published_listening"] = {"skip": "không có lệnh ss trên hệ này"}
+    r = next(x for x in evaluate(facts, JOBS, today=TODAY) if x.key == "published_listening")
+    assert r.status == SKIP and "ss" in r.detail
+
+
+def test_parse_ss_listen_tach_dia_chi_va_cong():
+    text = SS_V4_ALL + SS_V6_LO + SS_V6_DUAL + SS_IFACE_LO + SS_EXTRA_COL + "rac khong phai dong LISTEN\n"
+    assert parse_ss_listen(text) == [
+        ("0.0.0.0", 3000),
+        ("::1", 3000),
+        ("*", 3000),
+        ("127.0.0.53", 3000),
+        ("0.0.0.0", 3000),
+    ]
+
+
+def test_listening_ports_lay_tu_phep_12_hoac_CLOSED_PORTS():
+    pub = {"source": "compose", "ports": [{"service": "postgres", "published": "5432", "target": 5432},
+                                           {"service": "nats-test", "published": "4223", "target": 4222}]}
+    assert listening_ports(pub) == ([4223, 5432], "các cổng publish của compose")
+    ports, src = listening_ports({"skip": "không đọc được"})
+    assert ports == [3000, 5432] and "CLOSED_PORTS" in src
+    assert listening_ports(None)[1].startswith("CLOSED_PORTS")
+
+
+def test_collect_ss_khong_phai_linux_bo_qua(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("scripts.host_preflight._is_linux", lambda: False)
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+    main(["--repo", str(repo), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "published_listening")
+    assert row["status"] == SKIP and "Linux" in row["detail"]
+
+
+def test_collect_ss_co_ss_chay_that_qua_runner_gia(tmp_path, capsys, monkeypatch):
+    repo = _repo_with_config(tmp_path, "real_trading_enabled: false\n")
+    (repo / "docker-compose.yml").write_text(
+        "services:\n  postgres:\n    ports: ['0.0.0.0:5432:5432']\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("scripts.host_preflight._is_linux", lambda: True)
+    real_run = __import__("scripts.host_preflight", fromlist=["_run"])._run
+
+    def fake_run(cmd):
+        if cmd[:2] == ["ss", "-ltnH"]:
+            return 0, "LISTEN 0      4096   0.0.0.0:5432 0.0.0.0:*\n", ""
+        if cmd[0] == "docker":
+            return None
+        return real_run(cmd)
+
+    monkeypatch.setattr("scripts.host_preflight._run", fake_run)
+    main(["--repo", str(repo), "--json"])
+    row = next(r for r in json.loads(capsys.readouterr().out)["results"] if r["key"] == "published_listening")
+    assert row["status"] == FAIL and "5432" in row["detail"]

@@ -21,6 +21,7 @@ Mã thoát: 0 không có HỎNG (kể cả toàn BỎ QUA — nhưng bảng cả
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -81,7 +82,12 @@ def _check_backup_dir(f: dict | None) -> Result:
         return r
     assert f is not None
     if not f.get("env_set"):
-        return Result(key, name, FAIL, "biến TRADING_BACKUP_DIR chưa có trong môi trường (chạy qua scripts/sched.sh để nạp .env)")
+        return Result(
+            key,
+            name,
+            FAIL,
+            "biến TRADING_BACKUP_DIR chưa có trong môi trường (chạy qua scripts/sched.sh để nạp .env)",
+        )
     if not f.get("exists"):
         return Result(key, name, FAIL, f"thư mục không tồn tại: {f.get('path')}")
     if not f.get("writable"):
@@ -90,7 +96,11 @@ def _check_backup_dir(f: dict | None) -> Result:
 
 
 def _cron_active_lines(text: str) -> list[str]:
-    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    return [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
 
 
 def _check_cron(f: dict | None, jobs: set[str]) -> Result:
@@ -99,9 +109,13 @@ def _check_cron(f: dict | None, jobs: set[str]) -> Result:
         return r
     assert f is not None
     if f.get("rc") != 0:
-        return Result(key, name, FAIL, "người dùng chưa có crontab (crontab -l thất bại)")
+        return Result(
+            key, name, FAIL, "người dùng chưa có crontab (crontab -l thất bại)"
+        )
     lines = _cron_active_lines(str(f.get("text", "")))
-    present = {m for ln in lines for m in re.findall(r"sched\.sh\s+([a-zA-Z0-9_-]+)", ln)}
+    present = {
+        m for ln in lines for m in re.findall(r"sched\.sh\s+([a-zA-Z0-9_-]+)", ln)
+    }
     problems = []
     missing = sorted(jobs - present)
     if missing:
@@ -110,11 +124,17 @@ def _check_cron(f: dict | None, jobs: set[str]) -> Result:
         problems.append(f"thiếu dòng CRON_TZ={TZ}")
     if problems:
         return Result(key, name, FAIL, "; ".join(problems))
-    return Result(key, name, OK, f"đủ {len(jobs)} job và CRON_TZ")
+    src = f.get("source")
+    return Result(
+        key, name, OK, f"đủ {len(jobs)} job và CRON_TZ" + (f" ({src})" if src else "")
+    )
 
 
 def _check_docker_daemon(f: dict | None) -> Result:
-    key, name = "docker_daemon", "/etc/docker/daemon.json giới hạn log (max-size, max-file)"
+    key, name = (
+        "docker_daemon",
+        "/etc/docker/daemon.json giới hạn log (max-size, max-file)",
+    )
     if (r := _skip(key, name, f)) is not None:
         return r
     assert f is not None
@@ -127,7 +147,9 @@ def _check_docker_daemon(f: dict | None) -> Result:
     missing = [k for k in ("max-size", "max-file") if k not in opts]
     if missing:
         return Result(key, name, FAIL, f"log-opts thiếu: {', '.join(missing)}")
-    return Result(key, name, OK, f"max-size={opts['max-size']}, max-file={opts['max-file']}")
+    return Result(
+        key, name, OK, f"max-size={opts['max-size']}, max-file={opts['max-file']}"
+    )
 
 
 def _check_logrotate(f: dict | None) -> Result:
@@ -162,7 +184,9 @@ def _check_env_crlf(f: dict | None) -> Result:
         return Result(key, name, FAIL, "không tìm thấy .env")
     n = int(f.get("cr_count", 0))
     if n:
-        return Result(key, name, FAIL, f"{n} ký tự \\r (mọi giá trị, kể cả token, dính \\r)")
+        return Result(
+            key, name, FAIL, f"{n} ký tự \\r (mọi giá trị, kể cả token, dính \\r)"
+        )
     return Result(key, name, OK, "0 ký tự \\r")
 
 
@@ -193,8 +217,15 @@ def _check_ufw(f: dict | None) -> Result:
         if head and int(head.group(1)) in CLOSED_PORTS:
             opened.append(head.group(1))
     if opened:
-        return Result(key, name, FAIL, f"cổng mở cho mọi nguồn: {', '.join(sorted(set(opened)))}. {UFW_NOTE}")
-    return Result(key, name, OK, f"active, không cổng cấm nào mở cho mọi nguồn. {UFW_NOTE}")
+        return Result(
+            key,
+            name,
+            FAIL,
+            f"cổng mở cho mọi nguồn: {', '.join(sorted(set(opened)))}. {UFW_NOTE}",
+        )
+    return Result(
+        key, name, OK, f"active, không cổng cấm nào mở cho mọi nguồn. {UFW_NOTE}"
+    )
 
 
 def _check_published_ports(f: dict | None) -> Result:
@@ -214,7 +245,74 @@ def _check_published_ports(f: dict | None) -> Result:
     ]
     if bad:
         return Result(key, name, FAIL, f"cổng lộ ra ngoài: {', '.join(bad)} ({src})")
-    return Result(key, name, OK, f"{len(f.get('ports', []))} cổng, tất cả bind loopback ({src})")
+    return Result(
+        key, name, OK, f"{len(f.get('ports', []))} cổng, tất cả bind loopback ({src})"
+    )
+
+
+def parse_ss_listen(text: str) -> list[tuple[str, int]]:
+    """Đầu ra THẬT của `ss -ltnH` (đã bắt trong container Linux, đợt 139) -> [(địa chỉ, cổng)].
+
+    Dạng thật: `0.0.0.0:3000`, `127.0.0.1:3000`, `*:3000` (dual-stack), `[::]:3000`, `[::1]:3000`,
+    `127.0.0.53%lo:3000`, `172.17.0.2:3000`, và có thể có cột Process thừa (`users:((...))`).
+    Địa chỉ đứng ở cột thứ 4; ngoặc vuông và hậu tố `%iface` được bỏ."""
+    out: list[tuple[str, int]] = []
+    for ln in text.splitlines():
+        parts = ln.split()
+        if len(parts) < 5 or parts[0] != "LISTEN":
+            continue
+        addr, _, port = parts[3].rpartition(":")
+        if not port.isdigit():
+            continue
+        out.append((addr.strip("[]").split("%", 1)[0], int(port)))
+    return out
+
+
+def _is_loopback(addr: str) -> bool:
+    """`*`, `::`, `0.0.0.0` và mọi thứ không phân tích được đều KHÔNG phải loopback."""
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False
+
+
+def listening_ports(published: dict | None) -> tuple[list[int], str]:
+    """Cổng cần xét: các cổng publish mà phép 12 đọc được; phép 12 BỎ QUA thì dùng CLOSED_PORTS."""
+    if published and "skip" not in published:
+        ports = sorted(
+            {int(p.get("published") or p.get("target")) for p in published.get("ports", []) if p.get("published") or p.get("target")}
+        )
+        if ports:
+            return ports, "các cổng publish của compose"
+    return sorted(CLOSED_PORTS), "CLOSED_PORTS (phép 12 không đọc được cổng publish)"
+
+
+def _check_published_listening(f: dict | None) -> Result:
+    """Cổng ĐANG NGHE thật. Kiểm LỘ CỔNG, không kiểm sống/chết (đã có `container-health`).
+
+    Phép 12 chỉ đọc CẤU HÌNH compose; container chưa tạo lại theo compose mới, hoặc một Postgres cài
+    thẳng trên host, lọt qua phép 12 — phép này nhìn socket thật."""
+    key, name = "published_listening", "cổng đang nghe thật (ss -ltnH) không lộ ra ngoài loopback"
+    if (r := _skip(key, name, f)) is not None:
+        return r
+    assert f is not None
+    ports = set(f.get("ports", []))
+    listening = [(a, p) for a, p in parse_ss_listen(str(f.get("ss_text", ""))) if p in ports]
+    exposed = [(a, p) for a, p in listening if not _is_loopback(a)]
+    if exposed:
+        detail = ", ".join(f"{p} trên {a}" for a, p in sorted(exposed, key=lambda x: x[1]))
+        return Result(key, name, FAIL, f"cổng đang nghe NGOÀI loopback: {detail}")
+    if not listening:
+        return Result(
+            key,
+            name,
+            OK,
+            f"không có tiến trình nào nghe trên các cổng {sorted(ports)} — container có đang chạy không? "
+            "(phép này kiểm lộ cổng, không kiểm sống/chết; xem container-health)",
+        )
+    return Result(
+        key, name, OK, "đang nghe chỉ trên loopback: " + ", ".join(f"{p} ({a})" for a, p in sorted(listening, key=lambda x: x[1]))
+    )
 
 
 def _check_holidays_confirmed(f: dict | None, today: date) -> Result:
@@ -222,17 +320,30 @@ def _check_holidays_confirmed(f: dict | None, today: date) -> Result:
 
     KHÔNG đo bằng max(holidays): max hiện là 2027-09-02 nên phép kiểm kiểu "danh sách có vươn
     tới 60 ngày nữa không" sẽ ĐẠT trong khi Tết 2027 vẫn khuyết (đèn xanh giả)."""
-    key, name = "holidays_confirmed", f"lịch nghỉ được xác nhận tới ≥ hôm nay + {HOLIDAYS_MIN_DAYS} ngày"
+    key, name = (
+        "holidays_confirmed",
+        f"lịch nghỉ được xác nhận tới ≥ hôm nay + {HOLIDAYS_MIN_DAYS} ngày",
+    )
     if (r := _skip(key, name, f)) is not None:
         return r
     assert f is not None
     if not f.get("found"):
-        return Result(key, name, FAIL, "config/config.yaml thiếu khoá holidays_confirmed_through (chủ dự án điền)")
+        return Result(
+            key,
+            name,
+            FAIL,
+            "config/config.yaml thiếu khoá holidays_confirmed_through (chủ dự án điền)",
+        )
     raw = str(f.get("value"))
     try:
         confirmed = date.fromisoformat(raw)
     except ValueError:
-        return Result(key, name, FAIL, f"holidays_confirmed_through={raw!r} không phải ngày YYYY-MM-DD")
+        return Result(
+            key,
+            name,
+            FAIL,
+            f"holidays_confirmed_through={raw!r} không phải ngày YYYY-MM-DD",
+        )
     remaining = (confirmed - today).days
     if confirmed < today + timedelta(days=HOLIDAYS_MIN_DAYS):
         return Result(
@@ -243,11 +354,16 @@ def _check_holidays_confirmed(f: dict | None, today: date) -> Result:
             f"(cần ≥ {HOLIDAYS_MIN_DAYS}): cập nhật `holidays` và `holidays_confirmed_through` "
             "trong config/config.yaml theo thông báo của Chính phủ",
         )
-    return Result(key, name, OK, f"xác nhận tới {confirmed.isoformat()}, còn {remaining} ngày")
+    return Result(
+        key, name, OK, f"xác nhận tới {confirmed.isoformat()}, còn {remaining} ngày"
+    )
 
 
 def _check_disk(f: dict | None, min_free_gb: float, min_total_gb: float) -> Result:
-    key, name = "disk", f"đĩa: trống ≥ {min_free_gb:.0f} GB và tổng ≥ {min_total_gb:.0f} GB"
+    key, name = (
+        "disk",
+        f"đĩa: trống ≥ {min_free_gb:.0f} GB và tổng ≥ {min_total_gb:.0f} GB",
+    )
     if (r := _skip(key, name, f)) is not None:
         return r
     assert f is not None
@@ -257,7 +373,9 @@ def _check_disk(f: dict | None, min_free_gb: float, min_total_gb: float) -> Resu
     if free < min_free_gb:
         problems.append(f"còn trống {free:.1f} GB")
     if total < min_total_gb:
-        problems.append(f"tổng {total:.1f} GB (VPS tối thiểu ~{min_total_gb:.0f} GB, xem §7)")
+        problems.append(
+            f"tổng {total:.1f} GB (VPS tối thiểu ~{min_total_gb:.0f} GB, xem §7)"
+        )
     if problems:
         return Result(key, name, FAIL, "; ".join(problems))
     return Result(key, name, OK, f"trống {free:.1f} GB / tổng {total:.1f} GB")
@@ -322,6 +440,7 @@ def evaluate(
         _check_clock(facts.get("clock")),
         _check_published_ports(facts.get("published_ports")),
         _check_holidays_confirmed(facts.get("holidays_confirmed"), today),
+        _check_published_listening(facts.get("published_listening")),
     ]
 
 
@@ -397,7 +516,9 @@ def collect_published_ports(repo: Path, runner=None) -> dict:
     runner = runner or _run
     ports: list[dict] = []
     try:
-        res = runner(["docker", "compose", "--profile", "*", "config", "--format", "json"])
+        res = runner(
+            ["docker", "compose", "--profile", "*", "config", "--format", "json"]
+        )
         if res is not None and res[0] == 0:
             services = json.loads(res[1]).get("services", {})
             for svc, cfg in services.items():
@@ -416,11 +537,17 @@ def collect_published_ports(repo: Path, runner=None) -> dict:
 
     files = [
         repo / n
-        for n in ("docker-compose.yml", "docker-compose.override.yml", "docker-compose.override.yaml")
+        for n in (
+            "docker-compose.yml",
+            "docker-compose.override.yml",
+            "docker-compose.override.yaml",
+        )
         if (repo / n).is_file()
     ]
     if not files:
-        return {"skip": "không gọi được docker compose và không có file docker-compose*.yml để đọc"}
+        return {
+            "skip": "không gọi được docker compose và không có file docker-compose*.yml để đọc"
+        }
     try:
         for fp in files:
             data = yaml.safe_load(fp.read_text(encoding="utf-8")) or {}
@@ -437,10 +564,59 @@ def collect_published_ports(repo: Path, runner=None) -> dict:
                         )
                     else:
                         ip, pub, tgt = parse_port_spec(str(p))
-                        ports.append({"service": svc, "host_ip": ip, "published": pub, "target": tgt})
+                        ports.append(
+                            {
+                                "service": svc,
+                                "host_ip": ip,
+                                "published": pub,
+                                "target": tgt,
+                            }
+                        )
     except Exception as e:
-        return {"skip": f"không gọi được docker compose và không đọc được file compose: {type(e).__name__}"}
+        return {
+            "skip": f"không gọi được docker compose và không đọc được file compose: {type(e).__name__}"
+        }
     return {"source": "file", "ports": ports}
+
+
+def _euid() -> int | None:
+    return os.geteuid() if hasattr(os, "geteuid") else None
+
+
+def is_executable_mode(mode: int) -> bool:
+    """Có BẤT KỲ bit x nào -> thực thi được (root/cron chạy được). Đo bit chứ không dùng
+    `os.access(X_OK)`: hàm đó phụ thuộc danh tính (mode 010: root ĐẠT, chủ sở hữu thì không), nên lần
+    chạy tay và lần chạy cron cho hai kết quả khác nhau (đo thật đợt 139)."""
+    return bool(mode & 0o111)
+
+
+def collect_cron(runner=None, euid: int | None = None) -> dict:
+    """Crontab mà cron §9 thật sự dùng: của ROOT (DEPLOYMENT.md cài bằng `sudo crontab -e`).
+
+    `crontab -l` chỉ đọc crontab của TÀI KHOẢN ĐANG CHẠY nên chạy tay như tài liệu dạy (không sudo) sẽ
+    đọc nhầm crontab rỗng và báo HỎNG oan (đo thật đợt 139: `no crontab for trader`, exit 1). Không phải
+    root thì thử `sudo -n crontab -l -u root`; không đọc được thì BỎ QUA kèm cách chạy lại, không HỎNG."""
+    runner = runner or _run
+    own = runner(["crontab", "-l"])
+    if own is None:
+        return {"skip": "không có lệnh crontab trên hệ này"}
+    if euid in (0, None):
+        return {"rc": own[0], "text": own[1]}
+    via_sudo = runner(["sudo", "-n", "crontab", "-l", "-u", "root"])
+    if via_sudo is not None and via_sudo[0] == 0:
+        return {"rc": 0, "text": via_sudo[1], "source": "crontab của root, đọc qua sudo -n"}
+    if own[0] == 0:
+        return {
+            "rc": 0,
+            "text": own[1],
+            "source": "crontab của tài khoản này, không phải root — cron §9 cài ở crontab của root",
+        }
+    return {
+        "skip": (
+            "tài khoản này không có crontab và không đọc được crontab của root (sudo -n không khả dụng); "
+            "cron §9 cài ở crontab của root (`sudo crontab -e`) — chạy lại bằng `sudo scripts/sched.sh host-preflight`"
+        )
+    }
 
 
 def collect_facts(repo: Path) -> dict:
@@ -457,23 +633,28 @@ def collect_facts(repo: Path) -> dict:
     }
 
     # 2. crontab
-    res = _run(["crontab", "-l"])
-    facts["cron"] = {"skip": "không có lệnh crontab trên hệ này"} if res is None else {"rc": res[0], "text": res[1]}
+    facts["cron"] = collect_cron(euid=_euid())
 
     # 3. daemon.json / 4. logrotate
     if not linux:
-        facts["docker_daemon"] = {"skip": "không phải Linux (daemon.json của máy chủ nằm ở /etc/docker)"}
+        facts["docker_daemon"] = {
+            "skip": "không phải Linux (daemon.json của máy chủ nằm ở /etc/docker)"
+        }
         facts["logrotate"] = {"skip": "không phải Linux (không có logrotate)"}
     else:
         try:
             facts["docker_daemon"] = {
                 "exists": True,
-                "data": json.loads(Path("/etc/docker/daemon.json").read_text(encoding="utf-8")),
+                "data": json.loads(
+                    Path("/etc/docker/daemon.json").read_text(encoding="utf-8")
+                ),
             }
         except FileNotFoundError:
             facts["docker_daemon"] = {"exists": False}
         except PermissionError:
-            facts["docker_daemon"] = {"skip": "không đọc được /etc/docker/daemon.json (quyền)"}
+            facts["docker_daemon"] = {
+                "skip": "không đọc được /etc/docker/daemon.json (quyền)"
+            }
         except ValueError:
             facts["docker_daemon"] = {"exists": True, "data": None}
         facts["logrotate"] = {"exists": Path("/etc/logrotate.d/trading").exists()}
@@ -489,22 +670,37 @@ def collect_facts(repo: Path) -> dict:
             if linux
             else {"skip": "không phải Linux (Windows không có mode 600)"}
         )
-        facts["env_crlf"] = {"exists": True, "cr_count": env.read_bytes().count(b"\r")}
+        try:
+            facts["env_crlf"] = {"exists": True, "cr_count": env.read_bytes().count(b"\r")}
+        except PermissionError:
+            facts["env_crlf"] = {
+                "skip": "không đọc được .env (quyền): chạy lại bằng tài khoản sở hữu nó hoặc bằng sudo"
+            }
 
     # 6. múi giờ / 11. đồng hồ
     tz = _timedatectl("Timezone")
     if tz is None and linux and Path("/etc/timezone").is_file():
         tz = Path("/etc/timezone").read_text(encoding="utf-8").strip()
-    facts["timezone"] = {"value": tz} if tz else {"skip": "không có timedatectl hay /etc/timezone trên hệ này"}
+    facts["timezone"] = (
+        {"value": tz}
+        if tz
+        else {"skip": "không có timedatectl hay /etc/timezone trên hệ này"}
+    )
     synced = _timedatectl("NTPSynchronized")
-    facts["clock"] = {"synced": synced == "yes"} if synced else {"skip": "không có timedatectl trên hệ này"}
+    facts["clock"] = (
+        {"synced": synced == "yes"}
+        if synced
+        else {"skip": "không có timedatectl trên hệ này"}
+    )
 
     # 7. ufw
     res = _run(["ufw", "status"])
     if res is None:
         facts["ufw"] = {"skip": "không có ufw trên hệ này"}
     elif res[0] != 0:
-        facts["ufw"] = {"skip": f"ufw status không chạy được (thường cần root): {res[2].strip()[:80]}"}
+        facts["ufw"] = {
+            "skip": f"ufw status không chạy được (thường cần root): {res[2].strip()[:80]}"
+        }
     else:
         facts["ufw"] = {"text": res[1]}
 
@@ -517,17 +713,29 @@ def collect_facts(repo: Path) -> dict:
 
     # 9. cờ thực thi
     if not linux:
-        facts["exec_flags"] = {"skip": "không phải Linux (Windows không có bit thực thi)"}
-    else:
-        files = sorted((repo / "scripts").glob("*.sh")) + [repo / ".githooks" / "pre-push"]
         facts["exec_flags"] = {
-            "nonexec": [str(p.relative_to(repo)) for p in files if p.exists() and not os.access(p, os.X_OK)]
+            "skip": "không phải Linux (Windows không có bit thực thi)"
+        }
+    else:
+        files = sorted((repo / "scripts").glob("*.sh")) + [
+            repo / ".githooks" / "pre-push"
+        ]
+        facts["exec_flags"] = {
+            "nonexec": [
+                str(p.relative_to(repo))
+                for p in files
+                if p.exists() and not is_executable_mode(p.stat().st_mode)
+            ]
         }
 
     # 10. real_trading_enabled
     cfg = repo / "config" / "config.yaml"
     try:
-        m = re.search(r"^real_trading_enabled:\s*([A-Za-z]+)", cfg.read_text(encoding="utf-8"), re.MULTILINE)
+        m = re.search(
+            r"^real_trading_enabled:\s*([A-Za-z]+)",
+            cfg.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
         facts["real_trading"] = {"found": bool(m), "value": m.group(1) if m else ""}
     except OSError as e:
         facts["real_trading"] = {"skip": f"không đọc được config/config.yaml: {e}"}
@@ -538,9 +746,14 @@ def collect_facts(repo: Path) -> dict:
         if not isinstance(raw_cfg, dict):
             raise TypeError("config.yaml không phải mapping")
         v = raw_cfg.get("holidays_confirmed_through")
-        facts["holidays_confirmed"] = {"found": v is not None, "value": "" if v is None else str(v)}
+        facts["holidays_confirmed"] = {
+            "found": v is not None,
+            "value": "" if v is None else str(v),
+        }
     except (OSError, TypeError, yaml.YAMLError) as e:
-        facts["holidays_confirmed"] = {"skip": f"không đọc được config/config.yaml: {e}"}
+        facts["holidays_confirmed"] = {
+            "skip": f"không đọc được config/config.yaml: {e}"
+        }
 
     # 12. cổng Docker publish (bỏ qua ufw): chạy compose trong repo
     cwd = os.getcwd()
@@ -550,10 +763,23 @@ def collect_facts(repo: Path) -> dict:
     finally:
         os.chdir(cwd)
 
+    # 14. cổng ĐANG NGHE thật (ss -ltnH), trên các cổng mà phép 12 đọc được
+    ports, ports_src = listening_ports(facts.get("published_ports"))
+    if not linux:
+        facts["published_listening"] = {"skip": "không phải Linux (ss -ltnH chỉ có trên Linux)"}
+    else:
+        ss = _run(["ss", "-ltnH"])
+        if ss is None:
+            facts["published_listening"] = {"skip": "không có lệnh ss trên hệ này"}
+        elif ss[0] != 0:
+            facts["published_listening"] = {"skip": f"ss -ltnH lỗi: {ss[2].strip()[:80]}"}
+        else:
+            facts["published_listening"] = {"ss_text": ss[1], "ports": ports, "ports_source": ports_src}
+
     return facts
 
 
-def render_table(results: list[Result]) -> str:
+def render_table(results: list[Result], euid: int | None = None) -> str:
     s = summarize(results)
     lines = [f"{'TRẠNG THÁI':<8} {'PHÉP KIỂM':<62} CHI TIẾT"]
     for r in results:
@@ -562,14 +788,26 @@ def render_table(results: list[Result]) -> str:
     lines.append("")
     lines.append(f"Tổng kết: {c[OK]} {OK}, {c[FAIL]} {FAIL}, {c[SKIP]} {SKIP}")
     if s["nothing_measured"]:
-        lines.append("CẢNH BÁO: KHÔNG KIỂM ĐƯỢC GÌ CẢ — toàn BỎ QUA. Đây KHÔNG phải kết quả tốt; chạy lại trên host thật.")
+        lines.append(
+            "CẢNH BÁO: KHÔNG KIỂM ĐƯỢC GÌ CẢ — toàn BỎ QUA. Đây KHÔNG phải kết quả tốt; chạy lại trên host thật."
+        )
     elif c[SKIP]:
-        lines.append(f"Lưu ý: {c[SKIP]} phép kiểm BỎ QUA chưa được xác nhận — không tính là {OK}.")
+        lines.append(
+            f"Lưu ý: {c[SKIP]} phép kiểm BỎ QUA chưa được xác nhận — không tính là {OK}."
+        )
+    if euid not in (None, 0):
+        lines.append(
+            f"Chạy dưới uid={euid} (không phải root). Cron §9 chạy dưới root: các phép phụ thuộc danh tính "
+            "(crontab, thư mục sao lưu ghi được) đo theo tài khoản này; chạy lại bằng "
+            "`sudo scripts/sched.sh host-preflight` để khớp với cron."
+        )
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Kiểm các bước làm tay trên host (chỉ đọc).")
+    parser = argparse.ArgumentParser(
+        description="Kiểm các bước làm tay trên host (chỉ đọc)."
+    )
     parser.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_GB)
     parser.add_argument("--min-total-gb", type=float, default=DEFAULT_MIN_TOTAL_GB)
@@ -581,13 +819,27 @@ def main(argv: list[str] | None = None) -> int:
     if not sched.is_file():
         print(f"LỖI CẤU HÌNH: không đọc được {sched}", file=sys.stderr)
         return 2
-    jobs = sched_job_labels(sched)
+    try:
+        jobs = sched_job_labels(sched)
+    except OSError as e:
+        print(f"LỖI CẤU HÌNH: không đọc được {sched}: {e}", file=sys.stderr)
+        return 2
+    euid = _euid()
     results = evaluate(collect_facts(repo), jobs, args.min_free_gb, args.min_total_gb)
 
     if args.json:
-        print(json.dumps({"results": [asdict(r) for r in results], **summarize(results)}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "results": [asdict(r) for r in results],
+                    "euid": euid,
+                    **summarize(results),
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
-        print(render_table(results))
+        print(render_table(results, euid))
     return exit_code(results)
 
 
