@@ -10,6 +10,7 @@ Test tro vao:
 """
 
 import os
+import sys
 
 import psycopg
 import pytest
@@ -103,3 +104,79 @@ def _isolated_infra(request):
             c.execute(f'CREATE DATABASE "{db_name}"')
     Storage(TEST_DSN).init_schema()
     yield
+
+
+# ISO-6 (2026-10-02 Brief dot 145): LUOI AN TOAN cho file trang thai THAT trong logs/.
+# Su co: test_heartbeat_check goi main([]) nen moi lan chay pytest ghi de
+# logs/.schedule_health_state.json that bang du kien gia ("stale", 2026-08-14);
+# heartbeat that sau do gui 5 tin "DA CHAY LAI" oan, va neu mot job THAT chet thi
+# thay trang thai truoc la stale, coi nhu "da bao", IM LANG.
+#
+# Cach chon: audit hook (sys.addaudithook) bat moi lan MO-DE-GHI / XOA / DOI TEN mot
+# file `logs/.*state*` hoac `logs/.*last*` thuc ngay TRONG TIEN TRINH pytest nay, va
+# ghi lai ten test dang chay. Khong so sanh "truoc/sau" tren dia: cron ghi
+# .container_health_state.json THAT moi 10 phut (tien trinh khac) nen so sanh
+# truoc/sau se do oan; audit hook chi thay viec CUA pytest. Gioi han (da noi o bao
+# cao): tien trinh con (subprocess) khong bi bat.
+_REPO_LOGS = os.path.realpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "logs")
+)
+_STATE_WRITES: list[tuple[str, str, str]] = []  # (ten test, su kien, ten file)
+
+
+def _real_state_file_name(path) -> str | None:
+    try:
+        real = os.path.realpath(os.fsdecode(path))
+        folder, name = os.path.split(real)
+        if os.path.normcase(folder) != os.path.normcase(_REPO_LOGS):
+            return None
+        if name.startswith(".") and ("state" in name or "last" in name):
+            return name
+    except Exception:  # hook KHONG duoc nem: nem o day se pha open() cua nguoi khac
+        pass
+    return None
+
+
+def _audit_real_state_files(event, args):
+    try:
+        if event == "open":
+            path, mode, flags = args
+            write_flags = (
+                os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+            )
+            if isinstance(flags, int):
+                writing = bool(flags & write_flags)
+            else:
+                writing = any(c in str(mode) for c in "wax+")
+            paths = [path] if writing else []
+        elif event == "os.remove":
+            paths = [args[0]]
+        elif event == "os.rename":
+            paths = [args[0], args[1]]
+        else:
+            return
+        for p in paths:
+            name = _real_state_file_name(p)
+            if name:
+                _STATE_WRITES.append(
+                    (os.environ.get("PYTEST_CURRENT_TEST", "<ngoai test>"), event, name)
+                )
+    except Exception:
+        pass
+
+
+sys.addaudithook(_audit_real_state_files)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _khong_ghi_file_trang_thai_that():
+    _STATE_WRITES.clear()
+    yield
+    if _STATE_WRITES:
+        seen = sorted(set(_STATE_WRITES))
+        pytest.fail(
+            "Test da GHI/XOA/DOI TEN file trang thai THAT trong logs/ (cron doc file nay): "
+            + "; ".join(f"{name} [{event}] boi {test}" for test, event, name in seen)
+            + " - truyen thu muc tam (tmp_path) cho script, xem brief dot 145.",
+            pytrace=False,
+        )

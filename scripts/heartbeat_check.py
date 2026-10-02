@@ -68,11 +68,11 @@ DEFAULT_STALE_BAR_MINUTES = 15
 # mỗi mốc). Ngưỡng 15 phút = ~3x nhịp đo được — cùng hệ số an toàn với 2A.
 DEFAULT_STALE_POSITION_SYNC_MINUTES = 15
 
-DEFAULT_SCHEDULE_STATE_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "logs",
-    ".schedule_health_state.json",
+DEFAULT_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
 )
+SCHEDULE_STATE_NAME = ".schedule_health_state.json"
+DEFAULT_SCHEDULE_STATE_FILE = os.path.join(DEFAULT_LOGS_DIR, SCHEDULE_STATE_NAME)
 
 
 class WatchJobConfig(NamedTuple):
@@ -438,6 +438,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Chế độ chạy thử: in cảnh báo thay vì gửi Telegram, không ghi file trạng thái.",
     )
+    # Brief 145: cờ dòng lệnh (không phải tham số của main) vì parser là cổng vào
+    # duy nhất đã được test_sched_args ghim; test gọi main([...]) như cron gọi.
+    parser.add_argument(
+        "--logs-dir",
+        default=DEFAULT_LOGS_DIR,
+        help="Thư mục log để đọc (mặc định: logs/ của repo — cron không truyền).",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="File trạng thái lịch (mặc định: .schedule_health_state.json "
+        "trong --logs-dir).",
+    )
     return parser
 
 
@@ -489,13 +502,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Việc 2 (Brief 142): Canh các job 24/7 theo lịch (đọc log của run_if_docker_up.sh)
-    logs_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+    logs_dir = args.logs_dir
     job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
     for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
         log_path = os.path.join(logs_dir, job_cfg.log_file)
         job_last_seen[branch] = get_last_called_timestamp(log_path, job_cfg.label)
 
-    sched_state_file = DEFAULT_SCHEDULE_STATE_FILE
+    sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
     prev_sched_state = load_schedule_state(sched_state_file)
     sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
         job_last_seen, now, prev_sched_state
