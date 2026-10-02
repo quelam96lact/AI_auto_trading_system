@@ -9,7 +9,7 @@ import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy
 
 from trading import real_orders
-from trading.alerts import alert
+from trading.alerts import alert, start_outbox
 from trading.calendar_vn import (
     CONTINUOUS_SESSIONS,
     TZ,
@@ -735,6 +735,7 @@ def main() -> None:
     ap.add_argument("--config", default="config/config.yaml")
     args = ap.parse_args()
     _configure_logging()
+    start_outbox("engine")
     asyncio.run(run(load_config(args.config)))
 
 

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from trading.alerts import alert
+from trading.alerts import alert, start_outbox
 from trading.bus.publisher import BarPublisher
 from trading.calendar_vn import TZ, is_continuous_matching, is_trading_time
 from trading.collector.account_sync import sync_account_data
@@ -518,6 +518,7 @@ def main() -> None:
     args = ap.parse_args()
 
     _configure_logging()
+    start_outbox("collector")
     asyncio.run(run(load_config(args.config)))
 
 
