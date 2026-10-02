@@ -73,11 +73,7 @@ def stale_services(rows, now, max_age_seconds, expected=SERVICES) -> list[str]:
     """
     seen = {r[0]: r[1] for r in rows}
     limit = timedelta(seconds=max_age_seconds)
-    return [
-        svc
-        for svc in expected
-        if seen.get(svc) is None or now - seen[svc] > limit
-    ]
+    return [svc for svc in expected if seen.get(svc) is None or now - seen[svc] > limit]
 
 
 def in_bar_check_window(ts: datetime, holidays: frozenset = frozenset()) -> bool:
@@ -89,8 +85,12 @@ def in_bar_check_window(ts: datetime, holidays: frozenset = frozenset()) -> bool
     return any(start <= t <= end for start, end in CHECK_SESSIONS)
 
 
-def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES,
-              holidays: frozenset = frozenset()) -> bool:
+def bar_stale(
+    max_ts,
+    now,
+    stale_minutes=DEFAULT_STALE_BAR_MINUTES,
+    holidays: frozenset = frozenset(),
+) -> bool:
     """2A: dữ liệu ngừng chảy. max_ts = max(ts) gộp các mã ĐANG CẤU HÌNH
     (None = không có bar nào cả ngày — ca "feed chưa từng nối được").
 
@@ -117,7 +117,9 @@ def bar_stale(max_ts, now, stale_minutes=DEFAULT_STALE_BAR_MINUTES,
     )
 
 
-def position_sync_stale(sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_MINUTES) -> bool:
+def position_sync_stale(
+    sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_MINUTES
+) -> bool:
     """2D: vị thế ngừng đồng bộ. sync_ts = mốc đồng bộ gần nhất của
     real_order_account (từ Storage.read_position_sync_ts — None = chưa từng
     đồng bộ, bảng account_sync_log chưa có dòng).
@@ -132,8 +134,9 @@ def position_sync_stale(sync_ts, now, stale_minutes=DEFAULT_STALE_POSITION_SYNC_
     return now - sync_ts > timedelta(minutes=stale_minutes)
 
 
-def token_expiry_status(refresh_expires_at, now,
-                        holidays: frozenset = frozenset()) -> str | None:
+def token_expiry_status(
+    refresh_expires_at, now, holidays: frozenset = frozenset()
+) -> str | None:
     """2B: token SSI sắp/đã hết hạn. refresh_expires_at = epoch seconds
     (từ Storage.load_ssi_token) hoặc None (ssi_auth_state rỗng).
 
@@ -165,7 +168,9 @@ def token_expiry_status(refresh_expires_at, now,
     return None
 
 
-def check_holiday_exhaustion(holidays: frozenset[date] | set[date], now: datetime) -> str | None:
+def check_holiday_exhaustion(
+    holidays: frozenset[date] | set[date], now: datetime
+) -> str | None:
     """Kiểm tra lịch nghỉ lễ trong config đã cạn hay chưa.
 
     Luật: Cảnh báo WARN khi không còn ngày lễ nào >= hôm nay trong config VÀ
@@ -189,7 +194,9 @@ def check_holiday_exhaustion(holidays: frozenset[date] | set[date], now: datetim
     return None
 
 
-def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, capital: float = CAPITAL) -> float:
+def ledger_deviation(
+    cash: float, realized_pnl: float, positions_value: float, capital: float = CAPITAL
+) -> float:
     """2C: độ lệch hai sổ sách. Bất biến (đúng LUÔN, không chỉ khi phẳng):
         cash + Σ(avg_price × qty) − capital == realized_pnl
     Trả về vế trái − vế phải. > LEDGER_TOLERANCE (hoặc < −LEDGER_TOLERANCE)
@@ -205,8 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if argv is not None:
-        build_parser().parse_args(argv)
+    # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
+    # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
+    build_parser().parse_args(argv)
     # Ep utf-8 de ly do canh bao con dau tieng Viet; that bai cung khong sao,
     # _print_safe da co duong lui.
     try:
@@ -229,7 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     # 2A: chỉ nhìn mã ĐANG CẤU HÌNH — bảng bars còn 302 mã universe nạp theo
     # lô, gộp chúng vào sẽ che mất một feed đã chết.
     try:
-        cfg_path = os.path.join(os.path.dirname(__file__), "..", "config", "config.yaml")
+        cfg_path = os.path.join(
+            os.path.dirname(__file__), "..", "config", "config.yaml"
+        )
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         symbols = cfg["symbols"]
@@ -243,7 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as e:
         send_telegram(
-            f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
+            f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[
+                :300
+            ]
         )
         return 1
 
@@ -265,13 +277,17 @@ def main(argv: list[str] | None = None) -> int:
                 list(symbols),
             ).fetchone()
             # 2C: doc engine_state + positions de kiem bat bien so sach
-            es = c.execute("SELECT cash, realized_pnl FROM engine_state WHERE id = 1").fetchone()
+            es = c.execute(
+                "SELECT cash, realized_pnl FROM engine_state WHERE id = 1"
+            ).fetchone()
             pos_rows = c.execute(
                 "SELECT avg_price, qty FROM positions WHERE qty != 0"
             ).fetchall()
     except Exception as e:
         send_telegram(
-            f"[CRITICAL] heartbeat check không đọc được DB: {type(e).__name__}: {e}"[:300]
+            f"[CRITICAL] heartbeat check không đọc được DB: {type(e).__name__}: {e}"[
+                :300
+            ]
         )
         return 1
     max_ts = max_ts_row[0] if max_ts_row else None

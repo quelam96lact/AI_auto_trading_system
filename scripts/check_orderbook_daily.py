@@ -23,9 +23,13 @@ from pathlib import Path
 
 # Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer, encoding="utf-8", line_buffering=True
+    )
 if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(
+        sys.stderr.buffer, encoding="utf-8", line_buffering=True
+    )
 
 # Ensure repo root is in sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -67,7 +71,11 @@ def evaluate_daily_orderbook_check(
     """
     date_str = target_date.isoformat() if target_date else "hôm nay"
     sym_str = symbol or "VN30F"
-    file_desc = str(expected_path) if expected_path else f"data/orderbook/{sym_str}/{date_str}.jsonl.gz"
+    file_desc = (
+        str(expected_path)
+        if expected_path
+        else f"data/orderbook/{sym_str}/{date_str}.jsonl.gz"
+    )
 
     # 1. Kịch bản ngày không giao dịch
     if not is_trading_day:
@@ -95,11 +103,13 @@ def evaluate_daily_orderbook_check(
 
     # 3. Kịch bản file tồn tại nhưng không đạt chuẩn nghiệm thu
     if verification_result is None or not verification_result.is_valid:
-        reasons = verification_result.reasons if verification_result else ["Không có kết quả nghiệm thu."]
-        reasons_summary = "; ".join(reasons)
-        msg = (
-            f"File sổ lệnh ngày {date_str} ({sym_str}) không đạt tiêu chuẩn chất lượng: {reasons_summary}"
+        reasons = (
+            verification_result.reasons
+            if verification_result
+            else ["Không có kết quả nghiệm thu."]
         )
+        reasons_summary = "; ".join(reasons)
+        msg = f"File sổ lệnh ngày {date_str} ({sym_str}) không đạt tiêu chuẩn chất lượng: {reasons_summary}"
         return DailyCheckDecision(
             exit_code=1,
             alert_level="WARN",
@@ -196,7 +206,10 @@ async def check_orderbook_daily(
             symbol=sym,
             expected_path=expected_file,
         )
-        print(f"[{now_vn.strftime('%H:%M:%S')}] [CRITICAL] {decision.message}", file=sys.stderr)
+        print(
+            f"[{now_vn.strftime('%H:%M:%S')}] [CRITICAL] {decision.message}",
+            file=sys.stderr,
+        )
         alert(
             "CRITICAL",
             decision.message,
@@ -222,7 +235,10 @@ async def check_orderbook_daily(
     )
 
     if not decision.is_silent and decision.alert_level:
-        print(f"[{now_vn.strftime('%H:%M:%S')}] [{decision.alert_level}] {decision.message}", file=sys.stderr)
+        print(
+            f"[{now_vn.strftime('%H:%M:%S')}] [{decision.alert_level}] {decision.message}",
+            file=sys.stderr,
+        )
         alert(
             decision.alert_level,
             decision.message,
@@ -267,8 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
 
     target_date = date.fromisoformat(args.date) if args.date else None
 

@@ -55,10 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    return build_parser().parse_args(argv)
-
-
 def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
     """Kiểm tra file log backfill để biết tác vụ backfill-universe cho ngày target_date đã hoàn tất chưa.
 
@@ -124,7 +120,9 @@ def friday_only_symbols(
     if check_date.weekday() == 4:
         return set()
 
-    window_days = recent_trading_days(check_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays)
+    window_days = recent_trading_days(
+        check_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays
+    )
 
     result: set[str] = set()
     for sym, raw_dates in bar_dates_by_symbol.items():
@@ -159,7 +157,9 @@ def evaluate_daily_completeness(
     - exit_code 2: Ngày giao dịch mà KHÔNG có mã nào có bar VÀ backfill đã hoàn tất (sự cố dữ liệu thật),
                    HOẶC backfill chưa hoàn thành 2 ngày giao dịch liên tiếp (CRITICAL leo thang - Brief 97 Task 3).
     """
-    excluded = (set(excluded_symbols) & set(active_symbols)) if excluded_symbols else set()
+    excluded = (
+        (set(excluded_symbols) & set(active_symbols)) if excluded_symbols else set()
+    )
     effective_active = [s for s in active_symbols if s not in excluded]
 
     if not effective_active:
@@ -227,7 +227,7 @@ def evaluate_daily_completeness(
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
+    args = build_parser().parse_args(argv)
 
     try:
         dsn = resolve_dsn(args.dsn)
@@ -263,7 +263,9 @@ def main(argv: list[str] | None = None) -> None:
         bar_dates_by_symbol: dict[str, list[date]] = {}
         if target_date.weekday() != 4:
             min_date = min(
-                recent_trading_days(target_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays)
+                recent_trading_days(
+                    target_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays
+                )
             )
             bar_dates_by_symbol = storage.read_daily_bar_dates(
                 active_symbols, min_date, target_date

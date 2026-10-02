@@ -161,3 +161,131 @@ def test_shell_scripts_reject_unknown_flags():
             f"{sh_script} không thoát mã 2 khi nhận cờ lạ. Mã: {res.returncode}, stderr: {res.stderr}"
         )
         assert "ERROR:" in res.stderr or "Usage:" in res.stderr
+
+
+# ---------------------------------------------------------------------------
+# Brief 141: `main` phai THUC SU goi parser. Test o tren chi chung minh PARSER tu choi co la
+# (build_parser().parse_args(["--khong-ton-tai"])), khong chung minh `main` goi parser:
+# o heartbeat_check.py va deploy_drift_check.py `main` chi parse khi `argv is not None`, nen
+# `main()` nuot im lang moi co. Phan tich AST (khong import, khong chay) de ghim dieu do;
+# TUYET DOI khong goi main(["--khong-ton-tai"]) — go parser di thi test do se chay job that.
+# ---------------------------------------------------------------------------
+import ast
+
+# Danh sach trang: {module: so cau lenh duoc phep dung TRUOC cau parse}. Hien khong script nao can:
+# moi script goi parser NGAY cau dau tien cua `main`. Them vao day phai kem ly do trong bao cao.
+STATEMENTS_ALLOWED_BEFORE_PARSE: dict[str, int] = {}
+
+
+def _module_path(mod_name: str) -> Path:
+    return REPO_ROOT / (mod_name.replace(".", "/") + ".py")
+
+
+def _top_level_function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
+    return next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None
+    )
+
+
+def _body_without_docstring(fn: ast.FunctionDef) -> list[ast.stmt]:
+    body = list(fn.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    return body
+
+
+def _is_unconditional_parse_statement(stmt: ast.stmt) -> bool:
+    """`args = build_parser().parse_args(argv)` hoac `build_parser().parse_args(argv)` — nhu mot cau
+    lenh don o cap than ham (If/Try/With... khong phai Assign/Expr nen bi loai)."""
+    if not isinstance(stmt, (ast.Assign, ast.Expr)):
+        return False
+    call = stmt.value
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
+        return False
+    if call.func.attr != "parse_args":
+        return False
+    builder = call.func.value
+    if not (
+        isinstance(builder, ast.Call)
+        and isinstance(builder.func, ast.Name)
+        and builder.func.id == "build_parser"
+    ):
+        return False
+    # Phai chuyen tiep `argv` cua main (khong parse mot danh sach khac).
+    return len(call.args) == 1 and isinstance(call.args[0], ast.Name) and call.args[0].id == "argv"
+
+
+@pytest.mark.parametrize("mod_name", extract_python_modules(SCHED_SH))
+def test_main_goi_build_parser_parse_args_vo_dieu_kien_o_cau_dau(mod_name: str):
+    """Cau lenh dau tien co hieu luc cua `main` (bo docstring) la parse_args(argv) cua build_parser(),
+    khong nam trong if/try. Phan tich AST, khong import, khong chay."""
+    path = _module_path(mod_name)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    main_fn = _top_level_function(tree, "main")
+    assert main_fn is not None, f"{mod_name} khong co ham main() o cap module"
+    assert [a.arg for a in main_fn.args.args] == ["argv"], (
+        f"{mod_name}.main phai nhan dung mot tham so `argv`"
+    )
+
+    body = _body_without_docstring(main_fn)
+    skip = STATEMENTS_ALLOWED_BEFORE_PARSE.get(mod_name, 0)
+    assert len(body) > skip, f"{mod_name}.main rong"
+    first = body[skip]
+    assert _is_unconditional_parse_statement(first), (
+        f"{mod_name}.main: cau lenh dau tien co hieu luc phai la "
+        f"`args = build_parser().parse_args(argv)` vo dieu kien, nhung la: "
+        f"{ast.unparse(first).splitlines()[0][:100]!r}"
+    )
+
+
+@pytest.mark.parametrize("mod_name", extract_python_modules(SCHED_SH))
+def test_khoi_main_goi_ham_main(mod_name: str):
+    """Khoi `if __name__ == "__main__":` thuc su goi main (khong thoat som bang cach khac)."""
+    tree = ast.parse(_module_path(mod_name).read_text(encoding="utf-8"))
+    blocks = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.If)
+        and isinstance(n.test, ast.Compare)
+        and isinstance(n.test.left, ast.Name)
+        and n.test.left.id == "__name__"
+    ]
+    assert blocks, f"{mod_name} thieu khoi if __name__ == '__main__'"
+    calls_main = any(
+        isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "main"
+        for block in blocks
+        for c in ast.walk(block)
+    )
+    assert calls_main, f"{mod_name}: khoi __main__ khong goi main()"
+
+
+def test_cong_cu_ast_phan_biet_dung_sai():
+    """Tu kiem cong cu phat hien: mau dung phai qua, mau sai (nhu hai script o brief 141) phai bi bat."""
+    ok = ast.parse("def main(argv=None):\n    args = build_parser().parse_args(argv)\n")
+    bare = ast.parse("def main(argv=None):\n    build_parser().parse_args(argv)\n")
+    guarded = ast.parse(
+        "def main(argv=None):\n    if argv is not None:\n        build_parser().parse_args(argv)\n"
+    )
+    wrapped = ast.parse(
+        "def main(argv=None):\n    if argv:\n        args = build_parser().parse_args(argv)\n"
+    )
+    two_step = ast.parse(
+        "def main(argv=None):\n    parser = build_parser()\n    args = parser.parse_args(argv)\n"
+    )
+    other_list = ast.parse("def main(argv=None):\n    args = build_parser().parse_args([])\n")
+    in_try = ast.parse(
+        "def main(argv=None):\n    try:\n        args = build_parser().parse_args(argv)\n    except Exception:\n        pass\n"
+    )
+
+    def first(tree):
+        return _body_without_docstring(_top_level_function(tree, "main"))[0]
+
+    assert _is_unconditional_parse_statement(first(ok))
+    assert _is_unconditional_parse_statement(first(bare))
+    for bad in (guarded, wrapped, two_step, other_list, in_try):
+        assert not _is_unconditional_parse_statement(first(bad))

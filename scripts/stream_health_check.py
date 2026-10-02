@@ -417,8 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
     now_vn = datetime.now(TZ_VN)
     holidays = load_holidays()
 

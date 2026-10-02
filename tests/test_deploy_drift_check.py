@@ -66,7 +66,7 @@ def test_git_that_bai_van_phai_keu(monkeypatch):
         deploy_drift_check, "_git_trading_commit_epoch", lambda: None
     )
     sent = _capture_sent(monkeypatch)
-    rc = deploy_drift_check.main()
+    rc = deploy_drift_check.main([])
     assert rc == 1, f"git hong phai bao, rc={rc}"
     assert sent, "git hong PHAI gui Telegram, khong duoc chi in ra stdout"
     assert "KHÔNG đọc được commit" in sent[0]

@@ -69,7 +69,9 @@ def load_symbols(cfg, storage, exchanges: set[str] | None = None) -> list[str]:
                 )
     storage.upsert_symbol_universe(rows)
     syms = [r["symbol"] for r in rows]
-    print(f"[load] {len(syms)} co phieu (listed_shares>0 AND khong CW), da ghi symbol_universe")
+    print(
+        f"[load] {len(syms)} co phieu (listed_shares>0 AND khong CW), da ghi symbol_universe"
+    )
     return syms
 
 
@@ -116,9 +118,9 @@ async def backfill_one(
                 # last_done_date = ngày bar cuối THẬT (không tiến khi rỗng);
                 # attempted_until = to (đã hỏi tới đó, kể cả rỗng).
                 last_done = (
-                    max(b.ts.date() for b in bars) if bars else (
-                        prog["last_done_date"] if prog else None
-                    )
+                    max(b.ts.date() for b in bars)
+                    if bars
+                    else (prog["last_done_date"] if prog else None)
                 )
                 storage.set_backfill_progress(
                     symbol, timeframe, last_done, "ok", attempted_until=to
@@ -126,7 +128,11 @@ async def backfill_one(
                 return symbol, "ok", f"{len(bars)} bar"
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"[:200]
-                if "rate" in last_err.lower() or "429" in last_err or "too many" in last_err.lower():
+                if (
+                    "rate" in last_err.lower()
+                    or "429" in last_err
+                    or "too many" in last_err.lower()
+                ):
                     wait = min(2**attempt, 60)
                     print(f"    rate-limit {symbol}, cho {wait}s (lan {attempt + 1}/3)")
                     await asyncio.sleep(wait)
@@ -195,9 +201,7 @@ def resolve_use_universe_symbols(storage, cfg):
     phai duoc nap (CAP 0,63 ty < nguong — thieu bar 5 phien -> NAV tinh 0).
     """
     active = storage.read_active_universe()
-    must_price = storage.read_must_price_symbols(
-        cfg.ssi_equity_accounts, cfg.symbols
-    )
+    must_price = storage.read_must_price_symbols(cfg.ssi_equity_accounts, cfg.symbols)
     symbols = sorted(set(active) | set(must_price))
     n_outside = len(set(must_price) - set(active))
     return symbols, active, must_price, n_outside
@@ -217,8 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = build_parser()
-    args = ap.parse_args(argv)
+    args = build_parser().parse_args(argv)
 
     cfg = load_config("config/config.yaml")
     storage = Storage(cfg.db_dsn)

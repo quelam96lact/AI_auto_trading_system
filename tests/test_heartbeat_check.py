@@ -199,7 +199,7 @@ def test_main_no_crash_when_no_bar_any_day(monkeypatch):
         "read_position_sync_ts": lambda self, account_no: fixed_now - timedelta(minutes=2),
     })())
 
-    rc = hc.main()
+    rc = hc.main([])
     assert rc == 1, f"phai gui canh bao (feed chua tung noi), rc={rc}"
     assert sent, "phai gui tin nhan Telegram"
     assert any("không có bar nào cả ngày" in m for m in sent), f"tin nhan phai noi ro ca khong-bar, thuc te: {sent}"
@@ -311,7 +311,7 @@ def _run_main_with_ledger(monkeypatch, engine_state, positions_rows, fixed_now=N
         })(),
     )
     # Khong monkeypatch open — main() doc config/config.yaml that (file ton tai)
-    rc = hc.main()
+    rc = hc.main([])
     return rc, sent
 
 
@@ -419,7 +419,7 @@ def _run_main_with_position_sync(monkeypatch, sync_ts, fixed_now=None):
             },
         )(),
     )
-    rc = hc.main()
+    rc = hc.main([])
     return rc, sent
 
 

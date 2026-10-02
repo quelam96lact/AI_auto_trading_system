@@ -184,8 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if argv is not None:
-        build_parser().parse_args(argv)
+    # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
+    # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
+    build_parser().parse_args(argv)
     # Ép utf-8 để lý do cảnh báo còn dấu tiếng Việt; thất bại cũng không sao,
     # _print_safe đã có đường lui.
     try:
