@@ -406,6 +406,17 @@ async def run(
             "(fail-safe, khong roi ve account_balance_snapshot)",
             account=cfg.real_order_account,
         )
+    elif nav_row[0] <= 0:
+        real_capital = 0.0
+        nav_val, nav_ts, _ = nav_row
+        alert(
+            "CRITICAL",
+            f"NAV khong hop le (<= 0): {nav_val:,.0f} — real capital = 0, "
+            f"MOI lenh that bi tu choi (fail-safe)",
+            account=cfg.real_order_account,
+            nav=nav_val,
+            ts=str(nav_ts),
+        )
     else:
         real_capital, nav_ts, unpriced = nav_row
         age_h = (datetime.now(TZ) - nav_ts).total_seconds() / 3600
@@ -441,18 +452,32 @@ async def run(
     # o tren: doc tu real_order_fills (loc account_no). Vi the that co the do
     # chu tai khoan TU MUA ngoai he thong -> khong co fill -> khong tai dung
     # duoc -> alert WARN neu ro ma, KHONG im lang.
+    # Dot 150: chi khoi phuc trailing stop cho sym in cfg.symbols; cac ma ngoai
+    # cfg.symbols gom thanh 1 dong INFO de tranh spam Telegram (bay NOISE-1).
+    ignored_external_positions: dict[str, int] = {}
     for sym, rpos in storage.read_real_positions(cfg.real_order_account).items():
-        if rpos.qty > 0:
-            rhighest = storage.read_real_highest_since_buy(cfg.real_order_account, sym)
-            if rhighest is not None:
-                real_trailing_stop.on_position_opened(sym, rhighest)
-            else:
-                alert(
-                    "WARN",
-                    f"khong tai dung duoc trailing stop cho vi the that {sym}: "
-                    f"khong co BUY fill trong real_order_fills (co the mua ngoai "
-                    f"he thong) — vi the nay DANG KHONG co trailing stop",
-                )
+        if rpos.qty <= 0:
+            continue
+        if sym not in cfg.symbols:
+            ignored_external_positions[sym] = rpos.qty
+            continue
+        rhighest = storage.read_real_highest_since_buy(cfg.real_order_account, sym)
+        if rhighest is not None:
+            real_trailing_stop.on_position_opened(sym, rhighest)
+        else:
+            alert(
+                "WARN",
+                f"khong tai dung duoc trailing stop cho vi the that {sym}: "
+                f"khong co BUY fill trong real_order_fills (co the mua ngoai "
+                f"he thong) — vi the nay DANG KHONG co trailing stop",
+            )
+    if ignored_external_positions:
+        alert(
+            "INFO",
+            "vi the that ngoai cfg.symbols, engine khong quan ly",
+            account=cfg.real_order_account,
+            positions=ignored_external_positions,
+        )
     # GUARD-1: kiem tra duong dat lenh that co that su co the sinh lenh BUY
     # khong. Tran gia tri lenh = NAV * max_order_value_pct (NAV-CI: doc tu
     # account_nav_snapshot, khong con real_order_capital trong config); neu

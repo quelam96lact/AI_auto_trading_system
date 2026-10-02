@@ -36,3 +36,17 @@ def test_load_config(tmp_path, monkeypatch):
     assert cfg.db_dsn.startswith("postgresql://")
     assert cfg.nats_stream == "BARS"
     assert cfg.watchdog_stale_seconds == 180
+
+
+def check_real_order_account_in_equity_accounts(config_path: str = "config/config.yaml") -> None:
+    cfg = load_config(config_path)
+    assert cfg.real_order_account in cfg.ssi_equity_accounts, (
+        f"real_order_account '{cfg.real_order_account}' phai thuoc ssi_equity_accounts {cfg.ssi_equity_accounts}"
+    )
+
+
+def test_real_order_account_in_ssi_equity_accounts(config_path: str = "config/config.yaml"):
+    """Viec 1: kiem tra real_order_account phai nam trong ssi_equity_accounts
+    (neu khong se khong co NAV dong bo -> real_capital = 0)."""
+    check_real_order_account_in_equity_accounts(config_path)
+

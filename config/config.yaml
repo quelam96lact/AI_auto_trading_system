@@ -18,6 +18,9 @@ holidays: ['2026-08-31', '2026-09-01', '2026-09-02', '2027-01-01', '2027-04-30',
 # host-preflight (phep kiem 13) bao HONG khi con duoi 60 ngay, tuc tu 02/11/2026 neu khong doi.
 holidays_confirmed_through: '2026-12-31'
 real_trading_enabled: false
-real_order_account: "0434221"
+# Quyet dinh 03/10/2026: doi tu 0434221 (NAV ~5tr) sang 0434226 (NAV ~196tr, margin).
+# Moi lenh MUA dung vay ky quy (withdrawable = 0). Tran MAX_REAL_BUY_QTY chan kich thuoc.
+# Danh muc dang giu khong giao cfg.symbols; them ma vao symbols thi kiem GUARD-3.
+real_order_account: "0434226"
 nats: {url: 'nats://localhost:4222', stream: BARS}
 watchdog: {stale_seconds: 180, max_failures: 3}

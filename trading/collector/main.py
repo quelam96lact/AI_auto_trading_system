@@ -39,7 +39,7 @@ def held_symbols_for_pricing(storage, cfg) -> list[str]:
     cfg.symbols (luot backfill truoc da keo day du).
 
     Doc MOI tai khoan trong cfg.ssi_equity_accounts chu khong chi
-    real_order_account: quyet dinh chon tai khoan CHUA chot, va NAV duoc tinh
+    real_order_account: da chot 0434226 ngay 03/10/2026 nhung NAV van duoc tinh
     cho tung tai khoan. SYNC-1: mot tai khoan doc loi -> WARN + bo qua, khong
     giet cac tai khoan con lai (dung bug e20e647 da tung xoa so 0434226).
     Sap xep de thu tu on dinh giua cac lan chay."""

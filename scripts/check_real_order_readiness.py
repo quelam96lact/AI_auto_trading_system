@@ -189,7 +189,9 @@ def run_readiness_check(dsn: str, config_path: str = "config/config.yaml") -> No
                 print(f"  Tài khoản {acc}: Không có dữ liệu NAV snapshot")
 
         print("\n  So sánh sức mua (max_buy_qty) giữa hai tài khoản:")
-        print(f"  {'Mã':<6} | {'0434221 (Đang cấu hình)':<25} | {'0434226 (Tài khoản lớn)':<25} | {'Tỷ lệ chênh lệch':<18}")
+        label_221 = "0434221 (Đang cấu hình)" if real_account == "0434221" else "0434221"
+        label_226 = "0434226 (Đang cấu hình)" if real_account == "0434226" else "0434226"
+        print(f"  {'Mã':<6} | {label_221:<25} | {label_226:<25} | {'Tỷ lệ chênh lệch':<18}")
         print("  " + "-" * 76)
         for sym in cfg.symbols:
             cur.execute("""

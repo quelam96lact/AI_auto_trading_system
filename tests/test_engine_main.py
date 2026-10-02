@@ -763,6 +763,67 @@ async def test_engine_critical_and_blocks_buy_when_no_nav(storage, monkeypatch):
     assert n == 0, f"capital=0 (fail-safe) -> MOI lenh that bi tu choi, thuc te pending={n}"
 
 
+async def test_engine_critical_and_blocks_buy_when_nav_negative(storage, monkeypatch):
+    """Viec 2 (Lo 1): dong account_nav_snapshot co NAV am (-39.959.000) -> CRITICAL +
+    real capital = 0 -> MOI lenh that bi approve() tu choi (khong tao pending).
+    KHONG duoc coi la hop le de chay tiep hay roi ve so du."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+    _seed_nav(storage, -39_959_000.0)
+    _seed_balance(storage, 500_000_000.0)
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    bars = make_bars([10] * 20 + [20] * 5)  # crossover bull o bar 21
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert any(
+        level == "CRITICAL"
+        and "NAV khong hop le (<= 0)" in msg
+        and "-39,959,000" in msg
+        for level, msg, f in alerts_seen
+    ), f"phai CRITICAL khi NAV am kem gia tri, thuc te: {alerts_seen}"
+    with storage.conn() as c:
+        n = c.execute(
+            "SELECT count(*) FROM pending_real_orders WHERE symbol = 'ENGT'"
+        ).fetchone()[0]
+    assert n == 0, f"capital=0 (fail-safe) -> MOI lenh that bi tu choi, thuc te pending={n}"
+
+
+async def test_engine_critical_and_blocks_buy_when_nav_zero(storage, monkeypatch):
+    """Viec 2 (Lo 1): dong account_nav_snapshot co NAV bang 0 -> CRITICAL +
+    real capital = 0 -> MOI lenh that bi approve() tu choi (khong tao pending)."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+    _seed_nav(storage, 0.0)
+    _seed_balance(storage, 500_000_000.0)
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    bars = make_bars([10] * 20 + [20] * 5)  # crossover bull o bar 21
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert any(
+        level == "CRITICAL"
+        and "NAV khong hop le (<= 0)" in msg
+        and "0" in msg
+        for level, msg, f in alerts_seen
+    ), f"phai CRITICAL khi NAV bang 0 kem gia tri, thuc te: {alerts_seen}"
+    with storage.conn() as c:
+        n = c.execute(
+            "SELECT count(*) FROM pending_real_orders WHERE symbol = 'ENGT'"
+        ).fetchone()[0]
+    assert n == 0, f"capital=0 (fail-safe) -> MOI lenh that bi tu choi, thuc te pending={n}"
+
+
 async def test_engine_warns_when_nav_stale(storage, monkeypatch):
     """NAV-CI WARN: dong NAV cu hon 24h -> VAN dung nhung alert WARN kem tuoi
     cua du lieu (khong im lang ve du lieu cu)."""
@@ -1013,6 +1074,62 @@ async def test_engine_warns_when_real_trailing_stop_cannot_restore(storage, monk
         level == "WARN" and "ENGT" in msg and "khong tai dung duoc trailing stop" in msg
         for level, msg in alerts_seen
     ), f"phai alert WARN noi ro khong tai dung duoc trailing stop cho vi the that, thuc te: {alerts_seen}"
+
+
+async def test_real_trailing_stop_restore_filters_external_positions(storage, monkeypatch):
+    """Viec 3 (Lo 2): Chi khoi phuc trailing stop cho sym in cfg.symbols;
+    cac ma ngoai cfg.symbols gom vao 1 INFO duy nhat, khong phat WARN tranh spam."""
+    import trading.engine.main as engine_main
+
+    alerts_seen = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: alerts_seen.append((level, msg, f))
+    )
+
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)  # symbols = ['ENGT']
+    storage.write_engine_state(100_000_000 - 10.0, 0.0)
+
+    # Seed 1 ma trong cfg.symbols (ENGT) va 1 ma ngoai (EXTERNAL), ca hai deu khong co fill
+    ts = datetime.now(TZ)
+    storage.save_account_positions(
+        RTS_ACCOUNT,
+        ts,
+        [
+            {"symbol": "ENGT", "quantity": 100, "cost_price": 10.0, "sellable_quantity": 100},
+            {"symbol": "EXTERNAL", "quantity": 500, "cost_price": 20.0, "sellable_quantity": 500},
+        ],
+    )
+    storage.record_position_sync(RTS_ACCOUNT, ts)
+
+    bars = make_bars([10] * 5)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    # 1. Dung 1 WARN cho trailing stop, va phai la cua ENGT (ma trong cfg.symbols)
+    stop_warns = [
+        (level, msg, f)
+        for level, msg, f in alerts_seen
+        if level == "WARN" and "khong tai dung duoc trailing stop" in msg
+    ]
+    assert len(stop_warns) == 1, f"Chi dung 1 WARN cho trailing stop, thuc te: {stop_warns}"
+    assert "ENGT" in stop_warns[0][1], f"WARN phai la cua ENGT, thuc te: {stop_warns[0]}"
+    assert "EXTERNAL" not in stop_warns[0][1]
+
+    # 2. Ma ngoai (EXTERNAL) chi xuat hien trong INFO
+    external_warns = [
+        (level, msg, f)
+        for level, msg, f in alerts_seen
+        if ("EXTERNAL" in msg or "EXTERNAL" in str(f)) and level != "INFO"
+    ]
+    assert len(external_warns) == 0, f"EXTERNAL khong duoc phat canh bao khac INFO, thuc te: {external_warns}"
+
+    external_infos = [
+        (level, msg, f)
+        for level, msg, f in alerts_seen
+        if level == "INFO" and "vi the that ngoai cfg.symbols" in msg
+    ]
+    assert len(external_infos) == 1, f"Phai co 1 INFO cho vi the ngoai cfg.symbols, thuc te: {external_infos}"
+    assert external_infos[0][2].get("positions", {}).get("EXTERNAL") == 500
 
 
 async def test_real_stop_touch_init_tracking_mid_session(storage, monkeypatch):

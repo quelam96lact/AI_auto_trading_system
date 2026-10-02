@@ -78,7 +78,7 @@ def handle_crossover(
 ) -> None:
     """Gate 1 sự kiện crossover (từ SmaCrossStrategy.last_crossover() — thuần kỹ
     thuật, KHÔNG liên quan PaperBroker) qua RiskManager riêng cho lệnh thật, dựa
-    HOÀN TOÀN trên vị thế THẬT của tài khoản Cash.
+    HOÀN TOÀN trên vị thế THẬT của tài khoản `real_order_account`.
 
     Plan 2026-09-01 T1: nhanh BUY that gio day duoc DINH CO — goi LAI
     risk.approve_sized() (ATR sizing + tran 20%, KHONG chep lai cong thuc —
