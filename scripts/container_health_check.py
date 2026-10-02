@@ -17,7 +17,6 @@ Mã thoát:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -49,6 +48,11 @@ except ImportError:
             "logs",
             ".docker_down_last_alert",
         )
+
+try:
+    from scripts._alert_common import load_json_state, save_json_state
+except ImportError:
+    from _alert_common import load_json_state, save_json_state
 
 from trading.alerts import _print_safe
 from trading.telegram import send_telegram
@@ -433,32 +437,12 @@ def evaluate_container_health(
 
 def load_state(filepath: str) -> dict[str, dict[str, Any]]:
     """Đọc file trạng thái JSON. Nếu không tồn tại hoặc lỗi, trả về {}."""
-    if not os.path.exists(filepath):
-        return {}
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
-            _print_safe(
-                f"[container-health] File trạng thái {filepath} không đúng định dạng dict — coi như lần đầu."
-            )
-            return {}
-    except Exception as e:
-        _print_safe(
-            f"[container-health] File trạng thái {filepath} hỏng hoặc không đọc được ({e}) — coi như lần chạy đầu."
-        )
-        return {}
+    return load_json_state(filepath, "container-health")
 
 
 def save_state(filepath: str, state: dict[str, dict[str, Any]]) -> None:
     """Ghi trạng thái ra file JSON an toàn qua file tạm."""
-    dir_path = os.path.dirname(os.path.abspath(filepath))
-    os.makedirs(dir_path, exist_ok=True)
-    tmp_path = filepath + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, filepath)
+    save_json_state(filepath, state)
 
 
 def check_docker_daemon() -> bool:

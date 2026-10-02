@@ -17,7 +17,6 @@ Exit code:
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 from datetime import date, datetime
@@ -25,6 +24,11 @@ from pathlib import Path
 
 import nats
 import yaml
+
+try:
+    from scripts._alert_common import load_json_state, save_json_state
+except ImportError:
+    from _alert_common import load_json_state, save_json_state
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, is_trading_time
@@ -61,19 +65,15 @@ async def read_nats_consumer_info(nats_url: str, stream: str = "BARS", consumer:
         await nc.close()
 
 
-def load_state() -> dict:
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+def load_state(path: str | Path | None = None) -> dict:
+    p = Path(path) if path is not None else STATE_FILE
+    return load_json_state(p, "engine-consumer")
 
 
-def save_state(state: dict) -> None:
+def save_state(state: dict, path: str | Path | None = None) -> None:
+    p = Path(path) if path is not None else STATE_FILE
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+        save_json_state(p, state)
     except Exception as e:
         _print_safe(f"[engine-consumer] Không thể ghi file state: {e}")
 
@@ -114,6 +114,7 @@ def run_check(
     config_path: str = "config/config.yaml",
     force: bool = False,
     pending_threshold: int = 20,
+    state_file: str | Path | None = None,
 ) -> int:
     # Đọc config bằng yaml.safe_load — KHÔNG import load_config
     try:
@@ -147,7 +148,8 @@ def run_check(
         send_telegram(f"🚨 CHUÔNG 2C: {msg}")
         return 1
 
-    prev_state = load_state()
+    target_state = Path(state_file) if state_file is not None else STATE_FILE
+    prev_state = load_state(target_state)
     is_faulty, reason = check_consumer(
         info,
         stream_last_seq=stream_last_seq,
@@ -178,11 +180,11 @@ def run_check(
         else:
             _print_safe(f"[engine-consumer] Đang trong thời gian chống spam ({cooldown_elapsed:.0f}s < {ALERT_COOLDOWN_SECONDS}s), chưa gửi lại.")
 
-        save_state(new_state)
+        save_state(new_state, target_state)
         return 1
 
     _print_safe(f"[engine-consumer] OK: engine đang tiêu thụ bình thường (delivered_seq={stream_seq}, stream_last_seq={stream_last_seq}).")
-    save_state(new_state)
+    save_state(new_state, target_state)
     return 0
 
 
@@ -199,12 +201,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--threshold", type=int, default=20, help="Ngưỡng num_pending cảnh báo"
     )
+    parser.add_argument(
+        "--state-file", default=str(STATE_FILE), help="Đường dẫn file state"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
-    sys.exit(run_check(args.config, force=args.force, pending_threshold=args.threshold))
+    sys.exit(
+        run_check(
+            args.config,
+            force=args.force,
+            pending_threshold=args.threshold,
+            state_file=args.state_file,
+        )
+    )
 
 
 if __name__ == "__main__":

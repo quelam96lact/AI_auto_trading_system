@@ -232,3 +232,32 @@ def test_send_telegram_success_updates_last_alert_ts(monkeypatch, tmp_path):
     assert new_state.get("last_alert_ts") > 0.0, "last_alert_ts phải được cập nhật khi gửi thành công"
 
 
+def test_state_file_la_list_khong_nem_coi_nhu_lan_dau(monkeypatch, tmp_path):
+    """Brief 146: File trạng thái chứa JSON là list [] thay vì dict: coi như lần đầu, không ném exception."""
+    state_file = tmp_path / ".state.json"
+    state_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(ecc, "STATE_FILE", state_file)
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 100)))
+
+    sent_alerts = []
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: sent_alerts.append(msg))
+
+    code = ecc.run_check(state_file=state_file)
+    assert code == 0
+    saved = ecc.load_state(state_file)
+    assert saved["stream_seq"] == 100
+    assert saved["last_seq"] == 100
+    assert saved["last_alert_ts"] == 0
+
+
+def test_state_file_cli_flag(tmp_path):
+    """Brief 146: Cờ --state-file được parser nhận diện chính xác."""
+    sf = tmp_path / "custom_state.json"
+    parser = ecc.build_parser()
+    args = parser.parse_args(["--state-file", str(sf)])
+    assert args.state_file == str(sf)
+
+

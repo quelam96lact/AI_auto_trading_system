@@ -29,7 +29,11 @@ HAI HỌ mã thoát cho job cảnh báo (đợt 132) — cả hai đều đúng,
 test ghim. Trước khi gộp hai họ này làm một, đọc `test_deploy_drift_check.py:86`.
 """
 
+import json
+import os
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from trading.alerts import _print_safe
 
@@ -49,3 +53,36 @@ def alert_and_fail(
     except Exception as e:
         _print_safe(f"{prefix} GUI TELEGRAM HONG: {type(e).__name__}: {e}")
     return 1
+
+
+def load_json_state(path: str | Path, label: str) -> dict[str, Any]:
+    """Đọc file trạng thái JSON. Nếu không tồn tại hoặc lỗi, trả về {}.
+    Khi file không phải dict hoặc hỏng, in cảnh báo qua _print_safe và không bao giờ ném."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+            _print_safe(
+                f"[{label}] File trạng thái {path} không đúng định dạng dict — coi như lần đầu."
+            )
+            return {}
+    except Exception as e:
+        _print_safe(
+            f"[{label}] File trạng thái {path} hỏng hoặc không đọc được ({e}) — coi như lần chạy đầu."
+        )
+        return {}
+
+
+def save_json_state(path: str | Path, state: dict[str, Any]) -> None:
+    """Ghi trạng thái ra file JSON an toàn qua file tạm và os.replace.
+    Tạo thư mục cha nếu chưa có; lỗi ghi/replace được để ném lên cho nơi gọi quyết định."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = p.with_name(p.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, p)
