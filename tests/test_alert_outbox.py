@@ -6,6 +6,7 @@ Moi test dung ham gui gia duoc tiem vao — khong goi mang, khong gui Telegram t
 import json
 import threading
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -19,20 +20,22 @@ SU_CO = (
 
 
 class FakeNet:
-    """Ham gui gia: `up=False` -> tra False; `raises=True` -> nem; ghi lai tin da toi dich."""
+    """Ham gui gia: `up=False` -> tra False; `raises=True` -> nem; ghi lai tin da toi dich.
+    Gia lap gioi han 4096 ky tu cua Telegram: tra False neu len(text) > 4096."""
 
-    def __init__(self):
+    def __init__(self, max_len: int = 4096):
         self.up = True
         self.raises = False
         self.fail_texts: set[str] = set()
         self.delivered: list[str] = []
         self.calls = 0
+        self.max_len = max_len
 
     def __call__(self, text: str) -> bool:
         self.calls += 1
         if self.raises:
             raise OSError("Name or service not known")
-        if not self.up or any(f in text for f in self.fail_texts):
+        if not self.up or any(f in text for f in self.fail_texts) or len(text) > self.max_len:
             return False
         self.delivered.append(text)
         return True
@@ -112,13 +115,14 @@ def test_mang_hoi_lai_gui_dung_thu_tu_co_tien_to_va_file_rong(tmp_path):
 
 
 def test_tin_thu_2_trong_3_con_hong_thi_tin_1_di_va_2_3_o_lai_dung_thu_tu(tmp_path):
+    # Mo phong mat mang tu tin 2: ca tin 2 va 3 deu hong -> khong go, giu nguyen thu tu
     net = FakeNet()
     net.up = False
     box = _box(tmp_path, net)
     for i in (1, 2, 3):
         alert("WARN", f"tin{i}").join()
     net.up = True
-    net.fail_texts = {"tin2"}
+    net.fail_texts = {"tin2", "tin3"}
     assert box.flush() == 1
     assert len(net.delivered) == 1 and "tin1" in net.delivered[0]
     left = [json.loads(ln)["text"] for ln in _lines(tmp_path)]
@@ -225,3 +229,155 @@ def test_tai_hien_su_co_953s_gui_hong_3_lan_roi_toi_dich_voi_gio_viet_nam(tmp_pa
     assert box.flush() == 1
     assert net.delivered == [f"[GỬI TRỄ — phát lúc 07:35:36 02/10] [CRITICAL] {SU_CO}"]
     assert not _file(tmp_path).exists()
+
+
+def test_ca_a2_tin_dai_va_hai_tin_thuong_toi_dich_co_ghi_ro_so_ky_tu_cat(tmp_path):
+    # Ca A.2: tin 4.070 ky tu + hai tin thuong, mat mang roi co mang -> ca ba toi dich
+    net = FakeNet(max_len=4096)
+    net.up = False
+    clock = Clock(datetime(2026, 10, 2, 0, 0, 0, tzinfo=UTC))
+    box = _box(tmp_path, net, clock)
+
+    # Tin dau dai dung 4.070 ky tu: "[CRITICAL] " (11 ky tu) + 4059 ky tu 'A'
+    msg_dai = "A" * (4070 - len("[CRITICAL] "))
+    alert("CRITICAL", msg_dai).join()
+    alert("WARN", "lệnh thật bị từ chối 1").join()
+    alert("WARN", "lệnh thật bị từ chối 2").join()
+
+    assert len(_lines(tmp_path)) == 3
+    # Mang hoi phuc
+    net.up = True
+    sent = box.flush()
+    assert sent == 3
+    assert len(net.delivered) == 3
+    # Ca 3 tin toi dich, khong tin nao vuot 4.096 (va deu <= 3.900)
+    assert all(len(m) <= 4096 for m in net.delivered)
+    assert all(len(m) <= 3900 for m in net.delivered)
+    # Tin dai bi cat va ghi ro so ky tu da cat
+    assert "... [cắt " in net.delivered[0] and "ký tự]" in net.delivered[0]
+    # Hai tin sau toi dich
+    assert "lệnh thật bị từ chối 1" in net.delivered[1]
+    assert "lệnh thật bị từ chối 2" in net.delivered[2]
+    # Hang doi da sach
+    assert not _file(tmp_path).exists()
+
+
+def test_tin_hong_vinh_vien_bi_go_va_tin_sau_toi_dich(tmp_path):
+    # Mot tin hong vinh vien o dau, hai tin sau tot -> hai tin sau toi dich, tin hong bi go khoi file
+    net = FakeNet()
+    net.up = False
+    box = _box(tmp_path, net)
+    alert("CRITICAL", "tin_hong_vinh_vien").join()
+    alert("WARN", "tin2_tot").join()
+    alert("WARN", "tin3_tot").join()
+
+    net.up = True
+    net.fail_texts = {"tin_hong_vinh_vien"}
+    sent = box.flush()
+
+    assert sent == 2
+    # tin2_tot va tin3_tot toi dich
+    assert any("tin2_tot" in m for m in net.delivered)
+    assert any("tin3_tot" in m for m in net.delivered)
+    # Co dong thong bao bo 1 canh bao
+    assert any("bỏ 1 cảnh báo không gửi được" in m for m in net.delivered)
+    # Tin hong da bi go khoi file
+    assert not _file(tmp_path).exists()
+
+
+def test_mat_mang_hoan_toan_khong_go_tin_giu_nguyen_thu_tu(tmp_path):
+    # Mat mang hoan toan -> khong tin nao bi go, thu tu giu nguyen (khong coi mat mang la tin hong)
+    net = FakeNet()
+    net.up = False
+    box = _box(tmp_path, net)
+    alert("CRITICAL", "tin1").join()
+    alert("WARN", "tin2").join()
+
+    sent = box.flush()
+    assert sent == 0
+    assert net.delivered == []
+    # Khong tin nao bi go, thu tu giu nguyen
+    lines = _lines(tmp_path)
+    assert len(lines) == 2
+    assert json.loads(lines[0])["text"] == "[CRITICAL] tin1"
+    assert json.loads(lines[1])["text"] == "[WARN] tin2"
+
+
+def test_mang_chap_tin_dau_hong_mot_lan_roi_duoc_khong_bi_go(tmp_path):
+    # Tin dau hong 1 lan roi gui duoc (mang chap dung luc do), tin thu hai duoc -> tin dau khong bi go
+    class FlakyNet(FakeNet):
+        def __init__(self):
+            super().__init__()
+            self.tin1_attempts = 0
+
+        def __call__(self, text: str) -> bool:
+            self.calls += 1
+            if not self.up:
+                return False
+            if "tin1" in text:
+                self.tin1_attempts += 1
+                if self.tin1_attempts == 1:
+                    return False
+            self.delivered.append(text)
+            return True
+
+    net = FlakyNet()
+    net.up = False
+    box = _box(tmp_path, net)
+    alert("CRITICAL", "tin1").join()
+    alert("WARN", "tin2").join()
+
+    net.up = True
+    sent = box.flush()
+    assert sent == 2
+    assert any("tin1" in m for m in net.delivered)
+    assert any("tin2" in m for m in net.delivered)
+    # Khong bi go oan, khong co dong thong bao bo tin
+    assert not any("bỏ 1 cảnh báo" in m for m in net.delivered)
+    assert not _file(tmp_path).exists()
+
+
+def test_hang_doi_chi_mot_tin_va_no_hong_giu_nguyen_khong_doan(tmp_path):
+    # Hang doi chi 1 tin va no hong -> van con trong file sau flush()
+    net = FakeNet()
+    net.up = False
+    box = _box(tmp_path, net)
+    alert("CRITICAL", "tin_doc_nhat").join()
+
+    net.up = True
+    net.fail_texts = {"tin_doc_nhat"}
+    sent = box.flush()
+    assert sent == 0
+    assert net.delivered == []
+    assert len(_lines(tmp_path)) == 1
+    assert json.loads(_lines(tmp_path)[0])["text"] == "[CRITICAL] tin_doc_nhat"
+
+
+def test_thu_muc_khong_ghi_duoc_khong_bat_va_alert_khong_nem(tmp_path, monkeypatch):
+    # Thu muc khong ghi duoc -> start_outbox tra None, co dong CRITICAL, alert() van khong nem
+    ro_dir = tmp_path / "readonly_dir"
+    ro_dir.mkdir()
+
+    orig_write_text = Path.write_text
+
+    def fake_write_text(self, data, encoding=None, errors=None):
+        if ".probe_write" in self.name:
+            raise PermissionError("Access is denied")
+        return orig_write_text(self, data, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "write_text", fake_write_text)
+
+    net = FakeNet()
+    box = start_outbox("collector", directory=ro_dir, send_fn=net)
+    assert box is None
+    assert alerts_mod._outbox is None
+    assert len(net.delivered) == 1
+    assert "[CRITICAL]" in net.delivered[0]
+    assert "collector" in net.delivered[0]
+    assert "không ghi được" in net.delivered[0]
+
+    # alert() van hoat dong, khong nem ngoai le
+    t = alert("WARN", "sau_khi_outbox_tat")
+    assert t is not None
+    t.join()
+

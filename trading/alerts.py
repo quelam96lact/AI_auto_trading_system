@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
@@ -43,6 +44,26 @@ OUTBOX_MAX = 200
 OUTBOX_INTERVAL_SECONDS = 60.0
 DEFAULT_OUTBOX_DIR = "/app/logs"
 _VN_TZ = timezone(timedelta(hours=7))
+MAX_ALERT_LEN = 3900
+_CUT_RE = re.compile(r"\n?\.\.\. \[cắt (\d+) ký tự\]$")
+
+
+def _truncate_alert(text: str, max_len: int = MAX_ALERT_LEN) -> str:
+    """Cắt bớt văn bản nếu dài quá max_len (an toàn dưới 4.096 của Telegram), ghi
+    rõ số ký tự đã cắt. Nếu đã từng bị cắt thì cộng dồn số ký tự cắt từ bản gốc."""
+    if len(text) <= max_len:
+        return text
+    prev_cut = 0
+    m = _CUT_RE.search(text)
+    if m:
+        prev_cut = int(m.group(1))
+        text = text[: m.start()]
+    for keep in range(max_len, 0, -1):
+        cut = prev_cut + (len(text) - keep)
+        suffix = f"\n... [cắt {cut} ký tự]"
+        if keep + len(suffix) <= max_len:
+            return text[:keep] + suffix
+    return text[:max_len]
 
 
 class AlertOutbox:
@@ -114,6 +135,7 @@ class AlertOutbox:
 
     # -- API --
     def enqueue(self, text: str) -> None:
+        text = _truncate_alert(text)
         with self._lock:
             lines = self._read_locked()
             lines.append(self._dump(text))
@@ -125,6 +147,7 @@ class AlertOutbox:
 
     def send_or_queue(self, text: str) -> None:
         """Gui mot lan; hong (False hoac nem) thi vao hang doi. Khong bao gio nem."""
+        text = _truncate_alert(text)
         try:
             ok = bool(self._send(text))
         except Exception:
@@ -152,7 +175,7 @@ class AlertOutbox:
         return f"[GỬI TRỄ — phát lúc {stamp}] {entry['text']}"
 
     def flush(self) -> int:
-        """Gui lai theo thu tu, dung o tin dau tien con hong. Tra ve so tin da gui."""
+        """Gui lai theo thu tu, tin dau hong thi thu tin thu hai. Tra ve so tin da gui."""
         sent = 0
         with self._flush_lock:
             while True:
@@ -161,23 +184,104 @@ class AlertOutbox:
                     dropped = self._dropped
                 if not lines:
                     return sent
+
                 head = lines[0]
-                text = self._render(json.loads(head))
-                if dropped:
-                    text += f"\n(đã bỏ {dropped} cảnh báo cũ vì hàng đợi đầy)"
                 try:
-                    ok = bool(self._send(text))
+                    head_dict = json.loads(head)
                 except Exception:
-                    ok = False
-                if not ok:
+                    head_dict = {"text": head, "emitted_at": ""}
+
+                text1 = self._render(head_dict)
+                if dropped:
+                    text1 += f"\n(đã bỏ {dropped} cảnh báo cũ vì hàng đợi đầy)"
+                text1 = _truncate_alert(text1)
+
+                try:
+                    ok1 = bool(self._send(text1))
+                except Exception:
+                    ok1 = False
+
+                if ok1:
+                    with self._lock:
+                        cur = self._read_locked()
+                        if head in cur:
+                            cur.remove(head)
+                        self._write_locked(cur)
+                        self._dropped = max(0, self._dropped - dropped)
+                    sent += 1
+                    continue
+
+                # Tin dau hong:
+                if len(lines) == 1:
+                    # Hang doi chi con mot tin va no hong -> khong biet mang hay tin, giu lai
                     return sent
+
+                # Thu tin thu hai MOT LAN
+                second = lines[1]
+                try:
+                    second_dict = json.loads(second)
+                except Exception:
+                    second_dict = {"text": second, "emitted_at": ""}
+
+                text2 = self._render(second_dict)
+                if dropped:
+                    text2 += f"\n(đã bỏ {dropped} cảnh báo cũ vì hàng đợi đầy)"
+                text2 = _truncate_alert(text2)
+
+                try:
+                    ok2 = bool(self._send(text2))
+                except Exception:
+                    ok2 = False
+
+                if not ok2:
+                    # Tin thu hai cung hong -> coi la mat mang; dung, giu nguyen thu tu.
+                    return sent
+
+                # Tin thu hai DUOC -> mang dang co.
+                # Thu lai tin dau them mot lan nua ngay luc do.
+                text1_retry = _truncate_alert(self._render(head_dict))
+                try:
+                    ok1_retry = bool(self._send(text1_retry))
+                except Exception:
+                    ok1_retry = False
+
+                if ok1_retry:
+                    # Mang chi chap dung luc dau, lan retry da thanh cong!
+                    with self._lock:
+                        cur = self._read_locked()
+                        if head in cur:
+                            cur.remove(head)
+                        if second in cur:
+                            cur.remove(second)
+                        self._write_locked(cur)
+                        self._dropped = max(0, self._dropped - dropped)
+                    sent += 2
+                    continue
+
+                # Lan thu lai van hong -> tin dau la tin hong vinh vien!
+                # Go khoi hang doi, second da toi dich cung go khoi hang doi.
                 with self._lock:
                     cur = self._read_locked()
                     if head in cur:
                         cur.remove(head)
+                    if second in cur:
+                        cur.remove(second)
                     self._write_locked(cur)
                     self._dropped = max(0, self._dropped - dropped)
                 sent += 1
+
+                # Ghi day du noi dung ra log
+                _log.warning("Bỏ 1 cảnh báo không gửi được (hỏng vĩnh viễn): %s", head)
+                _print_safe(f"[WARN] bỏ 1 cảnh báo không gửi được: {head}")
+
+                # Gui dong ngan bao bo tin hong (dong nay cung qua hang doi neu hong)
+                try:
+                    when = datetime.fromisoformat(head_dict["emitted_at"]).astimezone(_VN_TZ)
+                    stamp = when.strftime("%H:%M:%S %d/%m")
+                except Exception:
+                    stamp = str(head_dict.get("emitted_at", ""))
+                notice = f"[WARN] bỏ 1 cảnh báo không gửi được, phát lúc {stamp}, xem log"
+                self.send_or_queue(notice)
 
     def _loop(self, interval: float) -> None:
         while not self.stop_event.is_set():
@@ -206,12 +310,32 @@ def start_outbox(
     interval: float = OUTBOX_INTERVAL_SECONDS,
     run_thread: bool = True,
 ) -> AlertOutbox | None:
-    """Bat hang doi gui lai cho tien trinh nay. Thu muc khong ton tai (may dev) thi
-    KHONG bat gi va tra None — hanh vi y nhu cu."""
+    """Bat hang doi gui lai cho tien trinh nay. Thu muc khong ton tai (may dev) hoac
+    khong ghi duoc thi KHONG bat gi va tra None — hanh vi y nhu cu."""
     global _outbox
     d = Path(directory if directory is not None else DEFAULT_OUTBOX_DIR)
     if not d.is_dir():
         return None
+
+    # Kiem tra quyen ghi luc khoi dong: thu tao roi xoa mot file trong thu muc
+    probe = d / f".probe_write_{service}_{os.getpid()}"
+    try:
+        probe.write_text("probe", encoding="utf-8")
+        probe.unlink()
+    except Exception as e:
+        msg = (
+            f"[CRITICAL] Thư mục outbox {d} không ghi được ({type(e).__name__}: {e}). "
+            f"Hàng đợi cảnh báo của {service} bị TẮT!"
+        )
+        _print_safe(msg)
+        _log.critical("%s", msg)
+        sender = send_fn or (lambda text: send_telegram(text))
+        try:
+            sender(msg)
+        except Exception:
+            pass
+        return None
+
     box = AlertOutbox(d / f"alert_outbox_{service}.jsonl", send_fn=send_fn, clock=clock)
     _outbox = box
     if run_thread:
