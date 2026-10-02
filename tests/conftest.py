@@ -106,18 +106,14 @@ def _isolated_infra(request):
     yield
 
 
-# ISO-6 (2026-10-02 Brief dot 145): LUOI AN TOAN cho file trang thai THAT trong logs/.
-# Su co: test_heartbeat_check goi main([]) nen moi lan chay pytest ghi de
-# logs/.schedule_health_state.json that bang du kien gia ("stale", 2026-08-14);
-# heartbeat that sau do gui 5 tin "DA CHAY LAI" oan, va neu mot job THAT chet thi
-# thay trang thai truoc la stale, coi nhu "da bao", IM LANG.
+# ISO-6 (2026-10-02 Brief dot 145 / Brief dot 148): LUOI AN TOAN cho file trang thai THAT trong logs/.
+# Su co dot 145: test_heartbeat_check goi main([]) ghi de .schedule_health_state.json.
+# Su co dot 147 (audit): pha thu lam test do nhung audit hook chi bao ma khong chan,
+# nen .engine_consumer_last_check that van bi ghi de du lieu gia.
 #
-# Cach chon: audit hook (sys.addaudithook) bat moi lan MO-DE-GHI / XOA / DOI TEN mot
-# file `logs/.*state*` hoac `logs/.*last*` thuc ngay TRONG TIEN TRINH pytest nay, va
-# ghi lai ten test dang chay. Khong so sanh "truoc/sau" tren dia: cron ghi
-# .container_health_state.json THAT moi 10 phut (tien trinh khac) nen so sanh
-# truoc/sau se do oan; audit hook chi thay viec CUA pytest. Gioi han (da noi o bao
-# cao): tien trinh con (subprocess) khong bi bat.
+# Dot 148: audit hook nem PermissionError NGAY trong hook khi mo-de-ghi, xoa, hoac doi
+# ten vao file trang thai that, huy thao tac truoc khi cham dia. Mo de doc van cho
+# phep binh thuong. Cuoi session van lam phien do de canh bao toan dien.
 _REPO_LOGS = os.path.realpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "logs")
 )
@@ -138,6 +134,7 @@ def _real_state_file_name(path) -> str | None:
 
 
 def _audit_real_state_files(event, args):
+    violation = None
     try:
         if event == "open":
             path, mode, flags = args
@@ -158,11 +155,18 @@ def _audit_real_state_files(event, args):
         for p in paths:
             name = _real_state_file_name(p)
             if name:
-                _STATE_WRITES.append(
-                    (os.environ.get("PYTEST_CURRENT_TEST", "<ngoai test>"), event, name)
-                )
+                test_name = os.environ.get("PYTEST_CURRENT_TEST", "<ngoai test>")
+                _STATE_WRITES.append((test_name, event, name))
+                violation = (name, event, test_name)
+                break
     except Exception:
         pass
+
+    if violation:
+        name, ev, test = violation
+        raise PermissionError(
+            f"[LUOI AN TOAN 148] CHẶN thao tác '{ev}' vào file trạng thái thật 'logs/{name}' bởi {test}"
+        )
 
 
 sys.addaudithook(_audit_real_state_files)
