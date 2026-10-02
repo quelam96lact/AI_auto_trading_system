@@ -8,7 +8,7 @@ Tất định, dùng mock, KHÔNG kết nối NATS/DB thật trong pytest:
 5. Biến môi trường SSI_* rỗng => script vẫn chạy bình thường không crash / không exit 2 do thiếu SSI.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -259,5 +259,73 @@ def test_state_file_cli_flag(tmp_path):
     parser = ecc.build_parser()
     args = parser.parse_args(["--state-file", str(sf)])
     assert args.state_file == str(sf)
+
+
+def test_main_passes_state_file_to_run_check(monkeypatch, tmp_path):
+    """Brief 147: main() truyền cờ --state-file xuống run_check và file được ghi tại tmp_path."""
+    custom_state = tmp_path / "custom_engine_state.json"
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 100)))
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: True)
+
+    real_run_check = ecc.run_check
+    spy_kwargs = {}
+
+    def spy_run_check(*args, **kwargs):
+        spy_kwargs.update(kwargs)
+        return real_run_check(*args, **kwargs)
+
+    monkeypatch.setattr(ecc, "run_check", spy_run_check)
+
+    with pytest.raises(SystemExit) as exc_info:
+        ecc.main(["--state-file", str(custom_state)])
+    assert exc_info.value.code == 0
+
+    # Khẳng định 1: run_check nhận đúng tham số state_file
+    assert spy_kwargs.get("state_file") == str(custom_state)
+
+    # Khẳng định 2: file trạng thái được ghi đúng tại tmp_path và có nội dung đúng
+    assert custom_state.is_file()
+    saved = ecc.load_state(custom_state)
+    assert saved["stream_seq"] == 100
+    assert saved["last_seq"] == 100
+
+
+def test_save_state_error_healthy_does_not_crash(monkeypatch, tmp_path, capsys):
+    """Brief 147: Lỗi ghi file trạng thái khi engine khỏe không làm chết job, exit 0."""
+    custom_state = tmp_path / "state.json"
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    fake_info = FakeConsumerInfo(num_pending=0, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 100)))
+    monkeypatch.setattr(ecc, "save_json_state", MagicMock(side_effect=OSError("Disk full")))
+
+    code = ecc.run_check(state_file=custom_state)
+    assert code == 0
+
+    captured = capsys.readouterr()
+    assert "Không thể ghi file state" in captured.out
+    assert "Disk full" in captured.out
+
+
+def test_save_state_error_faulty_does_not_crash(monkeypatch, tmp_path, capsys):
+    """Brief 147: Lỗi ghi file trạng thái khi có sự cố không làm chết job, exit 1."""
+    custom_state = tmp_path / "state.json"
+    monkeypatch.setattr(ecc, "is_trading_time", lambda now, hol: True)
+
+    fake_info = FakeConsumerInfo(num_pending=25, stream_seq=100)
+    monkeypatch.setattr(ecc, "read_nats_consumer_info", AsyncMock(return_value=(fake_info, 125)))
+    monkeypatch.setattr(ecc, "send_telegram", lambda msg: True)
+    monkeypatch.setattr(ecc, "save_json_state", MagicMock(side_effect=OSError("Permission denied")))
+
+    code = ecc.run_check(pending_threshold=20, state_file=custom_state)
+    assert code == 1
+
+    captured = capsys.readouterr()
+    assert "Không thể ghi file state" in captured.out
+    assert "Permission denied" in captured.out
+
 
 
