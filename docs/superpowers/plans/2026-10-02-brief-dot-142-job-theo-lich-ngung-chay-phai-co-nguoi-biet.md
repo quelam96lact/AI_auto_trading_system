@@ -125,6 +125,18 @@ dịch** (dùng `trading.calendar_vn`), từ 08:15 đến 15:00, nếu lần g�
    chép vào repo chính.
 7. Dán `git worktree list` cuối cùng: chỉ còn repo chính.
 
+## ⚠ Chạy song song với một agent khác — đừng chạy hai bộ test đầy đủ cùng lúc
+
+Đợt 142 và đợt 143 do hai agent làm cùng lúc trên một máy. Cả hai dùng chung DB `trading_test` và NATS
+cổng 4223. Hai lần `uv run pytest -q` (có integration) chạy chồng nhau sẽ tranh nhau một stream NATS và
+sinh **lỗi giả**, trông y như test chập chờn (đã gặp 13/08: 10 phút 46 giây và đỏ lung tung thay vì 14,6
+giây và xanh).
+
+- Trong lúc làm: chạy `uv run pytest -q -m "not integration"`, cộng file test của chính mình.
+- Chỉ chạy bộ đầy đủ khi **không có pytest nào khác đang chạy**:
+  `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'pytest' }` phải rỗng ngay trước đó.
+- Gặp lỗi integration lạ thì kiểm điều này **trước** khi nghi code của mình.
+
 ## Báo cáo
 
 `docs/superpowers/research/2026-10-02-dot-142-job-ngung-chay.md`:
