@@ -14,9 +14,12 @@ còn sống nhưng việc thật đã chết):
 """
 
 import argparse
+import json
 import os
+import re
 import sys
 from datetime import date, datetime, time, timedelta
+from typing import Any, NamedTuple
 
 import psycopg
 import yaml
@@ -64,6 +67,227 @@ DEFAULT_STALE_BAR_MINUTES = 15
 # liên tiếp account_position_snapshot cho nhịp 5 phút 05 giây, rất đều (7 dòng
 # mỗi mốc). Ngưỡng 15 phút = ~3x nhịp đo được — cùng hệ số an toàn với 2A.
 DEFAULT_STALE_POSITION_SYNC_MINUTES = 15
+
+DEFAULT_SCHEDULE_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs",
+    ".schedule_health_state.json",
+)
+
+
+class WatchJobConfig(NamedTuple):
+    branch: str  # Tên nhánh trong sched.sh
+    log_file: str  # Tên file log trong logs/
+    label: str  # Nhãn được ghi bởi run_if_docker_up.sh
+    max_age_seconds: int  # Ngưỡng tuổi tối đa của lần gọi gần nhất (giây)
+    schedule_desc: str  # Mô tả lịch (cho báo cáo / alert)
+    formula_note: str  # Câu số học giải thích ngưỡng
+
+
+# Bảng kỳ vọng các job chạy 24/7 (Việc 2 - Brief 142)
+SCHEDULE_WATCH_JOBS: dict[str, WatchJobConfig] = {
+    "container-health": WatchJobConfig(
+        branch="container-health",
+        log_file="container-health.log",
+        label="container-health",
+        max_age_seconds=25 * 60,  # 25 phút
+        schedule_desc="mỗi 10 phút (24/7)",
+        formula_note="chạy đúng tuổi lớn nhất ~10p, lỡ 1 lần tuổi ~20p (≤ 25p cho phép lỡ 1 lần), lỡ lần 2 tuổi ~30p > 25p -> bắt từ lần lỡ thứ 2",
+    ),
+    "disk-check": WatchJobConfig(
+        branch="disk-check",
+        log_file="disk-check.log",
+        label="disk-check",
+        max_age_seconds=int(6.5 * 3600),  # 6 giờ 30 phút = 23,400 giây
+        schedule_desc="mỗi 6 giờ (00/06/12/18, 24/7)",
+        formula_note="chạy đúng tuổi lớn nhất 6h, lỡ 1 lần (vd 06:00) thì lúc mở phiên 08:00 tuổi đã 8h > 6.5h -> bắt ngay",
+    ),
+    "backup": WatchJobConfig(
+        branch="backup",
+        log_file="backup.log",
+        label="backup",
+        max_age_seconds=26 * 3600,  # 26 giờ = 93,600 giây
+        schedule_desc="02:00 hằng ngày",
+        formula_note="chạy đúng trong phiên 08:00-15:00 tuổi 6h-13h (< 24h), lỡ lần 02:00 sáng thì lúc 08:00 tuổi 30h > 26h -> bắt ngay",
+    ),
+    "orderbook-backup": WatchJobConfig(
+        branch="orderbook-backup",
+        log_file="orderbook-backup.log",
+        label="orderbook-backup",
+        max_age_seconds=26 * 3600,  # 26 giờ = 93,600 giây
+        schedule_desc="02:30 hằng ngày",
+        formula_note="chạy đúng trong phiên 08:00-15:00 tuổi 5.5h-12.5h (< 24h), lỡ lần 02:30 sáng thì lúc 08:00 tuổi 29.5h > 26h -> bắt ngay",
+    ),
+    "backup-check": WatchJobConfig(
+        branch="backup-check",
+        log_file="backup-check.log",
+        label="backup-check",
+        max_age_seconds=26 * 3600,  # 26 giờ = 93,600 giây
+        schedule_desc="03:00 hằng ngày",
+        formula_note="chạy đúng trong phiên 08:00-15:00 tuổi 5h-12h (< 24h), lỡ lần 03:00 sáng thì lúc 08:00 tuổi 29h > 26h -> bắt ngay",
+    ),
+}
+
+# 11 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do một câu)
+KHONG_CANH: dict[str, str] = {
+    "heartbeat": "Chính là heartbeat, không tự canh mà do container-health canh riêng trong giờ giao dịch.",
+    "daily-check": "Chỉ chạy 21:00 ngày giao dịch, cần lịch giao dịch và ngày nghỉ để canh đúng.",
+    "backfill": "Chỉ chạy 21:15 ngày giao dịch, cần lịch giao dịch và ngày nghỉ để canh đúng.",
+    "deploy-drift": "Chỉ chạy 08:30 và 13:15 ngày giao dịch, không chạy 24/7.",
+    "engine-cam": "Chỉ chạy trong giờ giao dịch 09:15-14:45 ngày giao dịch.",
+    "engine-consumer": "Chỉ chạy trong giờ giao dịch 09:00-14:50 ngày giao dịch.",
+    "stream-health": "Chỉ chạy các mốc cụ thể trong phiên ngày giao dịch (09:20, 11:35, 13:20, 14:50).",
+    "orderbook-recorder": "Chỉ chạy tiến trình ghi sổ lệnh trong giờ giao dịch (08:55-14:46).",
+    "orderbook-daily-check": "Chỉ chạy 15:05 cuối ngày giao dịch.",
+    "host-preflight": "Chỉ chạy 07:45 trước giờ giao dịch.",
+    "restore-drill": "Chỉ chạy 03:30 sáng Chủ nhật hằng tuần (chu kỳ tuần).",
+}
+
+
+def get_last_called_timestamp(
+    log_path: str, label: str
+) -> tuple[datetime | None, str | None]:
+    """Đọc mốc thời gian lần gọi gần nhất của nhãn `label` từ file log.
+
+    Quy ước run_if_docker_up.sh:
+      <YYYY-MM-DD HH:MM:SS> <nhãn> start
+      <YYYY-MM-DD HH:MM:SS> <nhãn> SKIP: ...
+      <YYYY-MM-DD HH:MM:SS> <nhãn> ERROR: ...
+
+    Trả về:
+      (dt, None) nếu tìm thấy dòng hợp lệ (dòng SKIP cũng tính là đã được gọi).
+      (None, reason) nếu không tìm thấy file hoặc không có dòng nào mang nhãn.
+    """
+    if not os.path.isfile(log_path):
+        return None, f"file log không tồn tại ({os.path.basename(log_path)})"
+
+    pattern = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+" + re.escape(label) + r"(?:\s|$)"
+    )
+    last_dt = None
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = pattern.match(line)
+                if m:
+                    try:
+                        dt = datetime.strptime(
+                            m.group(1), "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=TZ)
+                        last_dt = dt
+                    except ValueError:
+                        continue
+    except Exception as e:
+        return None, f"không đọc được file log ({e})"
+
+    if last_dt is None:
+        return None, f"không tìm thấy dòng nào mang nhãn '{label}' trong {os.path.basename(log_path)}"
+    return last_dt, None
+
+
+def evaluate_schedule_health(
+    job_last_seen: dict[str, tuple[datetime | None, str | None]],
+    now: datetime,
+    previous_state: dict[str, dict[str, Any]],
+    watch_jobs: dict[str, WatchJobConfig] = SCHEDULE_WATCH_JOBS,
+) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
+    """Đánh giá trạng thái chạy của các job theo lịch 24/7 (pure function).
+
+    Chỉ báo khi chuyển trạng thái:
+      - từ 'ok' (hoặc lần đầu / thiếu state) sang 'stale' -> báo CRITICAL một lần.
+      - từ 'stale' sang 'ok' -> báo INFO hồi phục một lần.
+      - kéo dài trạng thái cũ -> im lặng (chỉ ghi log info).
+      - không có file log hoặc log không có nhãn -> coi là 'stale'.
+      - file trạng thái lỗi hoặc thiếu -> coi như lần chạy đầu, KHÔNG nuốt job đang ngừng.
+
+    Trả về: (alerts, new_state, info_logs)
+    """
+    alerts = []
+    info_logs = []
+    new_state = dict(previous_state)
+    now_tz = now.astimezone(TZ)
+
+    for branch, cfg in watch_jobs.items():
+        last_dt, reason = job_last_seen.get(branch, (None, "không có dữ liệu"))
+        prev = previous_state.get(branch)
+        prev_status = prev.get("status") if isinstance(prev, dict) else None
+
+        if last_dt is None:
+            current_status = "stale"
+            stale_reason = reason or f"không tìm thấy dòng nào của {cfg.label} trong log"
+        else:
+            age_seconds = (now_tz - last_dt).total_seconds()
+            if age_seconds > cfg.max_age_seconds:
+                current_status = "stale"
+                age_minutes = age_seconds / 60
+                max_minutes = cfg.max_age_seconds / 60
+                stale_reason = (
+                    f"lần gọi gần nhất lúc {last_dt:%Y-%m-%d %H:%M:%S} "
+                    f"({age_minutes:.0f} phút trước > ngưỡng {max_minutes:.0f} phút, lịch: {cfg.schedule_desc})"
+                )
+            else:
+                current_status = "ok"
+                stale_reason = None
+
+        new_record = {
+            "status": current_status,
+            "last_called": (
+                last_dt.strftime("%Y-%m-%d %H:%M:%S") if last_dt else None
+            ),
+            "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        new_state[branch] = new_record
+
+        if current_status == "stale":
+            if prev_status != "stale":
+                alerts.append(
+                    f"[CRITICAL] job theo lịch '{branch}' NGỪNG CHẠY: {stale_reason}"
+                )
+            else:
+                info_logs.append(
+                    f"[heartbeat-sched] INFO: {branch} vẫn ngừng chạy ({stale_reason}) - đã báo trước đó"
+                )
+        else:  # current_status == "ok"
+            if prev_status == "stale":
+                alerts.append(
+                    f"[INFO] job theo lịch '{branch}' ĐÃ CHẠY LẠI: lần gọi gần nhất lúc {last_dt:%Y-%m-%d %H:%M:%S}"
+                )
+            else:
+                pass
+
+    return alerts, new_state, info_logs
+
+
+def load_schedule_state(filepath: str) -> dict[str, dict[str, Any]]:
+    """Đọc file trạng thái JSON. Nếu không tồn tại hoặc lỗi, trả về {}."""
+    if not os.path.exists(filepath):
+        return {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+            _print_safe(
+                f"[heartbeat] File trạng thái {filepath} không đúng định dạng dict — coi như lần đầu."
+            )
+            return {}
+    except Exception as e:
+        _print_safe(
+            f"[heartbeat] File trạng thái {filepath} hỏng hoặc không đọc được ({e}) — coi như lần chạy đầu."
+        )
+        return {}
+
+
+def save_schedule_state(
+    filepath: str, state: dict[str, dict[str, Any]]
+) -> None:
+    """Ghi trạng thái ra file JSON an toàn qua file tạm."""
+    dir_path = os.path.dirname(os.path.abspath(filepath))
+    os.makedirs(dir_path, exist_ok=True)
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, filepath)
 
 
 def stale_services(rows, now, max_age_seconds, expected=SERVICES) -> list[str]:
@@ -206,15 +430,21 @@ def ledger_deviation(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Dead-man's switch: cảnh báo Telegram khi collector/engine ngừng đập heartbeat."
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Chế độ chạy thử: in cảnh báo thay vì gửi Telegram, không ghi file trạng thái.",
+    )
+    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
     # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
-    build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
     # Ep utf-8 de ly do canh bao con dau tieng Viet; that bai cung khong sao,
     # _print_safe da co duong lui.
     try:
@@ -252,21 +482,40 @@ def main(argv: list[str] | None = None) -> int:
             date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
         )
     except Exception as e:
-        send_telegram(
-            f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[
-                :300
-            ]
-        )
+        err_msg = f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
+        _print_safe(err_msg)
+        if not args.dry_run:
+            send_telegram(err_msg)
         return 1
 
-    # Chỉ cảnh báo trong giờ giao dịch: cả 2 service đều đập 24/7, nhưng ngoài
-    # phiên thì service chết không gây hại ngay — tránh spam đêm/cuối tuần/ngày lễ.
+    # Việc 2 (Brief 142): Canh các job 24/7 theo lịch (đọc log của run_if_docker_up.sh)
+    logs_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+    job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
+    for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
+        log_path = os.path.join(logs_dir, job_cfg.log_file)
+        job_last_seen[branch] = get_last_called_timestamp(log_path, job_cfg.label)
+
+    sched_state_file = DEFAULT_SCHEDULE_STATE_FILE
+    prev_sched_state = load_schedule_state(sched_state_file)
+    sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
+        job_last_seen, now, prev_sched_state
+    )
+
+    # Chỉ cảnh báo trong giờ giao dịch (trừ khi chạy --dry-run để chẩn đoán/test)
     now_tz = now.astimezone(TZ)
     pre_market = time(8, 0) <= now_tz.time() < time(9, 0) and is_trading_day(
         now_tz.date(), holidays
     )
-    if not is_trading_time(now, holidays) and not pre_market:
+    if not is_trading_time(now, holidays) and not pre_market and not args.dry_run:
         return 0
+
+    if args.dry_run:
+        for info in sched_info_logs:
+            _print_safe(info)
+
+    messages = []
+    if sched_alerts:
+        messages.extend(sched_alerts)
 
     try:
         with psycopg.connect(dsn, connect_timeout=10) as c:
@@ -284,16 +533,16 @@ def main(argv: list[str] | None = None) -> int:
                 "SELECT avg_price, qty FROM positions WHERE qty != 0"
             ).fetchall()
     except Exception as e:
-        send_telegram(
-            f"[CRITICAL] heartbeat check không đọc được DB: {type(e).__name__}: {e}"[
-                :300
-            ]
-        )
+        err_msg = f"[CRITICAL] heartbeat check không đọc được DB: {type(e).__name__}: {e}"[:300]
+        _print_safe(err_msg)
+        messages.append(err_msg)
+        if not args.dry_run:
+            send_telegram(err_msg)
+            save_schedule_state(sched_state_file, new_sched_state)
         return 1
     max_ts = max_ts_row[0] if max_ts_row else None
 
     stale = stale_services(rows, now, max_age)
-    messages = []
     if stale:
         messages.append(
             f"[CRITICAL] service ngừng heartbeat quá {max_age}s: {', '.join(stale)}"
@@ -372,8 +621,17 @@ def main(argv: list[str] | None = None) -> int:
         # nhanh nao no; va neu send_telegram nem exception thi khong con ban ghi
         # nao o dau. Chuong bao phai de lai dau vet tai cho.
         _print_safe("\n".join(messages))
+        if args.dry_run:
+            _print_safe(
+                "[DRY-RUN] Không gửi Telegram thật. Không cập nhật file trạng thái."
+            )
+            return 1
         send_telegram("\n".join(messages))
+        save_schedule_state(sched_state_file, new_sched_state)
         return 1
+
+    if not args.dry_run:
+        save_schedule_state(sched_state_file, new_sched_state)
     return 0
 
 

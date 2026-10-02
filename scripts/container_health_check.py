@@ -21,8 +21,17 @@ import json
 import os
 import subprocess
 import sys
-import traceback
+from datetime import date, datetime, time
 from typing import Any, NamedTuple
+
+import yaml
+
+from trading.calendar_vn import TZ, is_trading_day
+
+try:
+    from scripts.heartbeat_check import get_last_called_timestamp
+except ImportError:
+    from heartbeat_check import get_last_called_timestamp
 
 try:
     from scripts.deploy_drift_check import get_container_name
@@ -55,6 +64,90 @@ DEFAULT_STATE_FILE = os.path.join(
     os.path.dirname(SPAM_GUARD_FILE),
     ".container_health_state.json",
 )
+
+# Việc 3 (Brief 142): Canh heartbeat trong ngày giao dịch (08:15-15:00)
+HEARTBEAT_MAX_AGE_SECONDS = 15 * 60  # 15 phút
+HEARTBEAT_WINDOW_START = time(8, 15)
+HEARTBEAT_WINDOW_END = time(15, 0)
+
+
+def evaluate_heartbeat_watch(
+    last_seen: datetime | None,
+    reason: str | None,
+    now: datetime,
+    prev_state: dict[str, Any] | None,
+    holidays: frozenset[date] = frozenset(),
+) -> tuple[list[str], dict[str, Any] | None, list[str]]:
+    """Đánh giá sức khỏe của heartbeat từ container_health_check (pure function).
+
+    Chỉ đánh giá trong ngày giao dịch từ 08:15 đến 15:00 (giờ VN).
+    Ngoài khung đó -> trả về ([], prev_state, []) (không đánh giá, giữ nguyên state).
+
+    Trả về: (alerts, new_record, info_logs)
+    """
+    now_tz = now.astimezone(TZ)
+    today = now_tz.date()
+    t = now_tz.time()
+
+    # 1. Kiểm tra ngày giao dịch và khung giờ 08:15 - 15:00
+    if not is_trading_day(today, holidays):
+        return [], prev_state, []
+
+    if not (HEARTBEAT_WINDOW_START <= t <= HEARTBEAT_WINDOW_END):
+        return [], prev_state, []
+
+    # 2. Đánh giá trạng thái heartbeat
+    prev_status = (
+        prev_state.get("status") if isinstance(prev_state, dict) else None
+    )
+
+    if last_seen is None:
+        current_status = "stale"
+        stale_reason = (
+            reason or "không tìm thấy dòng nào của heartbeat trong log"
+        )
+    else:
+        age_seconds = (now_tz - last_seen).total_seconds()
+        if age_seconds > HEARTBEAT_MAX_AGE_SECONDS:
+            current_status = "stale"
+            age_minutes = age_seconds / 60
+            stale_reason = (
+                f"lần gọi gần nhất lúc {last_seen:%Y-%m-%d %H:%M:%S} "
+                f"({age_minutes:.0f} phút trước > ngưỡng 15 phút)"
+            )
+        else:
+            current_status = "ok"
+            stale_reason = None
+
+    new_record = {
+        "status": current_status,
+        "last_called": (
+            last_seen.strftime("%Y-%m-%d %H:%M:%S") if last_seen else None
+        ),
+        "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    alerts = []
+    info_logs = []
+
+    if current_status == "stale":
+        if prev_status != "stale":
+            alerts.append(
+                f"[CRITICAL] heartbeat check NGỪNG CHẠY: {stale_reason}"
+            )
+        else:
+            info_logs.append(
+                f"[container-health] INFO: heartbeat check vẫn ngừng chạy ({stale_reason}) - đã báo trước đó"
+            )
+    else:  # current_status == "ok"
+        if prev_status == "stale":
+            alerts.append(
+                f"[INFO] heartbeat check ĐÃ CHẠY LẠI: lần gọi gần nhất lúc {last_seen:%Y-%m-%d %H:%M:%S}"
+            )
+        else:
+            pass
+
+    return alerts, new_record, info_logs
 
 
 class ContainerStats(NamedTuple):
@@ -443,6 +536,38 @@ def main(argv: list[str] | None = None) -> int:
     # Đánh giá luật thuần túy
     alerts, new_state, info_logs = evaluate_container_health(stats_map, prev_state)
 
+    # Việc 3 (Brief 142): Canh heartbeat trong ngày giao dịch (08:15-15:00)
+    holidays = frozenset()
+    try:
+        cfg_path = os.path.join(
+            os.path.dirname(__file__), "..", "config", "config.yaml"
+        )
+        if os.path.exists(cfg_path):
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            holidays = frozenset(
+                date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
+            )
+    except Exception:
+        pass
+
+    logs_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+    hb_log_path = os.path.join(logs_dir, "heartbeat.log")
+    hb_last_seen, hb_reason = get_last_called_timestamp(
+        hb_log_path, "heartbeat-check"
+    )
+
+    hb_prev = prev_state.get("__heartbeat__")
+    hb_alerts, hb_record, hb_info = evaluate_heartbeat_watch(
+        hb_last_seen, hb_reason, datetime.now(TZ), hb_prev, holidays
+    )
+    if hb_record is not None:
+        new_state["__heartbeat__"] = hb_record
+    if hb_alerts:
+        alerts.extend(hb_alerts)
+    if hb_info:
+        info_logs.extend(hb_info)
+
     # In các dòng thông tin nếu có
     for info in info_logs:
         _print_safe(info)
@@ -478,7 +603,6 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        sys.exit(main(sys.argv[1:]))
     except Exception:
-        traceback.print_exc()
         sys.exit(2)

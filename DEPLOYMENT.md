@@ -612,8 +612,11 @@ Kiểm chứng cổng (đã chạy 01/09): giả lập Docker tắt bằng một
 - Cấu hình XML (repetition 5 phút trong khung 08:00–15:00 T2–T6, bỏ chặn
   pin/battery): xem bản đã đăng ký trên máy dev
   (`schtasks /query /tn trading-heartbeat-check /xml`).
+- **`StartWhenAvailable=True` cho các task lặp 24/7 neo 00:00 (`trading-container-health`, `trading-disk-check`)**:
+  Nếu máy ngủ qua mốc 00:00 thì task vẫn kích hoạt lặp ngay khi máy thức dậy thay vì trượt cả ngày
+  (bài học sự cố 02/10).
 
-Script kiểm **năm thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
+Script kiểm **sáu thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
 chạy — các nhánh khác tự bỏ qua):
 
 | Kiểm | Cảnh báo | Từ commit |
@@ -623,6 +626,7 @@ chạy — các nhánh khác tự bỏ qua):
 | Token SSI sắp/đã hết hạn (kể cả khung 8:00-8:59) | WARN / CRITICAL | `7700992` |
 | Hai sổ sách lệch (`cash + Σ(avg_price×qty) − CAPITAL == realized_pnl`) | CRITICAL | `d775ebb` |
 | Vị thế ngừng đồng bộ (`account_position_snapshot` của `real_order_account` quá 15 phút chưa cập nhật, hoặc chưa từng đồng bộ) | CRITICAL | `ebfec3c` |
+| Job theo lịch 24/7 ngừng chạy (`container-health` > 25p, `disk-check` > 6.5h, `backup`/`orderbook-backup`/`backup-check` > 26h; chỉ báo khi chuyển trạng thái) | CRITICAL / INFO hồi phục | Brief 142 |
 
 Thay `trading:trading` bằng user/password Postgres thật nếu bạn đã đổi khỏi giá
 trị mặc định trong `docker-compose.yml`.
@@ -697,9 +701,9 @@ Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ng
 | `stream-health` | **Có** (có điều kiện) | `scripts/sched.sh stream-health --date <ngày_lỡ> --session <sang\|chieu>` | Chỉ chạy bù được nếu log collector của phiên đó vẫn còn trong container hoặc trong `logs/bars_closed.log`. |
 | `orderbook-daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh orderbook-daily-check --date <ngày_lỡ>` | Kiểm tra tính toàn vẹn file `.jsonl.gz` của ngày bị lỡ. |
 | `orderbook-recorder` | **KHÔNG** | *Không thể chạy bù* | Luồng WebSocket L2 thời gian thực đã trôi qua thì không thể lấy lại từ API. |
-| `heartbeat` | **Không cần** | `scripts/sched.sh heartbeat` | Dead-man's switch giám sát thời gian thực (ngoài phiên tự thoát 0). Chạy tay chỉ để kiểm tra trạng thái ngay lúc bấm. |
+| `heartbeat` | **Không cần** | `scripts/sched.sh heartbeat --dry-run` | Dead-man's switch giám sát thời gian thực (ngoài phiên tự thoát 0). Chạy tay với `--dry-run` để chẩn đoán hệ thống an toàn mà không gửi Telegram và không cập nhật trạng thái. |
 | `deploy-drift` | **Không cần** | `scripts/sched.sh deploy-drift` | So sánh commit git và container đang chạy. Chạy tay bất cứ lúc nào. |
-| `container-health` | **Không cần** | `scripts/sched.sh container-health` | Giám sát trạng thái sống và OOM của container tại thời điểm hiện tại. |
+| `container-health` | **Không cần** | `scripts/sched.sh container-health` | Giám sát trạng thái sống và OOM của container tại thời điểm hiện tại, đồng thời canh heartbeat chéo trong khung giờ giao dịch 08:15–15:00 (ngưỡng 15 phút). |
 | `engine-cam` | **Không cần** | `scripts/sched.sh engine-cam` | Kiểm tra chốt chặn engine trên toàn bộ dữ liệu bar 5m trong DB. |
 | `engine-consumer` | **Không cần** | `scripts/sched.sh engine-consumer` | Giám sát hàng đợi tiêu thụ NATS JetStream trong phiên. Không có ý nghĩa bù quá khứ. |
 | `disk-check` | **Không cần** | `scripts/sched.sh disk-check` | Kiểm tra dung lượng đĩa hiện tại của host. |
