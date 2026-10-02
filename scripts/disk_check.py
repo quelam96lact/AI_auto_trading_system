@@ -121,7 +121,7 @@ def build_report(path: Path, backup_dir: Path | None) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cảnh báo dung lượng đĩa sắp hết.")
     parser.add_argument(
         "--path",
@@ -138,7 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="In thay vì gửi Telegram"
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     path = Path(args.path)
     if not path.is_dir():

@@ -141,7 +141,7 @@ def _alert(messages: list[str]) -> int:
     return alert_and_fail("[engine-cam]", messages, send_telegram)
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Kiểm tra chốt chặn engine câm")
     parser.add_argument(
         "--config",
@@ -155,7 +155,11 @@ def main() -> int:
         default=None,
         help="Danh sách mã cần kiểm (mặc định lấy từ config)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     cfg_path = Path(args.config)
     if not cfg_path.is_file():

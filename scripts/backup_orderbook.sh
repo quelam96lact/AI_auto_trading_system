@@ -17,6 +17,15 @@
 # Env: BACKUP_RETENTION_DAYS (default 14), ORDERBOOK_DIR (default <repo>/data/orderbook).
 set -euo pipefail
 
+if [ $# -gt 1 ]; then
+  echo "ERROR: Too many arguments ($#). Usage: $0 [backup_dir]" >&2
+  exit 2
+fi
+if [ $# -eq 1 ] && [[ "$1" == -* ]]; then
+  echo "ERROR: Unknown option '$1'. Usage: $0 [backup_dir]" >&2
+  exit 2
+fi
+
 # TRADING_BACKUP_DIR (.env) truoc, roi moi den mac dinh Ubuntu. Tren Windows
 # "/var/backups/trading-db" khong ton tai va se chet o mkdir (do that 29/09).
 BACKUP_DIR="${1:-${TRADING_BACKUP_DIR:-/var/backups/trading-db}}"

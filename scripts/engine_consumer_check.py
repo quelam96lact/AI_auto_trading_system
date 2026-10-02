@@ -186,13 +186,24 @@ def run_check(
     return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Chuông 2C: Giám sát engine tiêu thụ bar từ NATS JetStream (chỉ đọc).")
-    parser.add_argument("--config", default="config/config.yaml", help="Đường dẫn file config")
-    parser.add_argument("--force", action="store_true", help="Bỏ qua kiểm tra giờ giao dịch")
-    parser.add_argument("--threshold", type=int, default=20, help="Ngưỡng num_pending cảnh báo")
-    args = parser.parse_args()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Chuông 2C: Giám sát engine tiêu thụ bar từ NATS JetStream (chỉ đọc)."
+    )
+    parser.add_argument(
+        "--config", default="config/config.yaml", help="Đường dẫn file config"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Bỏ qua kiểm tra giờ giao dịch"
+    )
+    parser.add_argument(
+        "--threshold", type=int, default=20, help="Ngưỡng num_pending cảnh báo"
+    )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
     sys.exit(run_check(args.config, force=args.force, pending_threshold=args.threshold))
 
 

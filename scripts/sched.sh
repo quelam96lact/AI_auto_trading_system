@@ -52,36 +52,44 @@ BACKFILL_DAYS=7
 
 case "${1:-}" in
   heartbeat)
+    shift || true
     exec "$RUN" heartbeat.log heartbeat-check \
-      uv run python scripts/heartbeat_check.py
+      uv run python scripts/heartbeat_check.py "$@"
     ;;
   daily-check)
+    shift || true
     exec "$RUN" daily-data-check.log daily-data-check \
-      uv run python scripts/daily_data_check.py
+      uv run python scripts/daily_data_check.py "$@"
     ;;
   backfill)
+    shift || true
     exec "$RUN" backfill.log backfill \
       uv run python scripts/backfill_universe.py \
       --timeframe 1d \
       --from "$(date -d "$BACKFILL_DAYS days ago" +%F)" \
       --to "$(date +%F)" \
-      --use-universe --sleep-ms 200
+      --use-universe --sleep-ms 200 \
+      "$@"
     ;;
   deploy-drift)
+    shift || true
     exec "$RUN" deploy-drift.log deploy-drift \
-      uv run python scripts/deploy_drift_check.py
+      uv run python scripts/deploy_drift_check.py "$@"
     ;;
   container-health)
+    shift || true
     exec "$RUN" container-health.log container-health \
-      uv run python -m scripts.container_health_check
+      uv run python -m scripts.container_health_check "$@"
     ;;
   engine-cam)
+    shift || true
     exec "$RUN" engine-cam.log engine-cam \
-      uv run python scripts/check_silent_engine.py
+      uv run python scripts/check_silent_engine.py "$@"
     ;;
   engine-consumer)
+    shift || true
     exec "$RUN" engine-consumer.log engine-consumer \
-      uv run python scripts/engine_consumer_check.py
+      uv run python scripts/engine_consumer_check.py "$@"
     ;;
   stream-health)
     shift || true

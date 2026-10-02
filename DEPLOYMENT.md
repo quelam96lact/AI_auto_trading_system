@@ -678,6 +678,42 @@ Lưu ý:
 - 5m (`--timeframe 5m`) backfill toàn vũ trụ KHÔNG nên chạy định kỳ — chỉ
   backtest các mã cần thiết qua `--symbols` (7 ngày/lượt chunk, tốn API).
 
+## 9.6 Chạy bù sau khi máy hoặc Docker tắt
+
+Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ngừng hoạt động qua đêm/cuối tuần, một số tác vụ định kỳ sẽ bị lỡ. Bảng dưới đây hướng dẫn quy tắc chạy bù an toàn cho từng job.
+
+> [!WARNING]
+> **Sự cố thật sáng 02/10/2026:** Máy ngủ qua đêm lỡ job `daily-check` lúc 21:00 tối 01/10. Sáng 02/10 lúc 05:47 chạy bù bằng lệnh `Start-ScheduledTask` (hoặc chạy cron không tham số). Job lấy ngày mặc định là hôm nay (`datetime.now(TZ).date()` = 02/10) lúc thị trường chưa mở cửa → báo "0 mã có bar" và bắn cảnh báo Telegram oan. Chạy lại với cờ `--date 2026-10-01` nhưng lúc đó `sched.sh` nuốt cờ → tiếp tục kiểm ngày 02/10 và bắn cảnh báo oan lần 2!
+
+### Bảng quy tắc chạy bù cho các job định kỳ
+
+| Job | Chạy bù được không? | Lệnh chạy bù khuyến nghị | Cờ bắt buộc / Lưu ý quan trọng |
+|---|---|---|---|
+| `backfill` | **Có** (rất an toàn) | `scripts/sched.sh backfill` | Idempotent (UPSERT theo mã và ts). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
+| `daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh daily-check --date <ngày_lỡ> --dry-run` | **BẮT BUỘC** `--date <ngày_lỡ>` VÀ `--dry-run`. Xem kết quả in ra màn hình trước; chỉ bỏ `--dry-run` khi thực sự muốn gửi cảnh báo. **TUYỆT ĐỐI KHÔNG** dùng `Start-ScheduledTask` hoặc chạy không cờ vào hôm sau vì sẽ kiểm nhầm ngày hôm nay. |
+| `backup` | **Có** (rất an toàn) | `scripts/sched.sh backup` | Dump lại database Postgres và lập bản kê `.counts`. Nên chạy bù trước khi chạy `backup-check`. |
+| `orderbook-backup` | **Có** (rất an toàn) | `scripts/sched.sh orderbook-backup` | Sao lưu tăng dần các file nén sổ lệnh mới hơn tarball trước đó. |
+| `backup-check` | **Có** (lưu ý ngữ nghĩa) | `scripts/sched.sh backup-check --dry-run` | Đánh giá theo **thời điểm hiện tại**: nếu bản dump DB cũ hơn 23h (do lỡ job `backup`), nó sẽ báo CRITICAL đúng theo thiết kế. Do đó, hãy chạy bù `backup` thành công trước rồi mới chạy `backup-check`. |
+| `stream-health` | **Có** (có điều kiện) | `scripts/sched.sh stream-health --date <ngày_lỡ> --session <sang\|chieu>` | Chỉ chạy bù được nếu log collector của phiên đó vẫn còn trong container hoặc trong `logs/bars_closed.log`. |
+| `orderbook-daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh orderbook-daily-check --date <ngày_lỡ>` | Kiểm tra tính toàn vẹn file `.jsonl.gz` của ngày bị lỡ. |
+| `orderbook-recorder` | **KHÔNG** | *Không thể chạy bù* | Luồng WebSocket L2 thời gian thực đã trôi qua thì không thể lấy lại từ API. |
+| `heartbeat` | **Không cần** | `scripts/sched.sh heartbeat` | Dead-man's switch giám sát thời gian thực (ngoài phiên tự thoát 0). Chạy tay chỉ để kiểm tra trạng thái ngay lúc bấm. |
+| `deploy-drift` | **Không cần** | `scripts/sched.sh deploy-drift` | So sánh commit git và container đang chạy. Chạy tay bất cứ lúc nào. |
+| `container-health` | **Không cần** | `scripts/sched.sh container-health` | Giám sát trạng thái sống và OOM của container tại thời điểm hiện tại. |
+| `engine-cam` | **Không cần** | `scripts/sched.sh engine-cam` | Kiểm tra chốt chặn engine trên toàn bộ dữ liệu bar 5m trong DB. |
+| `engine-consumer` | **Không cần** | `scripts/sched.sh engine-consumer` | Giám sát hàng đợi tiêu thụ NATS JetStream trong phiên. Không có ý nghĩa bù quá khứ. |
+| `disk-check` | **Không cần** | `scripts/sched.sh disk-check` | Kiểm tra dung lượng đĩa hiện tại của host. |
+| `host-preflight` | **Không cần** | `scripts/sched.sh host-preflight` | Kiểm tra các cấu hình tĩnh trên host. |
+| `restore-drill` | **Có** (an toàn) | `scripts/sched.sh restore-drill --dry-run` | Diễn tập phục hồi bản dump DB mới nhất vào DB tạm và tự xoá. |
+
+> [!NOTE]
+> **Lưu ý quan trọng về múi giờ khi truy vấn psql:**
+> Cột `ts` trong `bars` và `bars_daily` lưu theo kiểu `timestamptz`. Nếu gõ `ts::date` trong psql, Postgres sẽ cast theo múi giờ session (mặc định UTC nếu chưa cấu hình), dẫn đến ngày bị **lùi lại 1 ngày** so với ngày lịch Việt Nam (ví dụ nến ngày `2026-10-02 00:00:00+07` được lưu là `2026-10-01 17:00:00Z` -> `ts::date` ra `2026-10-01`).
+> Khi kiểm tra bằng tay trong psql, **BẮT BUỘC** dùng:
+> ```sql
+> SELECT (ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, count(*) FROM bars_daily GROUP BY 1 ORDER BY 1 DESC LIMIT 5;
+> ```
+
 ## 10. Sau khi sửa code trong `trading/` — BẮT BUỘC dựng lại container
 
 Sửa file trên host **không có tác dụng gì** với stack đang chạy: collector/engine

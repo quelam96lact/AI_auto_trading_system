@@ -373,7 +373,7 @@ def evaluate_stream_health(
         return 0, "OK"
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kiểm tra sức khoẻ luồng SSI thời gian thực (Brief 43 & Brief 49)."
     )
@@ -413,8 +413,12 @@ def main() -> None:
         help="Số nến kỳ vọng mẫu số (mock cho test)",
     )
     parser.add_argument("--dsn", default=None, help="Database DSN override")
+    return parser
 
-    args = parser.parse_args()
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
     now_vn = datetime.now(TZ_VN)
     holidays = load_holidays()
 

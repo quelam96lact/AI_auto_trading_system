@@ -382,7 +382,7 @@ def check_docker_daemon() -> bool:
         return False
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kiểm tra sức khoẻ container và cảnh báo restart / OOM."
     )
@@ -403,8 +403,11 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Danh sách tên container phân cách bằng dấu phẩy.",
     )
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     # Brief §1c: --dry-run bắt buộc đi kèm --state-file
     if args.dry_run and not args.state_file:

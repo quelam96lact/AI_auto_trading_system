@@ -203,7 +203,7 @@ def resolve_use_universe_symbols(storage, cfg):
     return symbols, active, must_price, n_outside
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeframe", required=True, choices=["1d", "5m"])
     ap.add_argument("--from", dest="frm", required=True, help="YYYY-MM-DD")
@@ -213,7 +213,12 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--use-universe", action="store_true")
     ap.add_argument("--sleep-ms", type=int, default=200)
-    args = ap.parse_args()
+    return ap
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = build_parser()
+    args = ap.parse_args(argv)
 
     cfg = load_config("config/config.yaml")
     storage = Storage(cfg.db_dsn)

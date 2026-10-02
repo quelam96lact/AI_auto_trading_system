@@ -18,6 +18,7 @@ thuộc mới là một cách mới để chuông chết câm). Script này hỏ
 theo gì.
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -176,7 +177,15 @@ def get_container_name(service: str, project_name: str | None = None) -> str:
     return f"{project_name}-{service}-1"
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        description="Cảnh báo lệch triển khai: code đã sửa mà container vẫn chạy image cũ."
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    if argv is not None:
+        build_parser().parse_args(argv)
     # Ép utf-8 để lý do cảnh báo còn dấu tiếng Việt; thất bại cũng không sao,
     # _print_safe đã có đường lui.
     try:
@@ -210,4 +219,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

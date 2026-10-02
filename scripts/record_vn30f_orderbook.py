@@ -813,7 +813,7 @@ async def record_orderbook_stream(
         raise
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Máy ghi dữ liệu sổ lệnh và dòng lệnh VN30F (Brief 87/90)"
     )
@@ -837,7 +837,12 @@ def main() -> None:
         default="data/orderbook",
         help="Thư mục gốc lưu trữ dữ liệu (mặc định: data/orderbook)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     until_time = _parse_until_time(args.until)
 

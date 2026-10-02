@@ -804,7 +804,7 @@ def render_table(results: list[Result], euid: int | None = None) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kiểm các bước làm tay trên host (chỉ đọc)."
     )
@@ -812,7 +812,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_GB)
     parser.add_argument("--min-total-gb", type=float, default=DEFAULT_MIN_TOTAL_GB)
     parser.add_argument("--json", action="store_true", help="Xuất JSON máy đọc được")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     repo = Path(args.repo)
     sched = repo / "scripts" / "sched.sh"

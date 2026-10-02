@@ -239,7 +239,7 @@ async def check_orderbook_daily(
     return decision.exit_code
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kiểm tra chất lượng file sổ lệnh VN30F hằng ngày sau phiên (Brief 94 Task 2)"
     )
@@ -263,7 +263,12 @@ def main() -> None:
         default="config/config.yaml",
         help="Đường dẫn file config (mặc định: config/config.yaml)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     target_date = date.fromisoformat(args.date) if args.date else None
 

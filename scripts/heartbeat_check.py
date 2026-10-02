@@ -13,6 +13,7 @@ còn sống nhưng việc thật đã chết):
   (bar chảy đủ); 2B mới bắt được.
 """
 
+import argparse
 import os
 import sys
 from datetime import date, datetime, time, timedelta
@@ -195,7 +196,17 @@ def ledger_deviation(cash: float, realized_pnl: float, positions_value: float, c
     → hai sổ lệch (hai lỗi 6664cd9 / 2982900 đều là cash đúng, realized sai).
     """
     return (cash + positions_value - capital) - realized_pnl
-def main() -> int:
+
+
+def build_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        description="Dead-man's switch: cảnh báo Telegram khi collector/engine ngừng đập heartbeat."
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    if argv is not None:
+        build_parser().parse_args(argv)
     # Ep utf-8 de ly do canh bao con dau tieng Viet; that bai cung khong sao,
     # _print_safe da co duong lui.
     try:
@@ -351,4 +362,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

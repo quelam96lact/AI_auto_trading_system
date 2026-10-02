@@ -271,7 +271,7 @@ def check_pg_restore(file_path: Path) -> str:
     return "UNAVAILABLE: pg_restore không có trên PATH"
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Kiểm tra sao lưu DB hàng ngày.")
     parser.add_argument(
         "--backup-dir",
@@ -310,7 +310,11 @@ def main(argv: list[str] | None = None) -> int:
         default=str(DEFAULT_CONFIG),
         help="config.yaml để đọc danh sách ngày lễ (kiểm sổ lệnh theo lịch giao dịch)",
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     backup_dir = Path(args.backup_dir)
     now_epoch = time.time()

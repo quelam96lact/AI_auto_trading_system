@@ -37,7 +37,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kiểm tra các mã active đã có bar daily của phiên gần nhất chưa"
     )
@@ -47,7 +47,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Ngày kiểm tra (YYYY-MM-DD), mặc định: ngày hiện tại theo giờ VN",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="In cảnh báo thay vì gửi Telegram (chạy bù an toàn)",
+    )
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
@@ -217,8 +226,8 @@ def evaluate_daily_completeness(
     return 1, missing, msg
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
 
     try:
         dsn = resolve_dsn(args.dsn)
@@ -284,6 +293,9 @@ def main() -> None:
     _print_safe(f"[{target_date}] {msg}")
 
     if code in (1, 2):
+        if args.dry_run:
+            _print_safe(f"[DRY-RUN] Không gửi Telegram (mã thoát {code}).")
+            sys.exit(code)
         # Brief 56: send_telegram khong con nem (FEE-ALARM-2) va tra bool. Truoc day
         # doan nay in "Da gui" VO DIEU KIEN — tuc la noi doi khi thieu bien moi
         # truong hoac mang hong. Bao cao dot 56 Task 2 tu neu ra lo nay.
