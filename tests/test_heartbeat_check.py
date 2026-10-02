@@ -669,3 +669,71 @@ def test_main_ghi_trang_thai_vao_thu_muc_tam_khong_phai_logs_that(
     )
     assert rc == 0
     assert (tmp_path / ".schedule_health_state.json").is_file()
+
+
+# --- Brief 149: Chống lệch giờ và đối chiếu lịch canh với DEPLOYMENT.md §9 ---
+
+
+def test_khong_canh_reasons_contain_no_hardcoded_times():
+    """Brief 149: Không lý do nào trong KHONG_CANH được chứa giờ chạy cụ thể (tránh lệch với DEPLOYMENT.md §9)."""
+    import re
+
+    import scripts.heartbeat_check as hc
+
+    time_pattern = re.compile(r"\b\d{1,2}:\d{2}\b")
+    violations = {
+        job: reason
+        for job, reason in hc.KHONG_CANH.items()
+        if time_pattern.search(reason)
+    }
+    assert not violations, f"KHONG_CANH chứa giờ cụ thể: {violations}"
+
+
+def verify_schedule_watch_jobs_against_deployment_cron(deployment_path=None):
+    """Brief 149: Đối chiếu 5 job canh 24/7 trong SCHEDULE_WATCH_JOBS với dòng cron trong DEPLOYMENT.md §9."""
+    import re
+    from pathlib import Path
+
+    import scripts.heartbeat_check as hc
+
+    path = (
+        Path(deployment_path)
+        if deployment_path is not None
+        else Path(hc.DEFAULT_LOGS_DIR).parent / "DEPLOYMENT.md"
+    )
+    text = path.read_text(encoding="utf-8")
+
+    # Trích xuất biểu thức cron của các dòng gọi sched.sh <branch>
+    # Dòng cron trong DEPLOYMENT.md có dạng:
+    # <expr> cd /opt/trading && scripts/sched.sh <branch>
+    cron_pattern = re.compile(
+        r"^([0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+)\s+cd\s+/opt/trading\s+&&\s+scripts/sched\.sh\s+([a-zA-Z0-9_-]+)",
+        re.MULTILINE,
+    )
+    cron_map = {branch: expr.strip() for expr, branch in cron_pattern.findall(text)}
+
+    expected_cron_features = {
+        "container-health": "*/10",
+        "disk-check": "*/6",
+        "backup": "0 2 * * *",
+        "orderbook-backup": "30 2 * * *",
+        "backup-check": "0 3 * * *",
+    }
+
+    for job_name, expected in expected_cron_features.items():
+        assert job_name in cron_map, f"Thiếu dòng cron cho {job_name} trong {path.name} §9"
+        cron_expr = cron_map[job_name]
+        if expected.startswith("*/"):
+            assert expected in cron_expr, (
+                f"Job {job_name} kỳ vọng cron chứa '{expected}', nhưng trong {path.name} là '{cron_expr}'"
+            )
+        else:
+            assert cron_expr == expected, (
+                f"Job {job_name} kỳ vọng cron '{expected}', nhưng trong {path.name} là '{cron_expr}'"
+            )
+
+
+def test_schedule_watch_jobs_match_deployment_cron():
+    """Brief 149: Giờ gốc của 5 job canh 24/7 phải khớp đúng dòng cron tương ứng trong DEPLOYMENT.md §9."""
+    verify_schedule_watch_jobs_against_deployment_cron()
+

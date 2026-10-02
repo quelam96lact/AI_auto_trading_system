@@ -132,19 +132,20 @@ SCHEDULE_WATCH_JOBS: dict[str, WatchJobConfig] = {
     ),
 }
 
-# 11 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do một câu)
+# 11 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do phân loại).
+# LƯU Ý: Giờ chạy thật của từng job nằm ở DEPLOYMENT.md §9, không chép lại ở đây.
 KHONG_CANH: dict[str, str] = {
-    "heartbeat": "Chính là heartbeat, không tự canh mà do container-health canh riêng trong giờ giao dịch.",
-    "daily-check": "Chỉ chạy 21:00 ngày giao dịch, cần lịch giao dịch và ngày nghỉ để canh đúng.",
-    "backfill": "Chỉ chạy 21:15 ngày giao dịch, cần lịch giao dịch và ngày nghỉ để canh đúng.",
-    "deploy-drift": "Chỉ chạy 08:30 và 13:15 ngày giao dịch, không chạy 24/7.",
-    "engine-cam": "Chỉ chạy trong giờ giao dịch 09:15-14:45 ngày giao dịch.",
-    "engine-consumer": "Chỉ chạy trong giờ giao dịch 09:00-14:50 ngày giao dịch.",
-    "stream-health": "Chỉ chạy các mốc cụ thể trong phiên ngày giao dịch (09:20, 11:35, 13:20, 14:50).",
-    "orderbook-recorder": "Chỉ chạy tiến trình ghi sổ lệnh trong giờ giao dịch (08:55-14:46).",
-    "orderbook-daily-check": "Chỉ chạy 15:05 cuối ngày giao dịch.",
-    "host-preflight": "Chỉ chạy 07:45 trước giờ giao dịch.",
-    "restore-drill": "Chỉ chạy 03:30 sáng Chủ nhật hằng tuần (chu kỳ tuần).",
+    "heartbeat": "Chính là heartbeat (tự canh là đệ quy), do container-health canh chéo trong giờ giao dịch.",
+    "daily-check": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "backfill": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "deploy-drift": "Chỉ chạy trước phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "engine-cam": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "engine-consumer": "Chỉ chạy lặp trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",
+    "stream-health": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "orderbook-recorder": "Tiến trình thu thập chỉ chạy trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",
+    "orderbook-daily-check": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "host-preflight": "Chạy theo chu kỳ tuần (buổi sáng trước tuần giao dịch mới), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "restore-drill": "Diễn tập phục hồi theo chu kỳ tuần (ban đêm cuối tuần), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
 }
 
 

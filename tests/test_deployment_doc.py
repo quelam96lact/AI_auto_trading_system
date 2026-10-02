@@ -64,3 +64,13 @@ def test_referenced_scripts_exist():
         if not script_path.exists():
             missing.append(f"scripts/{s}")
     assert not missing, f"Các script sau được nhắc trong DEPLOYMENT.md nhưng không tồn tại: {missing}"
+
+
+def test_deployment_md_contains_alert_outbox_documentation():
+    """Brief 149: DEPLOYMENT.md phải có tài liệu về hàng đợi cảnh báo alert_outbox."""
+    text = DEPLOYMENT_MD.read_text(encoding="utf-8")
+    assert "alert_outbox" in text, "DEPLOYMENT.md thiếu tài liệu alert_outbox!"
+    assert "200 tin" in text, "DEPLOYMENT.md thiếu thông tin giới hạn 200 tin!"
+    assert "10001:10001" in text, "DEPLOYMENT.md thiếu hướng dẫn phân quyền uid 10001!"
+    assert "3.900 ký tự" in text or "3900" in text, "DEPLOYMENT.md thiếu giới hạn cắt ngắn tin!"
+

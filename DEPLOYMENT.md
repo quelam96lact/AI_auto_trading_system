@@ -438,6 +438,42 @@ uv run python scripts/load_token_to_db.py     # 2. CẦU NỐI DUY NHẤT sang D
 
 KHÔNG tự động hoá OTP — SSI yêu cầu OTP thủ công.
 
+## 8.6 Hàng đợi cảnh báo gửi lại khi mất mạng (`alert_outbox`)
+
+Từ đợt 143–144, hệ thống bổ sung cơ chế hàng đợi gửi lại cho hàm `alert()` của hai tiến trình dài hạn `collector` và `engine`. Khi gửi Telegram thất bại (mất kết nối mạng, lỗi phân giải DNS như 12 lần đo được trong 72 giờ log collector), cảnh báo không bị mất vĩnh viễn mà được lưu tạm xuống đĩa và gửi lại tự động khi mạng phục hồi.
+
+### Vị trí và định dạng file
+
+- **Đường dẫn:** Trong container là `/app/logs/alert_outbox_<service>.jsonl` (tương ứng `./logs/alert_outbox_collector.jsonl` và `./logs/alert_outbox_engine.jsonl` trên host).
+- **Định dạng:** JSON Lines (`.jsonl`), mỗi dòng là một JSON độc lập:
+  ```json
+  {"emitted_at": "2026-10-02T06:46:33.213927+00:00", "text": "[CRITICAL] phát hiện máy chủ ngủ/gián đoạn 953s"}
+  ```
+- **Vòng đời file:** File **chỉ tồn tại khi có tin gửi hỏng chưa gửi lại được**. Một luồng nền chạy mỗi 60 giây (`OUTBOX_INTERVAL_SECONDS = 60.0`) sẽ thử gửi lại theo thứ tự FIFO. Khi tất cả các tin trong hàng đợi đã được gửi thành công, file sẽ **tự động bị xoá khỏi đĩa**.
+
+### Cơ chế gửi lại và xử lý tin trễ
+
+- Tin gửi lại thành công sẽ được thêm tiền tố thời gian phát gốc theo giờ Việt Nam: `[GỬI TRỄ — phát lúc HH:MM:SS dd/mm]`.
+- **Giới hạn dung lượng:** Hàng đợi lưu tối đa **200 tin** (`OUTBOX_MAX = 200`). Nếu vượt quá 200 tin, hệ thống tự động loại bỏ các tin cũ nhất; tin gửi thành công tiếp theo sẽ kèm thông báo phụ: `(đã bỏ N cảnh báo cũ vì hàng đợi đầy)`. File nằm ngoài vòng xoay log (`scripts/log_rotate.sh`) nhưng được kiểm soát ở mức 200 dòng nên không có nguy cơ làm phình đĩa.
+- **Cắt ngắn tin dài:** Mọi tin trước khi vào hàng đợi và trước khi gửi đều được chuẩn hoá cắt tối đa **3.900 ký tự** (`MAX_ALERT_LEN = 3900`) kèm thông báo `... [cắt N ký tự]`. Điều này đảm bảo an toàn tuyệt đối dưới ngưỡng 4.096 ký tự của Telegram API, tránh lỗi HTTP 400.
+- **Xử lý tin hỏng vĩnh viễn (đợt 144):** Nếu tin đầu hàng đợi gửi thất bại, luồng gửi lại sẽ thử gửi tin thứ hai. Nếu tin thứ hai thành công (chứng minh mạng đang hoạt động bình thường), hệ thống thử lại tin đầu một lần nữa; nếu vẫn hỏng, tin đầu được xác định là tin hỏng vĩnh viễn. Hệ thống sẽ bỏ tin đầu khỏi hàng đợi, ghi log cảnh báo (`Bỏ 1 cảnh báo không gửi được...`) và gửi một thông báo ngắn: `[WARN] bỏ 1 cảnh báo không gửi được, phát lúc ... xem log`. Cơ chế này ngăn chặn tuyệt đối tình trạng một tin hỏng làm tắc nghẽn toàn bộ hàng đợi.
+
+### Quyền thư mục và an toàn khởi động
+
+- Lúc khởi động (`start_outbox`), tiến trình tạo thử và xoá một file thăm dò `.probe_write_*` trong thư mục log.
+- Nếu thư mục log không ghi được (ví dụ quên phân quyền trên VPS), hàng đợi sẽ **TỰ ĐỘNG TẮT** và phát cảnh báo `CRITICAL: Thư mục outbox ... không ghi được ... Hàng đợi cảnh báo của ... bị TẮT!`.
+- **Yêu cầu phân quyền trên VPS:** Thư mục `logs/` trên host **BẮT BUỘC** phải thuộc sở hữu của `uid 10001` (người dùng `appuser` trong container) như đã hướng dẫn tại mục [§2 (Get the code + secrets onto the server)](#2-get-the-code--secrets-onto-the-server):
+  ```bash
+  mkdir -p logs && sudo chown 10001:10001 logs
+  ```
+
+### Quản trị và can thiệp thủ công
+
+- **Kiểm tra trạng thái:** Đọc file hàng đợi bằng lệnh `cat logs/alert_outbox_*.jsonl` hoặc kiểm tra số dòng `wc -l logs/alert_outbox_*.jsonl`.
+- **Xoá file thủ công:** Người vận hành có thể xoá file này bất cứ lúc nào (cả khi dịch vụ đang chạy hoặc đang dừng). Hệ quả duy nhất là các tin cảnh báo đang chờ gửi trong file sẽ bị mất; hoàn toàn không gây lỗi hay ảnh hưởng đến tiến trình `collector`/`engine`.
+- **Phạm vi áp dụng:** Chỉ áp dụng cho các tiến trình nền dài hạn (`collector`, `engine`). Các script cron/task định kỳ (`sched.sh`) không dùng hàng đợi này: chúng là job ngắn hạn, lần chạy sau sẽ đánh giá lại tình trạng. Mã thoát khi gửi Telegram hỏng theo **hai họ** ghi trong docstring `scripts/_alert_common.py`: họ "theo gửi được hay không" trả 2, họ "theo phát hiện" (vd `deploy-drift`, `engine-cam`) luôn trả 1.
+- **Lưu ý triển khai:** Hàng đợi chỉ có hiệu lực **sau khi image collector và engine được build lại** từ commit chứa thay đổi của đợt 143–144 (xem [§10](#10-sau-khi-sửa-code-trong-trading--bắt-buộc-dựng-lại-container)).
+
 ## 9. Dead-man's switch (heartbeat)
 
 `collector` và `engine` ghi vào bảng `heartbeat` mỗi ~30-60 giây. Nếu một
