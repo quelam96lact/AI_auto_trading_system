@@ -87,6 +87,15 @@ def save_json_state(path: str | Path, state: dict[str, Any]) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, p)
 
+def outbox_name(job: str) -> str:
+    """Ten file hang doi gui lai cua mot job theo lich: `alert_outbox_<ten-job>.jsonl`.
+
+    Khuon nay duoc DEPLOYMENT.md muc 8.6 mo ta nhu mot quy uoc; day la noi duy nhat
+    dinh nghia no. `job` la nhan job (vd `backup-check`, `heartbeat`).
+    """
+    return f"alert_outbox_{job}.jsonl"
+
+
 
 def send_with_outbox(
     text: str,

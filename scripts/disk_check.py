@@ -36,14 +36,14 @@ from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
 try:
-    from scripts._alert_common import send_with_outbox
+    from scripts._alert_common import outbox_name, send_with_outbox
+    from scripts._db_common import REPO_LOGS_DIR
 except ImportError:
-    from _alert_common import send_with_outbox
+    from _alert_common import outbox_name, send_with_outbox
+    from _db_common import REPO_LOGS_DIR
 
-DEFAULT_LOGS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
-)
-OUTBOX_NAME = "alert_outbox_disk-check.jsonl"
+DEFAULT_LOGS_DIR = REPO_LOGS_DIR
+OUTBOX_NAME = outbox_name("disk-check")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

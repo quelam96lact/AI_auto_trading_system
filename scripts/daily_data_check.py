@@ -23,8 +23,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _alert_common import send_with_outbox
-from _db_common import resolve_dsn
+from _alert_common import outbox_name, send_with_outbox
+from _db_common import REPO_LOGS_DIR, resolve_dsn
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
@@ -32,8 +32,8 @@ from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 
-DEFAULT_LOGS_DIR = str(Path(__file__).resolve().parents[1] / "logs")
-OUTBOX_NAME = "alert_outbox_daily-check.jsonl"
+DEFAULT_LOGS_DIR = REPO_LOGS_DIR
+OUTBOX_NAME = outbox_name("daily-check")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

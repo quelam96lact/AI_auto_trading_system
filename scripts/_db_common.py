@@ -14,6 +14,12 @@ Import theo đúng lối `_ssi_spike_common` đang dùng: script chạy bằng
 import os
 from pathlib import Path
 
+# Dot 158: thu muc logs o goc repo, tinh tu vi tri file (KHONG tu cwd - job cron chay voi
+# cwd do sched.sh dat). Nguon duy nhat; cac script gan lai thanh DEFAULT_LOGS_DIR.
+REPO_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+)
+
 
 def load_dotenv() -> None:
     """uv run KHÔNG nạp .env — script tự đọc, không nhúng secret vào file."""

@@ -27,15 +27,19 @@ import yaml
 try:
     from scripts._alert_common import (
         load_json_state,
+        outbox_name,
         save_json_state,
         send_with_outbox,
     )
+    from scripts._db_common import REPO_LOGS_DIR
 except ImportError:
     from _alert_common import (
         load_json_state,
+        outbox_name,
         save_json_state,
         send_with_outbox,
     )
+    from _db_common import REPO_LOGS_DIR
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import (
@@ -81,12 +85,10 @@ DEFAULT_STALE_BAR_MINUTES = 15
 # mỗi mốc). Ngưỡng 15 phút = ~3x nhịp đo được — cùng hệ số an toàn với 2A.
 DEFAULT_STALE_POSITION_SYNC_MINUTES = 15
 
-DEFAULT_LOGS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
-)
+DEFAULT_LOGS_DIR = REPO_LOGS_DIR
 SCHEDULE_STATE_NAME = ".schedule_health_state.json"
 DEFAULT_SCHEDULE_STATE_FILE = os.path.join(DEFAULT_LOGS_DIR, SCHEDULE_STATE_NAME)
-HEARTBEAT_OUTBOX_NAME = "alert_outbox_heartbeat.jsonl"
+HEARTBEAT_OUTBOX_NAME = outbox_name("heartbeat")
 
 
 class WatchJobConfig(NamedTuple):
