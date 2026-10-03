@@ -42,6 +42,16 @@ from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, previous_trading_day
 from trading.telegram import send_telegram
 
+try:
+    from scripts._alert_common import send_with_outbox
+except ImportError:
+    from _alert_common import send_with_outbox
+
+DEFAULT_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+)
+OUTBOX_NAME = "alert_outbox_backup-check.jsonl"
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -310,6 +320,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_CONFIG),
         help="config.yaml để đọc danh sách ngày lễ (kiểm sổ lệnh theo lịch giao dịch)",
     )
+    parser.add_argument(
+        "--logs-dir",
+        default=DEFAULT_LOGS_DIR,
+        help="Thư mục logs trên host, nơi đặt hàng đợi gửi lại alert_outbox_*.jsonl",
+    )
     return parser
 
 
@@ -413,11 +428,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             _print_safe("[DRY-RUN] Không gửi Telegram thật.")
             return 1
-        sent = send_telegram(msg)
+        outbox_path = Path(args.logs_dir) / OUTBOX_NAME
+        sent = send_with_outbox(msg, send=send_telegram, outbox_path=outbox_path)
         if sent:
             return 1
         else:
             _print_safe("LỖI: Cảnh báo cần gửi nhưng send_telegram trả về thất bại!")
+            _print_safe(
+                f"[HANG DOI] Tin CHƯA tới người, đã xếp hàng trong {outbox_path} "
+                "— sẽ gửi lại ở lần chạy sau."
+            )
             return 2
 
     return 0

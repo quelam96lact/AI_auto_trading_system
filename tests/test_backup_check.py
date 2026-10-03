@@ -183,7 +183,7 @@ def test_main_dry_run_alerts_on_empty_dir(tmp_path):
 def test_main_send_telegram_success(tmp_path):
     """Có cảnh báo và gửi Telegram thành công -> thoát mã 1."""
     with patch("scripts.backup_check.send_telegram", return_value=True) as mock_send:
-        code = main(["--backup-dir", str(tmp_path)])
+        code = main(["--backup-dir", str(tmp_path), "--logs-dir", str(tmp_path)])
         assert code == 1
         assert mock_send.called
 
@@ -191,7 +191,7 @@ def test_main_send_telegram_success(tmp_path):
 def test_main_send_telegram_failure_returns_2(tmp_path):
     """Có cảnh báo nhưng gửi Telegram thất bại -> thoát mã 2 (nguyên tắc đợt 126)."""
     with patch("scripts.backup_check.send_telegram", return_value=False) as mock_send:
-        code = main(["--backup-dir", str(tmp_path)])
+        code = main(["--backup-dir", str(tmp_path), "--logs-dir", str(tmp_path)])
         assert code == 2
         assert mock_send.called
 

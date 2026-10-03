@@ -407,12 +407,16 @@ def test_main_dry_run_thu_muc_khong_co_dump_thoat_1_khong_gui(tmp_path):
 
 def test_main_gui_hong_thoat_2(tmp_path):
     with patch("scripts.restore_drill.send_telegram", return_value=False):
-        assert main(["--backup-dir", str(tmp_path)]) == 2
+        assert (
+            main(["--backup-dir", str(tmp_path), "--logs-dir", str(tmp_path)]) == 2
+        )
 
 
 def test_main_gui_thanh_cong_thoat_1(tmp_path):
     with patch("scripts.restore_drill.send_telegram", return_value=True) as s:
-        assert main(["--backup-dir", str(tmp_path)]) == 1
+        assert (
+            main(["--backup-dir", str(tmp_path), "--logs-dir", str(tmp_path)]) == 1
+        )
     s.assert_called_once()
 
 

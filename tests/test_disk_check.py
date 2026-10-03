@@ -50,7 +50,7 @@ def test_main_gui_hong_tra_2(tmp_path):
     ):
         from scripts.disk_check import main
 
-        assert main(["--path", str(tmp_path)]) == 2
+        assert main(["--path", str(tmp_path), "--logs-dir", str(tmp_path)]) == 2
 
 
 def test_main_gui_ne_nem_ngoai_le_van_tra_2(tmp_path):
@@ -63,7 +63,7 @@ def test_main_gui_ne_nem_ngoai_le_van_tra_2(tmp_path):
     ):
         from scripts.disk_check import main
 
-        assert main(["--path", str(tmp_path)]) == 2
+        assert main(["--path", str(tmp_path), "--logs-dir", str(tmp_path)]) == 2
 
 
 def test_main_gui_thanh_cong_tra_1(tmp_path):

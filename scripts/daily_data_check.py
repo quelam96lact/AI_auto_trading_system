@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from _alert_common import send_with_outbox
 from _db_common import resolve_dsn
 
 from trading.alerts import _print_safe
@@ -30,6 +31,9 @@ from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
 from trading.config import load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
+
+DEFAULT_LOGS_DIR = str(Path(__file__).resolve().parents[1] / "logs")
+OUTBOX_NAME = "alert_outbox_daily-check.jsonl"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -51,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="In cảnh báo thay vì gửi Telegram (chạy bù an toàn)",
+    )
+    parser.add_argument(
+        "--logs-dir",
+        default=DEFAULT_LOGS_DIR,
+        help="Thư mục logs trên host, nơi đặt hàng đợi gửi lại alert_outbox_*.jsonl",
     )
     return parser
 
@@ -301,11 +310,20 @@ def main(argv: list[str] | None = None) -> None:
         # Brief 56: send_telegram khong con nem (FEE-ALARM-2) va tra bool. Truoc day
         # doan nay in "Da gui" VO DIEU KIEN — tuc la noi doi khi thieu bien moi
         # truong hoac mang hong. Bao cao dot 56 Task 2 tu neu ra lo nay.
-        if send_telegram(f"[{target_date}] {msg}"):
+        # Brief 157: gui qua hang doi gui lai. Ma thoat `code` KHONG doi theo viec
+        # gui duoc hay khong (hanh vi san co; bang chinh sach dot 156 dua vao do).
+        outbox_path = Path(args.logs_dir) / OUTBOX_NAME
+        if send_with_outbox(
+            f"[{target_date}] {msg}", send=send_telegram, outbox_path=outbox_path
+        ):
             _print_safe("-> Đã gửi cảnh báo qua Telegram.")
         else:
             _print_safe(
                 "-> KHÔNG gửi được cảnh báo qua Telegram (xem log để biết lý do)."
+            )
+            _print_safe(
+                f"[HANG DOI] Tin CHƯA tới người, đã xếp hàng trong {outbox_path} "
+                "— sẽ gửi lại ở lần chạy sau (21:00 ngày hôm sau)."
             )
         sys.exit(code)
 

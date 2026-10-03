@@ -57,6 +57,16 @@ from pathlib import Path
 from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
+try:
+    from scripts._alert_common import send_with_outbox
+except ImportError:
+    from _alert_common import send_with_outbox
+
+DEFAULT_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+)
+OUTBOX_NAME = "alert_outbox_restore-drill.jsonl"
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -339,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backup-dir", default=DEFAULT_BACKUP_DIR)
     parser.add_argument("--target-db", default=DEFAULT_TARGET_DB)
     parser.add_argument("--dry-run", action="store_true", help="In thay vì gửi Telegram")
+    parser.add_argument(
+        "--logs-dir",
+        default=DEFAULT_LOGS_DIR,
+        help="Thư mục logs trên host, nơi đặt hàng đợi gửi lại alert_outbox_*.jsonl",
+    )
     return parser
 
 
@@ -365,14 +380,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         _print_safe("[DRY-RUN] Không gửi Telegram thật.")
         return 1
+    outbox_path = Path(args.logs_dir) / OUTBOX_NAME
     try:
-        sent = send_telegram(msg)
+        sent = send_with_outbox(msg, send=send_telegram, outbox_path=outbox_path)
     except Exception as e:
         _print_safe(f"LỖI: send_telegram ném {type(e).__name__}: {e}")
         return 2
     if sent:
         return 1
     _print_safe("LỖI: Cảnh báo cần gửi nhưng send_telegram trả về thất bại!")
+    _print_safe(
+        f"[HANG DOI] Tin CHƯA tới người, đã xếp hàng trong {outbox_path} "
+        "— sẽ gửi lại ở lần chạy sau (Chủ nhật tới nếu theo lịch)."
+    )
     return 2
 
 
