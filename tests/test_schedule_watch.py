@@ -26,10 +26,13 @@ from pathlib import Path
 from scripts.container_health_check import evaluate_heartbeat_watch
 from scripts.heartbeat_check import (
     KHONG_CANH,
+    SCHEDULE_EXIT_POLICIES,
     SCHEDULE_WATCH_JOBS,
+    JobExitPolicy,
     build_parser,
     evaluate_schedule_health,
     get_last_called_timestamp,
+    get_last_run_exit_code,
     load_schedule_state,
 )
 from trading.calendar_vn import TZ
@@ -271,3 +274,267 @@ def test_heartbeat_check_build_parser_has_dry_run():
     parser = build_parser()
     args = parser.parse_args(["--dry-run"])
     assert args.dry_run is True
+
+
+# =============================================================================
+# Brief 156: Canh mã thoát cho các job theo lịch
+# =============================================================================
+
+
+def test_sched_branches_covered_in_exit_policies():
+    """Việc 2 (Brief 156): Mọi nhánh trong sched.sh phải có chính sách mã thoát rõ ràng."""
+    sched_branches = extract_sched_branches(SCHED_SH)
+    assert len(sched_branches) == 16
+
+    policy_branches = set(SCHEDULE_EXIT_POLICIES.keys())
+    missing = sched_branches - policy_branches
+    assert not missing, f"Các nhánh sau trong sched.sh thiếu chính sách mã thoát trong SCHEDULE_EXIT_POLICIES: {missing}"
+
+    extra = policy_branches - sched_branches
+    assert not extra, f"Có nhánh dư thừa trong SCHEDULE_EXIT_POLICIES không tồn tại trong sched.sh: {extra}"
+
+    for branch, policy in SCHEDULE_EXIT_POLICIES.items():
+        assert isinstance(policy, JobExitPolicy)
+        assert policy.branch == branch
+        assert policy.log_file.endswith(".log")
+        assert len(policy.label) > 0
+        assert 0 in policy.normal_exit_codes, f"Nhánh {branch} phải coi mã 0 là mã bình thường"
+        assert len(policy.reason) > 0, f"Nhánh {branch} phải có giải thích căn cứ dòng code và lý do"
+
+
+def test_get_last_run_exit_code_reads_exit_code(tmp_path: Path):
+    """Đọc đúng mốc thời gian và mã thoát cuối cùng khi job kết thúc."""
+    log_file = tmp_path / "test.log"
+    log_file.write_text(
+        "2026-10-02 08:00:00 test-job start\n"
+        "some log line\n"
+        "EXIT=0\n"
+        "2026-10-02 09:00:00 test-job start\n"
+        "error happened\n"
+        "EXIT=4\n",
+        encoding="utf-8",
+    )
+    dt, code, err = get_last_run_exit_code(str(log_file), "test-job")
+    assert err is None
+    assert dt == datetime(2026, 10, 2, 9, 0, 0, tzinfo=TZ)
+    assert code == 4
+
+
+def test_get_last_run_exit_code_anchored_regex_avoids_alert_exit(tmp_path: Path):
+    """Bẫy: regex ^EXIT= phải neo đầu dòng để không khớp nhầm ALERT_EXIT= trong output."""
+    log_file = tmp_path / "test.log"
+    log_file.write_text(
+        "2026-10-02 08:00:00 test-job start\n"
+        "[docker-down-alert] status ALERT_EXIT=1\n",
+        encoding="utf-8",
+    )
+    dt, code, err = get_last_run_exit_code(str(log_file), "test-job")
+    assert err is None
+    assert dt == datetime(2026, 10, 2, 8, 0, 0, tzinfo=TZ)
+    assert code is None  # Job đang chạy, không được đọc nhầm ALERT_EXIT=1 thành EXIT=1
+
+
+def test_get_last_run_exit_code_running_job_is_not_failure(tmp_path: Path):
+    """Job đang chạy (đã có start nhưng chưa có EXIT=) -> exit_code là None, không phải thất bại."""
+    log_file = tmp_path / "test.log"
+    log_file.write_text(
+        "2026-10-02 08:40:02 orderbook-recorder start\n"
+        "[08:40:11] Đang kết nối WebSocket SSI...\n",
+        encoding="utf-8",
+    )
+    dt, code, err = get_last_run_exit_code(str(log_file), "orderbook-recorder")
+    assert err is None
+    assert dt == datetime(2026, 10, 2, 8, 40, 2, tzinfo=TZ)
+    assert code is None
+
+
+def test_get_last_run_exit_code_no_exit_line_is_silent(tmp_path: Path):
+    """Log không có dòng EXIT= nào -> im lặng, không coi là thất bại."""
+    log_file = tmp_path / "empty.log"
+    log_file.write_text("", encoding="utf-8")
+    dt, code, err = get_last_run_exit_code(str(log_file), "test-job")
+    assert dt is None
+    assert code is None
+    assert "không tìm thấy dòng nào" in err
+
+
+def test_exit_code_eval_normal_exit_is_silent():
+    """Lần chạy cuối mã 0 (hoặc mã bình thường) -> im lặng."""
+    now = datetime(2026, 10, 2, 10, 0, 0, tzinfo=TZ)
+    job_exit_codes = {
+        "orderbook-recorder": (now - timedelta(minutes=10), 0, None)
+    }
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes=job_exit_codes
+    )
+    assert alerts == []
+    assert new_state["orderbook-recorder"]["exit_status"] == "ok"
+    assert new_state["orderbook-recorder"]["exit_code"] == 0
+
+
+def test_exit_code_eval_unreported_failure_alerts_once():
+    """Mã thất bại không ai báo -> sinh cảnh báo CRITICAL một lần."""
+    now = datetime(2026, 10, 2, 10, 0, 0, tzinfo=TZ)
+    run_dt = now - timedelta(minutes=10)
+    job_exit_codes = {
+        "orderbook-recorder": (run_dt, 4, None)
+    }
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes=job_exit_codes
+    )
+    assert len(alerts) == 1
+    assert "[CRITICAL] job theo lịch 'orderbook-recorder' THẤT BẠI" in alerts[0]
+    assert "mã thoát 4" in alerts[0]
+    assert new_state["orderbook-recorder"]["exit_status"] == "failed"
+    assert new_state["orderbook-recorder"]["exit_code"] == 4
+
+
+def test_exit_code_eval_repeated_failure_is_silent():
+    """Lặp lại cùng mã thất bại -> im lặng (không gửi lặp)."""
+    now = datetime(2026, 10, 2, 10, 5, 0, tzinfo=TZ)
+    run_dt = now - timedelta(minutes=15)
+    prev_state = {
+        "orderbook-recorder": {
+            "exit_status": "failed",
+            "exit_code": 4,
+            "checked_at": "2026-10-02 10:00:00",
+        }
+    }
+    job_exit_codes = {
+        "orderbook-recorder": (run_dt, 4, None)
+    }
+    alerts, new_state, info_logs = evaluate_schedule_health(
+        {}, now, prev_state, watch_jobs={}, job_exit_codes=job_exit_codes
+    )
+    assert alerts == []
+    assert new_state["orderbook-recorder"]["exit_status"] == "failed"
+    assert any("vẫn thất bại" in log for log in info_logs)
+
+
+def test_exit_code_eval_recovery_alerts_once():
+    """Chạy lại thành công sau thất bại -> sinh cảnh báo INFO hồi phục một lần."""
+    now = datetime(2026, 10, 2, 10, 10, 0, tzinfo=TZ)
+    run_dt = now - timedelta(minutes=2)
+    prev_state = {
+        "orderbook-recorder": {
+            "exit_status": "failed",
+            "exit_code": 4,
+            "checked_at": "2026-10-02 10:05:00",
+        }
+    }
+    job_exit_codes = {
+        "orderbook-recorder": (run_dt, 0, None)
+    }
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, prev_state, watch_jobs={}, job_exit_codes=job_exit_codes
+    )
+    assert len(alerts) == 1
+    assert "[INFO] job theo lịch 'orderbook-recorder' ĐÃ HỒI PHỤC" in alerts[0]
+    assert "thành công (mã thoát 0)" in alerts[0]
+    assert new_state["orderbook-recorder"]["exit_status"] == "ok"
+    assert new_state["orderbook-recorder"]["exit_code"] == 0
+
+
+def test_tai_hien_su_co_that_orderbook_recorder_exit_4(tmp_path: Path):
+    """Bằng chứng 1: Tái hiện sự cố thật 29/09 của orderbook-recorder với nguyên văn log EXIT=4."""
+    raw_log = (
+        "2026-09-29 08:40:10 orderbook-recorder start\n"
+        "2026-09-29 08:40:22.354 INFO [ssi_sdk.services.token_manager]: Access token set manually\n"
+        "2026-09-29 08:40:24.325 INFO [ssi_sdk.services.token_manager]: Token refreshed successfully\n"
+        "[08:40:22] Tự động xác định hợp đồng front-month VN30F: 41I1GA000\n"
+        "[08:40:22] Khởi động máy ghi sổ lệnh 41I1GA000\n"
+        "  File ghi nhận: data\\orderbook\\41I1GA000\\2026-09-29.jsonl.gz\n"
+        "  Thời điểm tự dừng: 14:46:00 (giờ VN)\n"
+        "2026-09-29 08:40:33.641 INFO [ssi_sdk.services.token_manager]: Access token set manually\n"
+        "2026-09-29 08:40:34.089 INFO [ssi_sdk.services.token_manager]: Token refreshed successfully\n"
+        "EXIT=4\n"
+    )
+    log_file = tmp_path / "orderbook-recorder.log"
+    log_file.write_text(raw_log, encoding="utf-8")
+
+    dt, code, err = get_last_run_exit_code(str(log_file), "orderbook-recorder")
+    assert err is None
+    assert code == 4
+    assert dt == datetime(2026, 9, 29, 8, 40, 10, tzinfo=TZ)
+
+    now = datetime(2026, 9, 29, 10, 0, 0, tzinfo=TZ)
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes={"orderbook-recorder": (dt, code, err)}
+    )
+    assert len(alerts) == 1
+    assert "[CRITICAL] job theo lịch 'orderbook-recorder' THẤT BẠI" in alerts[0]
+    assert "mã thoát 4" in alerts[0]
+    assert new_state["orderbook-recorder"]["exit_status"] == "failed"
+
+
+def test_tai_hien_su_co_that_stream_health_exit_1(tmp_path: Path):
+    """Bằng chứng 2: Tái hiện sự cố thật 18/09 của stream-health với nguyên văn log EXIT=1."""
+    raw_log = (
+        "2026-09-18 12:25:42 stream-health start\n"
+        "WARN: do phu luong phien sang ngay 2026-09-18 dat 88.9% (72/81 nen), duoi nguong canh bao 90%\n"
+        "EXIT=1\n"
+        "2026-09-18 15:10:02 stream-health start\n"
+        "WARN: do phu luong phien chieu ngay 2026-09-18 dat 89.5% (51/57 nen), duoi nguong canh bao 90%\n"
+        "EXIT=1\n"
+    )
+    log_file = tmp_path / "stream-health.log"
+    log_file.write_text(raw_log, encoding="utf-8")
+
+    dt, code, err = get_last_run_exit_code(str(log_file), "stream-health")
+    assert err is None
+    assert code == 1
+    assert dt == datetime(2026, 9, 18, 15, 10, 2, tzinfo=TZ)
+
+    now = datetime(2026, 9, 18, 16, 0, 0, tzinfo=TZ)
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes={"stream-health": (dt, code, err)}
+    )
+    assert len(alerts) == 1
+    assert "[CRITICAL] job theo lịch 'stream-health' THẤT BẠI" in alerts[0]
+    assert "mã thoát 1" in alerts[0]
+    assert new_state["stream-health"]["exit_status"] == "failed"
+
+
+def test_chong_nhan_doi_heartbeat_exit_1_im_lang(tmp_path: Path):
+    """Test chống nhân đôi: heartbeat tự thoát 1 khi nó cảnh báo -> KHÔNG được sinh thêm cảnh báo."""
+    raw_log = (
+        "2026-10-02 10:00:00 heartbeat-check start\n"
+        "[CRITICAL] service ngừng heartbeat quá 300s: collector\n"
+        "EXIT=1\n"
+    )
+    log_file = tmp_path / "heartbeat.log"
+    log_file.write_text(raw_log, encoding="utf-8")
+
+    dt, code, err = get_last_run_exit_code(str(log_file), "heartbeat-check")
+    assert err is None
+    assert code == 1
+
+    now = datetime(2026, 10, 2, 10, 5, 0, tzinfo=TZ)
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes={"heartbeat": (dt, code, err)}
+    )
+    assert alerts == [], "Heartbeat tự thoát 1 không được sinh thêm cảnh báo"
+    assert new_state["heartbeat"]["exit_status"] == "ok"
+
+
+def test_chong_nhan_doi_container_health_exit_2_docker_down_im_lang(tmp_path: Path):
+    """Test chống nhân đôi: container-health thoát 2 lúc Docker không chạy -> KHÔNG được sinh thêm cảnh báo."""
+    raw_log = (
+        "2026-10-02 10:00:00 container-health start\n"
+        "LỖI: Docker daemon không chạy hoặc không phản hồi trong 10s.\n"
+        "EXIT=2\n"
+    )
+    log_file = tmp_path / "container-health.log"
+    log_file.write_text(raw_log, encoding="utf-8")
+
+    dt, code, err = get_last_run_exit_code(str(log_file), "container-health")
+    assert err is None
+    assert code == 2
+
+    now = datetime(2026, 10, 2, 10, 5, 0, tzinfo=TZ)
+    alerts, new_state, _ = evaluate_schedule_health(
+        {}, now, {}, watch_jobs={}, job_exit_codes={"container-health": (dt, code, err)}
+    )
+    assert alerts == [], "container-health thoát 2 do Docker chết không được sinh thêm cảnh báo"
+    assert new_state["container-health"]["exit_status"] == "ok"
+

@@ -159,6 +159,131 @@ KHONG_CANH: dict[str, str] = {
 }
 
 
+class JobExitPolicy(NamedTuple):
+    branch: str  # Tên nhánh trong sched.sh
+    log_file: str  # Tên file log trong logs/
+    label: str  # Nhãn được ghi bởi run_if_docker_up.sh
+    normal_exit_codes: frozenset[int]  # Các mã thoát coi là bình thường / đã tự báo
+    reason: str  # Căn cứ dòng code và lý do phân loại
+
+
+# Bảng chính sách mã thoát cho cả 16 nhánh sched.sh (Brief đợt 156)
+SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
+    "heartbeat": JobExitPolicy(
+        branch="heartbeat",
+        log_file="heartbeat.log",
+        label="heartbeat-check",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="heartbeat_check.py:653-665. Mã 0 là OK, mã 1 là khi có cảnh báo đã tự gửi Telegram / outbox. Tự canh mã 1 sẽ đệ quy nhân đôi cảnh báo.",
+    ),
+    "daily-check": JobExitPolicy(
+        branch="daily-check",
+        log_file="daily-data-check.log",
+        label="daily-data-check",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="daily_data_check.py:237, 244, 277, 304, 310, 312. Mã 0 là đủ dữ liệu/ngày nghỉ; mã 1 là thiếu bar đã tự gửi Telegram. Mã 2 khi lỗi config/DB/parser không gửi Telegram hoặc crash.",
+    ),
+    "backfill": JobExitPolicy(
+        branch="backfill",
+        log_file="backfill.log",
+        label="backfill",
+        normal_exit_codes=frozenset({0}),
+        reason="backfill_universe.py:223-261. Script không có cơ chế gửi Telegram. Mã 0 là nạp xong bình thường; mọi mã khác 0 là lỗi nạp/mạng/DB chưa ai báo.",
+    ),
+    "deploy-drift": JobExitPolicy(
+        branch="deploy-drift",
+        log_file="deploy-drift.log",
+        label="deploy-drift",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="deploy_drift_check.py:156, 215, 219. Mã 0 là không lệch; mã 1 là có lệch đã tự gửi Telegram qua alert_and_fail. Mã 2 là gửi Telegram hỏng hoặc lỗi chưa ai báo.",
+    ),
+    "container-health": JobExitPolicy(
+        branch="container-health",
+        log_file="container-health.log",
+        label="container-health",
+        normal_exit_codes=frozenset({0, 1, 2}),
+        reason="container_health_check.py:497-499, 575, 585. Mã 0 là container khỏe; mã 1 là cảnh báo đã gửi Telegram; mã 2 là Docker chưa chạy (đã có docker_down_alert lo) hoặc gửi Telegram hỏng; chỉ mã kill/crash ngoại lai mới chưa ai báo.",
+    ),
+    "engine-cam": JobExitPolicy(
+        branch="engine-cam",
+        log_file="engine-cam.log",
+        label="engine-cam",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="check_silent_engine.py:141, 167, 177, 240. Mã 0 là OK; mã 1 là phát hiện engine câm đã tự gửi Telegram qua alert_and_fail. Mã 2 là lỗi config/symbols hoặc gửi Telegram hỏng.",
+    ),
+    "engine-consumer": JobExitPolicy(
+        branch="engine-consumer",
+        log_file="engine-consumer.log",
+        label="engine-consumer",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="engine_consumer_check.py:136, 149, 184, 188. Mã 0 là tiêu thụ bình thường/ngoài phiên; mã 1 là sự cố NATS/config/lag đã tự gửi Telegram. Mã khác là lỗi chưa ai báo.",
+    ),
+    "stream-health": JobExitPolicy(
+        branch="stream-health",
+        log_file="stream-health.log",
+        label="stream-health",
+        normal_exit_codes=frozenset({0}),
+        reason="stream_health_check.py:546, 556, 572. Script không gửi Telegram. Mã 0 là độ phủ đạt; mã 1 (WARN <90%) và mã 2 (CRITICAL <50%/0 nến) hoàn toàn im lặng trong log chưa ai báo.",
+    ),
+    "orderbook-recorder": JobExitPolicy(
+        branch="orderbook-recorder",
+        log_file="orderbook-recorder.log",
+        label="orderbook-recorder",
+        normal_exit_codes=frozenset({0}),
+        reason="record_vn30f_orderbook.py:844-855. Mã 0 là thu thập đủ phiên; mã 1 (crash) và mã 4 (bị Task Scheduler/Windows kill giữa chừng) không thể tự gửi cảnh báo.",
+    ),
+    "orderbook-daily-check": JobExitPolicy(
+        branch="orderbook-daily-check",
+        log_file="orderbook-daily-check.log",
+        label="orderbook-daily-check",
+        normal_exit_codes=frozenset({0, 1, 2}),
+        reason="check_orderbook_daily.py:215, 246, 250. Mã 0 là OK; mã 1 (WARN) và mã 2 (CRITICAL) đều đã gọi trading.alerts.alert() nên tự gửi Telegram. LUU Y: script nay KHONG goi start_outbox nen KHONG co hang doi gui lai; gui hong la mat tin (cung lo voi 14 job con lai, xem DEPLOYMENT 8.6). Chỉ crash ngoại lai mới chưa ai báo.",
+    ),
+    "backup": JobExitPolicy(
+        branch="backup",
+        log_file="backup.log",
+        label="backup",
+        normal_exit_codes=frozenset({0}),
+        reason="backup_db.sh:18, 22, 85. Shell script không có cơ chế gửi Telegram. Mã 0 là backup xong; mã 1 (lỗi pg_restore verify) và mã 2 (lỗi đối số) chưa ai báo.",
+    ),
+    "backup-check": JobExitPolicy(
+        branch="backup-check",
+        log_file="backup-check.log",
+        label="backup-check",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="backup_check.py:418, 421, 423, 431. Mã 0 là backup tốt; mã 1 là phát hiện lỗi backup đã tự gửi Telegram. Mã 2 là gửi Telegram hỏng hoặc crash chưa ai báo.",
+    ),
+    "orderbook-backup": JobExitPolicy(
+        branch="orderbook-backup",
+        log_file="orderbook-backup.log",
+        label="orderbook-backup",
+        normal_exit_codes=frozenset({0}),
+        reason="backup_orderbook.sh:22, 26, 41, 60, 75. Shell script không có cơ chế gửi Telegram. Mã 0 là xong/không có file; mã 1 (không thấy thư mục / tar rỗng) và mã 2 chưa ai báo.",
+    ),
+    "disk-check": JobExitPolicy(
+        branch="disk-check",
+        log_file="disk-check.log",
+        label="disk-check",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="disk_check.py:150, 171, 181, 194, 196, 204. Mã 0 là đĩa đủ; mã 1 là thiếu đĩa đã tự gửi Telegram. Mã 2 là lỗi config/không đo được đĩa/gửi Telegram hỏng chưa ai báo.",
+    ),
+    "host-preflight": JobExitPolicy(
+        branch="host-preflight",
+        log_file="host-preflight.log",
+        label="host-preflight",
+        normal_exit_codes=frozenset({0}),
+        reason="host_preflight.py:459, 825, 830, 847, 855. Script không gửi Telegram. Mã 0 là pass/warn/skip; mã 1 (có kiểm tra FAIL) và mã 2 (lỗi config/repo) chưa ai báo.",
+    ),
+    "restore-drill": JobExitPolicy(
+        branch="restore-drill",
+        log_file="restore-drill.log",
+        label="restore-drill",
+        normal_exit_codes=frozenset({0, 1}),
+        reason="restore_drill.py:352, 362, 374, 376, 384. Mã 0 là diễn tập pass; mã 1 là lỗi restore đã tự gửi Telegram. Mã 2 là lỗi config/gửi Telegram hỏng chưa ai báo.",
+    ),
+}
+
+
 def get_last_called_timestamp(
     log_path: str, label: str
 ) -> tuple[datetime | None, str | None]:
@@ -200,20 +325,116 @@ def get_last_called_timestamp(
     return last_dt, None
 
 
+def get_last_run_exit_code(
+    log_path: str, label: str
+) -> tuple[datetime | None, int | None, str | None]:
+    r"""Đọc mốc thời gian và mã thoát của lần chạy gần nhất của nhãn `label` từ file log.
+
+    Quy ước run_if_docker_up.sh:
+      <YYYY-MM-DD HH:MM:SS> <nhãn> start
+      ...
+      EXIT=<RC>
+    Hoặc:
+      <YYYY-MM-DD HH:MM:SS> <nhãn> SKIP: ...
+      ALERT_EXIT=<RC>
+
+    Quy tắc an toàn (tránh bẫy):
+      1. Neo đầu dòng r"^EXIT=(\d+)" để không khớp nhầm "ALERT_EXIT=".
+      2. Gắn EXIT= vào đúng lần chạy: tìm dòng EXIT= SAU mốc start gần nhất.
+      3. Nếu job đang chạy (đã có start nhưng chưa có EXIT=) -> exit_code = None.
+      4. Nếu lần gọi gần nhất là SKIP -> exit_code = None (không tính là thất bại).
+
+    Trả về:
+      (start_dt, exit_code, None) nếu đọc được file log và tìm thấy mốc start.
+      (None, None, reason) nếu không tìm thấy file hoặc không có dòng nào mang nhãn.
+    """
+    if not os.path.isfile(log_path):
+        return None, None, f"file log không tồn tại ({os.path.basename(log_path)})"
+
+    pattern_start = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        + re.escape(label)
+        + r"\s+start(?:\s|$)"
+    )
+    pattern_skip = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        + re.escape(label)
+        + r"\s+SKIP:(?:\s|$)"
+    )
+    pattern_exit = re.compile(r"^EXIT=(\d+)")
+
+    last_start_dt: datetime | None = None
+    last_exit_code: int | None = None
+    latest_event_is_skip: bool = False
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m_start = pattern_start.match(line)
+                if m_start:
+                    try:
+                        dt = datetime.strptime(
+                            m_start.group(1), "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=TZ)
+                        last_start_dt = dt
+                        last_exit_code = None
+                        latest_event_is_skip = False
+                    except ValueError:
+                        continue
+                    continue
+
+                m_skip = pattern_skip.match(line)
+                if m_skip:
+                    latest_event_is_skip = True
+                    last_start_dt = None
+                    last_exit_code = None
+                    continue
+
+                if last_start_dt is not None:
+                    m_exit = pattern_exit.match(line)
+                    if m_exit:
+                        try:
+                            last_exit_code = int(m_exit.group(1))
+                        except ValueError:
+                            pass
+    except Exception as e:
+        return None, None, f"không đọc được file log ({e})"
+
+    if last_start_dt is None and not latest_event_is_skip:
+        return (
+            None,
+            None,
+            f"không tìm thấy dòng nào mang nhãn '{label}' trong {os.path.basename(log_path)}",
+        )
+
+    return last_start_dt, last_exit_code, None
+
+
 def evaluate_schedule_health(
     job_last_seen: dict[str, tuple[datetime | None, str | None]],
     now: datetime,
     previous_state: dict[str, dict[str, Any]],
     watch_jobs: dict[str, WatchJobConfig] = SCHEDULE_WATCH_JOBS,
+    job_exit_codes: (
+        dict[str, tuple[datetime | None, int | None, str | None]] | None
+    ) = None,
+    exit_policies: dict[str, JobExitPolicy] = SCHEDULE_EXIT_POLICIES,
 ) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
-    """Đánh giá trạng thái chạy của các job theo lịch 24/7 (pure function).
+    """Đánh giá trạng thái chạy và mã thoát của các job theo lịch (pure function).
 
     Chỉ báo khi chuyển trạng thái:
-      - từ 'ok' (hoặc lần đầu / thiếu state) sang 'stale' -> báo CRITICAL một lần.
-      - từ 'stale' sang 'ok' -> báo INFO hồi phục một lần.
-      - kéo dài trạng thái cũ -> im lặng (chỉ ghi log info).
-      - không có file log hoặc log không có nhãn -> coi là 'stale'.
-      - file trạng thái lỗi hoặc thiếu -> coi như lần chạy đầu, KHÔNG nuốt job đang ngừng.
+      - Canh lịch 24/7 (watch_jobs):
+        + từ 'ok' (hoặc lần đầu / thiếu state) sang 'stale' -> báo CRITICAL một lần.
+        + từ 'stale' sang 'ok' -> báo INFO hồi phục một lần.
+        + kéo dài trạng thái cũ -> im lặng (chỉ ghi log info).
+      - Canh mã thoát (exit_policies, nếu job_exit_codes được cung cấp):
+        + lần chạy cuối có mã thoát không thuộc normal_exit_codes:
+          * nếu trước đó chưa báo hoặc mã khác -> báo CRITICAL một lần.
+          * nếu trước đó đã báo cùng mã -> im lặng (ghi log info).
+        + lần chạy cuối thành công (thuộc normal_exit_codes):
+          * nếu trước đó thất bại -> báo INFO hồi phục một lần.
+          * nếu trước đó ok -> im lặng.
+        + không có dòng EXIT= (đang chạy hoặc file rỗng) -> im lặng.
 
     Trả về: (alerts, new_state, info_logs)
     """
@@ -222,6 +443,7 @@ def evaluate_schedule_health(
     new_state = dict(previous_state)
     now_tz = now.astimezone(TZ)
 
+    # 1. Canh tuổi (staleness) các job 24/7
     for branch, cfg in watch_jobs.items():
         last_dt, reason = job_last_seen.get(branch, (None, "không có dữ liệu"))
         prev = previous_state.get(branch)
@@ -229,7 +451,9 @@ def evaluate_schedule_health(
 
         if last_dt is None:
             current_status = "stale"
-            stale_reason = reason or f"không tìm thấy dòng nào của {cfg.label} trong log"
+            stale_reason = (
+                reason or f"không tìm thấy dòng nào của {cfg.label} trong log"
+            )
         else:
             age_seconds = (now_tz - last_dt).total_seconds()
             if age_seconds > cfg.max_age_seconds:
@@ -244,13 +468,16 @@ def evaluate_schedule_health(
                 current_status = "ok"
                 stale_reason = None
 
-        new_record = {
-            "status": current_status,
-            "last_called": (
-                last_dt.strftime("%Y-%m-%d %H:%M:%S") if last_dt else None
-            ),
-            "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
-        }
+        new_record = dict(prev) if isinstance(prev, dict) else {}
+        new_record.update(
+            {
+                "status": current_status,
+                "last_called": (
+                    last_dt.strftime("%Y-%m-%d %H:%M:%S") if last_dt else None
+                ),
+                "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
         new_state[branch] = new_record
 
         if current_status == "stale":
@@ -269,6 +496,65 @@ def evaluate_schedule_health(
                 )
             else:
                 pass
+
+    # 2. Canh mã thoát (exit codes)
+    if job_exit_codes is not None:
+        for branch, policy in exit_policies.items():
+            last_run_dt, exit_code, _err = job_exit_codes.get(
+                branch, (None, None, None)
+            )
+            prev = previous_state.get(branch)
+            prev_exit_status = (
+                prev.get("exit_status") if isinstance(prev, dict) else None
+            )
+            prev_exit_code = (
+                prev.get("exit_code") if isinstance(prev, dict) else None
+            )
+
+            if exit_code is not None:
+                if exit_code not in policy.normal_exit_codes:
+                    current_exit_status = "failed"
+                else:
+                    current_exit_status = "ok"
+            else:
+                current_exit_status = None
+
+            # Cập nhật vào new_state (bảo toàn các trường status/last_called nếu có)
+            rec = new_state.get(branch)
+            if not isinstance(rec, dict):
+                rec = dict(prev) if isinstance(prev, dict) else {}
+            if exit_code is not None:
+                rec["exit_code"] = exit_code
+                rec["exit_status"] = current_exit_status
+                if "checked_at" not in rec:
+                    rec["checked_at"] = now_tz.strftime("%Y-%m-%d %H:%M:%S")
+            new_state[branch] = rec
+
+            if current_exit_status == "failed":
+                if prev_exit_status != "failed" or prev_exit_code != exit_code:
+                    dt_str = (
+                        last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        if last_run_dt
+                        else "không rõ"
+                    )
+                    alerts.append(
+                        f"[CRITICAL] job theo lịch '{branch}' THẤT BẠI: "
+                        f"lần chạy gần nhất lúc {dt_str} kết thúc với mã thoát {exit_code}"
+                    )
+                else:
+                    info_logs.append(
+                        f"[heartbeat-sched] INFO: {branch} vẫn thất bại (mã thoát {exit_code}) - đã báo trước đó"
+                    )
+            elif current_exit_status == "ok" and prev_exit_status == "failed":
+                dt_str = (
+                    last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    if last_run_dt
+                    else "không rõ"
+                )
+                alerts.append(
+                    f"[INFO] job theo lịch '{branch}' ĐÃ HỒI PHỤC: "
+                    f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {exit_code})"
+                )
 
     return alerts, new_state, info_logs
 
@@ -503,7 +789,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
         return 1
 
-    # Việc 2 (Brief 142): Canh các job 24/7 theo lịch (đọc log của run_if_docker_up.sh)
+    # Việc 2 (Brief 142 + Brief 156): Canh các job theo lịch (đọc log của run_if_docker_up.sh)
     logs_dir = args.logs_dir
     outbox_path = Path(logs_dir) / HEARTBEAT_OUTBOX_NAME
     job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
@@ -511,10 +797,20 @@ def main(argv: list[str] | None = None) -> int:
         log_path = os.path.join(logs_dir, job_cfg.log_file)
         job_last_seen[branch] = get_last_called_timestamp(log_path, job_cfg.label)
 
+    job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
+    for branch, policy in SCHEDULE_EXIT_POLICIES.items():
+        log_path = os.path.join(logs_dir, policy.log_file)
+        job_exit_codes[branch] = get_last_run_exit_code(log_path, policy.label)
+
     sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
     prev_sched_state = load_schedule_state(sched_state_file)
     sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
-        job_last_seen, now, prev_sched_state
+        job_last_seen,
+        now,
+        prev_sched_state,
+        watch_jobs=SCHEDULE_WATCH_JOBS,
+        job_exit_codes=job_exit_codes,
+        exit_policies=SCHEDULE_EXIT_POLICIES,
     )
 
     # Chỉ cảnh báo trong giờ giao dịch (trừ khi chạy --dry-run để chẩn đoán/test)
