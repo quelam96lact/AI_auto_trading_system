@@ -181,7 +181,7 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         log_file="daily-data-check.log",
         label="daily-data-check",
         normal_exit_codes=frozenset({0, 1}),
-        reason="daily_data_check.py:237, 244, 277, 304, 310, 312. Mã 0 là đủ dữ liệu/ngày nghỉ; mã 1 là thiếu bar đã tự gửi Telegram. Mã 2 khi lỗi config/DB/parser không gửi Telegram hoặc crash.",
+        reason="daily_data_check.py:237, 244, 277, 304, 310, 312. Mã 0 là đủ dữ liệu/ngày nghỉ; mã 1 là thiếu bar đã tự gửi Telegram. Mã 2 có HAI nghĩa (đo 03/10 trong logs/daily-data-check.log): (a) cờ lạ/argparse hoặc lỗi config/DB — chưa ai báo, đúng diện canh; (b) sự cố dữ liệu nặng 0 mã có bar — script ĐÃ tự gửi Telegram (02/10 05:47 và 05:53). Canh mã 2 nên ca (b) sẽ có tin trùng. Chấp nhận có chủ đích: trùng ở tin to nhất còn hơn bỏ sót ca (a). Muốn hết trùng thì phải phân biệt theo nội dung log, chưa làm.",
     ),
     "backfill": JobExitPolicy(
         branch="backfill",
