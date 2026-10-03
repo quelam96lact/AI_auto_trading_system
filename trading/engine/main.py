@@ -31,6 +31,30 @@ from trading.trailing_stop import TrailingStopManager
 CAPITAL = 100_000_000.0
 
 
+def real_capital_from_nav(
+    nav_row: tuple[float, datetime, list[str]] | None,
+) -> tuple[float, str | None]:
+    """Tách từ nav_row ra (vốn, vấn_đề) cho RiskManager lệnh thật.
+
+    - Không có dòng snapshot -> (0.0, "khong doc duoc NAV (account_nav_snapshot khong co dong cho tai khoan nay)")
+    - NAV <= 0 -> (0.0, f"NAV khong hop le (<= 0): {nav_val:,.0f} (ts={nav_ts})")
+    - Bình thường -> (nav_val, None)
+    """
+    if nav_row is None:
+        return (
+            0.0,
+            "khong doc duoc NAV (account_nav_snapshot khong co dong cho tai khoan nay)",
+        )
+    nav_val, nav_ts, _ = nav_row
+    if nav_val <= 0:
+        return (
+            0.0,
+            f"NAV khong hop le (<= 0): {nav_val:,.0f} (ts={nav_ts})",
+        )
+    return nav_val, None
+
+
+
 def _install_stop_handlers(stop_event: asyncio.Event) -> None:
     """Bắt SIGTERM/SIGINT -> set stop_event để vòng lặp thoát ở ranh giới message.
 
@@ -397,8 +421,8 @@ async def run(
     # (account_sync tính mã không định giá được THÀNH 0 nên NAV bị tính HỤT —
     # hụt là an toàn nên vẫn dùng, nhưng im lặng thì không chấp nhận được).
     nav_row = storage.read_nav(cfg.real_order_account)
+    real_capital, nav_issue = real_capital_from_nav(nav_row)
     if nav_row is None:
-        real_capital = 0.0
         alert(
             "CRITICAL",
             "khong doc duoc NAV (account_nav_snapshot khong co dong "
@@ -407,7 +431,6 @@ async def run(
             account=cfg.real_order_account,
         )
     elif nav_row[0] <= 0:
-        real_capital = 0.0
         nav_val, nav_ts, _ = nav_row
         alert(
             "CRITICAL",
@@ -448,6 +471,8 @@ async def run(
     real_risk = RiskManager(capital=real_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     real_trailing_stop = TrailingStopManager()
+    last_nav_valid: bool = (nav_issue is None)
+    last_nav_capital: float = real_capital
     # Tai dung _highest cho vi the THAT sau restart (RTS-1), giong luong paper
     # o tren: doc tu real_order_fills (loc account_no). Vi the that co the do
     # chu tai khoan TU MUA ngoai he thong -> khong co fill -> khong tai dung
@@ -573,6 +598,55 @@ async def run(
             alert("WARN", "real pending orders expired without confirmation", count=n)
 
     def on_real_crossover(crossover, bar) -> None:
+        nonlocal last_nav_valid, last_nav_capital
+        # Dot 151: doc lai NAV truoc moi crossover that
+        try:
+            curr_nav_row = storage.read_nav(cfg.real_order_account)
+            curr_capital, curr_issue = real_capital_from_nav(curr_nav_row)
+            curr_valid = (curr_issue is None)
+            if last_nav_valid and not curr_valid:
+                alert(
+                    "CRITICAL",
+                    f"NAV chuyen sang khong hop le: {curr_issue} — real capital = 0, "
+                    f"MOI lenh that bi tu choi (fail-safe)",
+                    account=cfg.real_order_account,
+                )
+                real_risk.capital = 0.0
+                last_nav_valid = False
+                last_nav_capital = 0.0
+            elif not last_nav_valid and curr_valid:
+                alert(
+                    "WARN",
+                    f"NAV hop le tro lai — real capital = {curr_capital:,.0f}",
+                    account=cfg.real_order_account,
+                    capital=curr_capital,
+                )
+                real_risk.capital = curr_capital
+                last_nav_valid = True
+                last_nav_capital = curr_capital
+            elif not last_nav_valid and not curr_valid:
+                # hong -> van hong: im lang
+                real_risk.capital = 0.0
+            else:
+                # hop le, so doi: INFO cu -> moi
+                if curr_capital != last_nav_capital:
+                    alert(
+                        "INFO",
+                        f"NAV cap nhat real capital: {last_nav_capital:,.0f} -> {curr_capital:,.0f}",
+                        account=cfg.real_order_account,
+                        old_capital=last_nav_capital,
+                        new_capital=curr_capital,
+                    )
+                    last_nav_capital = curr_capital
+                real_risk.capital = curr_capital
+        except Exception as e:
+            alert(
+                "WARN",
+                "khong doc lai duoc NAV cho crossover lenh that, giu nguyen von hien tai",
+                account=cfg.real_order_account,
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+
         # Plan 2026-09-01 T1: truyen atr (float | None) cho dinh co BUY that —
         # khong keo object strategy vao real_orders.py
         real_orders.handle_crossover(

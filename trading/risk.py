@@ -32,6 +32,8 @@ class RiskManager:
         approve_sized() để 2 luồng paper/thật đồng bộ trạng thái halt."""
         if self.halted_date == today:
             return True
+        if self.capital <= 0:
+            return False
         if daily_pnl <= -self.capital * self.max_daily_loss_pct:
             self.halted_date = today
             return True
@@ -49,6 +51,11 @@ class RiskManager:
             self.last_reject_reason = "halt lỗ ngày"
             return False
         if signal.side == "BUY":
+            if self.capital <= 0:
+                self.last_reject_reason = (
+                    "vốn <= 0 (NAV không dùng được) — không định cỡ được lệnh"
+                )
+                return False
             order_value = ref_price * signal.qty
             if order_value > self.capital * self.max_order_value_pct * self.leverage:
                 self.last_reject_reason = (
@@ -99,6 +106,12 @@ class RiskManager:
         if signal.side == "SELL":
             self.last_reject_reason = None
             return signal
+
+        if self.capital <= 0:
+            self.last_reject_reason = (
+                "vốn <= 0 (NAV không dùng được) — không định cỡ được lệnh"
+            )
+            return None
 
         if atr is None or atr <= 0:
             self.last_reject_reason = "ATR không hợp lệ (atr=None hoặc <=0)"

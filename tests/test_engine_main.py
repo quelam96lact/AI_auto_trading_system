@@ -2258,5 +2258,269 @@ async def test_engine_does_not_restore_take_profit_for_other_strategies(storage,
     )
 
 
+# ============ Dot 151: Doc lai NAV truoc moi crossover that ============
 
+
+async def test_real_crossover_nav_reread_recovery(storage, monkeypatch):
+    """Dot 151 Ca A — hoi phuc:
+    Khoi dong NAV -39.959.000 (hong), toi crossover NAV 100.000.000 moi (hop le).
+    Phai thay: pending BUY = 1, WARN 'NAV hop le tro lai', KHONG co REAL risk halt,
+    storage.read_real_risk_halt() la None.
+    """
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    engine_alerts: list[tuple[str, str, dict]] = []
+    real_alerts: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: engine_alerts.append((level, msg, f)),
+    )
+    monkeypatch.setattr(
+        real_orders_mod,
+        "alert",
+        lambda level, msg, **f: real_alerts.append((level, msg, f)),
+    )
+
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+
+    nav_seq = [
+        (-39_959_000.0, now, []),
+        (100_000_000.0, now, []),
+    ]
+
+    def fake_read_nav(self, acc):
+        if nav_seq:
+            return nav_seq.pop(0)
+        return (-39_959_000.0, now, [])
+
+    monkeypatch.setattr(Storage, "read_nav", fake_read_nav)
+
+    prices = [10.0] * 20 + [20.0] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert _count_pending_buys(storage) == 1, (
+        f"Ca A phai sinh 1 lenh BUY that, thuc te pending={_count_pending_buys(storage)}, "
+        f"engine_alerts={engine_alerts}, real_alerts={real_alerts}"
+    )
+    assert storage.read_real_risk_halt() is None, "Ca A khong duoc co REAL risk halt trong DB"
+    assert not any("REAL risk halt" in msg for _, msg, _ in engine_alerts), (
+        f"Ca A khong duoc alert REAL risk halt: {engine_alerts}"
+    )
+    warn_recovered = [
+        a for a in engine_alerts if a[0] == "WARN" and "NAV hop le tro lai" in a[1]
+    ]
+    assert len(warn_recovered) == 1, f"Ca A phai co 1 WARN 'NAV hop le tro lai': {engine_alerts}"
+    assert "100,000,000" in warn_recovered[0][1]
+
+
+async def test_real_crossover_nav_reread_breaks_midway(storage, monkeypatch):
+    """Dot 151 Ca B — hong giua chung:
+    Khoi dong NAV 100.000.000 (hop le), toi crossover NAV -39.959.000 (hong).
+    Phai thay: pending BUY = 0, dung MOT CRITICAL NAV, KHONG co REAL risk halt.
+    """
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    engine_alerts: list[tuple[str, str, dict]] = []
+    real_alerts: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: engine_alerts.append((level, msg, f)),
+    )
+    monkeypatch.setattr(
+        real_orders_mod,
+        "alert",
+        lambda level, msg, **f: real_alerts.append((level, msg, f)),
+    )
+
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+
+    nav_seq = [
+        (100_000_000.0, now, []),
+        (-39_959_000.0, now, []),
+    ]
+
+    def fake_read_nav(self, acc):
+        if nav_seq:
+            return nav_seq.pop(0)
+        return (100_000_000.0, now, [])
+
+    monkeypatch.setattr(Storage, "read_nav", fake_read_nav)
+
+    prices = [10.0] * 20 + [20.0] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert _count_pending_buys(storage) == 0, (
+        f"Ca B khong duoc sinh lenh BUY that, thuc te pending={_count_pending_buys(storage)}"
+    )
+    assert storage.read_real_risk_halt() is None, "Ca B khong duoc co REAL risk halt trong DB"
+    assert not any("REAL risk halt" in msg for _, msg, _ in engine_alerts), (
+        f"Ca B khong duoc alert REAL risk halt: {engine_alerts}"
+    )
+    nav_criticals = [
+        a for a in engine_alerts if a[0] == "CRITICAL" and "NAV" in a[1]
+    ]
+    assert len(nav_criticals) == 1, (
+        f"Ca B phai co dung 1 CRITICAL NAV (luc chuyen sang hong): {engine_alerts}"
+    )
+    assert "NAV chuyen sang khong hop le" in nav_criticals[0][1]
+    assert any(
+        level == "INFO" and "vốn <= 0" in f.get("reason", "")
+        for level, msg, f in real_alerts
+    ), f"Ca B phai co INFO tu choi lenh vi von <= 0: {real_alerts}"
+
+
+async def test_real_crossover_nav_reread_stays_broken_silent(storage, monkeypatch):
+    """Dot 151 Ca C — hong suot:
+    Khoi dong NAV -39.959.000 (hong), toi crossover NAV -39.959.000 (van hong).
+    Phai thay: pending BUY = 0, CRITICAL NAV dung MOT lan (luc khoi dong), khong co halt.
+    """
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    engine_alerts: list[tuple[str, str, dict]] = []
+    real_alerts: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        engine_main,
+        "alert",
+        lambda level, msg, **f: engine_alerts.append((level, msg, f)),
+    )
+    monkeypatch.setattr(
+        real_orders_mod,
+        "alert",
+        lambda level, msg, **f: real_alerts.append((level, msg, f)),
+    )
+
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+
+    nav_seq = [
+        (-39_959_000.0, now, []),
+        (-39_959_000.0, now, []),
+    ]
+
+    def fake_read_nav(self, acc):
+        if nav_seq:
+            return nav_seq.pop(0)
+        return (-39_959_000.0, now, [])
+
+    monkeypatch.setattr(Storage, "read_nav", fake_read_nav)
+
+    prices = [10.0] * 20 + [20.0] * 5
+    bars = make_bars(prices)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert _count_pending_buys(storage) == 0, (
+        f"Ca C khong duoc sinh lenh BUY that, thuc te pending={_count_pending_buys(storage)}"
+    )
+    assert storage.read_real_risk_halt() is None, "Ca C khong duoc co REAL risk halt trong DB"
+    assert not any("REAL risk halt" in msg for _, msg, _ in engine_alerts), (
+        f"Ca C khong duoc alert REAL risk halt: {engine_alerts}"
+    )
+    nav_criticals = [
+        a for a in engine_alerts if a[0] == "CRITICAL" and "NAV" in a[1]
+    ]
+    assert len(nav_criticals) == 1, (
+        f"Ca C phai co dung 1 CRITICAL NAV (luc khoi dong, crossover im lang): {engine_alerts}"
+    )
+    assert "NAV khong hop le (<= 0)" in nav_criticals[0][1]
+    assert any(
+        level == "INFO" and "vốn <= 0" in f.get("reason", "")
+        for level, msg, f in real_alerts
+    ), f"Ca C phai co INFO tu choi lenh vi von <= 0: {real_alerts}"
+
+
+def _capture_reread_alerts(monkeypatch):
+    """Audit dot 151: bat alert o CA HAI module (engine.main va real_orders)."""
+    import trading.engine.main as engine_main
+    import trading.real_orders as real_orders_mod
+
+    engine_alerts: list[tuple[str, str, dict]] = []
+    real_alerts: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        engine_main, "alert", lambda level, msg, **f: engine_alerts.append((level, msg, f))
+    )
+    monkeypatch.setattr(
+        real_orders_mod, "alert", lambda level, msg, **f: real_alerts.append((level, msg, f))
+    )
+    return engine_alerts, real_alerts
+
+
+async def test_real_crossover_nav_reread_recovery_warns_once(storage, monkeypatch):
+    """Audit dot 151 (Claude): hong -> hop le phai bao WARN MOT lan, ke ca khi con
+    crossover sau do. Ca A chi co mot crossover nen khong giu duoc dieu nay —
+    Claude pha thu bo `last_nav_valid = True` o nhanh hoi phuc, Ca A van xanh.
+    Gia len roi xuong: crossover bull roi bear, ca hai deu doc lai NAV."""
+    engine_alerts, _real_alerts = _capture_reread_alerts(monkeypatch)
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+
+    calls: list[int] = []
+
+    def fake_read_nav(self, acc):
+        calls.append(1)
+        if len(calls) == 1:
+            return (-39_959_000.0, now, [])  # luc khoi dong: hong
+        return (100_000_000.0, now, [])  # moi crossover sau: hop le
+
+    monkeypatch.setattr(Storage, "read_nav", fake_read_nav)
+
+    bars = make_bars([10.0] * 20 + [20.0] * 5 + [1.0] * 25)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert len(calls) >= 3, f"phai co it nhat 2 crossover doc lai NAV, thuc te so lan doc={len(calls)}"
+    warn_recovered = [a for a in engine_alerts if a[0] == "WARN" and "NAV hop le tro lai" in a[1]]
+    assert len(warn_recovered) == 1, f"WARN hoi phuc phai dung MOT lan: {engine_alerts}"
+
+
+async def test_real_crossover_nav_reread_db_error_keeps_capital(storage, monkeypatch):
+    """Audit dot 151 (Claude): loi DB khi doc lai NAV -> WARN, GIU von dang co, engine
+    KHONG chet va lenh that van di tiep. Claude pha thu them `raise` vao nhanh except:
+    truoc test nay toan bo 89 test engine/risk van xanh."""
+    engine_alerts, real_alerts = _capture_reread_alerts(monkeypatch)
+    now = datetime.now(TZ)
+    cfg = make_cfg(real_order_account=RTS_ACCOUNT)
+    _seed_real_position(storage, qty=0, sellable=0, sync_ts=now)
+    storage.record_buying_power(RTS_ACCOUNT, "ENGT", now, 1000, 0, 50.0)
+
+    calls: list[int] = []
+
+    def fake_read_nav(self, acc):
+        calls.append(1)
+        if len(calls) == 1:
+            return (100_000_000.0, now, [])  # luc khoi dong: hop le
+        raise ConnectionError("db tam mat")
+
+    monkeypatch.setattr(Storage, "read_nav", fake_read_nav)
+
+    bars = make_bars([10.0] * 20 + [20.0] * 5)
+    await _publish(cfg, bars)
+    await run(cfg, strategy=SmaCrossStrategy(), max_messages=len(bars), warmup_wait_timeout_sec=0)
+
+    assert any(
+        a[0] == "WARN" and "khong doc lai duoc NAV" in a[1] for a in engine_alerts
+    ), f"phai WARN khi doc lai NAV loi: {engine_alerts}"
+    assert _count_pending_buys(storage) == 1, (
+        f"von khoi dong phai duoc giu -> van sinh lenh BUY, engine_alerts={engine_alerts}, "
+        f"real_alerts={real_alerts}"
+    )
 

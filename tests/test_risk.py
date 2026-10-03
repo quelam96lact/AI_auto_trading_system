@@ -312,3 +312,60 @@ def test_lot_size_10_lam_tron_xuong_boi_10():
         positions={}, daily_pnl=0.0, today=TODAY,
     )
     assert sized is not None and sized.qty % 10 == 0
+
+
+def _check_non_positive_capital_rejects_buy_without_halting(bad_cap: float):
+    """Brief dot 151 Viec 1: von <= 0 la 'khong tinh duoc', khong phai 'lo'
+    -> khong tu sinh halt lo ngay, approve/approve_sized BUY tu choi voi ly do ro rang,
+    SELL van di qua."""
+    rm = RiskManager(capital=bad_cap)
+    buy_sig = Signal("VCB", "BUY", 100)
+    sell_sig = Signal("VCB", "SELL", 100)
+
+    # 1. approve_sized BUY -> None, ly do chua "vốn", halted_date is None
+    res_sized = rm.approve_sized(
+        buy_sig, ref_price=50_000.0, atr=2_000.0, positions={}, daily_pnl=0.0, today=TODAY
+    )
+    assert res_sized is None
+    assert rm.last_reject_reason is not None and "vốn" in rm.last_reject_reason.lower()
+    assert rm.halted_date is None
+
+    # 2. approve BUY -> False, ly do chua "vốn", halted_date is None
+    res_app = rm.approve(
+        buy_sig, ref_price=50_000.0, positions={}, daily_pnl=0.0, today=TODAY
+    )
+    assert res_app is False
+    assert rm.last_reject_reason is not None and "vốn" in rm.last_reject_reason.lower()
+    assert rm.halted_date is None
+
+    # 3. approve SELL -> True
+    assert rm.approve(sell_sig, ref_price=50_000.0, positions={}, daily_pnl=0.0, today=TODAY) is True
+    # approve_sized SELL -> tra ve signal
+    sized_sell = rm.approve_sized(
+        sell_sig, ref_price=50_000.0, atr=2_000.0, positions={}, daily_pnl=0.0, today=TODAY
+    )
+    assert sized_sell == sell_sig
+
+    # 4. Neu da co halted_date = today tu truoc -> ca BUY va SELL van bi chan
+    rm.halted_date = TODAY
+    assert rm.approve(buy_sig, ref_price=50_000.0, positions={}, daily_pnl=0.0, today=TODAY) is False
+    assert rm.last_reject_reason == "halt lỗ ngày"
+    assert rm.approve(sell_sig, ref_price=50_000.0, positions={}, daily_pnl=0.0, today=TODAY) is False
+    assert rm.last_reject_reason == "halt lỗ ngày"
+    assert rm.approve_sized(
+        buy_sig, ref_price=50_000.0, atr=2_000.0, positions={}, daily_pnl=0.0, today=TODAY
+    ) is None
+    assert rm.last_reject_reason == "halt lỗ ngày"
+    assert rm.approve_sized(
+        sell_sig, ref_price=50_000.0, atr=2_000.0, positions={}, daily_pnl=0.0, today=TODAY
+    ) is None
+    assert rm.last_reject_reason == "halt lỗ ngày"
+
+
+def test_risk_manager_zero_capital_rejects_buy_without_halting():
+    _check_non_positive_capital_rejects_buy_without_halting(0.0)
+
+
+def test_risk_manager_negative_capital_rejects_buy_without_halting():
+    _check_non_positive_capital_rejects_buy_without_halting(-39_959_000.0)
+
