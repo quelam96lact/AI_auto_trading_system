@@ -446,7 +446,7 @@ Từ đợt 143–144, hệ thống bổ sung cơ chế hàng đợi gửi lại
 
 ### Vị trí và định dạng file
 
-- **Đường dẫn:** Trong container là `/app/logs/alert_outbox_<service>.jsonl` (tương ứng `./logs/alert_outbox_collector.jsonl` và `./logs/alert_outbox_engine.jsonl` trên host).
+- **Đường dẫn:** Trong container là `/app/logs/alert_outbox_<service>.jsonl` (tương ứng `./logs/alert_outbox_collector.jsonl` và `./logs/alert_outbox_engine.jsonl` trên host). Job `heartbeat` có file riêng `./logs/alert_outbox_heartbeat.jsonl` — xem mục cuối §8.6.
 - **Định dạng:** JSON Lines (`.jsonl`), mỗi dòng là một JSON độc lập:
   ```json
   {"emitted_at": "2026-10-02T06:46:33.213927+00:00", "text": "[CRITICAL] phát hiện máy chủ ngủ/gián đoạn 953s"}
@@ -473,7 +473,18 @@ Từ đợt 143–144, hệ thống bổ sung cơ chế hàng đợi gửi lại
 
 - **Kiểm tra trạng thái:** Đọc file hàng đợi bằng lệnh `cat logs/alert_outbox_*.jsonl` hoặc kiểm tra số dòng `wc -l logs/alert_outbox_*.jsonl`.
 - **Xoá file thủ công:** Người vận hành có thể xoá file này bất cứ lúc nào (cả khi dịch vụ đang chạy hoặc đang dừng). Hệ quả duy nhất là các tin cảnh báo đang chờ gửi trong file sẽ bị mất; hoàn toàn không gây lỗi hay ảnh hưởng đến tiến trình `collector`/`engine`.
-- **Phạm vi áp dụng:** Chỉ áp dụng cho các tiến trình nền dài hạn (`collector`, `engine`). Các script cron/task định kỳ (`sched.sh`) không dùng hàng đợi này: chúng là job ngắn hạn, lần chạy sau sẽ đánh giá lại tình trạng. Mã thoát khi gửi Telegram hỏng theo **hai họ** ghi trong docstring `scripts/_alert_common.py`: họ "theo gửi được hay không" trả 2, họ "theo phát hiện" (vd `deploy-drift`, `engine-cam`) luôn trả 1.
+- **Phạm vi áp dụng:** hai tiến trình nền dài hạn (`collector`, `engine`), **và từ đợt 155 thêm job `heartbeat`**. Mã thoát khi gửi Telegram hỏng theo **hai họ** ghi trong docstring `scripts/_alert_common.py`: họ "theo gửi được hay không" trả 2, họ "theo phát hiện" (vd `deploy-drift`, `engine-cam`, và `heartbeat`) luôn trả 1.
+- **Các job theo lịch còn lại vẫn CHƯA có hàng đợi.** Lý do trước đây ghi ở đây — "job ngắn hạn, lần chạy sau sẽ đánh giá lại tình trạng" — **không đúng với job có file trạng thái**: đợt 155 đo được rằng `heartbeat` từng ghi trạng thái "đã báo" ngay cả khi gửi hỏng, nên một job theo lịch chết sẽ im lặng vĩnh viễn.
+  - Job **có gửi Telegram** (đo 03/10): `daily-check`, `deploy-drift`, `engine-cam`, `engine-consumer`, `orderbook-recorder`, `orderbook-daily-check`, `backup-check`, `disk-check`, `container-health`, `restore-drill`.
+  - Mất tin lâu nhất là nhóm chạy **mỗi ngày hoặc mỗi tuần**: `daily-check`, `orderbook-daily-check`, `backup-check` (24 giờ) và `restore-drill` (7 ngày).
+  - `host-preflight` và `stream-health` **không gửi Telegram dòng nào** — chúng chỉ in ra log và trả mã thoát, nên không có tin để mất. Ai đọc mã thoát của hai job này là câu hỏi riêng, chưa giải.
+
+### Hàng đợi của job `heartbeat` (đợt 155) — khác ba điểm
+
+- **Đường dẫn:** `logs/alert_outbox_heartbeat.jsonl`, lấy theo cờ `--logs-dir`. Job chạy **trên host**, không trong container, nên **không** dùng `/app/logs`.
+- **Không có luồng nền 60 giây.** Job là tiến trình ngắn, thoát ngay sau khi chạy. Chính **cron là cơ chế gửi lại**: mỗi lần chạy (5 phút một lần trong giờ giao dịch) nó gửi lại hàng tồn trước, rồi mới gửi tin mới.
+- **Không phụ thuộc việc build lại image**, khác hàng đợi của `collector`/`engine`: job theo lịch chạy thẳng từ cây làm việc.
+- Khi tin bị xếp hàng, `heartbeat` **không** ghi trạng thái canh lịch. Hệ quả có chủ ý: lần chạy sau người nhận có thể thấy **hai tin trùng nội dung** (một tin gửi trễ từ hàng đợi, một tin phát hiện lại). Trùng tin tốt hơn im lặng.
 - **Lưu ý triển khai:** Hàng đợi chỉ có hiệu lực **sau khi image collector và engine được build lại** từ commit chứa thay đổi của đợt 143–144 (xem [§10](#10-sau-khi-sửa-code-trong-trading--bắt-buộc-dựng-lại-container)).
 
 ## 9. Dead-man's switch (heartbeat)
