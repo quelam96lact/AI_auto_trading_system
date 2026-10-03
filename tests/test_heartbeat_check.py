@@ -1,5 +1,7 @@
+import json
 import os
 import sys
+import urllib.error
 from datetime import date, datetime, timedelta
 
 from scripts.heartbeat_check import (
@@ -296,7 +298,12 @@ def _run_main_with_ledger(
     import scripts.heartbeat_check as hc
 
     sent = []
-    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent.append(msg))
+
+    def _fake_send(msg):
+        sent.append(msg)
+        return True
+
+    monkeypatch.setattr(hc, "send_telegram", _fake_send)
     if fixed_now is None:
         fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)  # thu 6, trong phien
 
@@ -431,7 +438,12 @@ def _run_main_with_position_sync(monkeypatch, logs_dir, sync_ts, fixed_now=None)
     import scripts.heartbeat_check as hc
 
     sent = []
-    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent.append(msg))
+
+    def _fake_send(msg):
+        sent.append(msg)
+        return True
+
+    monkeypatch.setattr(hc, "send_telegram", _fake_send)
     if fixed_now is None:
         fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)  # thu 6, trong phien
 
@@ -747,3 +759,354 @@ def test_schedule_watch_jobs_match_deployment_cron():
     """Brief 149: Giờ gốc của 5 job canh 24/7 phải khớp đúng dòng cron tương ứng trong DEPLOYMENT.md §9."""
     verify_schedule_watch_jobs_against_deployment_cron()
 
+
+# =============================================================================
+# Brief 155: Gửi Telegram hỏng không được ăn mất trạng thái "đã báo"
+# =============================================================================
+from scripts._alert_common import send_with_outbox
+
+
+def test_send_with_outbox_success(tmp_path):
+    """Việc 2: send_with_outbox gửi thành công -> trả True, không tạo file outbox."""
+    delivered = []
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    ok = send_with_outbox(
+        "Cảnh báo test", send=lambda msg: delivered.append(msg) or True, outbox_path=outbox_file
+    )
+    assert ok is True
+    assert delivered == ["Cảnh báo test"]
+    assert not outbox_file.exists()
+
+
+def test_send_with_outbox_failure_enqueues(tmp_path):
+    """Việc 2: send_with_outbox gửi hỏng (send trả False) -> trả False, xếp hàng vào outbox."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    ok = send_with_outbox("Cảnh báo hỏng", send=lambda msg: False, outbox_path=outbox_file)
+    assert ok is False
+    assert outbox_file.exists()
+    lines = [ln for ln in outbox_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["text"] == "Cảnh báo hỏng"
+    assert "emitted_at" in record
+
+
+def test_send_with_outbox_flushes_old_before_new(tmp_path):
+    """Việc 2: Tin cũ trong hàng đợi đi TRƯỚC tin mới khi flush()."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    # Lần 1: gửi hỏng -> tin 1 vào hàng đợi
+    send_with_outbox("Tin cũ số 1", send=lambda msg: False, outbox_path=outbox_file)
+    assert outbox_file.exists()
+
+    # Lần 2: mạng phục hồi -> tin cũ được flush TRƯỚC tin mới
+    calls = []
+
+    def tracker_send(msg):
+        calls.append(msg)
+        return True
+
+    ok = send_with_outbox("Tin mới số 2", send=tracker_send, outbox_path=outbox_file)
+    assert ok is True
+    assert len(calls) == 2
+    assert "Tin cũ số 1" in calls[0]
+    assert "[GỬI TRỄ" in calls[0]
+    assert calls[1] == "Tin mới số 2"
+    # Outbox đã được làm sạch
+    assert not outbox_file.exists() or not outbox_file.read_text(encoding="utf-8").strip()
+
+
+def test_send_with_outbox_pending_prints(tmp_path, capsys):
+    """Việc 2: In số tin còn tồn (pending) khi khác 0 để log ghi nhận nợ tin."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    send_with_outbox("Nợ tin 1", send=lambda msg: False, outbox_path=outbox_file)
+    captured = capsys.readouterr()
+    assert "[HANG DOI]" in captured.out
+    assert "Đang nợ 1 cảnh báo" in captured.out
+
+
+def test_send_with_outbox_send_raises_enqueues(tmp_path):
+    """Việc 2: send ném URLError -> không chết, xếp hàng và trả False."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+
+    def broken_send(msg):
+        raise urllib.error.URLError("DNS resolution failed")
+
+    ok = send_with_outbox("Tin ném lỗi", send=broken_send, outbox_path=outbox_file)
+    assert ok is False
+    assert outbox_file.exists()
+
+
+def _setup_heartbeat_stale_env(monkeypatch, logs_dir, fixed_now=None, stale_job="container-health"):
+    """Dàn dựng môi trường heartbeat với một job theo lịch bị stale."""
+    import scripts.heartbeat_check as hc
+
+    if fixed_now is None:
+        fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+
+    monkeypatch.setenv("DB_DSN", "postgresql://fake:5432/trading")
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return fixed_now
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    class FakeCur:
+        def __init__(self, result=None, rows=None):
+            self._result = result
+            self._rows = rows or []
+
+        def fetchall(self):
+            return self._rows
+
+        def fetchone(self):
+            return self._result
+
+    class FakeConn:
+        def execute(self, *a, **k):
+            q = str(a[0])
+            if "FROM heartbeat" in q:
+                return FakeCur(
+                    rows=[
+                        ("collector", fixed_now - timedelta(seconds=30)),
+                        ("engine", fixed_now - timedelta(seconds=45)),
+                    ]
+                )
+            if "max(ts) FROM bars" in q:
+                return FakeCur(result=(fixed_now - timedelta(minutes=2),))
+            if "FROM engine_state" in q:
+                return FakeCur(result=None)
+            if "FROM positions" in q:
+                return FakeCur(rows=[])
+            return FakeCur()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(
+        hc,
+        "Storage",
+        lambda dsn: type(
+            "S",
+            (),
+            {
+                "load_ssi_token": lambda self: {
+                    "refresh_token_expires_at": fixed_now.timestamp() + 7200
+                },
+                "read_position_sync_ts": lambda self, account_no: fixed_now - timedelta(minutes=2),
+            },
+        )(),
+    )
+
+    _fresh_job_logs(logs_dir, fixed_now)
+    # Làm cho stale_job bị quá hạn (stale)
+    cfg = hc.SCHEDULE_WATCH_JOBS[stale_job]
+    old_time = fixed_now - timedelta(seconds=cfg.max_age_seconds + 300)
+    (logs_dir / cfg.log_file).write_text(
+        f"{old_time.strftime('%Y-%m-%d %H:%M:%S')} {cfg.label} start\n",
+        encoding="utf-8",
+    )
+
+
+def test_heartbeat_case_a_send_failure_does_not_save_state(monkeypatch, tmp_path, capsys):
+    """Ca A: Gửi hỏng (send_telegram trả False) -> KHÔNG lưu trạng thái, stdout có dấu vết, exit 1."""
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+    assert not state_file.exists()
+
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: False)
+
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    # File trạng thái KHÔNG được tạo/đổi
+    assert not state_file.exists(), "Trạng thái không được lưu khi gửi Telegram hỏng"
+    # Stdout có dấu vết gửi hỏng
+    assert "GUI TELEGRAM HONG" in captured.out
+    # Đã vào hàng đợi outbox
+    outbox_file = tmp_path / hc.HEARTBEAT_OUTBOX_NAME
+    assert outbox_file.exists()
+
+
+def test_heartbeat_case_b_subsequent_run_still_alerts_and_saves_state(monkeypatch, tmp_path):
+    """Ca B: Ngay sau Ca A, gửi True -> vẫn gửi cảnh báo NGỪNG CHẠY, trạng thái được lưu."""
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+
+    # Ca A: gửi hỏng
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: False)
+    rc1 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+    assert not state_file.exists()
+
+    # Ca B: chạy lại ngay sau Ca A với send_telegram trả True
+    delivered = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: delivered.append(msg) or True)
+
+    rc2 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc2 == 1
+    # Vẫn gửi cảnh báo NGỪNG CHẠY (không bị nuốt thành 'đã báo trước đó')
+    assert any("NGỪNG CHẠY" in m for m in delivered)
+    assert any("container-health" in m for m in delivered)
+    # Trạng thái ĐƯỢC lưu
+    assert state_file.exists()
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert saved_state["container-health"]["status"] == "stale"
+
+
+def test_heartbeat_case_c_success_preserves_anti_spam_on_second_run(monkeypatch, tmp_path):
+    """Ca C: Gửi được (True), rồi chạy lần hai -> lần hai KHÔNG gửi lại (chống lặp)."""
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+
+    delivered_1 = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: delivered_1.append(msg) or True)
+
+    # Lần 1: gửi thành công
+    rc1 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+    assert len(delivered_1) >= 1
+    assert state_file.exists()
+
+    # Lần 2: chạy lại khi job vẫn đang stale -> chống lặp, không gửi lại
+    delivered_2 = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: delivered_2.append(msg) or True)
+
+    rc2 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc2 == 0  # Không có cảnh báo mới -> exit 0
+    assert len(delivered_2) == 0, "Lần hai không được gửi lại cảnh báo đã báo"
+
+
+def test_heartbeat_case_d_send_raises_does_not_crash_or_save_state(monkeypatch, tmp_path, capsys):
+    """Ca D: send_telegram ném URLError -> không crash, không lưu trạng thái, có dấu vết, exit 1."""
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+
+    def broken_send(msg):
+        raise urllib.error.URLError("<urlopen error [Errno 11001] getaddrinfo failed>")
+
+    monkeypatch.setattr(hc, "send_telegram", broken_send)
+
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert not state_file.exists(), "Không được lưu trạng thái khi send_telegram ném lỗi"
+    assert "GUI TELEGRAM HONG" in captured.out
+    # Tin nhắn được xếp vào hàng đợi an toàn
+    outbox_file = tmp_path / hc.HEARTBEAT_OUTBOX_NAME
+    assert outbox_file.exists()
+
+
+def test_heartbeat_end_to_end_recipient_receives_queued_messages(monkeypatch, tmp_path):
+    """Test đầu-cuối: Lần 1 gửi hỏng, lần 2 gửi được -> người nhận được CẢ tin của lần 1."""
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, tmp_path)
+
+    # Lần 1: hỏng mạng (send_telegram trả False)
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: False)
+    rc1 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+
+    # Lần 2: mạng phục hồi
+    all_received = []
+
+    def tracking_send(msg):
+        all_received.append(msg)
+        return True
+
+    monkeypatch.setattr(hc, "send_telegram", tracking_send)
+    rc2 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc2 == 1
+
+    # Kiểm tra người nhận nhận được cả 2 tin: tin cũ (lần 1) được flush và tin mới (lần 2)
+    assert len(all_received) >= 2
+    assert any("[GỬI TRỄ" in m and "container-health" in m for m in all_received)
+    # Outbox được dọn sạch
+    outbox_file = tmp_path / hc.HEARTBEAT_OUTBOX_NAME
+    assert not outbox_file.exists() or not outbox_file.read_text(encoding="utf-8").strip()
+def _setup_db_unreachable(monkeypatch, logs_dir):
+    """Audit dot 155: nhu _setup_heartbeat_stale_env nhung psycopg.connect NEM.
+
+    Nhanh "khong doc duoc DB" la nhanh nổ đúng lúc postgres chet — luc can canh bao
+    nhat. Claude pha thu: tra nhanh nay ve "luu trang thai vo dieu kien" thi ca 52
+    test cu van xanh, nen nhanh nay chua duoc ghim.
+    """
+    import scripts.heartbeat_check as hc
+
+    _setup_heartbeat_stale_env(monkeypatch, logs_dir)
+
+    def boom(*a, **k):
+        raise OSError("postgres khong ket noi duoc")
+
+    monkeypatch.setattr(hc.psycopg, "connect", boom)
+
+
+def test_heartbeat_db_error_send_failure_does_not_save_state(
+    monkeypatch, tmp_path, capsys
+):
+    """Audit dot 155: nhanh loi doc DB — gui hong thi KHONG an mat trang thai."""
+    import scripts.heartbeat_check as hc
+
+    _setup_db_unreachable(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+    assert not state_file.exists()
+
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: False)
+
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert (
+        not state_file.exists()
+    ), "nhanh loi doc DB: gui hong thi KHONG duoc luu trang thai canh lich"
+    assert "GUI TELEGRAM HONG" in out
+
+
+def test_heartbeat_db_error_alert_includes_stale_job(monkeypatch, tmp_path):
+    """Audit dot 155: nhanh loi doc DB phai gui CA canh bao job ngung chay.
+
+    Truoc dot 155, nhanh nay gui DUY NHAT err_msg roi van luu trang thai, nen canh
+    bao "job ngung chay" bi an mat vinh vien khi DB cung dang hong.
+    """
+    import scripts.heartbeat_check as hc
+
+    _setup_db_unreachable(monkeypatch, tmp_path)
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+
+    sent: list[str] = []
+
+    def ok_send(msg):
+        sent.append(msg)
+        return True
+
+    monkeypatch.setattr(hc, "send_telegram", ok_send)
+
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+
+    assert rc == 1
+    assert sent, "phai gui mot tin"
+    body = "\n".join(sent)
+    assert "không đọc được DB" in body, f"phai noi DB hong, thuc te: {body}"
+    assert (
+        "NGỪNG CHẠY" in body
+    ), f"phai gui ca canh bao job ngung chay, khong duoc an mat: {body}"
+    assert state_file.exists(), "gui duoc thi moi luu trang thai"

@@ -35,7 +35,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from trading.alerts import _print_safe
+from trading.alerts import AlertOutbox, _print_safe
 
 
 def alert_and_fail(
@@ -86,3 +86,44 @@ def save_json_state(path: str | Path, state: dict[str, Any]) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, p)
+
+
+def send_with_outbox(
+    text: str,
+    send: Callable[[str], object],
+    outbox_path: str | Path,
+) -> bool:
+    """Gửi cảnh báo qua hàng đợi outbox cho job theo lịch.
+
+    - Tạo AlertOutbox(outbox_path, send_fn=send)
+    - Gửi lại hàng tồn trước (flush())
+    - Rồi send_or_queue(text) cho tin mới
+    - Trả True khi tin mới đã đi, False khi nó bị xếp hàng
+    - In số tin còn tồn (pending()) khi khác 0, để log nói được là đang nợ tin
+    """
+    in_send_or_queue = False
+    new_sent = False
+
+    def tracked_send(msg: str) -> bool:
+        nonlocal new_sent
+        try:
+            res = bool(send(msg))
+        except Exception:
+            if in_send_or_queue:
+                new_sent = False
+            raise
+        if in_send_or_queue:
+            new_sent = res
+        return res
+
+    outbox = AlertOutbox(Path(outbox_path), send_fn=tracked_send)
+    outbox.flush()
+
+    in_send_or_queue = True
+    outbox.send_or_queue(text)
+
+    pending = outbox.pending()
+    if pending != 0:
+        _print_safe(f"[HANG DOI] Đang nợ {pending} cảnh báo trong {outbox.path.name}")
+
+    return new_sent

@@ -18,15 +18,24 @@ import os
 import re
 import sys
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import psycopg
 import yaml
 
 try:
-    from scripts._alert_common import load_json_state, save_json_state
+    from scripts._alert_common import (
+        load_json_state,
+        save_json_state,
+        send_with_outbox,
+    )
 except ImportError:
-    from _alert_common import load_json_state, save_json_state
+    from _alert_common import (
+        load_json_state,
+        save_json_state,
+        send_with_outbox,
+    )
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import (
@@ -77,6 +86,7 @@ DEFAULT_LOGS_DIR = os.path.join(
 )
 SCHEDULE_STATE_NAME = ".schedule_health_state.json"
 DEFAULT_SCHEDULE_STATE_FILE = os.path.join(DEFAULT_LOGS_DIR, SCHEDULE_STATE_NAME)
+HEARTBEAT_OUTBOX_NAME = "alert_outbox_heartbeat.jsonl"
 
 
 class WatchJobConfig(NamedTuple):
@@ -483,11 +493,19 @@ def main(argv: list[str] | None = None) -> int:
         err_msg = f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
         _print_safe(err_msg)
         if not args.dry_run:
-            send_telegram(err_msg)
+            outbox_path = Path(args.logs_dir) / HEARTBEAT_OUTBOX_NAME
+            ok = send_with_outbox(
+                err_msg, send=send_telegram, outbox_path=outbox_path
+            )
+            if not ok:
+                _print_safe(
+                    "[heartbeat-check] GUI TELEGRAM HONG: cảnh báo chưa tới được Telegram"
+                )
         return 1
 
     # Việc 2 (Brief 142): Canh các job 24/7 theo lịch (đọc log của run_if_docker_up.sh)
     logs_dir = args.logs_dir
+    outbox_path = Path(logs_dir) / HEARTBEAT_OUTBOX_NAME
     job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
     for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
         log_path = os.path.join(logs_dir, job_cfg.log_file)
@@ -535,8 +553,15 @@ def main(argv: list[str] | None = None) -> int:
         _print_safe(err_msg)
         messages.append(err_msg)
         if not args.dry_run:
-            send_telegram(err_msg)
-            save_schedule_state(sched_state_file, new_sched_state)
+            ok = send_with_outbox(
+                "\n".join(messages), send=send_telegram, outbox_path=outbox_path
+            )
+            if ok:
+                save_schedule_state(sched_state_file, new_sched_state)
+            else:
+                _print_safe(
+                    "[heartbeat-check] GUI TELEGRAM HONG: cảnh báo chưa tới được Telegram"
+                )
         return 1
     max_ts = max_ts_row[0] if max_ts_row else None
 
@@ -624,8 +649,15 @@ def main(argv: list[str] | None = None) -> int:
                 "[DRY-RUN] Không gửi Telegram thật. Không cập nhật file trạng thái."
             )
             return 1
-        send_telegram("\n".join(messages))
-        save_schedule_state(sched_state_file, new_sched_state)
+        ok = send_with_outbox(
+            "\n".join(messages), send=send_telegram, outbox_path=outbox_path
+        )
+        if ok:
+            save_schedule_state(sched_state_file, new_sched_state)
+        else:
+            _print_safe(
+                "[heartbeat-check] GUI TELEGRAM HONG: cảnh báo chưa tới được Telegram"
+            )
         return 1
 
     if not args.dry_run:
