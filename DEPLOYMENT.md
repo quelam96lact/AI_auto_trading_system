@@ -183,7 +183,9 @@ Bốn job sao lưu (`backup`, `backup-check`, `orderbook-backup`, `disk-check`) 
 sao lưu theo thứ tự: **tham số dòng lệnh** → **`TRADING_BACKUP_DIR` trong `.env`** →
 mặc định `/var/backups/trading-db`.
 
-- **VPS Ubuntu:** để trống, mặc định đã đúng.
+- **VPS Ubuntu:** đặt rõ `TRADING_BACKUP_DIR=/var/backups/trading-db` trong `.env`. Bốn job trên tự
+  rơi về mặc định này nếu để trống, nhưng `host-preflight` (phép kiểm `backup_dir`) đòi biến **có mặt**
+  và báo HỎNG nếu thiếu — đo thật khi diễn tập trên Ubuntu sạch (đợt 153).
 - **Windows: BẮT BUỘC đặt** `TRADING_BACKUP_DIR` (hoặc truyền tham số cho mọi task).
   Đường dẫn Ubuntu vừa không tồn tại, vừa bị Git Bash dịch thành
   `C:\Program Files\Git\var\backups\trading-db`.
