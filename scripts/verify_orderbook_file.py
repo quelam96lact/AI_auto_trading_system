@@ -17,7 +17,6 @@ import asyncio
 import gzip
 import io
 import json
-import os
 import pathlib
 import sys
 from collections.abc import Iterable
@@ -369,14 +368,10 @@ def format_verification_report(
     return "\n".join(lines)
 
 
-def _load_dotenv(env_path: str = ".env") -> None:
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+try:
+    from _db_common import load_dotenv as _load_dotenv
+except ImportError:
+    from scripts._db_common import load_dotenv as _load_dotenv
 
 
 async def verify_orderbook_file(

@@ -16,7 +16,6 @@ import argparse
 import asyncio
 import io
 import json
-import os
 import pathlib
 import sys
 from datetime import datetime
@@ -46,14 +45,10 @@ TARGET_ACCOUNT = "0434221"
 DEFAULT_STOP_TIME = dt_time(23, 30, 0)
 
 
-def _load_dotenv(env_path: str = ".env") -> None:
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+try:
+    from _db_common import load_dotenv as _load_dotenv
+except ImportError:
+    from scripts._db_common import load_dotenv as _load_dotenv
 
 
 async def probe_account_balance(

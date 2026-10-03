@@ -635,10 +635,11 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        from _db_common import resolve_dsn
+        from _db_common import load_dotenv, resolve_dsn
     except ImportError:
-        from scripts._db_common import resolve_dsn
+        from scripts._db_common import load_dotenv, resolve_dsn
 
+    load_dotenv()
     dsn = resolve_dsn(args.dsn)
     sys.exit(run_gate_check(dsn, args.config))
 

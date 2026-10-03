@@ -502,6 +502,16 @@ def _run_main_with_position_sync(monkeypatch, logs_dir, sync_ts, fixed_now=None)
     return rc, sent
 
 
+def _expected_real_order_account() -> str:
+    """Đọc real_order_account từ config/config.yaml giống cách heartbeat_check đọc (Brief 152 Việc 3)."""
+    import yaml
+
+    cfg_path = os.path.join(os.path.dirname(__file__), "..", "config", "config.yaml")
+    with open(cfg_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    return cfg["real_order_account"]
+
+
 def test_main_alerts_when_position_sync_stale(monkeypatch, tmp_path):
     """2D qua DUONG DUNG TIN NHAN: moc dong bo 20 phut truoc (nguong 15) ->
     dung MOT tin [CRITICAL] chua ten tai khoan va so phut."""
@@ -513,7 +523,7 @@ def test_main_alerts_when_position_sync_stale(monkeypatch, tmp_path):
     assert len(sent) == 1, f"dung mot tin, thuc te: {sent}"
     msg = sent[0]
     assert "[CRITICAL]" in msg, f"phai la CRITICAL, thuc te: {msg}"
-    assert "0434226" in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
+    assert _expected_real_order_account() in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
     assert "20 phút" in msg, f"tin nhan phai chua so phut, thuc te: {msg}"
 
 
@@ -526,7 +536,7 @@ def test_main_never_synced_message_has_no_arithmetic(monkeypatch, tmp_path):
     assert sent, "phai gui tin nhan Telegram"
     msg = sent[0]
     assert "[CRITICAL]" in msg
-    assert "0434226" in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
+    assert _expected_real_order_account() in msg, f"tin nhan phai chua ten tai khoan, thuc te: {msg}"
     assert (
         "chưa từng đồng bộ" in msg
     ), f"tin nhan phai noi ro ca chua-dong-bo, thuc te: {msg}"
@@ -545,7 +555,7 @@ def test_main_prints_message_to_stdout_before_sending(monkeypatch, capsys, tmp_p
     assert (
         "[CRITICAL]" in captured.out
     ), f"stdout phai chua noi dung canh bao, thuc te: {captured.out!r}"
-    assert "0434226" in captured.out
+    assert _expected_real_order_account() in captured.out
     # stdout phai giong noi dung da gui Telegram
     assert (
         captured.out.strip() == sent[0]

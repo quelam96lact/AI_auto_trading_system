@@ -516,3 +516,33 @@ def test_14_golive_gate_criteria_9_counts_only_filled():
     assert "1 đã huỷ" in item9.note or "đã huỷ: 1" in item9.note
 
 
+def test_main_loads_dotenv_even_with_dsn_override(monkeypatch):
+    import sys
+
+    import pytest
+
+    import scripts._db_common as db_common_mod
+    import scripts.check_golive_gate as gate_mod
+
+
+    called = False
+
+    def spy_load_dotenv():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(db_common_mod, "load_dotenv", spy_load_dotenv)
+    if "_db_common" in sys.modules:
+        monkeypatch.setattr(sys.modules["_db_common"], "load_dotenv", spy_load_dotenv)
+
+    monkeypatch.setattr(gate_mod, "run_gate_check", lambda dsn, cfg: 0)
+    monkeypatch.setattr(sys, "argv", ["check_golive_gate.py", "--dsn", "postgresql://override:5432/db"])
+
+    with pytest.raises(SystemExit) as exc:
+        gate_mod.main()
+
+    assert exc.value.code == 0
+    assert called is True, "load_dotenv() phai duoc goi ke ca khi co --dsn"
+
+
+
