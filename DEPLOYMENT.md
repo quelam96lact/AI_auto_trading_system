@@ -1004,8 +1004,9 @@ sed -i 's/\r$//' .env
 # Giải thích: Do .env được chép từ máy Windows sang mang định dạng xuống dòng CRLF (\r\n),
 # lệnh sed trên loại bỏ ký tự \r thừa để tránh làm hỏng các biến môi trường (token SSI, Telegram).
 
-# (a) GHIM phiên bản TimescaleDB bằng đúng số đã ghi ở Bước 3 (compose dùng tag `latest-pg16`,
-#     VPS kéo về hôm nay có thể là bản mới hơn — TimescaleDB yêu cầu khôi phục trên CÙNG phiên bản).
+# (a) GHIM phiên bản TimescaleDB bằng đúng số đã ghi ở Bước 3 (compose đã ghim;
+#     khi nâng phiên bản phải đổi tag và chạy ALTER EXTENSION có chủ đích —
+#     TimescaleDB yêu cầu khôi phục trên CÙNG phiên bản).
 #     File override chỉ nằm trên VPS, không commit:
 cat > docker-compose.override.yml <<'EOF'
 services:

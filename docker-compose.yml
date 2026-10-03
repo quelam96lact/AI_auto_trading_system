@@ -8,7 +8,7 @@ x-logging: &default-logging
 
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.27.2-pg16
     # Dot 129 (2026-09-29): co -c thang mem_limit va postgresql.conf (ke ca volume da co
     # va initdb moi tren VPS). timescaledb-tune do RAM may chu khong phai gioi han
     # container, sinh shared_buffers ~1,9 GB trong khi mem_limit chi la 1g — se bi
