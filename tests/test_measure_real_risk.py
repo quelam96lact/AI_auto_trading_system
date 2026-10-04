@@ -171,3 +171,42 @@ def test_round_trips_store_fees_pct_capital():
     ]
     trips, _ = m.round_trips(fills, CAPITAL)
     assert trips[0]["fees_pct_capital"] == 120_000.0 / CAPITAL
+
+
+def _falling_bars():
+    price = 20_000.0
+    bars = []
+    for i in range(6):
+        price *= 0.99
+        bars.append(Bar("HPG", T0 + timedelta(minutes=5 * i), price, price, price, price, 1_000_000))
+    return bars
+
+
+def test_fee_rate_flows_into_backtest_fills():
+    from trading.paper_broker import FEE_RATE
+
+    default = m.run_report(_falling_bars(), _BuyOnceStrategy(), CAPITAL)
+    lower = m.run_report(_falling_bars(), _BuyOnceStrategy(), CAPITAL, fee_rate=0.0015)
+    buy_default = next(f for f in default.fills if f.side == "BUY")
+    buy_lower = next(f for f in lower.fills if f.side == "BUY")
+    # Cùng giá khớp và qty, chỉ phí mua khác nhau đúng theo tỷ lệ phí.
+    assert buy_default.price == buy_lower.price and buy_default.qty == buy_lower.qty
+    assert abs(buy_lower.fee / buy_default.fee - 0.0015 / FEE_RATE) < 1e-9
+
+
+def test_fee_rate_none_keeps_default_behavior():
+    a = m.run_report(_falling_bars(), _BuyOnceStrategy(), CAPITAL)
+    b = m.run_report(_falling_bars(), _BuyOnceStrategy(), CAPITAL, fee_rate=None)
+    assert [f.fee for f in a.fills] == [f.fee for f in b.fills]
+
+
+def test_validate_fee_rate_rejects_percent_typo():
+    assert m.validate_fee_rate(None) is None
+    assert m.validate_fee_rate(0.0015) == 0.0015
+    for bad in (0.15, 1.0, -0.001):
+        try:
+            m.validate_fee_rate(bad)
+        except SystemExit as e:
+            assert "0.0015" in str(e)
+        else:
+            raise AssertionError(f"không chặn --fee-rate {bad}")

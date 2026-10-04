@@ -15,7 +15,8 @@ So với: risk_pct = 1% vốn mỗi lệnh (cấu hình), max_positions = 5, tr�
 
 CLI (chạy từ gốc repo):
     uv run python scripts/measure_real_risk.py [--symbols HPG,IJC,AAA]
-        [--strategy octopus_pullback] [--tf 5m] [--capital 100000000] [--dsn ...]
+        [--strategy octopus_pullback] [--tf 5m] [--capital 100000000]
+        [--fee-rate 0.0015] [--dsn ...]
 """
 
 import argparse
@@ -32,6 +33,7 @@ from trading.backtest import _TF_SPEC, STRATEGIES, run_backtest
 from trading.broker import Fill
 from trading.calendar_vn import TZ
 from trading.models import Bar
+from trading.paper_broker import FEE_RATE
 from trading.risk import RiskManager
 from trading.storage.db import Storage
 from trading.trailing_stop import TrailingStopManager
@@ -199,6 +201,24 @@ def format_report(
     return "\n".join(lines)
 
 
+def validate_fee_rate(fee_rate: float | None) -> float | None:
+    """Phí mỗi chiều dạng thập phân (0.0015 = 0,15%). Chặn gõ nhầm kiểu 0.15 (= 15%)."""
+    if fee_rate is not None and not 0.0 <= fee_rate < 0.01:
+        raise SystemExit(
+            f"--fee-rate = {fee_rate} không hợp lý: dùng dạng thập phân, "
+            "ví dụ 0.0015 cho 0,15% mỗi chiều (phải nhỏ hơn 0.01 = 1%)."
+        )
+    return fee_rate
+
+
+def run_report(bars, strategy, capital: float, fee_rate: float | None = None):
+    """Chạy backtest gộp như engine. `fee_rate` = None -> dùng FEE_RATE mặc định của repo."""
+    return run_backtest(
+        bars, strategy, RiskManager(capital=capital), TrailingStopManager(), capital,
+        fee_rate=fee_rate,
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbols", default="HPG,IJC,AAA")
@@ -207,8 +227,14 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=100_000_000.0)
     ap.add_argument("--from", dest="frm", default="2020-01-01")
     ap.add_argument("--to", dest="to", default="2030-01-01")
+    ap.add_argument(
+        "--fee-rate", type=float, default=None,
+        help=f"phí môi giới mỗi chiều, dạng thập phân (mặc định {FEE_RATE} = FEE_RATE của "
+        "paper_broker; thuế bán 0,1% và trượt giá giữ nguyên)",
+    )
     ap.add_argument("--dsn", default=None)
     args = ap.parse_args()
+    fee_rate = validate_fee_rate(args.fee_rate)
 
     storage = Storage(resolve_dsn(args.dsn))
     frm = datetime.strptime(args.frm, "%Y-%m-%d").replace(tzinfo=TZ)
@@ -220,14 +246,13 @@ def main() -> None:
         bars.extend(resample_fn(read(sym, frm, to)))
     bars.sort(key=lambda b: (b.ts, b.symbol))
 
-    report = run_backtest(
-        bars, STRATEGIES[args.strategy](), RiskManager(capital=args.capital),
-        TrailingStopManager(), args.capital,
-    )
+    report = run_report(bars, STRATEGIES[args.strategy](), args.capital, fee_rate)
     trips, still_open = round_trips(report.fills, args.capital)
     exposure = exposure_profile(report.fills, bars, args.capital)
+    used_fee = FEE_RATE if fee_rate is None else fee_rate
     print(f"Vốn: {args.capital:,.0f}  Chiến lược: {args.strategy}  Khung: {args.tf}  "
-          f"Mã: {args.symbols}  Số bar: {len(bars)}")
+          f"Mã: {args.symbols}  Số bar: {len(bars)}  Phí mỗi chiều: {used_fee:.4%}"
+          + (" (mặc định)" if fee_rate is None else " (--fee-rate)"))
     print(format_report(trips, still_open, exposure, report.max_drawdown))
 
 
