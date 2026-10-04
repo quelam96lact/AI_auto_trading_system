@@ -43,6 +43,7 @@ Thành công là lãi ròng sau mọi chi phí và thuế, tính trên vốn r�
 | Loại chiến lược | Tiêu chí | Ghi chú |
 |---|---|---|
 | Mọi loại | **MDD ≤ 7% vốn rủi ro** (tuyệt đối, ưu tiên cao nhất) | Chủ dự án chốt 04/10/2026 |
+| Mọi loại, khi đánh giá bằng backtest | **MDD backtest ≤ 4,7% vốn rủi ro** (= 7% / 1,5) | Biên an toàn vì drawdown tương lai thường xấu hơn backtest. Chủ dự án duyệt 04/10/2026. Mức 7% vẫn là ngưỡng dừng cứng khi chạy thật (mục D) |
 | Beta thấp (cổ phiếu, ETF) | MDD ≤ ⅔ MDD mua-và-giữ **và** CAGR ≥ mua-và-giữ − 1 điểm % | Đúng tiêu chí đợt 161; bổ sung cho mức 7%. Mua-và-giữ ETF VN30: CAGR 13,34%, MDD 47,74% (2017 → 09/2026) |
 | Alpha, trung tính (phái sinh, perpetual) | Lãi kỳ vọng mỗi vòng ≥ **1,5 lần** chi phí thật (phí, thuế, spread/trượt giá) | Đợt 98 dùng 1,0 lần; 1,5 chừa biên cho trượt giá thực thi |
 | Mọi loại | Lãi ròng trên vốn rủi ro ≥ **9%/năm** (lãi suất tiền gửi, quy đổi theo thời gian chiếm vốn) | Chỉ đánh giá được khi quy năm trên cửa sổ ≥ 12 tháng hoặc bằng kiểm định thống kê; không kết luận trên cửa sổ vài tuần |
@@ -72,13 +73,10 @@ ngưỡng "đáng tin" khó hơn.
 Không đổi ngưỡng sau khi thấy dữ liệu. Muốn đổi thì ghi ngày và lý do vào mục H **trước** khi chạy
 phép đo mới.
 
-## Việc chưa chốt (chưa có hiệu lực)
-1. **Đề xuất, chưa được duyệt:** vì drawdown tương lai thường xấu hơn lịch sử, có thể đòi MDD của
-   backtest ≤ khoảng 4,7% (= 7% / 1,5) để chừa biên an toàn. Chưa áp dụng cho tới khi chủ dự án duyệt.
-
 ## H. Nhật ký thay đổi
 
 | Ngày | Thay đổi | Lý do | Người duyệt |
 |---|---|---|---|
 | 04/10/2026 | Ban hành bản đầu; MDD tuyệt đối 7% là ràng buộc ưu tiên | Chủ dự án chốt vốn rủi ro 100 triệu và drawdown tối đa 7% | Chủ dự án |
 | 04/10/2026 | Điền hurdle 3 = 9%/năm; xác nhận quy tắc dừng cứng (drawdown ≥ 7%) | Chủ dự án trả lời các mục chưa chốt cùng ngày | Chủ dự án |
+| 04/10/2026 | Áp dụng biên an toàn: MDD backtest ≤ 4,7% (mục B). Mục "Việc chưa chốt" bỏ vì không còn việc nào | Chủ dự án duyệt đề xuất 4,7% | Chủ dự án |
