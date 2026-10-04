@@ -127,3 +127,16 @@ def test_run_measurement_end_to_end():
     assert rows[0]["qty_garch_eff"] > 0
     assert depth["HPG"] == (620, 619)
     assert "Tín hiệu: 1, dùng được: 1" in m.format_report(rows, depth)
+
+
+def test_calibrated_deviation_removes_level_shift():
+    # GARCH luôn cho qty gấp 1,5 lần ATR (chênh mức thuần) -> sau hiệu chỉnh lệch = 0.
+    rows = [
+        {"skipped": None, "qty_atr_raw": 1000, "qty_garch_raw": 1500},
+        {"skipped": None, "qty_atr_raw": 2000, "qty_garch_raw": 3000},
+        {"skipped": None, "qty_atr_raw": 800, "qty_garch_raw": 1200},
+    ]
+    assert m._calibrated_deviations(rows, "raw") == [0.0, 0.0, 0.0]
+    # Một tín hiệu lệch hình dạng (gấp 3 thay vì 1,5) -> lệch 100% so với trung vị 1,5.
+    rows.append({"skipped": None, "qty_atr_raw": 1000, "qty_garch_raw": 3000})
+    assert max(m._calibrated_deviations(rows, "raw")) == 1.0
