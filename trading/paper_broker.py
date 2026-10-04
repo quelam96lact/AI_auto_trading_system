@@ -6,15 +6,16 @@ from trading.calendar_vn import trading_days_between_dates
 from trading.models import Bar
 from trading.strategy import Signal
 
-# 0.15% mỗi chiều - mức phí THỰC của chủ dự án tại SSI, đã gồm phí trả Sở (chủ dự án xác
-# nhận 04/10/2026). Trước đó dùng 0.25% = biểu phí công bố của SSI cho lệnh Online dưới
-# 100 triệu đồng/ngày/tài khoản (hiệu lực 10/10/2025, đã gồm phí trả Sở; nguồn:
-# https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan).
-# Đo cùng 18 vòng giao dịch octopus_pullback 5m: 0.25% -> lãi ròng -510.856 đồng, 0.15% ->
-# +190.969 đồng — dấu kết quả phụ thuộc vào đúng hằng số này. Dùng 1 rate cố định cho mọi
-# bậc giá trị giao dịch (PaperBroker chưa hỗ trợ phí theo bậc); nếu bậc phí của tài khoản
-# đổi thì sửa tại đây.
-FEE_RATE = 0.0015
+# 0.25% mỗi chiều - mức phí thực của chủ dự án: giao dịch QUA MÔI GIỚI (chủ dự án xác nhận
+# 04/10/2026). Con số này trùng với biểu phí công bố của SSI cho lệnh Online dưới 100 triệu
+# đồng/ngày/tài khoản (hiệu lực 10/10/2025, đã gồm phí trả Sở; nguồn:
+# https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan),
+# nhưng biểu đó áp dụng cho lệnh Online KHÔNG qua môi giới nên KHÔNG phải nguồn của mức này.
+# Từng đổi sang 0.15% (PR #7) rồi hoàn lại cùng ngày vì mức 0.15% không áp dụng cho giao dịch
+# qua môi giới. Số đo 18 vòng octopus_pullback 5m: 0.25% -> lãi ròng -510.856 đồng, 0.15% ->
+# +190.969 đồng - dấu kết quả phụ thuộc đúng vào hằng số này. Dùng 1 rate cố định cho mọi bậc
+# giá trị giao dịch (PaperBroker chưa hỗ trợ phí theo bậc); nếu mức phí đổi thì sửa tại đây.
+FEE_RATE = 0.0025
 SELL_TAX_RATE = 0.001
 SLIPPAGE_BPS = 5
 

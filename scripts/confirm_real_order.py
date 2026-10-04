@@ -24,11 +24,10 @@ from trading.config import Config, load_config
 from trading.paper_broker import FEE_RATE
 from trading.storage.db import Storage
 
-FEE_RATE_ESTIMATE = FEE_RATE  # 0.15% giá trị lệnh — mức phí thực của chủ dự án tại SSI
-# (đã gồm phí trả Sở, xác nhận 04/10/2026); trước đó 0.25% = biểu phí công bố của SSI:
-# https://www.ssi.com.vn/khach-hang-ca-nhan/bieu-phi/bieu-gia-dich-vu-giao-dich-chung-khoan
-# (hiệu lực 10/10/2025). Vẫn là ƯỚC TÍNH cho account cụ thể (bậc GD khác có
-# rate khác — chưa hỗ trợ), KHÔNG PHẢI phí thật trả về từ SSI SDK
+FEE_RATE_ESTIMATE = FEE_RATE  # 0.25% giá trị lệnh — mức phí của chủ dự án khi giao dịch
+# qua môi giới (xác nhận 04/10/2026); xem chú thích nguồn tại paper_broker.FEE_RATE.
+# Vẫn là ƯỚC TÍNH cho account cụ thể (bậc GD khác có rate khác — chưa hỗ trợ),
+# KHÔNG PHẢI phí thật trả về từ SSI SDK
 # per-order (PlaceOrderResponse/Order chỉ có id/status/giá/số lượng, EquityPPMMR.fees
 # chỉ là tổng luỹ kế cấp tài khoản) — xem PLAN_REAL_ORDER_PLACEMENT.md.
 

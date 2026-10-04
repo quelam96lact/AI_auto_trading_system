@@ -3,7 +3,7 @@
 Đặc tả:
 - Rổ mã: Đúng các mã trong config/config.yaml (HII, IJC, AAA).
 - Dữ liệu: Bảng bars (nến 5m).
-- Chi phí: FEE_RATE (0.15% từ 04/10/2026, trước đó 0.25%), SELL_TAX_RATE (0.1%), SLIPPAGE_BPS (5) từ trading.paper_broker.
+- Chi phí: FEE_RATE (0.25%), SELL_TAX_RATE (0.1%), SLIPPAGE_BPS (5) từ trading.paper_broker.
 - Thước đo: profit_factor, expectancy, max_drawdown, sharpe từ trading.metrics.
 - periods_per_year cho 5m: 51 bar/ngày * 252 ngày/năm = 12,852 kỳ/năm.
 

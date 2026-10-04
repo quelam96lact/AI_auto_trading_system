@@ -300,15 +300,15 @@ def test_8b_thang_dau_turnover_bang_1():
 
 
 def test_8c_cost_rt_tinh_tu_HANG_SO_IMPORT_khong_phai_so_go_tay():
-    # 2 x 0,0015 + 0,001 + 2 x 5/10.000 = 0,003 + 0,001 + 0,001 = 0,005
+    # 2 x 0,0025 + 0,001 + 2 x 5/10.000 = 0,005 + 0,001 + 0,001 = 0,007
     assert round_trip_cost() == pytest.approx(2 * FEE_RATE + SELL_TAX_RATE + 2 * SLIPPAGE_BPS / 10_000)
-    assert round_trip_cost() == pytest.approx(0.005)
-    assert round_trip_cost() != pytest.approx(0.007)  # gia tri cu khi phi con 0,25% moi chieu
+    assert round_trip_cost() == pytest.approx(0.007)
+    assert round_trip_cost() != pytest.approx(0.006)  # do neu ai do go tay 0,006
 
 
 def test_8d_net_tru_dung_chi_phi_vong_quay():
-    # gross = 0,05 ; turnover = 0,5 ; cost_rt = 0,005 -> net = 0,05 - 0,0025 = 0,0475
-    assert net_month(0.05, 0.5, round_trip_cost()) == pytest.approx(0.0475)
+    # gross = 0,05 ; turnover = 0,5 ; cost_rt = 0,007 -> net = 0,05 - 0,0035 = 0,0465
+    assert net_month(0.05, 0.5, round_trip_cost()) == pytest.approx(0.0465)
 
 
 # --- 9. bootstrap khoi 3 thang -----------------------------------------------------
