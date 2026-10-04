@@ -25,7 +25,7 @@ def test_buy_fills_with_fee_and_slippage():
     expected_price = 10.0 * (1 + 5 / 10_000)
     assert abs(f.price - expected_price) < 1e-9
     assert f.qty == 100 and f.pnl is None
-    expected_fee = expected_price * 100 * 0.0025
+    expected_fee = expected_price * 100 * 0.0015
     assert abs(f.fee - expected_fee) < 1e-9
     assert b.position_qty("VCB") == 100
 
@@ -173,7 +173,7 @@ def test_unrealized_pnl_reflects_entry_fee():
     # on_bar mua voi slippage 5bps -> gia thuc = bar.open + 5
     fill_price = 10_000.0 + 10_000.0 * (5 / 10_000)
     gross = fill_price * 100
-    fee = gross * 0.0025
+    fee = gross * 0.0015
     upnl = b.unrealized_pnl({"ENGT": 10_000.0})
     assert upnl < 0, f"unrealized phai am (phi mua), thuc te: {upnl}"
     # upnl = (mark - gia von gom phi) * qty = -(gross + fee - mark*qty)
