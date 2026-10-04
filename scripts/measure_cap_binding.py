@@ -128,8 +128,10 @@ def measure_cap_binding(
 
 def format_report(result: dict[str, dict]) -> str:
     lines = [
-        f"{'Mã':<6}{'BUY':>6}{'cap_binds':>11}{'not_bind':>10}"
-        f"{'rej_by_cap':>12}{'rej_other':>11}{'qty có trần/không trần':>26}"
+        (
+            f"{'Mã':<6}{'BUY':>6}{'cap_binds':>11}{'not_bind':>10}"
+            f"{'rej_by_cap':>12}{'rej_other':>11}{'qty có trần/không trần':>26}"
+        )
     ]
     for sym, c in sorted(result.items()):
         ratio = (
