@@ -10,7 +10,8 @@ khi đã thấy dữ liệu. Mọi phép đo chiến lược về sau phải d�
 |---|---|
 | Vốn rủi ro dành cho hệ thống tự động | **100.000.000 đồng** |
 | Drawdown tối đa chịu được | **7% vốn rủi ro = 7.000.000 đồng** |
-| Lãi suất tiền gửi tham chiếu (hurdle 3) | **CHƯA CUNG CẤP** → hurdle 3 chưa có hiệu lực cho tới khi điền |
+| Lãi suất tiền gửi tham chiếu (hurdle 3) | **9%/năm** (chủ dự án cung cấp 04/10/2026; chưa đối chiếu nguồn ngân hàng) |
+| Quy tắc dừng cứng | Drawdown từ đỉnh vốn ≥ 7% (7 triệu đồng) thì tắt hệ thống: **chủ dự án xác nhận 04/10/2026** |
 | Mức duyệt | Duyệt toàn bộ mục A–G bên dưới |
 
 ## 1. Hệ quả trực tiếp của mức 7% (đọc trước)
@@ -24,6 +25,11 @@ khi đã thấy dữ liệu. Mọi phép đo chiến lược về sau phải d�
   tương ứng 7 triệu drawdown chỉ khoảng **15% vốn rủi ro** (7 / 47,74), và đó là ước tính thô: drawdown
   tương lai thường xấu hơn mức xấu nhất đã thấy. Cổ phiếu và ETF không thể chiếm toàn bộ 100 triệu
   nếu muốn giữ trong 7%.
+- **Hệ quả của hurdle 9%/năm:** 9% trên 100 triệu là 9 triệu đồng mỗi năm, tương đương khoảng 90
+  điểm VN30F ròng mỗi năm với một hợp đồng. Với MDD tối đa 7%, chỉ để ngang tiền gửi cũng cần tỷ số
+  lãi năm / MDD (Calmar) ≥ 9 / 7 ≈ 1,29; tiền gửi không có drawdown nên yêu cầu thực tế còn cao hơn.
+  Với cổ phiếu và ETF, tiêu chí CAGR ≥ mua-và-giữ − 1 điểm (≈ 12,34%) đã cao hơn 9%, nên hurdle 3 chỉ
+  ràng buộc thật với chiến lược alpha.
 - Vì vậy tiêu chí "MDD ≤ ⅔ MDD mua-và-giữ" (mục B) cho phép khoảng 31,8%, **vượt xa 7%**. Từ nay mức
   tuyệt đối 7% là ràng buộc ưu tiên; tiêu chí ⅔ chỉ còn là điều kiện bổ sung, không còn là ràng buộc
   chính.
@@ -39,7 +45,7 @@ Thành công là lãi ròng sau mọi chi phí và thuế, tính trên vốn r�
 | Mọi loại | **MDD ≤ 7% vốn rủi ro** (tuyệt đối, ưu tiên cao nhất) | Chủ dự án chốt 04/10/2026 |
 | Beta thấp (cổ phiếu, ETF) | MDD ≤ ⅔ MDD mua-và-giữ **và** CAGR ≥ mua-và-giữ − 1 điểm % | Đúng tiêu chí đợt 161; bổ sung cho mức 7%. Mua-và-giữ ETF VN30: CAGR 13,34%, MDD 47,74% (2017 → 09/2026) |
 | Alpha, trung tính (phái sinh, perpetual) | Lãi kỳ vọng mỗi vòng ≥ **1,5 lần** chi phí thật (phí, thuế, spread/trượt giá) | Đợt 98 dùng 1,0 lần; 1,5 chừa biên cho trượt giá thực thi |
-| Mọi loại | Thắng lãi suất tiền gửi | **Chưa có hiệu lực**: chờ chủ dự án cung cấp số hiện tại |
+| Mọi loại | Lãi ròng trên vốn rủi ro ≥ **9%/năm** (lãi suất tiền gửi, quy đổi theo thời gian chiếm vốn) | Chỉ đánh giá được khi quy năm trên cửa sổ ≥ 12 tháng hoặc bằng kiểm định thống kê; không kết luận trên cửa sổ vài tuần |
 
 ## C. Ngưỡng thống kê và mẫu
 - p < 0,05 một phía (hoán vị khối, Holm trong họ giả thuyết) ở IS, **rồi lặp lại p < 0,05** trên tập
@@ -49,8 +55,8 @@ Thành công là lãi ròng sau mọi chi phí và thuế, tính trên vốn r�
 
 ## D. Rủi ro
 - Vốn rủi ro 100 triệu; **quy tắc dừng cứng: drawdown từ đỉnh vốn ≥ 7% (7 triệu đồng) thì tắt hệ thống,
-  không tự bật lại, chủ dự án xem xét trước khi chạy tiếp.** (Diễn giải của Claude từ con số 7% do chủ
-  dự án đưa; nếu muốn ngưỡng dừng khác mức chịu đựng tối đa thì sửa tại đây và ghi vào mục H.)
+  không tự bật lại, chủ dự án xem xét trước khi chạy tiếp.** (Chủ dự án xác nhận 04/10/2026. Muốn
+  đổi ngưỡng thì sửa tại đây và ghi vào mục H.)
 - Giữ nguyên ngưỡng có sẵn: lỗ ngày tối đa 2%, dừng sau 2 lệnh thua liên tiếp trong ngày (phái sinh).
 
 ## E. Thang chuyển giai đoạn
@@ -67,8 +73,7 @@ Không đổi ngưỡng sau khi thấy dữ liệu. Muốn đổi thì ghi ngày
 phép đo mới.
 
 ## Việc chưa chốt (chưa có hiệu lực)
-1. Lãi suất tiền gửi tham chiếu (hurdle 3).
-2. **Đề xuất, chưa được duyệt:** vì drawdown tương lai thường xấu hơn lịch sử, có thể đòi MDD của
+1. **Đề xuất, chưa được duyệt:** vì drawdown tương lai thường xấu hơn lịch sử, có thể đòi MDD của
    backtest ≤ khoảng 4,7% (= 7% / 1,5) để chừa biên an toàn. Chưa áp dụng cho tới khi chủ dự án duyệt.
 
 ## H. Nhật ký thay đổi
@@ -76,3 +81,4 @@ phép đo mới.
 | Ngày | Thay đổi | Lý do | Người duyệt |
 |---|---|---|---|
 | 04/10/2026 | Ban hành bản đầu; MDD tuyệt đối 7% là ràng buộc ưu tiên | Chủ dự án chốt vốn rủi ro 100 triệu và drawdown tối đa 7% | Chủ dự án |
+| 04/10/2026 | Điền hurdle 3 = 9%/năm; xác nhận quy tắc dừng cứng (drawdown ≥ 7%) | Chủ dự án trả lời các mục chưa chốt cùng ngày | Chủ dự án |
