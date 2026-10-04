@@ -125,6 +125,23 @@ def _deviations(rows: Sequence[dict], tag: str) -> list[float]:
     ]
 
 
+def _calibrated_deviations(rows: Sequence[dict], tag: str) -> list[float]:
+    """|tỷ lệ qty_garch/qty_atr chia cho trung vị tỷ lệ - 1|: bỏ chênh MỨC.
+
+    ATR (biên độ high-low) lớn hơn độ lệch chuẩn close-to-close một cách hệ thống, nên
+    GARCH cho qty lớn hơn ATR ở mọi tín hiệu — chênh mức đó atr_multiplier hấp thụ được.
+    Phần GARCH thật sự thêm là độ phân tán của tỷ lệ quanh mức trung vị."""
+    ratios = [
+        r[f"qty_garch_{tag}"] / r[f"qty_atr_{tag}"]
+        for r in rows
+        if r["skipped"] is None and r[f"qty_atr_{tag}"] > 0
+    ]
+    if not ratios:
+        return []
+    mid = statistics.median(ratios)
+    return [abs(x / mid - 1) for x in ratios]
+
+
 def format_report(rows: Sequence[dict], depth: dict[str, tuple[int, int]]) -> str:
     lines = ["Độ sâu dữ liệu (số bar daily / số return 1 ngày dùng được):"]
     for sym, (n_bars, n_ret) in sorted(depth.items()):
@@ -151,6 +168,17 @@ def format_report(rows: Sequence[dict], depth: dict[str, tuple[int, int]]) -> st
     med_eff, med_raw = statistics.median(eff), statistics.median(raw)
     lines.append(f"Lệch trung vị qty THỰC (sau trần 20%): {med_eff:.1%}  [tiêu chí quyết định]")
     lines.append(f"Lệch trung vị qty gỡ trần (tham khảo): {med_raw:.1%}")
+    cal = _calibrated_deviations(rows, "raw")
+    ratios = [
+        r["qty_garch_raw"] / r["qty_atr_raw"]
+        for r in rows
+        if r["skipped"] is None and r["qty_atr_raw"] > 0
+    ]
+    lines.append(
+        f"Chênh MỨC (trung vị qty_GARCH/qty_ATR, gỡ trần): {statistics.median(ratios):.2f}x; "
+        f"lệch trung vị SAU hiệu chỉnh mức: {statistics.median(cal):.1%}  "
+        "[chỉ số bổ sung sau lần đo đầu, tham khảo]"
+    )
     if med_eff < THRESHOLD:
         lines.append(f"KẾT LUẬN: < {THRESHOLD:.0%} — GARCH không đổi qty đáng kể, dừng hướng này.")
     else:

@@ -8,12 +8,19 @@ Kiểm chứng:
 """
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 
 import numpy as np
 
+import trading.garch_vol as gv
 from trading.calendar_vn import TZ, is_trading_day
-from trading.garch_vol import daily_log_returns, forecast_sigma, sigma_asof
+from trading.garch_vol import (
+    daily_log_returns,
+    forecast_sigma,
+    is_plausible_fit,
+    sigma_asof,
+)
 from trading.models import Bar
 
 START = date(2022, 1, 3)  # Thứ Hai
@@ -52,8 +59,20 @@ def test_too_few_observations_returns_none():
     assert forecast_sigma(_iid_returns(100), min_obs=500) is None
 
 
+def _garch_returns(n: int, seed: int = 11) -> list[float]:
+    """Chuỗi GARCH(1,1) mô phỏng (alpha 0.10, beta 0.85, sigma dài hạn ~2%)."""
+    rng = np.random.default_rng(seed)
+    omega = 0.02**2 * (1 - 0.10 - 0.85)
+    var, out = 0.02**2, []
+    for z in rng.standard_normal(n):
+        r = math.sqrt(var) * z
+        out.append(r)
+        var = omega + 0.10 * r * r + 0.85 * var
+    return out
+
+
 def test_no_lookahead_sigma_asof_ignores_future():
-    rets = _iid_returns(700)
+    rets = _garch_returns(700)
     bars = _bars_from_returns(rets)
     asof = bars[599].ts.astimezone(TZ).date()
     base = sigma_asof(bars, asof, min_obs=500)
@@ -87,3 +106,25 @@ def test_holiday_is_not_a_gap():
         holidays={holiday},
     )
     assert len(out) == 8
+
+
+def test_implausible_fit_is_rejected():
+    assert is_plausible_fit(0.08, 0.90, 0.02)
+    assert not is_plausible_fit(0.30, 0.80, 0.02)  # alpha + beta >= 1: explosive
+    assert not is_plausible_fit(0.08, 0.90, 18.1455)  # sigma 1814% (lỗi đo thật)
+    assert not is_plausible_fit(0.08, 0.90, 0.0)
+
+
+def test_sigma_asof_includes_signal_bar_when_bars_are_stored_in_utc():
+    # Bar daily lưu 00:00 giờ VN = 17:00 UTC của ngày TRƯỚC (ts.date() lệch 1 ngày so với
+    # ngày VN). Backtest truyền asof = bar.ts.date() -> phiên tín hiệu PHẢI được tính.
+    rets = _iid_returns(10)
+    utc = [
+        Bar(b.symbol, b.ts.astimezone(UTC), b.open, b.high, b.low, b.close, b.volume)
+        for b in _bars_from_returns(rets)
+    ]
+    signal_bar = utc[-1]
+    seen: list[int] = []
+    with patch.object(gv, "forecast_sigma", side_effect=lambda r, m: seen.append(len(r))):
+        sigma_asof(utc, signal_bar.ts.date(), min_obs=1)
+    assert seen == [9]  # 10 bar -> 9 return, gồm cả phiên tín hiệu
