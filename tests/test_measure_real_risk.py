@@ -84,11 +84,14 @@ def test_report_counts_breaches_and_handles_empty():
     assert "không có vòng giao dịch nào" in m.format_report([], 0, {}, 0.0)
     trips = [
         {"pnl_pct_capital": -0.02, "pnl_pct_entry": -0.10, "fee_pct_entry": 0.007,
-         "entry_pct_capital": 0.2, "hold_days": 3.0},
+         "entry_pct_capital": 0.2, "hold_days": 3.0, "pnl": -2_000_000.0,
+         "fees": 140_000.0, "fees_pct_capital": 0.0014},
         {"pnl_pct_capital": -0.004, "pnl_pct_entry": -0.02, "fee_pct_entry": 0.007,
-         "entry_pct_capital": 0.2, "hold_days": 4.0},
+         "entry_pct_capital": 0.2, "hold_days": 4.0, "pnl": -400_000.0,
+         "fees": 140_000.0, "fees_pct_capital": 0.0014},
         {"pnl_pct_capital": 0.01, "pnl_pct_entry": 0.05, "fee_pct_entry": 0.007,
-         "entry_pct_capital": 0.2, "hold_days": 5.0},
+         "entry_pct_capital": 0.2, "hold_days": 5.0, "pnl": 1_000_000.0,
+         "fees": 140_000.0, "fees_pct_capital": 0.0014},
     ]
     exp = {"max_positions": 3, "max_exposure": 0.6, "share_bars_over_40pct": 0.25}
     text = m.format_report(trips, 0, exp, 0.08)
@@ -130,3 +133,41 @@ def test_end_to_end_with_real_backtest():
     assert len(trips) + still_open == 1
     assert p["max_positions"] == 1
     assert 0 < p["max_exposure"] <= 0.2 + 1e-9
+
+
+def _trip(pnl, fees, capital=CAPITAL):
+    return {
+        "pnl": pnl, "fees": fees, "pnl_pct_capital": pnl / capital,
+        "fees_pct_capital": fees / capital, "pnl_pct_entry": 0.0,
+        "fee_pct_entry": 0.0, "entry_pct_capital": 0.2, "hold_days": 3.0,
+    }
+
+
+def test_totals_net_fees_and_gross():
+    trips = [_trip(-1_000_000.0, 100_000.0), _trip(500_000.0, 100_000.0)]
+    text = "\n".join(m._totals_lines(trips))
+    assert "Tổng lãi/lỗ ròng: -500,000 đồng (-0.50% vốn)" in text
+    assert "Tổng phí+thuế: 200,000 đồng (0.20% vốn)" in text
+    # gộp = ròng + phí = -500.000 + 200.000
+    assert "Lãi/lỗ gộp trước phí+thuế (sau trượt giá): -300,000 đồng (-0.30% vốn)" in text
+
+
+def test_mean_and_standard_error_flag_noise_vs_signal():
+    noisy = [_trip(x, 0.0) for x in (-1_000_000.0, 900_000.0, -800_000.0, 1_000_000.0)]
+    assert "CHƯA phân biệt được với 0" in "\n".join(m._totals_lines(noisy))
+    clear = [_trip(x, 0.0) for x in (500_000.0, 520_000.0, 480_000.0, 510_000.0)]
+    assert "PHÂN BIỆT được với 0" in "\n".join(m._totals_lines(clear))
+
+
+def test_totals_single_trip_has_no_standard_error():
+    text = "\n".join(m._totals_lines([_trip(-250_000.0, 50_000.0)]))
+    assert "n = 1, không có sai số chuẩn" in text
+
+
+def test_round_trips_store_fees_pct_capital():
+    fills = [
+        _fill("HPG", "BUY", 1000, 20_000.0, 50_000.0, 0),
+        _fill("HPG", "SELL", 1000, 20_500.0, 70_000.0, 60, pnl=380_000.0),
+    ]
+    trips, _ = m.round_trips(fills, CAPITAL)
+    assert trips[0]["fees_pct_capital"] == 120_000.0 / CAPITAL
