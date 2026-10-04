@@ -28,7 +28,7 @@ from _db_common import REPO_LOGS_DIR, resolve_dsn
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
-from trading.config import load_config
+from trading.config import Config, load_config
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 
@@ -235,6 +235,61 @@ def evaluate_daily_completeness(
     return 1, missing, msg
 
 
+def assess_date(
+    storage: Storage,
+    cfg: Config,
+    target_date: date,
+    backfill_log: Path,
+) -> tuple[int, set[str], str]:
+    """Đánh giá độ đủ nến NGÀY của MỘT ngày — tách ra để heartbeat dùng lại (đợt 160).
+
+    Trước đây đoạn này nằm trong `main`. Tách ra vì `heartbeat_check` cần hỏi "ngày
+    giao dịch liền trước có đủ nến ngày chưa" mà KHÔNG được chép lại logic đủ/thiếu:
+    hai bản logic lệch nhau chính là kiểu hỏng âm thầm mà đợt này sinh ra để diệt.
+
+    Trả về (exit_code, missing_symbols, message) y hệt `evaluate_daily_completeness`.
+    Ném exception khi truy vấn DB lỗi — `main` bắt và giữ nguyên hành vi cũ.
+
+    `backfill_log` là tham số (không hardcode) vì trước đây nó là đường dẫn tương
+    đối theo cwd; heartbeat truyền `logs_dir/backfill.log` của chính nó.
+    """
+    # Brief 2026-09-01 (dot 2): kiem tren HOP hai tap, cung tap voi backfill
+    # hang dem — neu backfill nap CAP ma kiem tra khong soi CAP, ngay CAP
+    # thieu bar se khong ai biet (dung kieu hong am tham ca dot nay sinh ra
+    # de diet). read_must_price_symbols = cfg.symbols + ma dang nam giu.
+    active = storage.read_active_universe()
+    must_price = storage.read_must_price_symbols(cfg.ssi_equity_accounts, cfg.symbols)
+    active_symbols = sorted(set(active) | set(must_price))
+    present_symbols = storage.read_symbols_with_bar_on_date(target_date)
+
+    # Brief 97 Task 2: Xác định các mã chỉ giao dịch thứ Sáu
+    holidays = cfg.holidays
+    bar_dates_by_symbol: dict[str, list[date]] = {}
+    if target_date.weekday() != 4:
+        min_date = min(
+            recent_trading_days(target_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays)
+        )
+        bar_dates_by_symbol = storage.read_daily_bar_dates(
+            active_symbols, min_date, target_date
+        )
+
+    excluded = friday_only_symbols(bar_dates_by_symbol, target_date, holidays)
+
+    trading_day = is_trading_day(target_date, holidays)
+    backfill_done = check_backfill_completed(backfill_log, target_date)
+    prev_date = previous_trading_day(target_date, holidays)
+    prev_backfill_done = check_backfill_completed(backfill_log, prev_date)
+
+    return evaluate_daily_completeness(
+        active_symbols,
+        present_symbols,
+        is_trading_day=trading_day,
+        backfill_done=backfill_done,
+        excluded_symbols=excluded,
+        prev_backfill_done=prev_backfill_done,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
@@ -255,51 +310,17 @@ def main(argv: list[str] | None = None) -> None:
         target_date = datetime.now(TZ).date()
 
     try:
-        # Brief 2026-09-01 (dot 2): kiem tren HOP hai tap, cung tap voi backfill
-        # hang dem — neu backfill nap CAP ma kiem tra khong soi CAP, ngay CAP
-        # thieu bar se khong ai biet (dung kieu hong am tham ca dot nay sinh ra
-        # de diet). read_must_price_symbols = cfg.symbols + ma dang nam giu.
+        # Brief 2026-09-01 (dot 2) + brief đợt 160: phần "đánh giá MỘT ngày" đã tách
+        # sang assess_date() để heartbeat_check dùng lại đúng logic này thay vì chép
+        # lại (xem docstring assess_date). `cfg` vẫn đọc TRONG try để hành vi khi lỗi
+        # không đổi: trước đây lỗi đọc config cũng thoát ra "LỖI TRUY VẤN DB" + exit 2.
         cfg = load_config("config/config.yaml")
-        active = storage.read_active_universe()
-        must_price = storage.read_must_price_symbols(
-            cfg.ssi_equity_accounts, cfg.symbols
+        code, _missing, msg = assess_date(
+            storage, cfg, target_date, Path("logs/backfill.log")
         )
-        active_symbols = sorted(set(active) | set(must_price))
-        present_symbols = storage.read_symbols_with_bar_on_date(target_date)
-
-        # Brief 97 Task 2: Xác định các mã chỉ giao dịch thứ Sáu
-        holidays = cfg.holidays
-        bar_dates_by_symbol: dict[str, list[date]] = {}
-        if target_date.weekday() != 4:
-            min_date = min(
-                recent_trading_days(
-                    target_date, FRIDAY_ONLY_WINDOW_TRADING_DAYS, holidays
-                )
-            )
-            bar_dates_by_symbol = storage.read_daily_bar_dates(
-                active_symbols, min_date, target_date
-            )
-
-        excluded = friday_only_symbols(bar_dates_by_symbol, target_date, holidays)
     except Exception as e:
         _print_safe(f"LỖI TRUY VẤN DB: {e}")
         sys.exit(2)
-
-    trading_day = is_trading_day(target_date, holidays)
-
-    backfill_log = Path("logs/backfill.log")
-    backfill_done = check_backfill_completed(backfill_log, target_date)
-    prev_date = previous_trading_day(target_date, holidays)
-    prev_backfill_done = check_backfill_completed(backfill_log, prev_date)
-
-    code, _missing, msg = evaluate_daily_completeness(
-        active_symbols,
-        present_symbols,
-        is_trading_day=trading_day,
-        backfill_done=backfill_done,
-        excluded_symbols=excluded,
-        prev_backfill_done=prev_backfill_done,
-    )
 
     _print_safe(f"[{target_date}] {msg}")
 

@@ -666,7 +666,7 @@ Kiểm chứng cổng (đã chạy 01/09): giả lập Docker tắt bằng một
   Nếu máy ngủ qua mốc 00:00 thì task vẫn kích hoạt lặp ngay khi máy thức dậy thay vì trượt cả ngày
   (bài học sự cố 02/10).
 
-Script kiểm **sáu thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
+Script kiểm **bảy thứ** (ngoài giờ giao dịch chỉ nhánh tiền-phiên 8:00-8:59
 chạy — các nhánh khác tự bỏ qua):
 
 | Kiểm | Cảnh báo | Từ commit |
@@ -677,6 +677,7 @@ chạy — các nhánh khác tự bỏ qua):
 | Hai sổ sách lệch (`cash + Σ(avg_price×qty) − CAPITAL == realized_pnl`) | CRITICAL | `d775ebb` |
 | Vị thế ngừng đồng bộ (`account_position_snapshot` của `real_order_account` quá 15 phút chưa cập nhật, hoặc chưa từng đồng bộ) | CRITICAL | `ebfec3c` |
 | Job theo lịch 24/7 ngừng chạy (`container-health` > 25p, `disk-check` > 6.5h, `backup`/`orderbook-backup`/`backup-check` > 26h; chỉ báo khi chuyển trạng thái) | CRITICAL / INFO hồi phục | Brief 142 |
+| Độ đủ nến NGÀY của ngày giao dịch liền trước (bắt kết quả của `backfill` → `daily-check`; mỗi ngày giao dịch một tin) | WARN / CRITICAL | Brief 160 |
 
 Thay `trading:trading` bằng user/password Postgres thật nếu bạn đã đổi khỏi giá
 trị mặc định trong `docker-compose.yml`.
@@ -691,6 +692,17 @@ chạy tay đúng lệnh cron trên trong khung 8:00-8:59 một lần. Kỳ vọ
 thoát 0 im lặng nếu token còn > 60 phút; nếu token còn < 60 phút hoặc đã hết
 hạn sẽ thấy WARN/CRITICAL trong `/var/log/trading-heartbeat.log`. Nếu không
 thấy gì trong khung đó — cron chưa gọi đúng giờ (kiểm `crontab -l`).
+
+**Đợt 160 — nến ngày thiếu phải có người biết vào sáng hôm sau.** Heartbeat còn kiểm
+KẾT QUẢ của chuỗi `backfill` → `daily-check` của đêm hôm trước bằng đúng một câu hỏi:
+nến NGÀY của ngày giao dịch liền trước có đủ chưa (dùng lại `assess_date` của
+`daily_data_check.py` — không có bản logic đủ/thiếu thứ hai). Cách này bắt được mọi
+nguyên nhân làm thủng một ngày nến — Docker tắt, máy ngủ, task bị từ chối, mạng lỗi —
+mà không phải chép giờ chạy của job nào vào heartbeat. Chỉ kiểm trong giờ giao dịch, và
+**mỗi ngày giao dịch chỉ báo một lần** (trạng thái ở `logs/.prev_day_bars_state.json`),
+nên không có chuyện 5 phút một tin. Tin có ngày, số mã có/tổng và câu lệnh khắc phục —
+cách xử lý xem §9.6. Trùng tin với `daily-check` là CÓ CHỦ Ý: tin buổi tối nói "thiếu
+lúc đó", tin buổi sáng nói "sáng ra rồi mà vẫn chưa ai vá" — hai việc khác nhau.
 
 ## 9.5 Backfill vũ trụ (bars_daily/bars lịch sử)
 

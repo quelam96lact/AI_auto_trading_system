@@ -11,6 +11,15 @@ còn sống nhưng việc thật đã chết):
 - 2B "token SSI sắp/đã hết hạn": bắt đúng sự cố 14/08 — refresh token hết hạn
   13:39, feed chết 14:33, heartbeat vẫn xanh suốt. 2A KHÔNG bắt được sự cố đó
   (bar chảy đủ); 2B mới bắt được.
+
+Đợt 160 — "ngày nến thiếu phải có người biết vào sáng hôm sau":
+- Kiểm KẾT QUẢ của chuỗi `backfill` -> `daily-check`: độ đủ nến NGÀY của ngày giao
+  dịch liền trước, dùng lại `daily_data_check.assess_date` (KHÔNG chép logic đủ/thiếu).
+  Hai job đó nằm trong `KHONG_CANH` (tuổi phụ thuộc cuối tuần) nên kết quả của chúng
+  được kiểm gián tiếp ở đây.
+- TRÙNG TIN CÓ CHỦ Ý với `daily-check`: nếu tối hôm trước nó đã báo thiếu thì sáng hôm
+  sau heartbeat báo LẠI — "thiếu lúc 21:00" và "sáng ra vẫn chưa ai vá" là hai việc
+  khác nhau. Mỗi ngày P chỉ báo một lần (xem PREV_DAY_BARS_STATE_NAME).
 """
 
 import argparse
@@ -32,6 +41,7 @@ try:
         send_with_outbox,
     )
     from scripts._db_common import REPO_LOGS_DIR
+    from scripts.daily_data_check import assess_date
 except ImportError:
     from _alert_common import (
         load_json_state,
@@ -40,6 +50,7 @@ except ImportError:
         send_with_outbox,
     )
     from _db_common import REPO_LOGS_DIR
+    from daily_data_check import assess_date
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import (
@@ -47,7 +58,9 @@ from trading.calendar_vn import (
     is_trading_day,
     is_trading_time,
     market_minutes_between,
+    previous_trading_day,
 )
+from trading.config import Config
 
 # LEDGER-1: import hang so tu trading/ —
 # da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
@@ -89,6 +102,10 @@ DEFAULT_LOGS_DIR = REPO_LOGS_DIR
 SCHEDULE_STATE_NAME = ".schedule_health_state.json"
 DEFAULT_SCHEDULE_STATE_FILE = os.path.join(DEFAULT_LOGS_DIR, SCHEDULE_STATE_NAME)
 HEARTBEAT_OUTBOX_NAME = outbox_name("heartbeat")
+# Đợt 160: trạng thái "đã báo thiếu nến ngày cho ngày P" — file RIÊNG, không nhét vào
+# .schedule_health_state.json: file kia bị evaluate_schedule_health dựng lại toàn bộ
+# mỗi lần chạy nên khoá lạ sẽ bị xoá mất.
+PREV_DAY_BARS_STATE_NAME = ".prev_day_bars_state.json"
 
 
 class WatchJobConfig(NamedTuple):
@@ -148,8 +165,8 @@ SCHEDULE_WATCH_JOBS: dict[str, WatchJobConfig] = {
 # LƯU Ý: Giờ chạy thật của từng job nằm ở DEPLOYMENT.md §9, không chép lại ở đây.
 KHONG_CANH: dict[str, str] = {
     "heartbeat": "Chính là heartbeat (tự canh là đệ quy), do container-health canh chéo trong giờ giao dịch.",
-    "daily-check": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
-    "backfill": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "daily-check": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 160): mỗi ngày giao dịch, heartbeat kiểm độ đủ nến NGÀY của ngày giao dịch liền trước, nên job này chết thì sáng hôm sau có tin.",
+    "backfill": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 160): mỗi ngày giao dịch, heartbeat kiểm độ đủ nến NGÀY của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
     "deploy-drift": "Chỉ chạy trước phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-cam": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-consumer": "Chỉ chạy lặp trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",
@@ -737,6 +754,77 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def app_cfg_for_daily_check(raw_cfg: dict[str, Any], dsn: str) -> Config:
+    """Dựng `Config` cho `daily_data_check.assess_date` từ YAML heartbeat đã đọc.
+
+    CỐ Ý không gọi `trading.config.load_config`: hàm đó đòi đầy đủ SSI_* trong môi
+    trường, mà chuông báo phải chạy được cả khi cấu hình SSI thiếu (cùng lý do đã ghi
+    ở khối đọc config trong `main`). Các trường SSI để rỗng vì `assess_date` chỉ đọc
+    `symbols`, `ssi_equity_accounts` và `holidays`.
+    """
+    return Config(
+        symbols=list(raw_cfg.get("symbols") or []),
+        indices=list(raw_cfg.get("indices") or []),
+        bar_interval_minutes=int(raw_cfg.get("bar_interval_minutes") or 5),
+        ssi_equity_accounts=list(raw_cfg.get("ssi_equity_accounts") or []),
+        holidays={date.fromisoformat(str(h)) for h in (raw_cfg.get("holidays") or [])},
+        db_dsn=dsn,
+        nats_url="",
+        nats_stream="",
+        watchdog_stale_seconds=0,
+        watchdog_max_failures=0,
+        ssi_consumer_id="",
+        ssi_consumer_secret="",
+        ssi_api_key="",
+        ssi_api_secret="",
+        ssi_private_key="",
+        real_trading_enabled=False,
+        real_order_account=str(raw_cfg.get("real_order_account") or ""),
+    )
+
+
+def prev_day_bars_alert(
+    storage: Storage,
+    app_cfg: Config,
+    now: datetime,
+    backfill_log: Path,
+    alerted_for: str | None,
+) -> tuple[str | None, str]:
+    """Tin cảnh báo độ đủ nến NGÀY của ngày giao dịch liền trước (đợt 160).
+
+    Trả về (tin, ngày P dạng ISO). Tin là None khi không có gì để báo: hoặc đủ nến,
+    hoặc đã báo cho đúng ngày P đó rồi.
+
+    Kiểm KẾT QUẢ chứ không canh job: `backfill` và `daily-check` chỉ chạy buổi tối
+    ngày giao dịch, tuổi phụ thuộc cuối tuần nên không canh tuổi được (xem KHONG_CANH).
+    Nhưng hệ quả của việc chúng không chạy thì luôn giống nhau: sáng hôm sau
+    `bars_daily` thiếu ngày. Kiểm đúng hệ quả đó bắt được mọi nguyên nhân (Docker tắt,
+    máy ngủ, task bị từ chối, backfill lỗi mạng) mà không phải chép giờ chạy của job
+    nào vào đây.
+
+    TRÙNG TIN CÓ CHỦ Ý với daily-check: nếu tối hôm trước daily-check đã báo thiếu thì
+    sáng hôm sau heartbeat báo LẠI. Chấp nhận, vì hai tin nói hai việc khác nhau:
+    "thiếu lúc 21:00 (còn kịp vá trong đêm)" và "sáng ra rồi mà vẫn CHƯA ai vá".
+    """
+    p = previous_trading_day(now.date(), app_cfg.holidays)
+    p_iso = p.isoformat()
+    if alerted_for == p_iso:
+        return None, p_iso
+
+    code, _missing, msg = assess_date(storage, app_cfg, p, backfill_log)
+    if code not in (1, 2):
+        return None, p_iso
+
+    level = "WARN" if code == 1 else "CRITICAL"
+    tin = (
+        f"[{level}] nến NGÀY của ngày giao dịch liền trước ({p_iso}) KHÔNG đầy đủ "
+        f"— heartbeat kiểm lúc {now:%H:%M %d/%m}:\n{msg}\n"
+        "Khắc phục: ./scripts/sched.sh backfill (idempotent — DEPLOYMENT.md §9.6), "
+        "chạy TRƯỚC khi account_sync định giá vị thế bằng giá bars_daily cũ."
+    )
+    return tin, p_iso
+
+
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
     # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
@@ -820,7 +908,11 @@ def main(argv: list[str] | None = None) -> int:
     pre_market = time(8, 0) <= now_tz.time() < time(9, 0) and is_trading_day(
         now_tz.date(), holidays
     )
-    if not is_trading_time(now, holidays) and not pre_market and not args.dry_run:
+    # Đợt 160: "đang trong giờ giao dịch" được dùng LẠI cho phép kiểm nến ngày. Ngoài
+    # cửa sổ thì không kiểm — kể cả khi --dry-run (dry-run bỏ qua `return 0` dưới đây
+    # để chẩn đoán được, nhưng không được kéo theo một phép kiểm chỉ có nghĩa trong phiên).
+    in_check_window = is_trading_time(now, holidays) or pre_market
+    if not in_check_window and not args.dry_run:
         return 0
 
     if args.dry_run:
@@ -935,6 +1027,46 @@ def main(argv: list[str] | None = None) -> int:
     holiday_warn = check_holiday_exhaustion(holidays, now)
     if holiday_warn:
         messages.append(holiday_warn)
+
+    # Đợt 160: kiểm KẾT QUẢ của chuỗi `backfill` -> `daily-check` (đêm hôm trước) bằng
+    # đúng một câu hỏi: nến NGÀY của ngày giao dịch liền trước có đủ chưa. Chỉ trong
+    # giờ giao dịch, và mỗi ngày P chỉ báo MỘT lần (nếu không thì 5 phút một tin).
+    if in_check_window:
+        try:
+            prev_state_file = Path(logs_dir) / PREV_DAY_BARS_STATE_NAME
+            prev_state = load_json_state(prev_state_file, "prev-day-bars")
+            tin, p_iso = prev_day_bars_alert(
+                Storage(dsn),
+                app_cfg_for_daily_check(cfg, dsn),
+                now,
+                Path(logs_dir) / "backfill.log",
+                prev_state.get("alerted_for"),
+            )
+            if tin:
+                messages.append(tin)
+                # Ghi trạng thái NGAY, không chờ gửi xong: send_with_outbox đã xếp tin
+                # vào hàng đợi khi gửi hỏng nên tin không mất, còn nếu không ghi thì mỗi
+                # 5 phút lại báo lại cùng một ngày cho tới hết phiên.
+                if not args.dry_run:
+                    save_json_state(prev_state_file, {"alerted_for": p_iso})
+        except Exception as e:
+            # Brief 147 (đã ghim cho engine-consumer) + brief 160 §Việc 2.5: phép kiểm
+            # mới KHÔNG được làm chết các phép kiểm khác. Hỏng thì in ra rồi đi tiếp —
+            # đây là job canh mọi thứ khác, im lặng mới là sai.
+            #
+            # In ra STDERR, không phải stdout: test cũ
+            # `test_main_prints_message_to_stdout_before_sending` ghim hợp đồng "stdout
+            # phải bằng đúng nội dung gửi Telegram". Không dấu tiếng Việt và bọc try:
+            # stderr không được reconfigure utf-8 như stdout, in dấu ở đây có thể ném
+            # UnicodeEncodeError — bên trong except thì chuông báo chết theo.
+            try:
+                print(
+                    "[WARN] heartbeat khong kiem duoc nen ngay cua ngay lien truoc: "
+                    f"{type(e).__name__}: {e}"[:300],
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
 
     if messages:
         # Brief 2026-09-01 (dot 3) Task B: in ly do ra stdout TRUOC khi gui —
