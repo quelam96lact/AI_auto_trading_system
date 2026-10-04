@@ -1,5 +1,26 @@
 # Spec: Cấu hình vận hành phái sinh vốn 30tr + xác minh biểu phí SSI
 
+> **CẢNH BÁO (rà soát 04/10/2026): các con số backtest trong tài liệu này KHÔNG phải bằng chứng
+> về lợi thế của cấu hình. Đừng dùng "+60%" làm cơ sở cho quyết định nào.** Lý do:
+>
+> 1. **Mẫu nhỏ và chọn trên chính mẫu đó:** 2 tháng (1.493 nến 5 phút), 21 lệnh; cấu hình "CHỐT"
+>    được chọn từ 4 biến thể chạy trên cùng dữ liệu. Chưa có kiểm chứng ngoài mẫu.
+> 2. **Chi phí thiếu:** tính phí 8.250 đồng/lượt, chưa có thuế TNCN (đợt 95, 26/09: khoảng 16
+>    nghìn đồng/lượt, chiếm khoảng 2/3 tổng chi phí) và chưa có spread (đợt 93/98: trung vị 0,2
+>    điểm). Chi phí khứ hồi thực khoảng 0,49 điểm cộng 0,2 điểm spread, so với 0,165 điểm đã tính.
+>    Ước tính thiếu khoảng 0,5 điểm mỗi vòng, tức khoảng 1,1 triệu đồng trên 21 lệnh, nhỏ so với
+>    +17,5 triệu: **chi phí không phải lỗ hổng chính, việc chọn cấu hình trên mẫu nhỏ mới là**.
+> 3. **Khớp lệnh lạc quan:** backtest khớp tại giá đóng của chính nến sinh tín hiệu, không trượt
+>    giá (xem `spread_points` trong `run_derivative_backtest` để thêm spread; độ lạc quan "khớp
+>    cùng nến" vẫn còn).
+> 4. **Các phép đo sau đó đều âm:** sáu phép đo liên tiếp (đợt 85 về VN30F1M trong phiên: 18/18
+>    không tín hiệu; đợt 98 về SMC: 8/9 cặp không đạt) chưa tìm ra tín hiệu nào trả nổi chi phí thật.
+> 5. **Checklist mục 4: hai việc quan trọng vẫn chưa làm:** paper trading tối thiểu 50 lệnh, và
+>    kiểm chứng ngoài mẫu. (Ô về mô hình hóa thuế TNCN đã được làm ở đợt 95 nhưng chưa được tick.)
+>
+> Nội dung còn lại giữ nguyên làm hồ sơ lịch sử (biểu phí, ràng buộc ký quỹ D+ vẫn là tham khảo hữu ích).
+
+
 **Ngày viết:** 2026-08-09
 **Bối cảnh:** User chốt cấu hình vận hành cho tài khoản phái sinh khởi đầu
 **30,000,000 VND**, dựa trên chuỗi nghiên cứu/backtest đã audit (multiplier

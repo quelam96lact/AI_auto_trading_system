@@ -693,3 +693,124 @@ def test_parse_args_requires_symbol():
     # Khi thiếu --symbol: báo lỗi argparse SystemExit (code != 0)
     with pytest.raises(SystemExit):
         parse_args(["--from", "2026-09-01", "--to", "2026-09-20"])
+
+
+# --- spread_points: nửa spread mỗi lượt khớp (mặc định 0 = hành vi cũ) -------------
+# Quy ước: spread_points là spread TRỌN VÒNG (vào + ra bằng lệnh thị trường), nên mỗi lượt
+# khớp chịu spread_points / 2: mua cao hơn giá tham chiếu, bán thấp hơn. Đợt 98 đo spread
+# VN30F trung vị 0,2 điểm; chi phí thật khoảng 0,5004 (phí+thuế) + 0,2 (spread).
+
+SPREAD = 0.2
+HALF = SPREAD / 2
+
+
+def test_spread_long_cycle_buys_higher_and_sells_lower():
+    prices = [10, 10, 10, 10, 11, 13, 16, 20, 24, 20, 16, 12, 9, 7]
+    bars = bars_from_prices(prices)
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, new_strategy(), risk, CAP, spread_points=SPREAD
+    )
+
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "BUY" and abs(open_fill.price - (11.0 + HALF)) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - (16.0 - HALF)) < 1e-9
+    expected = (
+        ((16.0 - HALF) - (11.0 + HALF)) * DERIVATIVE_CONTRACT_MULTIPLIER
+        - derivative_side_cost(16.0 - HALF, 1, opening=False)
+        - derivative_side_cost(11.0 + HALF, 1, opening=True)
+    )
+    assert abs(close_fill.pnl - expected) < 1e-9
+
+
+def test_spread_short_cycle_sells_lower_and_covers_higher():
+    prices = [10, 11, 12, 14, 12, 9, 6, 9, 12, 15]
+    bars = bars_from_prices(prices)
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, new_strategy(), risk, CAP, spread_points=SPREAD
+    )
+
+    open_fill, close_fill = report.fills
+    assert open_fill.side == "SELL" and abs(open_fill.price - (9.0 - HALF)) < 1e-9
+    assert close_fill.side == "BUY" and abs(close_fill.price - (12.0 + HALF)) < 1e-9
+
+
+def test_spread_applies_to_stop_loss_exit():
+    # Cùng chuỗi giá với test SL long: SL chạm ở bar5 (open=9.5); lệnh cắt lỗ là lệnh thị
+    # trường nên cũng chịu nửa spread: 9.5 - 0.1.
+    prices = [10, 10, 10, 10, 11, 9.5]
+    bars = bars_from_prices(prices)
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, new_strategy(), risk, CAP, stop_loss_points=1.0, spread_points=SPREAD
+    )
+
+    open_fill, close_fill = report.fills
+    assert abs(open_fill.price - (11.0 + HALF)) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - (9.5 - HALF)) < 1e-9
+
+
+def test_spread_applies_to_end_of_day_close():
+    start = datetime(2026, 8, 8, 9, 0, tzinfo=TZ)
+    bars = [
+        Bar(DERIVATIVE_SYMBOL, start + timedelta(minutes=5 * i), p, p, p, p, 100)
+        for i, p in enumerate([10, 10, 10, 10, 11])
+    ]
+    bars.append(
+        Bar(DERIVATIVE_SYMBOL, datetime(2026, 8, 8, 14, 25, tzinfo=TZ), 7.0, 7.0, 7.0, 7.0, 100)
+    )
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+
+    report = run_derivative_backtest(
+        bars, new_strategy(), risk, CAP, intraday_close_time=time(14, 20),
+        spread_points=SPREAD,
+    )
+
+    open_fill, close_fill = report.fills
+    assert abs(open_fill.price - (11.0 + HALF)) < 1e-9
+    assert close_fill.side == "SELL" and abs(close_fill.price - (7.0 - HALF)) < 1e-9
+
+
+def test_spread_costs_exactly_one_spread_per_round_trip_in_points():
+    prices = [10, 10, 10, 10, 11, 13, 16, 20, 24, 20, 16, 12, 9, 7]
+    base = run_derivative_backtest(
+        bars_from_prices(prices), new_strategy(),
+        DerivativeRiskManager(capital=CAP, max_contracts=1), CAP,
+    )
+    with_spread = run_derivative_backtest(
+        bars_from_prices(prices), new_strategy(),
+        DerivativeRiskManager(capital=CAP, max_contracts=1), CAP, spread_points=SPREAD,
+    )
+    # Chênh lợi nhuận gộp (chưa phí) đúng bằng 1 spread trọn vòng x hệ số nhân.
+    gross_base = base.fills[1].pnl + base.fills[0].fee + base.fills[1].fee
+    gross_spread = with_spread.fills[1].pnl + with_spread.fills[0].fee + with_spread.fills[1].fee
+    assert abs((gross_base - gross_spread) - SPREAD * DERIVATIVE_CONTRACT_MULTIPLIER) < 1e-6
+
+
+def test_spread_zero_is_identical_to_default():
+    prices = [10, 10, 10, 10, 11, 13, 16, 20, 24, 20, 16, 12, 9, 7]
+    a = run_derivative_backtest(
+        bars_from_prices(prices), new_strategy(),
+        DerivativeRiskManager(capital=CAP, max_contracts=1), CAP,
+    )
+    b = run_derivative_backtest(
+        bars_from_prices(prices), new_strategy(),
+        DerivativeRiskManager(capital=CAP, max_contracts=1), CAP, spread_points=0.0,
+    )
+    assert [(f.side, f.price, f.fee, f.pnl) for f in a.fills] == [
+        (f.side, f.price, f.fee, f.pnl) for f in b.fills
+    ]
+
+
+def test_negative_spread_is_rejected():
+    import pytest
+
+    risk = DerivativeRiskManager(capital=CAP, max_contracts=1)
+    with pytest.raises(ValueError, match="spread_points"):
+        run_derivative_backtest(
+            bars_from_prices([10, 10]), new_strategy(), risk, CAP, spread_points=-0.1
+        )
