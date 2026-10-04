@@ -43,6 +43,11 @@ Trước khi đề xuất xoá bất kỳ file nào trong `scripts/`:
 > **8 dòng** ban đầu ghi `KHÔNG RÕ` đã được đợt 53 kết luận giữ có chủ đích, nên đã đổi thành `CÒN CẦN`:
 > `spike_securities_summary_raw`, `spike_ssi_sdk_account`, `spike_ssi_sdk_equity_10y_history`, `spike_ssi_sdk_hnx_upcom_ohlc`, `spike_ssi_sdk_index_lookup`, `spike_ssi_sdk_index_stream`, `spike_ssi_sdk_index_summary`, `spike_ssi_sdk_ohlc`.
 > Vì vậy **`KHÔNG RÕ` không phải danh sách để xoá** — nó là danh sách cần đối chiếu tiếp.
+>
+> **04/10/2026: chủ dự án quyết định xoá 9 script `KHÔNG RÕ` còn lại** (không code, test, `sched.sh` hay runbook nào
+> trỏ tới): `backfill_spike_data_to_db`, `backtest_to_db`, `bingx_account_probe`, `check_refprice_reset`,
+> `classify_overnight_gaps`, `measure_cross_sectional`, `probe_engine_consumer`, `spike_securities_status_check`,
+> `verify_ssi_gaps`. Cần lại thì lấy từ git: `git show 1c5edd3:scripts/<tên>.py`.
 
 Quy ước ở mục 1 nói "không dấu chấm = công cụ chính thức", nhưng nhiều script không dấu chấm không được
 `scripts/sched.sh` gọi và cũng không được `tests/` nhập hoặc gọi. Test
@@ -60,17 +65,11 @@ kiểm file được dẫn **còn chứa tên script**.
 
 | Script | Vai trò | Trạng thái | Bằng chứng |
 |---|---|---|---|
-| `backfill_spike_data_to_db` | Ghi dữ liệu spike 5 phút từ file JSON vào bảng `bars`, có kiểm tra trùng. | KHÔNG RÕ | Chỉ thấy trong `docs/prompts/` và `docs/superpowers/research/2026-09-26-dot-108-engine-bo-nen-ban-va-don-nen-gia-0.md:207` (nhắc như nơi đếm nến giá 0). |
-| `backtest_to_db` | Chạy mô phỏng chiến lược từng mã rồi ghi DB cho Grafana đọc. | KHÔNG RÕ | Chỉ có kế hoạch tạo nó: `docs/superpowers/plans/2026-08-30-backtest-grafana.md:13`. |
-| `bingx_account_probe` | Thăm dò tài khoản BingX Perpetual, chỉ đọc. | KHÔNG RÕ | Chỉ có kế hoạch tạo nó: `docs/superpowers/plans/2026-09-27-brief-dot-111-bingx-ket-noi-chi-doc.md:45`. |
 | `check_orders_hygiene` | Báo cáo vệ sinh bảng `orders` (mã lạ), không xoá gì. | ĐÃ GHI SỐ ĐO | Output chạy thật: `docs/superpowers/research/2026-09-18-dot-49-mo-rong-hop-dong-va-nguong-luong.md:172`. |
 | `check_price_adjustment` | Kiểm tra `bars_daily` đã điều chỉnh chia tách chưa, xuất danh sách mã loại trừ (`--emit-exclusions`). | CÒN CẦN | Code đang chạy trỏ vào làm nguồn file loại trừ: `scripts/measure_strategy.py:33`, `scripts/score_sepa_daily.py:323`. |
 | `check_real_order_readiness` | Báo cáo mức sẵn sàng của đường lệnh thật. | CÒN CẦN | Đợt 150 chạy nó để nghiệm thu: `docs/superpowers/research/2026-10-03-dot-150-chuyen-lenh-that-sang-0434226.md:44`; toàn văn output đợt 48: `docs/superpowers/research/2026-09-18-dot-48-hop-dong-sdk.md:94`. |
-| `check_refprice_reset` | Đối chiếu 10 mã đã biết về việc reset giá tham chiếu. | KHÔNG RÕ | Chỉ nhắc trong kế hoạch: `docs/superpowers/plans/2026-08-18-data-completeness.md:12`. |
-| `classify_overnight_gaps` | Phân loại 837 bước nhảy giá qua đêm (> 25%). | KHÔNG RÕ | Chỉ nhắc trong kế hoạch: `docs/superpowers/plans/2026-08-18-data-completeness.md:13`. |
 | `fix_backfill_progress` | Sửa `backfill_progress` cho khớp thực tế (xem trước, rồi `--apply`). | CÒN CẦN | Runbook: `DEPLOYMENT.md:729`. |
 | `fix_mojibake` | Gỡ mojibake nhiều lớp (UTF-8 bị đọc nhầm thành cp1252). | CÒN CẦN | Mục 1 của chính tài liệu này nêu là công cụ bảo trì chính thức: `scripts/README.md:14`. |
-| `measure_cross_sectional` | CLI đo chiến lược động lượng cắt ngang 20 mã (đợt 39). | KHÔNG RÕ | Chỉ nhắc như một nơi gọi `read_crypto_bars`: `docs/superpowers/research/2026-09-28-dot-121-bit-hai-cong-mo-san.md:520`. Báo cáo đợt 39 giữ số đo nhưng không nêu tên script. |
 | `measure_octopus_combo_matched_basket` | Đo OctopusComboStrategy trên đường ống `run_backtest` (đợt 8). | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-09-06-dot-8-octopus-combo-registry-report.md:52`. |
 | `measure_perp_modules` | CLI đo hai module perpetual 1H, chia IS/OOS (đợt 37). | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-09-12-dot-37-do-hai-module-perp-1h-price-only.md:10`. |
 | `measure_session_stream_metrics` | Đo chỉ số chốt nến thời gian thực phiên chiều. | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-09-14-dot-43-luong-ssi-va-nghiem-thu-phien-chieu.md:47`; các phiên đo kế tiếp: `docs/superpowers/research/2026-09-15-dot-44-dem-snapshot-va-chay-lai-event-study.md:50`. |
@@ -78,13 +77,11 @@ kiểm file được dẫn **còn chứa tên script**.
 | `probe_account_balance_22h` | Thăm dò phản hồi account balance SSI trong khung 22h. | CÒN CẦN | Bước kiểm số dư 22h còn trong việc đang làm: `docs/superpowers/research/2026-10-03-dot-150-chuyen-lenh-that-sang-0434226.md:184`, `docs/superpowers/research/2026-10-03-dot-152-gom-viec-nho.md:55`. |
 | `probe_bars_5m_completeness` | Đo độ đầy đủ của nến 5 phút, chỉ đọc. | CÒN CẦN | Dùng để kiểm nến giá 0: `docs/superpowers/research/2026-09-26-dot-108-engine-bo-nen-ban-va-don-nen-gia-0.md:252`. |
 | `probe_dead_man_switch` | Kiểm chứng đường Telegram và dead-man's switch ở local. | CÒN CẦN | Runbook: `DEPLOYMENT.md:1111`. |
-| `probe_engine_consumer` | Đọc trạng thái consumer `engine` trên JetStream stream `BARS`. | KHÔNG RÕ | Chỉ có kế hoạch tạo nó: `docs/superpowers/plans/2026-09-09-brief-dot-24-quan-sat-trong-phien.md:130`. Việc tương tự đã có `engine_consumer_check.py` (do `sched.sh` gọi); chưa kiểm xem nó thay thế hẳn chưa. |
 | `probe_ssi_5m_0607` | Điều tra nguyên nhân mất nến 5 phút ngày 06 và 07/07/2026 tại SSI (đợt 14). | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-09-07-dot-14-vps-pipe-and-missing-bars-report.md:106`. |
 | `probe_timestamp_semantics` | Đo hướng ngữ nghĩa timestamp (đợt 72, lớp vỏ cho công cụ đợt 42). | CÒN CẦN | Code đang chạy trỏ vào: `scripts/leakage_audit.py:4`. |
 | `record_fixtures` | Ghi raw message SSI thành fixtures cho test. | CÒN CẦN | Fixtures được ghi bằng nó: `tests/fixtures/README.md:3`. |
 | `scan_mojibake` | Quét file văn bản trong repo tìm dấu vết mojibake. | CÒN CẦN | `scripts/README.md:14`. |
 | `screen_liquidity` | Lọc thanh khoản từ `bars_daily` sang `symbol_universe.is_active`. | CÒN CẦN | `GO_LIVE_AUDIT.md:490`. |
-| `spike_securities_status_check` | Thăm dò SSI có trả trạng thái "hạn chế giao dịch" không (chỉ đọc). | KHÔNG RÕ | Không tài liệu nào nhắc ngoài brief đợt 159. |
 | `spike_securities_summary_raw` | Kiểm khả thi endpoint tóm tắt chứng khoán (bước 0 của prompt 15/08). | CÒN CẦN | Chỉ nhắc trong kế hoạch/prompt cũ và một báo cáo dọn rác ghi "giữ có chủ ý" (quyết định giữ, không phải bằng chứng còn cần): `docs/superpowers/research/2026-09-18-dot-53-don-rac-va-kiem-dinh-image.md:215`. |
 | `spike_ssi_history_depth` | Đo độ sâu lịch sử SSI và liệt kê mã 3 sàn. | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-08-09-ssi-history-depth.md:4`. |
 | `spike_ssi_sdk_account` | Phase 0 spike: xác nhận Portfolio/Account API thật (số dư, vị thế). | CÒN CẦN | Chỉ được `scripts/spike_ssi_sdk_derivative_account.py:232` nhắc trong comment làm mẫu, và trong `docs/plans-legacy/`. |
@@ -99,4 +96,3 @@ kiểm file được dẫn **còn chứa tên script**.
 | `spike_ssi_symbols_classify` | Khám phá trường phân loại của `get_securities_info_by_board`, sinh `.spike_all_symbols_classified.json`. | CÒN CẦN | Runbook: `DEPLOYMENT.md:718`; thông báo lỗi: `scripts/backfill_universe.py:52`. |
 | `verify_backup_file_roundtrip` | Kiểm chứng mắt xích cuối của đường dữ liệu VPS: `backup_db.sh` qua ống host (đợt 14). | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-09-07-dot-14-vps-pipe-and-missing-bars-report.md:76`. |
 | `verify_backup_restore` | Kiểm chứng quy trình sao lưu và phục hồi TimescaleDB (đợt 13). | CÒN CẦN | Được script khác nhập thật: `scripts/verify_backup_file_roundtrip.py:21`. |
-| `verify_ssi_gaps` | Đối chiếu DB với API SSI để tìm khoảng trống nến. | KHÔNG RÕ | Chỉ nhắc trong prompt cũ: `docs/prompts/2026-08-15-hermes-gap-cluster.md:37`. |
