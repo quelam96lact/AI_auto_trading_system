@@ -75,6 +75,7 @@ def round_trips(fills: Sequence[Fill], capital: float) -> tuple[list[dict], int]
                 t["pnl_pct_capital"] = t["pnl"] / capital
                 t["pnl_pct_entry"] = t["pnl"] / t["entry_value"]
                 t["fee_pct_entry"] = t["fees"] / t["entry_value"]
+                t["fees_pct_capital"] = t["fees"] / capital
                 done.append(open_trip.pop(f.symbol))
     return done, len(open_trip)
 
@@ -109,6 +110,42 @@ def exposure_profile(
 def _q(values: Sequence[float], p: float) -> float:
     s = sorted(values)
     return s[min(len(s) - 1, max(0, round(p * (len(s) - 1))))]
+
+
+def _totals_lines(trips: Sequence[dict]) -> list[str]:
+    """Tổng lãi/lỗ ròng, trung bình mỗi vòng (kèm sai số chuẩn) và tổng phí+thuế.
+
+    `pnl` của broker là lãi/lỗ RÒNG: đã trừ phí mua, phí bán, thuế bán, và giá khớp đã
+    gồm trượt giá. Lãi gộp ở đây = ròng + phí+thuế, tức trước phí/thuế (vẫn sau trượt giá)."""
+    n = len(trips)
+    net = sum(t["pnl"] for t in trips)
+    fees = sum(t["fees"] for t in trips)
+    net_pct = sum(t["pnl_pct_capital"] for t in trips)
+    fees_pct = sum(t["fees_pct_capital"] for t in trips)
+    per_trip = [t["pnl_pct_capital"] for t in trips]
+    mean = statistics.mean(per_trip)
+    lines = [
+        f"Tổng lãi/lỗ ròng: {net:+,.0f} đồng ({net_pct:+.2%} vốn)",
+        f"Tổng phí+thuế: {fees:,.0f} đồng ({fees_pct:.2%} vốn)",
+        (
+            f"Lãi/lỗ gộp trước phí+thuế (sau trượt giá): {net + fees:+,.0f} đồng "
+            f"({net_pct + fees_pct:+.2%} vốn)"
+        ),
+    ]
+    if n >= 2:
+        se = statistics.stdev(per_trip) / n**0.5
+        lines.append(
+            f"Trung bình mỗi vòng: {net / n:+,.0f} đồng ({mean:+.3%} vốn) "
+            f"± {se:.3%} (sai số chuẩn, n = {n})"
+        )
+        lines.append(
+            "Trung bình mỗi vòng "
+            + ("PHÂN BIỆT được với 0" if abs(mean) > 2 * se else "CHƯA phân biệt được với 0")
+            + " (ngưỡng thô: |trung bình| > 2 sai số chuẩn)"
+        )
+    else:
+        lines.append(f"Trung bình mỗi vòng: {net / n:+,.0f} đồng (n = 1, không có sai số chuẩn)")
+    return lines
 
 
 def format_report(
@@ -157,6 +194,7 @@ def format_report(
             f"{exposure['share_bars_over_40pct']:.1%} số bar trên 40% vốn"
         ),
         f"Max drawdown equity (backtest): {max_drawdown:.1%}",
+        *_totals_lines(trips),
     ]
     return "\n".join(lines)
 
