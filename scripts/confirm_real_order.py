@@ -24,8 +24,8 @@ from trading.config import Config, load_config
 from trading.paper_broker import FEE_RATE
 from trading.storage.db import Storage
 
-FEE_RATE_ESTIMATE = FEE_RATE  # 0.25% giá trị lệnh — mức phí của chủ dự án khi giao dịch
-# qua môi giới (xác nhận 04/10/2026); xem chú thích nguồn tại paper_broker.FEE_RATE.
+FEE_RATE_ESTIMATE = FEE_RATE  # 0.28% giá trị lệnh (0.25% môi giới + 0.03% phí trả Sở) — mức
+# phí của chủ dự án khi giao dịch qua môi giới (xác nhận 04/10/2026); xem paper_broker.FEE_RATE.
 # Vẫn là ƯỚC TÍNH cho account cụ thể (bậc GD khác có rate khác — chưa hỗ trợ),
 # KHÔNG PHẢI phí thật trả về từ SSI SDK
 # per-order (PlaceOrderResponse/Order chỉ có id/status/giá/số lượng, EquityPPMMR.fees

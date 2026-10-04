@@ -7,7 +7,7 @@ So sánh trực tiếp:
 4. Octopus + Combo Hybrid (Trailing Stop: 2.0x ATR).
 
 Trên 2 thị trường:
-- Chứng khoán VN: bars_daily (1.308 mã, T+2.5, Phí 0,25% (FEE_RATE — biểu phí SSI có nguồn),
+- Chứng khoán VN: bars_daily (1.308 mã, T+2.5, Phí FEE_RATE (0,28% từ 04/10/2026 = 0,25% môi giới + 0,03% phí trả Sở),
   Thuế 0,1%, Trượt giá 5bps, Lô 100).
 - Crypto Perpetual: bars_crypto (20 cặp, Khung 1D & 1H, T+0, Long & Short).
 

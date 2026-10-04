@@ -4,7 +4,7 @@
 - Rổ mã: Toàn bộ mã có trong bảng bars (SELECT DISTINCT symbol FROM bars ORDER BY symbol).
   Hỗ trợ cờ --symbols để lọc một tập con mã (ví dụ --symbols HII,IJC,AAA).
 - Dữ liệu: Bảng bars (nến 5m).
-- Chi phí: FEE_RATE (0.25%), SELL_TAX_RATE (0.1%), SLIPPAGE_BPS (5) từ trading.paper_broker.
+- Chi phí: FEE_RATE (0.28% từ 04/10/2026 = 0.25% môi giới + 0.03% phí trả Sở), SELL_TAX_RATE (0.1%), SLIPPAGE_BPS (5) từ trading.paper_broker.
 - Dùng lại: measure_symbol_5m từ scripts.measure_octopus_5m (TUYỆT ĐỐI không chép lại logic đo).
 - Thước đo danh mục: profit_factor, expectancy, max_drawdown, sharpe, portfolio_equity_curve từ trading.metrics.
 - Không áp exclusions.txt, không đọc config.yaml để lấy rổ mã.
