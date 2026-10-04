@@ -12,7 +12,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]
+dev = [
+    "arch>=7",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
 
 [tool.pytest.ini_options]
 markers = ["integration: cần Docker Postgres/NATS đang chạy"]
