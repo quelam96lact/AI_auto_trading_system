@@ -318,11 +318,11 @@ def test_5c_entry_status_bo_vi_tran_vi_volume_0_vi_thieu_nen_sau():
 
 def test_6_loi_nhuan_rong_tinh_tay_voi_hang_so_import():
     # vao 10.000, thoat 11.000; s = 5/10.000 = 0,0005
-    # tu so: 11.000 x (1 - 0,0025 - 0,001 - 0,0005) = 11.000 x 0,996 = 10.956 = 2 x 5.478
-    # mau so: 10.000 x (1 + 0,0025 + 0,0005)       = 10.000 x 1,003 = 10.030 = 2 x 5.015
-    # r_net = 5.478 / 5.015 - 1 = 0,092323030907... (phan so da rut gon, tinh tay)
-    assert (FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS) == (0.0025, 0.001, 5)
-    assert net_return(10_000.0, 11_000.0) == pytest.approx(5478 / 5015 - 1, abs=1e-15)
+    # tu so: 11.000 x (1 - 0,0028 - 0,001 - 0,0005) = 11.000 x 0,9957 = 10.952,7
+    # mau so: 10.000 x (1 + 0,0028 + 0,0005)       = 10.000 x 1,0033 = 10.033
+    # r_net = 10.952,7 / 10.033 - 1 = 109.527 / 100.330 - 1 = 0,0916674... (tinh tay)
+    assert (FEE_RATE, SELL_TAX_RATE, SLIPPAGE_BPS) == (0.0028, 0.001, 5)
+    assert net_return(10_000.0, 11_000.0) == pytest.approx(109527 / 100330 - 1, abs=1e-15)
     # loi nhuan gop phai khac (khong duoc tra ve so gop khi hoi so rong)
     assert net_return(10_000.0, 11_000.0) < 0.10
     assert net_return(10_000.0, 10_000.0) < 0.0
