@@ -121,3 +121,12 @@ Lưu ý: với dữ liệu chỉ có từ 25/09/2026, **cửa sổ ≥ 12 tháng
 - Lưới 1 phút và độ trễ 1 phút bỏ qua toàn bộ tín hiệu thang giây. Nếu có tín hiệu thật ở thang giây thì brief này **không thấy**, và cũng không giao dịch được với hạ tầng hiện tại. Đo thang giây là giả thuyết khác, tính vào ngân sách.
 - Bảng chi phí (phí, thuế TNCN) **chưa đối chiếu với bảng kê thật**. Chi phí sai lệch đổi ngưỡng ĐÁNG KỂ. Khi chủ dự án gửi bảng kê, đối chiếu **trước** khi chạy phép đo thật, và nếu mô hình phí đổi thì ghi vào nhật ký trước khi chạy (không phải sau).
 - Một IS ≈ 47 phiên, 9 cặp: sức mạnh thống kê vừa phải. Hiệu ứng nhỏ cỡ 0,1 điểm gần như không phân biệt được với 0, nên THIẾU SỨC MẠNH là kết cục có thật, không phải trường hợp hiếm.
+
+## 8. Sửa đổi trước khi thấy dữ liệu (08/10/2026, Claude)
+
+Chưa ai dựng bảng hay tính gì trên IS. Ba thay đổi, lý do chi tiết ở brief đợt 163 §1:
+1. **Lưới đủ 240 phút mỗi phiên.** Phút thiếu QUOTE giữ hàng với đặc trưng `None` (không xóa hàng); rho chỉ dùng cặp đủ giá trị. Nhờ vậy hoán vị §1.4 dùng `run_block_permutation_test(block_size_hours=240)` và mọi khối trùng đúng một phiên. Thay cho câu "loại khỏi mẫu" ở §1.1 về mặt cơ chế; tỷ lệ loại vẫn báo.
+2. **Biến đối chứng §1.4:** `ofi(t)` so với `mid_close(t) − mid_close(t−1)`, ngưỡng `CONTROL_MIN_RHO_TRUOC = 0.3`, qua `check_control_variable`. Trượt thì dừng, không in kết quả.
+3. **Công cụ dựng trước** trên dữ liệu tổng hợp (đợt 163); script tự từ chối chạy khi ngày ≤ 30/11/2026.
+
+Sự kiện: phiên **01/10/2026 không có file** (máy tắt cả phiên), mất vĩnh viễn. IS dự kiến còn khoảng 46 phiên.
