@@ -126,3 +126,30 @@ Tài liệu tham chiếu:
 - Phần ETF chỉ đóng góp +0,59 điểm trên tiền gửi ở r=9%. Trong IS, chính ETF (CAGR 2017–2022 = 9,22%, đợt 161) xấp xỉ bằng tiền gửi giả định.
 
 **Chưa làm:** phần niêm phong 2023-01-03 → 30/09/2026. Chờ chủ dự án xác nhận lãi suất tiền gửi tham chiếu, vì nếu r đổi thì phải mở niêm phong lần hai.
+
+## Cập nhật 08/10/2026: lãi suất tham chiếu 6% và mở niêm phong
+
+Chủ dự án chốt lãi suất tiền gửi tham chiếu **6%/năm** (spec mục H, brief §7). Thay đổi này đến **sau** khi đã thấy bảng IS với r = 9% ở trên, và trước khi mở niêm phong. Script đổi `MAIN_RATE = 0.06`, lưới r thêm 6%, cột ngưỡng thành CAGR ≥ 6%.
+
+**IS 2017–2022, r = 6%, tái cân bằng năm** (Claude tính lại độc lập ô w = 15% và w = 10%, khớp tới 0,01 điểm):
+
+| w | CAGR | MDD | Năm tệ | MDD ≤ 4,7% | MDD ≤ 7% | CAGR ≥ 6% |
+|---|---|---|---|---|---|---|
+| 5% | 6,37% | 0,93% | +4,02% | ĐẠT | ĐẠT | ĐẠT |
+| 10% | 6,72% | 2,84% | +2,06% | ĐẠT | ĐẠT | ĐẠT |
+| **15%** | **7,04%** | **4,79%** | +0,09% | **K.ĐẠT** | ĐẠT | ĐẠT |
+| 20% | 7,34% | 6,73% | −1,87% | K.ĐẠT | ĐẠT | ĐẠT |
+| 25% | 7,62% | 8,66% | −3,84% | K.ĐẠT | K.ĐẠT | ĐẠT |
+| 30% | 7,88% | 10,58% | −5,80% | K.ĐẠT | K.ĐẠT | ĐẠT |
+
+**Niêm phong 2023-01-03 → 30/09/2026** (930 phiên; mở đúng một lần lúc 14:40:54 08/10, log ở `docs/holdout-unlock-log.md`):
+
+| Cấu hình | CAGR | MDD | Năm tệ |
+|---|---|---|---|
+| w = 15%, năm, r = 6% | **8,30%** | **2,20%** | +3,06% |
+| w = 15%, năm, r = 0% | 3,20% | 2,90% | −0,73% |
+
+**Đọc kết quả:**
+- Với r = 6%, biến thể chính **trượt mốc MDD backtest 4,7% trên IS** (4,79%), dù đạt MDD 7% và CAGR 6%. Ở tập niêm phong, nó đạt cả ba ngưỡng, nhờ ETF giai đoạn 2023–2026 tốt hơn 2017–2022. Hai giai đoạn khác nhau nhiều; con số IS bảo thủ hơn.
+- **Mốc chuẩn cho mọi chiến lược về sau** (cùng giai đoạn, cùng chi phí): IS 2017–2022 **7,04% / MDD 4,79%**; 2023–09/2026 **8,30% / MDD 2,20%**. Một chiến lược muốn có giá trị phải thắng cả lãi lẫn MDD của mốc này trên cùng giai đoạn.
+- Phần ETF đóng góp so với tiền gửi thuần: +1,04 điểm (IS) và +2,30 điểm (niêm phong).

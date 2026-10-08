@@ -16,7 +16,7 @@ Thiết kế ĐĂNG KÝ TRƯỚC (chốt trong brief, KHÔNG chỉnh sau khi th�
   * Tiền gửi: không phí, không thuế lãi.
   * Cuối kỳ: trừ phí bán giả định phần ETF để so sánh với tiền mặt.
 - Lãi tiền gửi: lãi suất r, tính lãi kép theo ngày lịch: (1 + r) ** (số_ngày_lịch / 365).
-  * Chính: r = 9%. Độ nhạy: r ∈ {0%, 5%, 7%, 9%}.
+  * Chính: r = 6% (spec 08/10; ban đầu 9%). Độ nhạy: r ∈ {0%, 5%, 6%, 7%, 9%}.
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ HOLDOUT_END = date(2026, 9, 30)
 
 DEFAULT_WEIGHTS = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30)
 MAIN_WEIGHT = 0.15
-DEFAULT_RATES = (0.0, 0.05, 0.07, 0.09)
-MAIN_RATE = 0.09
+DEFAULT_RATES = (0.0, 0.05, 0.06, 0.07, 0.09)
+MAIN_RATE = 0.06  # spec hurdle 3, chủ dự án chốt 08/10/2026 (trước đó 0.09)
 MAIN_REBALANCE = "annual"
 
 SLIP = SLIPPAGE_BPS / 10_000.0
@@ -324,7 +324,7 @@ def summarize_mix(res: SimResult) -> dict[str, Any]:
         "avg_etf_weight": res.avg_etf_weight,
         "pass_mdd_4_7": mdd <= 0.047,
         "pass_mdd_7_0": mdd <= 0.070,
-        "pass_cagr_9_0": c >= 0.090 if not math.isnan(c) else False,
+        "pass_cagr_hurdle": c >= MAIN_RATE if not math.isnan(c) else False,
     }
 
 
@@ -351,7 +351,7 @@ def _append_holdout_log(log_path: Path, symbol: str) -> None:
     now_str = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
     entry = (
         f"| {now_str} | Mốc chuẩn ETF + tiền gửi (đợt 165) | "
-        f"w=15%, rebalance=annual, r=9% & r=0% | "
+        f"w=15%, rebalance=annual, r=6% & r=0% | "
         f"Đánh giá mốc chuẩn tham chiếu trên tập niêm phong sau khi audit IS ({symbol}) |\n"
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -402,7 +402,7 @@ def print_main_table(summaries: list[dict[str, Any]]) -> None:
     print(
         f"{'w':<6} {'Tái cân bằng':<14} {'CAGR':>8} {'Vượt r':>8} {'MDD':>8} "
         f"{'MDD năm tệ':>12} {'Năm tệ':>8} {'GD':>4} {'Tổng phí':>9} "
-        f"{'MDD<=4.7%':>10} {'MDD<=7%':>8} {'CAGR>=9%':>9}"
+        f"{'MDD<=4.7%':>10} {'MDD<=7%':>8} {'CAGR>=6%':>9}"
     )
     print("-" * 115)
     for s in summaries:
@@ -414,14 +414,14 @@ def print_main_table(summaries: list[dict[str, Any]]) -> None:
             f"{fmt_pct(s['worst_year_return']):>8} {int(s['n_trades']):>4} "
             f"{s['total_cost_pct']*100:>8.3f}% "
             f"{fmt_pass(s['pass_mdd_4_7']):>10} {fmt_pass(s['pass_mdd_7_0']):>8} "
-            f"{fmt_pass(s['pass_cagr_9_0']):>9}"
+            f"{fmt_pass(s['pass_cagr_hurdle']):>9}"
         )
 
 
 def print_sensitivity_table(summaries: list[dict[str, Any]]) -> None:
     print(
         f"{'w':<6} {'r':>6} {'CAGR':>8} {'Vượt r':>8} {'MDD':>8} "
-        f"{'Năm tệ':>8} {'MDD<=4.7%':>10} {'MDD<=7%':>8} {'CAGR>=9%':>9}"
+        f"{'Năm tệ':>8} {'MDD<=4.7%':>10} {'MDD<=7%':>8} {'CAGR>=6%':>9}"
     )
     print("-" * 75)
     for s in summaries:
@@ -431,14 +431,14 @@ def print_sensitivity_table(summaries: list[dict[str, Any]]) -> None:
             f"{w_str:<6} {r_str:>6} {fmt_pct(s['cagr']):>8} {fmt_pct(s['excess']):>8} "
             f"{fmt_pct(s['mdd']):>8} {fmt_pct(s['worst_year_return']):>8} "
             f"{fmt_pass(s['pass_mdd_4_7']):>10} {fmt_pass(s['pass_mdd_7_0']):>8} "
-            f"{fmt_pass(s['pass_cagr_9_0']):>9}"
+            f"{fmt_pass(s['pass_cagr_hurdle']):>9}"
         )
 
 
 def print_yearly_breakdown(res_main: SimResult, r: float = MAIN_RATE) -> None:
     y_tab = yearly_table(res_main)
     print(
-        f"{'Năm':<6} {'Lợi nhuận':>12} {'Tiền gửi (r=9%)':>16} {'Chênh lệch':>12} {'MDD trong năm':>14}"
+        f"{'Năm':<6} {'Lợi nhuận':>12} {'Tiền gửi (r=6%)':>16} {'Chênh lệch':>12} {'MDD trong năm':>14}"
     )
     print("-" * 64)
     for y, ret in y_tab:
@@ -511,8 +511,8 @@ def main(argv: list[str] | None = None) -> int:
         print_sensitivity_table(hold)
         return 0
 
-    # 1. Bảng chính: w ∈ {5%, 10%, 15%, 20%, 25%, 30%} × {annual, none} với r = 9%
-    print("## 1. BẢNG CHÍNH: CÁC TỔ HỢP w × TÁI CÂN BẰNG (r = 9% CỐ ĐỊNH)")
+    # 1. Bảng chính: w ∈ {5%, 10%, 15%, 20%, 25%, 30%} × {annual, none} với r = 6%
+    print("## 1. BẢNG CHÍNH: CÁC TỔ HỢP w × TÁI CÂN BẰNG (r = 6% CỐ ĐỊNH)")
     main_summaries = []
     main_res_instance = None
     for reb in ("annual", "none"):
@@ -525,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     print_main_table(main_summaries)
     print()
 
-    # 2. Bảng độ nhạy: w × r (r ∈ {0%, 5%, 7%, 9%}) với tái cân bằng hàng năm
+    # 2. Bảng độ nhạy: w × r (r ∈ {0%, 5%, 6%, 7%, 9%}) với tái cân bằng hàng năm
     print("## 2. BẢNG ĐỘ NHẠY THEO LÃI SUẤT TIỀN GỬI r (TÁI CÂN BẰNG HÀNG NĂM)")
     sens_summaries = []
     for r in DEFAULT_RATES:
@@ -536,10 +536,10 @@ def main(argv: list[str] | None = None) -> int:
     print_sensitivity_table(sens_summaries)
     print()
 
-    # 3. Bảng chi tiết từng năm cho biến thể chính (w = 15%, annual, r = 9%)
+    # 3. Bảng chi tiết từng năm cho biến thể chính (w = 15%, annual, r = 6%)
     if main_res_instance is not None:
         print(
-            "## 3. CHI TIẾT TỪNG NĂM CỦA BIẾN THỂ CHÍNH (w = 15%, TÁI CÂN BẰNG HÀNG NĂM, r = 9%)"
+            "## 3. CHI TIẾT TỪNG NĂM CỦA BIẾN THỂ CHÍNH (w = 15%, TÁI CÂN BẰNG HÀNG NĂM, r = 6%)"
         )
         print_yearly_breakdown(main_res_instance, r=MAIN_RATE)
         print()

@@ -108,3 +108,10 @@ uv run ruff check trading tests scripts
 - Tự tính lại độc lập ít nhất một ô (biến thể chính, `r = 9%`).
 - Chạy phần niêm phong đúng một lần cho hai cấu hình ở §1.6, ghi log.
 - Ghi kết quả vào spec như mốc chuẩn tham chiếu, commit, push.
+
+## 7. Sửa đổi trước khi mở niêm phong (08/10/2026, Claude, theo quyết định chủ dự án)
+
+Chủ dự án chốt lãi suất tiền gửi tham chiếu **6%/năm** (spec mục H). Thay đổi này đến **sau** khi đã thấy kết quả IS với r = 9%, và **trước** khi mở niêm phong.
+- Lưới r ở IS: {0%, 5%, **6%**, 7%, 9%}. Mức chính: **r = 6%**. Ngưỡng CAGR trong bảng: ≥ 6%.
+- §1.6 thay bằng: phần niêm phong chỉ cho **w = 15%, tái cân bằng năm, r = 6% và r = 0%**. Mở đúng một lần.
+- Bảng IS r = 9% cũ vẫn giữ trong báo cáo, không xóa.
