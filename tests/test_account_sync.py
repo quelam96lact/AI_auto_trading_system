@@ -209,12 +209,12 @@ async def test_sync_account_data_isolates_failing_account(monkeypatch):
 
     calls = {"balance": [], "positions": []}
 
-    async def fake_balance(auth, client_id, account_no, ts, storage):
+    async def fake_balance(auth, client_id, account_no, ts, storage, *args, **kwargs):
         calls["balance"].append(account_no)
         if account_no == "ACC_BAD":
             raise RuntimeError("parse boom")
 
-    async def fake_positions(portfolio, account_no, ts, storage):
+    async def fake_positions(portfolio, account_no, ts, storage, *args, **kwargs):
         calls["positions"].append(account_no)
 
     monkeypatch.setattr(account_sync, "_sync_balance", fake_balance)
@@ -862,19 +862,20 @@ async def test_b1_sudden_empty_positions_not_written_first_time():
 
 @pytest.mark.asyncio
 async def test_b2_sudden_empty_confirmed_on_second_sync():
-    """b2: lần đầu pending, lần thứ hai vẫn None -> ghi + record_position_sync + WARN xác nhận."""
+    """b2: trong phiên, lần đầu pending, lần thứ hai vẫn None -> ghi + record_position_sync + WARN xác nhận."""
     _reset_confirm1()
     from trading.calendar_vn import TZ as _TZ
     alerts = []
     storage = FakeStorage()
     storage._prev_positions["ACC"] = {"HPG": object(), "VCB": object()}
-    ts = datetime(2026, 9, 28, 23, 18, tzinfo=_TZ)
+    ts1 = datetime(2026, 9, 28, 10, 0, tzinfo=_TZ)
+    ts2 = datetime(2026, 9, 28, 10, 5, tzinfo=_TZ)
     _orig = _acct_sync_mod.alert
     _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
     try:
-        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts1, storage)
         assert storage.position_calls == []
-        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts, storage)
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", ts2, storage)
     finally:
         _acct_sync_mod.alert = _orig
     assert len(storage.position_calls) == 1, "b2: lần 2 phải ghi vị thế rỗng"
@@ -1011,3 +1012,248 @@ async def test_b_break3_only_one_zero_field_must_not_be_blocked():
         "cid", "ACC", datetime(2026, 9, 28, 23, 0, tzinfo=_TZ), storage,
     )
     assert len(storage.balance_calls) == 1, "B3: withdrawable=0 thật không phải CONFIRM-1"
+
+
+# =============================================================================
+# CONFIRM-1 Brief 164 tests: Cửa sổ xác nhận 09:00 - 15:30 ngày giao dịch
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_confirm1_night_empty_positions_reproduced_30_09():
+    """Test 1 (Tái hiện 30/09 danh mục):
+    01:40 rỗng -> không ghi, có WARN đặt cờ.
+    01:45 rỗng -> VẪN KHÔNG GHI (ngoài giờ), không phát WARN mới, cờ vẫn giữ.
+    01:50 có lại 6 mã -> ghi 6 mã, cờ đã xóa.
+    """
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_positions["0434226"] = {s: object() for s in ["HPG", "VCB", "MBB", "TCB", "BID", "VHM"]}
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        # Nhịp 01:40
+        t1 = datetime(2026, 9, 30, 1, 40, tzinfo=_TZ)
+        await account_sync._sync_positions(_fake_portfolio_none(), "0434226", t1, storage)
+        assert storage.position_calls == []
+        assert storage.sync_recorded == []
+        warns_1 = [msg for lvl, msg in alerts if lvl == "WARN"]
+        assert len(warns_1) == 1
+        assert "CONFIRM-1" in warns_1[0]
+        assert _acct_sync_mod._pending_empty_positions.get("0434226") is True
+
+        # Nhịp 01:45 (vẫn rỗng, ngoài giờ giao dịch) -> KHÔNG ghi, KHÔNG thêm WARN mới, cờ vẫn giữ
+        t2 = datetime(2026, 9, 30, 1, 45, tzinfo=_TZ)
+        await account_sync._sync_positions(_fake_portfolio_none(), "0434226", t2, storage)
+        assert storage.position_calls == []
+        assert storage.sync_recorded == []
+        warns_2 = [msg for lvl, msg in alerts if lvl == "WARN"]
+        assert len(warns_2) == 1, "Không được phát WARN mới ngoài giờ giao dịch"
+        assert _acct_sync_mod._pending_empty_positions.get("0434226") is True
+
+        # Nhịp 01:50 (có lại 6 mã) -> ghi 6 mã, cờ xóa
+        t3 = datetime(2026, 9, 30, 1, 50, tzinfo=_TZ)
+        await account_sync._sync_positions(_fake_portfolio_with("HPG", "VCB", "MBB", "TCB", "BID", "VHM"), "0434226", t3, storage)
+        assert len(storage.position_calls) == 1
+        assert len(storage.position_calls[0][2]) == 6
+        assert len(storage.sync_recorded) == 1
+        assert not _acct_sync_mod._pending_empty_positions.get("0434226")
+    finally:
+        _acct_sync_mod.alert = _orig
+
+
+@pytest.mark.asyncio
+async def test_confirm1_night_zero_balance_reproduced_30_09():
+    """Test 2 (Tái hiện 30/09 số dư):
+    01:40 ba trường = 0 -> không ghi, có WARN đặt cờ.
+    01:45 ba trường = 0 -> VẪN KHÔNG GHI (ngoài giờ), không phát WARN mới, cờ vẫn giữ.
+    01:50 số dư bình thường -> ghi bình thường, cờ đã xóa.
+    """
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_balance = (500000.0, 31000000.0)
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        # Nhịp 01:40
+        t1 = datetime(2026, 9, 30, 1, 40, tzinfo=_TZ)
+        await account_sync._sync_balance(_fake_auth_balance(0, 0, 0), "cid", "0434226", t1, storage)
+        assert storage.balance_calls == []
+        warns_1 = [msg for lvl, msg in alerts if lvl == "WARN"]
+        assert len(warns_1) == 1
+        assert "CONFIRM-1" in warns_1[0]
+        assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+
+        # Nhịp 01:45
+        t2 = datetime(2026, 9, 30, 1, 45, tzinfo=_TZ)
+        await account_sync._sync_balance(_fake_auth_balance(0, 0, 0), "cid", "0434226", t2, storage)
+        assert storage.balance_calls == []
+        warns_2 = [msg for lvl, msg in alerts if lvl == "WARN"]
+        assert len(warns_2) == 1, "Không được phát WARN mới ngoài giờ giao dịch"
+        assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+
+        # Nhịp 01:50
+        t3 = datetime(2026, 9, 30, 1, 50, tzinfo=_TZ)
+        await account_sync._sync_balance(_fake_auth_balance(500000, 31000000, 500000), "cid", "0434226", t3, storage)
+        assert len(storage.balance_calls) == 1
+        assert storage.balance_calls[0]["account_balance"] == 500000.0
+        assert not _acct_sync_mod._pending_zero_balance.get("0434226")
+    finally:
+        _acct_sync_mod.alert = _orig
+
+
+@pytest.mark.asyncio
+async def test_confirm1_in_session_confirmed_on_second_sync():
+    """Test 3 (Trong phiên): 10:00 rỗng, 10:05 rỗng -> ghi rỗng ở 10:05."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object(), "VCB": object()}
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        t1 = datetime(2026, 9, 28, 10, 0, tzinfo=_TZ)
+        t2 = datetime(2026, 9, 28, 10, 5, tzinfo=_TZ)
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t1, storage)
+        assert storage.position_calls == []
+        await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t2, storage)
+    finally:
+        _acct_sync_mod.alert = _orig
+    assert len(storage.position_calls) == 1
+    assert storage.position_calls[0][2] == []
+    assert len(storage.sync_recorded) == 1
+    assert any("xác nhận" in msg for _, msg in alerts)
+
+
+@pytest.mark.asyncio
+async def test_confirm1_window_boundary():
+    """Test 4 (Biên cửa sổ 15:30):
+    - Chờ từ 15:25, nhịp 15:30 rỗng -> XÁC NHẬN (15:30 còn trong cửa sổ).
+    - Chờ từ 15:30, nhịp 15:35 rỗng -> KHÔNG XÁC NHẬN (15:35 ngoài cửa sổ).
+    """
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    # Kịch bản A: 15:25 -> 15:30 (xác nhận)
+    storage_a = FakeStorage()
+    storage_a._prev_positions["ACC"] = {"HPG": object()}
+    t_1525 = datetime(2026, 9, 28, 15, 25, tzinfo=_TZ)
+    t_1530 = datetime(2026, 9, 28, 15, 30, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_1525, storage_a)
+    assert storage_a.position_calls == []
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_1530, storage_a)
+    assert len(storage_a.position_calls) == 1, "15:30 phải được xác nhận"
+
+    # Kịch bản B: 15:30 -> 15:35 (không xác nhận)
+    _reset_confirm1()
+    storage_b = FakeStorage()
+    storage_b._prev_positions["ACC"] = {"HPG": object()}
+    t_1535 = datetime(2026, 9, 28, 15, 35, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_1530, storage_b)
+    assert storage_b.position_calls == []
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_1535, storage_b)
+    assert storage_b.position_calls == [], "15:35 ngoài cửa sổ -> KHÔNG được xác nhận"
+
+
+@pytest.mark.asyncio
+async def test_confirm1_holidays_and_weekends_blocked():
+    """Test 5 (Ngày nghỉ):
+    - Ngày lễ trong holidays (ví dụ 2026-09-01 Thứ Ba), 10:00 -> 10:05 rỗng -> KHÔNG ghi.
+    - Thứ Bảy (2026-10-03), 10:00 -> 10:05 rỗng -> KHÔNG ghi.
+    """
+    _reset_confirm1()
+    from datetime import date as _date
+
+    from trading.calendar_vn import TZ as _TZ
+
+    holidays = frozenset({_date(2026, 9, 1), _date(2026, 9, 2)})
+
+    # Ngày lễ Thứ Ba
+    storage_holiday = FakeStorage()
+    storage_holiday._prev_positions["ACC"] = {"HPG": object()}
+    t_hol1 = datetime(2026, 9, 1, 10, 0, tzinfo=_TZ)
+    t_hol2 = datetime(2026, 9, 1, 10, 5, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_hol1, storage_holiday, holidays=holidays)
+    assert storage_holiday.position_calls == []
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_hol2, storage_holiday, holidays=holidays)
+    assert storage_holiday.position_calls == [], "Ngày lễ 10:05 -> KHÔNG được ghi"
+
+    # Thứ Bảy
+    _reset_confirm1()
+    storage_sat = FakeStorage()
+    storage_sat._prev_positions["ACC"] = {"HPG": object()}
+    t_sat1 = datetime(2026, 10, 3, 10, 0, tzinfo=_TZ)
+    t_sat2 = datetime(2026, 10, 3, 10, 5, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_sat1, storage_sat, holidays=holidays)
+    assert storage_sat.position_calls == []
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_sat2, storage_sat, holidays=holidays)
+    assert storage_sat.position_calls == [], "Thứ Bảy 10:05 -> KHÔNG được ghi"
+
+
+@pytest.mark.asyncio
+async def test_confirm1_overnight_confirmed_at_0900_next_trading_day():
+    """Test 6 (Qua đêm):
+    - Chờ từ 01:40 (đặt cờ), các nhịp đêm 01:45, 02:00, 08:55 không ghi.
+    - Nhịp 09:00 ngày giao dịch (2026-09-30) vẫn rỗng -> XÁC NHẬN GHI.
+    """
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_positions["ACC"] = {"HPG": object()}
+
+    # Các nhịp đêm: 01:40 (lần đầu đặt cờ), 01:45, 02:00 (vẫn ngoài giờ, giữ cờ, không ghi)
+    t_0140 = datetime(2026, 9, 30, 1, 40, tzinfo=_TZ)
+    t_0145 = datetime(2026, 9, 30, 1, 45, tzinfo=_TZ)
+    t_0200 = datetime(2026, 9, 30, 2, 0, tzinfo=_TZ)
+    t_0900 = datetime(2026, 9, 30, 9, 0, tzinfo=_TZ)
+
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_0140, storage)
+    assert storage.position_calls == []
+    assert _acct_sync_mod._pending_empty_positions.get("ACC") is True
+
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_0145, storage)
+    assert storage.position_calls == []
+    assert _acct_sync_mod._pending_empty_positions.get("ACC") is True
+
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_0200, storage)
+    assert storage.position_calls == []
+    assert _acct_sync_mod._pending_empty_positions.get("ACC") is True
+
+    # Nhịp 09:00 đúng ngày giao dịch -> xác nhận ghi
+    await account_sync._sync_positions(_fake_portfolio_none(), "ACC", t_0900, storage)
+    assert len(storage.position_calls) == 1, "09:00 ngày giao dịch -> phải xác nhận ghi"
+    assert not _acct_sync_mod._pending_empty_positions.get("ACC")
+
+
+@pytest.mark.asyncio
+async def test_confirm1_always_empty_account_writes_immediately_at_night():
+    """Test 7 (Tài khoản vốn rỗng): snapshot trước rỗng, nhịp 01:45 rỗng -> ghi ngay (SYNC-1)."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    # Không có prev_positions (mặc định rỗng)
+    ts = datetime(2026, 9, 30, 1, 45, tzinfo=_TZ)
+    await account_sync._sync_positions(_fake_portfolio_none(), "0434221", ts, storage)
+    assert storage.position_calls == [("0434221", ts, [])]
+    assert storage.sync_recorded == [("0434221", ts)]
+
+
+@pytest.mark.asyncio
+async def test_confirm1_single_zero_field_margin_writes_at_night():
+    """Test 8 (Số dư một trường = 0): withdrawable=0 thật của tài khoản margin lúc 01:45 -> ghi ngay."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+    storage = FakeStorage()
+    storage._prev_balance = (0.0, 31000000.0)
+    ts = datetime(2026, 9, 30, 1, 45, tzinfo=_TZ)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-31000000, total_debt=31000000, withdrawable=0),
+        "cid", "0434226", ts, storage,
+    )
+    assert len(storage.balance_calls) == 1
+    assert storage.balance_calls[0]["withdrawable"] == 0.0
+    assert storage.balance_calls[0]["total_debt"] == 31000000.0

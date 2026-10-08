@@ -1,9 +1,9 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from ssi_sdk.constant import EP_ACCOUNT_BALANCE
 
 from trading.alerts import alert
-from trading.calendar_vn import TZ, trading_days_between
+from trading.calendar_vn import TZ, is_trading_day, trading_days_between
 from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
 from trading.config import Config
 from trading.real_order_reconcile import decide_update
@@ -18,6 +18,18 @@ _alerted_unmatched_fills: set[tuple[int, date]] = set()
 # về {} trước khi chạy để đảm bảo độc lập giữa các test.
 _pending_empty_positions: dict[str, bool] = {}   # account_no -> True khi đang chờ
 _pending_zero_balance: dict[str, bool] = {}       # account_no -> True khi đang chờ
+
+CONFIRM_WINDOW_START = time(9, 0)
+CONFIRM_WINDOW_END = time(15, 30)
+
+
+def _is_in_confirmation_window(ts: datetime, holidays: set[date] | frozenset = frozenset()) -> bool:
+    """Kiểm tra ts có nằm trong cửa sổ xác nhận CONFIRM-1 (ngày giao dịch, 09:00 - 15:30 tính cả 2 đầu)."""
+    ts_vn = ts.astimezone(TZ)
+    if not is_trading_day(ts_vn.date(), holidays):
+        return False
+    t = ts_vn.time()
+    return CONFIRM_WINDOW_START <= t <= CONFIRM_WINDOW_END
 
 
 async def sync_account_data(cfg: Config, storage: Storage) -> None:
@@ -39,8 +51,8 @@ async def sync_account_data(cfg: Config, storage: Storage) -> None:
             # position. Alert WARN nêu rõ account_no nao roi continue (tang
             # kha nang quan sat, khong phai nuot loi).
             try:
-                await _sync_balance(auth, client_id, account_no, now, storage)
-                await _sync_positions(portfolio, account_no, now, storage)
+                await _sync_balance(auth, client_id, account_no, now, storage, cfg.holidays)
+                await _sync_positions(portfolio, account_no, now, storage, cfg.holidays)
                 # MARGIN-1 (phan 1): thu thap + tinh, CHUA noi vao duong dat lenh.
                 # Suc mua theo tung ma trong cfg.symbols (trần cứng — phan 2).
                 await _sync_buying_power(trading, account_no, now, cfg.symbols, storage)
@@ -73,7 +85,10 @@ def _find_missing_balance_fields(equity: dict) -> list[str]:
     return missing
 
 
-async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, storage: Storage) -> None:
+async def _sync_balance(
+    auth, client_id: str, account_no: str, ts: datetime, storage: Storage,
+    holidays: set[date] | frozenset = frozenset(),
+) -> None:
     raw = await auth.rest_client.get(
         EP_ACCOUNT_BALANCE,
         params={"clientId": client_id, "accountNo": account_no},
@@ -95,11 +110,11 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
     total_debt = float(equity["totalDebt"])
     withdrawable = float(equity["withdrawable"])
 
-    # CONFIRM-1 (Phần B, đợt 124): cả ba trường = 0 đồng thời là dấu hiệu bảo trì SSI
+    # CONFIRM-1 (Phần B, đợt 124 & đợt 164): cả ba trường = 0 đồng thời là dấu hiệu bảo trì SSI
     # (đo được 14 lần trong lịch sử, luôn cả hai tài khoản cùng lúc, không thể thật).
     # Điều kiện bắt: CẢ BA = 0 (không phải bất kỳ một trường = 0 — b7: withdrawable=0
     # thật cho tài khoản margin, không được bắt nhầm).
-    # Áp quy tắc xác nhận hai lần tương tự _sync_positions.
+    # Áp quy tắc xác nhận hai lần tương tự _sync_positions: chỉ xác nhận trong cửa sổ giao dịch.
     if acct_bal == 0.0 and total_debt == 0.0 and withdrawable == 0.0:
         prev_bal = storage.read_account_balance_with_debt(account_no)
         prev_nonzero = prev_bal is not None and (prev_bal[0] != 0.0 or prev_bal[1] != 0.0)
@@ -113,6 +128,13 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
                 )
                 return  # KHÔNG ghi
             else:
+                if not _is_in_confirmation_window(ts, holidays):
+                    alert(
+                        "INFO",
+                        "CONFIRM-1: số dư cả ba trường vẫn = 0 ngoài cửa sổ giao dịch, tiếp tục chờ",
+                        account_no=account_no,
+                    )
+                    return  # KHÔNG ghi
                 _pending_zero_balance.pop(account_no, None)
                 alert(
                     "WARN",
@@ -135,7 +157,10 @@ async def _sync_balance(auth, client_id: str, account_no: str, ts: datetime, sto
     )
 
 
-async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Storage) -> None:
+async def _sync_positions(
+    portfolio, account_no: str, ts: datetime, storage: Storage,
+    holidays: set[date] | frozenset = frozenset(),
+) -> None:
     positions = await portfolio.get_equity_positions(account_no)
     # SDK docstring (portfolio.py:330-331): "absent or empty sections yield
     # None for that side" — annotation `-> list[EquityPosition]` sai voi
@@ -152,12 +177,14 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
         for p in positions
     ]
 
-    # CONFIRM-1 (Phần B, đợt 124): chặn "rỗng đột ngột" do bảo trì SSI.
+    # CONFIRM-1 (Phần B, đợt 124 & đợt 164): chặn "rỗng đột ngột" do bảo trì SSI.
     # Chỉ hoãn khi danh mục mới rỗng VÀ snapshot gần nhất không rỗng.
     # Tài khoản luôn rỗng (0434221): prev_positions rỗng -> ghi ngay (SYNC-1).
     # Cái giá: bán sạch thật -> ghi chậm 1 nhịp (~5 phút). Trong 5 phút,
     # nếu engine sinh lệnh SELL thì SSI từ chối (không có cổ phiếu) -> an toàn.
     # Ngược lại, rỗng giả trong phiên làm NAV âm, cổng vốn chặn BUY -> tai hại.
+    # Đợt 164: Ngoài giờ giao dịch (hoặc ngày nghỉ/cuối tuần), chuyển từ "có cổ phiếu"
+    # sang "rỗng" không thể là thật -> chỉ XÁC NHẬN trong cửa sổ 09:00 - 15:30 ngày giao dịch.
     if not rows:
         prev_positions = storage.read_real_positions(account_no)
         if prev_positions:
@@ -173,7 +200,14 @@ async def _sync_positions(portfolio, account_no: str, ts: datetime, storage: Sto
                 )
                 return  # KHÔNG ghi, KHÔNG gọi record_position_sync
             else:
-                # Lần thứ hai liên tiếp rỗng: xác nhận thật, ghi bình thường
+                if not _is_in_confirmation_window(ts, holidays):
+                    alert(
+                        "INFO",
+                        "CONFIRM-1: danh mục vẫn rỗng ngoài cửa sổ giao dịch, tiếp tục chờ",
+                        account_no=account_no,
+                    )
+                    return  # KHÔNG ghi, KHÔNG gọi record_position_sync
+                # Lần thứ hai liên tiếp rỗng trong cửa sổ giao dịch: xác nhận thật, ghi bình thường
                 _pending_empty_positions.pop(account_no, None)
                 alert(
                     "WARN",
