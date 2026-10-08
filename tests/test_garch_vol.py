@@ -50,7 +50,7 @@ def _iid_returns(n: int, sigma: float = 0.02, seed: int = 7) -> list[float]:
 
 
 def test_forecast_recovers_volatility_level():
-    s = forecast_sigma(_iid_returns(800), min_obs=500)
+    s = forecast_sigma(_iid_returns(300), min_obs=200)
     assert s is not None
     assert 0.015 < s < 0.026
 

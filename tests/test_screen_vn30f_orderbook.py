@@ -492,6 +492,7 @@ def test_main_niem_phong_du_dieu_kien_ghi_log_truoc_doc_holdout_sau(tmp_path):
         patch("scripts.screen_vn30f_orderbook._write_holdout_log", side_effect=spy_write_log),
         patch("scripts.screen_vn30f_orderbook.build_minute_features", side_effect=spy_build_minute_features),
         patch("scripts.screen_vn30f_orderbook.evaluate_pairs") as mock_eval,
+        patch("scripts.screen_vn30f_orderbook._evaluate_holdout_pair") as mock_holdout_eval,
     ):
         mock_eval.return_value = {
             "imb_top5_fwd_5": {
@@ -508,6 +509,17 @@ def test_main_niem_phong_du_dieu_kien_ghi_log_truoc_doc_holdout_sau(tmp_path):
                 "hurdle": 0.735,
                 "label": "ĐÁNG KỂ",
             }
+        }
+        mock_holdout_eval.return_value = {
+            "feature": "imb_top5",
+            "horizon": 5,
+            "rho": 0.25,
+            "p_value": 0.01,
+            "mean_m": 1.5,
+            "roundtrip_cost": 0.49,
+            "hurdle": 0.735,
+            "passed": True,
+            "label": "ĐÁNG KỂ",
         }
         rc = main(
             today=date(2026, 12, 1),

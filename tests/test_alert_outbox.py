@@ -149,8 +149,16 @@ def test_khoi_dong_lai_gui_nhung_tin_con_ton(tmp_path):
 def test_qua_200_tin_bo_tin_cu_nhat_va_lan_gui_ke_tiep_co_dong_da_bo(tmp_path):
     net = FakeNet()
     net.up = False
+    lines = [
+        json.dumps(
+            {"emitted_at": "2026-10-02T00:00:00+00:00", "text": f"[WARN] t{i}"},
+            ensure_ascii=False,
+        )
+        for i in range(200)
+    ]
+    _file(tmp_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     box = _box(tmp_path, net)
-    for i in range(203):
+    for i in range(200, 203):
         box.enqueue(f"[WARN] t{i}")
     assert len(_lines(tmp_path)) == 200
     assert json.loads(_lines(tmp_path)[0])["text"] == "[WARN] t3"

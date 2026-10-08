@@ -11,6 +11,7 @@ một dòng khai báo cho script đã thuộc nhóm 1 hoặc 2, hoặc cho file 
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
@@ -38,13 +39,14 @@ def _sched_text() -> str:
     return (SCRIPTS / "sched.sh").read_text(encoding="utf-8", errors="replace")
 
 
-def _tests_texts() -> list[str]:
+@functools.lru_cache(maxsize=1)
+def _tests_combined_text() -> str:
     out = []
     for p in (REPO / "tests").rglob("*.py"):
         if p.resolve() == THIS_FILE:
             continue
         out.append(p.read_text(encoding="utf-8", errors="replace"))
-    return out
+    return "\n\x00\n".join(out)
 
 
 def _declared_rows() -> dict[str, tuple[str, str]]:
@@ -67,12 +69,15 @@ def _declared_rows() -> dict[str, tuple[str, str]]:
     return rows
 
 
+@functools.lru_cache(maxsize=1)
 def _groups() -> tuple[set[str], set[str], set[str]]:
     sched = _sched_text()
-    tests = _tests_texts()
+    combined_tests = _tests_combined_text()
+    test_words = set(re.findall(r"[A-Za-z0-9_]+", combined_tests))
+    sched_words = set(re.findall(r"[A-Za-z0-9_]+", sched))
     names = _convention_scripts()
-    in_sched = {n for n in names if _word(n).search(sched)}
-    in_tests = {n for n in names if any(_word(n).search(t) for t in tests)}
+    in_sched = {n for n in names if n in sched_words}
+    in_tests = {n for n in names if n in test_words}
     declared = set(_declared_rows())
     return in_sched, in_tests, declared
 
