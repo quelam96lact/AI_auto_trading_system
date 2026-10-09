@@ -154,6 +154,15 @@ async def _sync_balance(
         withdrawable=withdrawable,
         buy_unmatched=float(equity.get("buyUnmatched") or 0),
         sell_unmatched=float(equity.get("sellUnmatched") or 0),
+        buy_t0=float(equity.get("buyT0") or 0),
+        buy_t1=float(equity.get("buyT1") or 0),
+        buy_t2=float(equity.get("buyT2") or 0),
+        sell_t0=float(equity.get("sellT0") or 0),
+        sell_t1=float(equity.get("sellT1") or 0),
+        sell_t2=float(equity.get("sellT2") or 0),
+        advanced_cash_t0=float(equity.get("advancedCashT0") or 0),
+        advanced_cash_t1=float(equity.get("advancedCashT1") or 0),
+        dividend_cash=float(equity.get("dividend") or 0),
     )
 
 

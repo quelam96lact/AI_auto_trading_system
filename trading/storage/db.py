@@ -470,16 +470,30 @@ class Storage:
         withdrawable: float,
         buy_unmatched: float,
         sell_unmatched: float,
+        buy_t0: float = 0.0,
+        buy_t1: float = 0.0,
+        buy_t2: float = 0.0,
+        sell_t0: float = 0.0,
+        sell_t1: float = 0.0,
+        sell_t2: float = 0.0,
+        advanced_cash_t0: float = 0.0,
+        advanced_cash_t1: float = 0.0,
+        dividend_cash: float = 0.0,
     ) -> None:
         with self.conn() as c:
             c.execute(
                 "INSERT INTO account_balance_snapshot "
-                "(account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "(account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched, "
+                "buy_t0, buy_t1, buy_t2, sell_t0, sell_t1, sell_t2, advanced_cash_t0, advanced_cash_t1, dividend_cash) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (account_no, ts) DO UPDATE SET "
                 "account_balance = EXCLUDED.account_balance, total_debt = EXCLUDED.total_debt, "
                 "withdrawable = EXCLUDED.withdrawable, buy_unmatched = EXCLUDED.buy_unmatched, "
-                "sell_unmatched = EXCLUDED.sell_unmatched",
+                "sell_unmatched = EXCLUDED.sell_unmatched, "
+                "buy_t0 = EXCLUDED.buy_t0, buy_t1 = EXCLUDED.buy_t1, buy_t2 = EXCLUDED.buy_t2, "
+                "sell_t0 = EXCLUDED.sell_t0, sell_t1 = EXCLUDED.sell_t1, sell_t2 = EXCLUDED.sell_t2, "
+                "advanced_cash_t0 = EXCLUDED.advanced_cash_t0, advanced_cash_t1 = EXCLUDED.advanced_cash_t1, "
+                "dividend_cash = EXCLUDED.dividend_cash",
                 (
                     account_no,
                     ts,
@@ -488,6 +502,15 @@ class Storage:
                     withdrawable,
                     buy_unmatched,
                     sell_unmatched,
+                    buy_t0,
+                    buy_t1,
+                    buy_t2,
+                    sell_t0,
+                    sell_t1,
+                    sell_t2,
+                    advanced_cash_t0,
+                    advanced_cash_t1,
+                    dividend_cash,
                 ),
             )
 

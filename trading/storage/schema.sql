@@ -128,8 +128,26 @@ CREATE TABLE IF NOT EXISTS account_balance_snapshot (
   withdrawable double precision NOT NULL,
   buy_unmatched double precision NOT NULL,
   sell_unmatched double precision NOT NULL,
+  buy_t0 double precision NOT NULL DEFAULT 0,
+  buy_t1 double precision NOT NULL DEFAULT 0,
+  buy_t2 double precision NOT NULL DEFAULT 0,
+  sell_t0 double precision NOT NULL DEFAULT 0,
+  sell_t1 double precision NOT NULL DEFAULT 0,
+  sell_t2 double precision NOT NULL DEFAULT 0,
+  advanced_cash_t0 double precision NOT NULL DEFAULT 0,
+  advanced_cash_t1 double precision NOT NULL DEFAULT 0,
+  dividend_cash double precision NOT NULL DEFAULT 0,
   PRIMARY KEY (account_no, ts)
 );
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS buy_t0 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS buy_t1 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS buy_t2 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS sell_t0 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS sell_t1 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS sell_t2 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS advanced_cash_t0 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS advanced_cash_t1 double precision NOT NULL DEFAULT 0;
+ALTER TABLE account_balance_snapshot ADD COLUMN IF NOT EXISTS dividend_cash double precision NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS account_position_snapshot (
   account_no text NOT NULL,

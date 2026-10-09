@@ -94,6 +94,15 @@ async def test_sync_balance_maps_real_api_fields():
             "withdrawable": 21459.0,
             "buy_unmatched": 3.0,
             "sell_unmatched": 4.0,
+            "buy_t0": 0.0,
+            "buy_t1": 0.0,
+            "buy_t2": 0.0,
+            "sell_t0": 0.0,
+            "sell_t1": 0.0,
+            "sell_t2": 0.0,
+            "advanced_cash_t0": 1.0,
+            "advanced_cash_t1": 2.0,
+            "dividend_cash": 0.0,
         }
     ]
 
@@ -106,6 +115,102 @@ async def test_sync_balance_skips_missing_equity():
     await account_sync._sync_balance(auth, "043422", "0434228", ts, storage)
 
     assert storage.balance_calls == []
+
+
+async def test_sync_balance_maps_all_9_pending_cash_fields():
+    """Brief 167 vòng 2: _sync_balance maps all 9 pending cash fields from equity."""
+    storage = FakeStorage()
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "9595640",
+                    "totalDebt": "42760",
+                    "withdrawable": "9595640",
+                    "buyUnmatched": "0",
+                    "sellUnmatched": "0",
+                    "buyT0": "100",
+                    "buyT1": "200",
+                    "buyT2": "23979800",
+                    "sellT0": "300",
+                    "sellT1": "400",
+                    "sellT2": "500",
+                    "advancedCashT0": "600",
+                    "advancedCashT1": "700",
+                    "dividend": "800",
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+
+    await account_sync._sync_balance(auth, "043422", "0434226", ts, storage)
+
+    assert storage.balance_calls == [
+        {
+            "account_no": "0434226",
+            "ts": ts,
+            "account_balance": 9595640.0,
+            "total_debt": 42760.0,
+            "withdrawable": 9595640.0,
+            "buy_unmatched": 0.0,
+            "sell_unmatched": 0.0,
+            "buy_t0": 100.0,
+            "buy_t1": 200.0,
+            "buy_t2": 23979800.0,
+            "sell_t0": 300.0,
+            "sell_t1": 400.0,
+            "sell_t2": 500.0,
+            "advanced_cash_t0": 600.0,
+            "advanced_cash_t1": 700.0,
+            "dividend_cash": 800.0,
+        }
+    ]
+
+
+async def test_sync_balance_missing_9_new_keys_still_writes_defaults(monkeypatch):
+    """Brief 167 vòng 2: equity thiếu 9 key mới vẫn ghi với giá trị 0.0, không có cảnh báo mới."""
+    storage = FakeStorage()
+    alerts = []
+    monkeypatch.setattr(
+        account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
+    )
+    auth = SimpleNamespace(
+        rest_client=FakeRestClient(
+            {
+                "equity": {
+                    "accountBalance": "10000000",
+                    "totalDebt": "2000000",
+                    "withdrawable": "5000000",
+                }
+            }
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+
+    await account_sync._sync_balance(auth, "043422", "0434226", ts, storage)
+
+    assert storage.balance_calls == [
+        {
+            "account_no": "0434226",
+            "ts": ts,
+            "account_balance": 10000000.0,
+            "total_debt": 2000000.0,
+            "withdrawable": 5000000.0,
+            "buy_unmatched": 0.0,
+            "sell_unmatched": 0.0,
+            "buy_t0": 0.0,
+            "buy_t1": 0.0,
+            "buy_t2": 0.0,
+            "sell_t0": 0.0,
+            "sell_t1": 0.0,
+            "sell_t2": 0.0,
+            "advanced_cash_t0": 0.0,
+            "advanced_cash_t1": 0.0,
+            "dividend_cash": 0.0,
+        }
+    ]
+    assert alerts == []
 
 
 async def test_sync_positions_maps_position_fields():

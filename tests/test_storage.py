@@ -110,6 +110,96 @@ def test_save_account_balance_upsert(storage):
     assert row == (200.0, 20.0, 180.0, 3.0, 4.0)
 
 
+def test_save_account_balance_all_9_pending_cash_fields_and_conflict_update(storage):
+    """Brief 167 vòng 2: Ghi và đọc lại 9 trường tiền chờ thanh toán, và cập nhật khi conflict."""
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    storage.save_account_balance(
+        account_no="ACC_TEST",
+        ts=ts,
+        account_balance=9595640.0,
+        total_debt=42760.0,
+        withdrawable=9595640.0,
+        buy_unmatched=10.0,
+        sell_unmatched=20.0,
+        buy_t0=100.0,
+        buy_t1=200.0,
+        buy_t2=23979800.0,
+        sell_t0=300.0,
+        sell_t1=400.0,
+        sell_t2=500.0,
+        advanced_cash_t0=600.0,
+        advanced_cash_t1=700.0,
+        dividend_cash=800.0,
+    )
+
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched, "
+            "buy_t0, buy_t1, buy_t2, sell_t0, sell_t1, sell_t2, advanced_cash_t0, advanced_cash_t1, dividend_cash "
+            "FROM account_balance_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s",
+            (ts,),
+        ).fetchone()
+    assert row == (
+        9595640.0, 42760.0, 9595640.0, 10.0, 20.0,
+        100.0, 200.0, 23979800.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0,
+    )
+
+    # Ghi đè cùng (account_no, ts)
+    storage.save_account_balance(
+        account_no="ACC_TEST",
+        ts=ts,
+        account_balance=10000000.0,
+        total_debt=50000.0,
+        withdrawable=9900000.0,
+        buy_unmatched=15.0,
+        sell_unmatched=25.0,
+        buy_t0=110.0,
+        buy_t1=210.0,
+        buy_t2=25000000.0,
+        sell_t0=310.0,
+        sell_t1=410.0,
+        sell_t2=510.0,
+        advanced_cash_t0=610.0,
+        advanced_cash_t1=710.0,
+        dividend_cash=810.0,
+    )
+
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched, "
+            "buy_t0, buy_t1, buy_t2, sell_t0, sell_t1, sell_t2, advanced_cash_t0, advanced_cash_t1, dividend_cash "
+            "FROM account_balance_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s",
+            (ts,),
+        ).fetchone()
+    assert row == (
+        10000000.0, 50000.0, 9900000.0, 15.0, 25.0,
+        110.0, 210.0, 25000000.0, 310.0, 410.0, 510.0, 610.0, 710.0, 810.0,
+    )
+
+
+def test_init_schema_idempotent_and_default_zero_balance(storage):
+    """Brief 167 vòng 2: init_schema chạy nhiều lần không lỗi, và dòng không có cột mới thì mặc định 0.0."""
+    storage.init_schema()
+    storage.init_schema()
+
+    ts = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO account_balance_snapshot "
+            "(account_no, ts, account_balance, total_debt, withdrawable, buy_unmatched, sell_unmatched) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            ("ACC_TEST", ts, 100.0, 10.0, 90.0, 1.0, 2.0),
+        )
+
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT buy_t0, buy_t1, buy_t2, sell_t0, sell_t1, sell_t2, advanced_cash_t0, advanced_cash_t1, dividend_cash "
+            "FROM account_balance_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s",
+            (ts,),
+        ).fetchone()
+    assert row == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
 def test_save_account_positions_upsert(storage):
     ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
     storage.save_account_positions(
