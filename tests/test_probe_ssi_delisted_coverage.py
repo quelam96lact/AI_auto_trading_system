@@ -152,6 +152,24 @@ async def test_chay_tiep_do_lai_ma_tung_loi():
         assert saved["AAB"]["error"] is None and saved["AAB"]["count"] == 1
 
 
+def test_bao_cao_tach_rieng_ma_con_loi():
+    """Sửa của Claude khi audit: mã còn lỗi không được lẫn vào 'không có dữ liệu'."""
+    from scripts.probe_ssi_delisted_coverage import analyze_probe_results
+
+    data = {
+        "AAA": {"count": 0, "first_date": None, "last_date": None, "error": None},
+        "AAB": {
+            "count": 0,
+            "first_date": None,
+            "last_date": None,
+            "error": "Exception: 429",
+        },
+    }
+    res = analyze_probe_results(data, set(), symbol_subset=["AAA", "AAB"])
+    assert res["errored"] == ["AAB"]
+    assert res["s_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_loi_429_thu_lai_va_giu_ma():
     """3. Lỗi 429 cho một mã -> thử lại mã đó với backoff và lưu kết quả thành công."""

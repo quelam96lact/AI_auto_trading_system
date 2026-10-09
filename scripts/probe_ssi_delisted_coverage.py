@@ -222,8 +222,12 @@ def analyze_probe_results(
         if not m["last_date"] or m["last_date"] >= IS_CUTOFF_DATE
     ]
 
+    # Ma con loi sau khi het luot thu: KHONG duoc lan vao "khong co du lieu" (sua cua Claude khi audit).
+    errored = sorted(k for k, v in relevant_probed.items() if v.get("error"))
+
     return {
         "total_probed": len(relevant_probed),
+        "errored": errored,
         "s_count": len(s_symbols),
         "s_symbols": s_symbols,
         "db_in_scope_count": len(db_in_scope),
@@ -284,6 +288,12 @@ def print_report(analysis: dict[str, Any], prefix: str | None = None) -> None:
 
     print(f"\n1. Tổng số mã đã thăm dò: {analysis['total_probed']}")
     print(f"2. Số mã có >= 1 nến trong 2016–2022 (Tập S): {analysis['s_count']}")
+    errored = analysis.get("errored", [])
+    print(f"   Số mã còn LỖI (chưa biết có dữ liệu hay không): {len(errored)}")
+    if errored:
+        print(
+            f"   [CẢNH BÁO] Chạy lại lệnh để dò lại các mã này: {', '.join(errored[:50])}"
+        )
 
     print("\n--- 3. ĐỐI CHỨNG DƯƠNG / ĐỘ NHẠY ---")
     print(
