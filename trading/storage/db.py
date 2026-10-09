@@ -494,17 +494,26 @@ class Storage:
     def save_account_positions(
         self, account_no: str, ts: datetime, positions: list[dict]
     ) -> None:
-        """positions: list of symbol/quantity/cost_price/sellable_quantity dicts."""
+        """positions: list of symbol/quantity/cost_price/sellable_quantity + pending quantity dicts."""
         if not positions:
             return
         with self.conn() as c:
             c.cursor().executemany(
                 "INSERT INTO account_position_snapshot "
-                "(account_no, ts, symbol, quantity, cost_price, sellable_quantity) "
-                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "(account_no, ts, symbol, quantity, cost_price, sellable_quantity, "
+                "bought_quantity, buying_quantity, sold_quantity, selling_quantity, "
+                "t1_sell_quantity, t2_sell_quantity, dividend_quantity) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (account_no, ts, symbol) DO UPDATE SET "
                 "quantity = EXCLUDED.quantity, cost_price = EXCLUDED.cost_price, "
-                "sellable_quantity = EXCLUDED.sellable_quantity",
+                "sellable_quantity = EXCLUDED.sellable_quantity, "
+                "bought_quantity = EXCLUDED.bought_quantity, "
+                "buying_quantity = EXCLUDED.buying_quantity, "
+                "sold_quantity = EXCLUDED.sold_quantity, "
+                "selling_quantity = EXCLUDED.selling_quantity, "
+                "t1_sell_quantity = EXCLUDED.t1_sell_quantity, "
+                "t2_sell_quantity = EXCLUDED.t2_sell_quantity, "
+                "dividend_quantity = EXCLUDED.dividend_quantity",
                 [
                     (
                         account_no,
@@ -513,6 +522,13 @@ class Storage:
                         p["quantity"],
                         p["cost_price"],
                         p["sellable_quantity"],
+                        p.get("bought_quantity", 0) or 0,
+                        p.get("buying_quantity", 0) or 0,
+                        p.get("sold_quantity", 0) or 0,
+                        p.get("selling_quantity", 0) or 0,
+                        p.get("t1_sell_quantity", 0) or 0,
+                        p.get("t2_sell_quantity", 0) or 0,
+                        p.get("dividend_quantity", 0) or 0,
                     )
                     for p in positions
                 ],

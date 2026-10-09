@@ -173,6 +173,13 @@ async def _sync_positions(
             "quantity": p.quantity,
             "cost_price": p.cost_price,
             "sellable_quantity": p.sellable_quantity,
+            "bought_quantity": getattr(p, "bought_quantity", 0) or 0,
+            "buying_quantity": getattr(p, "buying_quantity", 0) or 0,
+            "sold_quantity": getattr(p, "sold_quantity", 0) or 0,
+            "selling_quantity": getattr(p, "selling_quantity", 0) or 0,
+            "t1_sell_quantity": getattr(p, "t1_sell_quantity", 0) or 0,
+            "t2_sell_quantity": getattr(p, "t2_sell_quantity", 0) or 0,
+            "dividend_quantity": getattr(p, "dividend_quantity", 0) or 0,
         }
         for p in positions
     ]

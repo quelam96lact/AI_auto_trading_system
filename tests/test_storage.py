@@ -132,6 +132,86 @@ def test_save_account_positions_upsert(storage):
     assert row == ("TEST", 12, 21.5, 8)
 
 
+def test_save_account_positions_all_7_fields_and_conflict_update(storage):
+    """Brief 167: Ghi và đọc lại 7 trường số lượng chờ về/chờ đi, và cập nhật khi conflict."""
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    pos1 = {
+        "symbol": "CTD",
+        "quantity": 1200,
+        "cost_price": 58858.0,
+        "sellable_quantity": 800,
+        "bought_quantity": 400,
+        "buying_quantity": 10,
+        "sold_quantity": 20,
+        "selling_quantity": 30,
+        "t1_sell_quantity": 40,
+        "t2_sell_quantity": 100,
+        "dividend_quantity": 50,
+    }
+    storage.save_account_positions("ACC_TEST", ts, [pos1])
+
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT symbol, quantity, cost_price, sellable_quantity, "
+            "bought_quantity, buying_quantity, sold_quantity, selling_quantity, "
+            "t1_sell_quantity, t2_sell_quantity, dividend_quantity "
+            "FROM account_position_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s",
+            (ts,),
+        ).fetchone()
+    assert row == ("CTD", 1200, 58858.0, 800, 400, 10, 20, 30, 40, 100, 50)
+
+    # Ghi đè cùng khóa (account_no, ts, symbol) với giá trị mới
+    pos2 = {
+        "symbol": "CTD",
+        "quantity": 1500,
+        "cost_price": 59000.0,
+        "sellable_quantity": 900,
+        "bought_quantity": 500,
+        "buying_quantity": 15,
+        "sold_quantity": 25,
+        "selling_quantity": 35,
+        "t1_sell_quantity": 45,
+        "t2_sell_quantity": 110,
+        "dividend_quantity": 60,
+    }
+    storage.save_account_positions("ACC_TEST", ts, [pos2])
+
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT symbol, quantity, cost_price, sellable_quantity, "
+            "bought_quantity, buying_quantity, sold_quantity, selling_quantity, "
+            "t1_sell_quantity, t2_sell_quantity, dividend_quantity "
+            "FROM account_position_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s",
+            (ts,),
+        ).fetchone()
+    assert row == ("CTD", 1500, 59000.0, 900, 500, 15, 25, 35, 45, 110, 60)
+
+
+def test_init_schema_idempotent_and_default_zero(storage):
+    """Brief 167: init_schema chạy nhiều lần không lỗi, và dòng không có cột mới thì mặc định 0."""
+    storage.init_schema()
+    storage.init_schema()
+
+    ts = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+    # Ghi thô chỉ 6 cột cũ
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO account_position_snapshot (account_no, ts, symbol, quantity, cost_price, sellable_quantity) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            ("ACC_TEST", ts, "VCB", 100, 88.5, 80),
+        )
+
+    # Đọc lại cả 7 trường mới -> phải ra 0
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT bought_quantity, buying_quantity, sold_quantity, selling_quantity, "
+            "t1_sell_quantity, t2_sell_quantity, dividend_quantity "
+            "FROM account_position_snapshot WHERE account_no = 'ACC_TEST' AND ts = %s AND symbol = 'VCB'",
+            (ts,),
+        ).fetchone()
+    assert row == (0, 0, 0, 0, 0, 0, 0)
+
+
 def test_create_and_get_pending_order(storage):
     ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
     oid = storage.create_pending_order(

@@ -123,7 +123,68 @@ async def test_sync_positions_maps_position_fields():
         (
             "0434226",
             ts,
-            [{"symbol": "VCB", "quantity": 100, "cost_price": 88.5, "sellable_quantity": 80}],
+            [
+                {
+                    "symbol": "VCB",
+                    "quantity": 100,
+                    "cost_price": 88.5,
+                    "sellable_quantity": 80,
+                    "bought_quantity": 0,
+                    "buying_quantity": 0,
+                    "sold_quantity": 0,
+                    "selling_quantity": 0,
+                    "t1_sell_quantity": 0,
+                    "t2_sell_quantity": 0,
+                    "dividend_quantity": 0,
+                }
+            ],
+        )
+    ]
+
+
+async def test_sync_positions_maps_all_7_pending_quantity_fields():
+    """Brief 167: _sync_positions maps all 7 pending quantity fields."""
+    storage = FakeStorage()
+    portfolio = SimpleNamespace(
+        get_equity_positions=lambda account_no: _positions(
+            SimpleNamespace(
+                symbol="CTD",
+                quantity=1200,
+                cost_price=58858.0,
+                sellable_quantity=800,
+                bought_quantity=400,
+                buying_quantity=10,
+                sold_quantity=20,
+                selling_quantity=30,
+                t1_sell_quantity=40,
+                t2_sell_quantity=100,
+                dividend_quantity=50,
+            )
+        )
+    )
+    ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+
+    await account_sync._sync_positions(portfolio, "0434226", ts, storage)
+
+    assert storage.position_calls == [
+        (
+            "0434226",
+            ts,
+            [
+                {
+                    "symbol": "CTD",
+                    "quantity": 1200,
+                    "cost_price": 58858.0,
+                    "sellable_quantity": 800,
+                    "bought_quantity": 400,
+                    "buying_quantity": 10,
+                    "sold_quantity": 20,
+                    "selling_quantity": 30,
+                    "t1_sell_quantity": 40,
+                    "t2_sell_quantity": 100,
+                    "dividend_quantity": 50,
+                }
+            ],
         )
     ]
 

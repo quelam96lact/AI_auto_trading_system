@@ -138,8 +138,22 @@ CREATE TABLE IF NOT EXISTS account_position_snapshot (
   quantity integer NOT NULL,
   cost_price double precision NOT NULL,
   sellable_quantity integer NOT NULL,
+  bought_quantity integer NOT NULL DEFAULT 0,
+  buying_quantity integer NOT NULL DEFAULT 0,
+  sold_quantity integer NOT NULL DEFAULT 0,
+  selling_quantity integer NOT NULL DEFAULT 0,
+  t1_sell_quantity integer NOT NULL DEFAULT 0,
+  t2_sell_quantity integer NOT NULL DEFAULT 0,
+  dividend_quantity integer NOT NULL DEFAULT 0,
   PRIMARY KEY (account_no, ts, symbol)
 );
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS bought_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS buying_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS sold_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS selling_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS t1_sell_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS t2_sell_quantity integer NOT NULL DEFAULT 0;
+ALTER TABLE account_position_snapshot ADD COLUMN IF NOT EXISTS dividend_quantity integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS derivative_balance_snapshot (
   account_no text NOT NULL,
