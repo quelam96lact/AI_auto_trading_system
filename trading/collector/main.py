@@ -450,7 +450,7 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
         cfg.watchdog_stale_seconds,
         cfg.watchdog_max_failures,
         now_fn=lambda: datetime.now(TZ),
-        is_trading_fn=lambda ts: is_trading_time(ts, cfg.holidays),
+        is_trading_fn=lambda ts: is_continuous_matching(ts, cfg.holidays),
         on_stale=_on_stale,
         on_critical=lambda: alert("CRITICAL", "feed stale beyond max failures"),
     )

@@ -23,6 +23,8 @@ class Watchdog:
     def check(self) -> None:
         now = self.now_fn()
         if not self.is_trading_fn(now):
+            self._last_beat = now
+            self._failures = 0
             return
         if now - self._last_beat > self.stale:
             self._failures += 1
