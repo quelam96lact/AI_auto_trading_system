@@ -36,8 +36,10 @@ from datetime import date, datetime, timedelta
 
 try:
     from _db_common import resolve_dsn
+    from screen_momentum_portfolio import is_stock_symbol
 except ImportError:
     from scripts._db_common import resolve_dsn
+    from scripts.screen_momentum_portfolio import is_stock_symbol
 
 from trading.backtest import BacktestReport, run_backtest
 from trading.broker import Fill
@@ -70,12 +72,6 @@ DELISTED_CUTOFF_DATE = date(2022, 6, 30)
 # mo truoc khi du lieu duoc nap. Khoi A** cua dot 170 rieng da co 4 ma chet trong IS.
 MIN_DELISTED_REQUIRED = 20
 
-STOCK_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-
-
-def is_stock_symbol(sym: str) -> bool:
-    """Đúng 3 ký tự, in hoa hoặc số (loại chứng quyền, chứng chỉ quỹ)."""
-    return len(sym) == 3 and all(c in STOCK_CHARS for c in sym)
 
 
 @dataclass(frozen=True)
