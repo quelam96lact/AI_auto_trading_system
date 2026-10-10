@@ -2,7 +2,7 @@
 
 Ngày: 11/10/2026. Người giao, audit, commit, push: Claude. Người thực thi: agent khác, **KHÔNG commit, KHÔNG push**.
 Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gia-chien-luoc.md`.
-**Điều kiện bắt đầu:** đợt 182 đã được Claude audit và commit. Đợt này **import** các hàm phát hiện sự kiện của `scripts/screen_vn30f_orderflow.py`, xem §2 của brief 182.
+**Điều kiện bắt đầu:** đợt 182 **và 182b** đã được Claude audit và commit. 182b thêm `block_end_fn` cho `calculate_event_targets`: đợt này truyền hàm "hết khung 8 giờ funding". Đợt này **import** các hàm phát hiện sự kiện của `scripts/screen_vn30f_orderflow.py`, xem §2 của brief 182.
 
 ## 0. Yêu cầu và cách hiểu
 
