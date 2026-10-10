@@ -8,7 +8,21 @@ Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gi
 **Chủ dự án (11/10)** gửi link danh sách phát YouTube "tổng hợp về order flow" và yêu cầu triển khai.
 - Danh sách phát **ở chế độ riêng tư**: YouTube trả về "The playlist does not exist".
 - Claude chỉ đọc được tên video mở đầu: *"Master ORDER FLOW TRADING in Less than ONE HOUR!"* (kênh Fractal Flow – Pro Trading Strategies). Claude **không xem được nội dung**.
-- Vì vậy brief dùng ba khái niệm order flow kinh điển, khái niệm nào cũng có định nghĩa định lượng được: footprint, delta, CVD. Nếu chủ dự án muốn một setup cụ thể trong video, setup đó có thể **thay** một trong ba sự kiện ở §1.3. Việc thay phải xong **trước 01/12/2026**, trước khi ai nhìn thấy kết quả.
+- Bản v1 của brief vì vậy dùng ba khái niệm order flow kinh điển.
+
+**Bản v2 (11/10, cùng ngày, TRƯỚC khi agent viết dòng code nào và trước khi ai mở dữ liệu):** chủ dự án gửi bản tóm tắt nội dung video (`order_flow_trading_guide.md`, file ngoài repo). Claude đối chiếu và sửa §1.3 cho khớp video:
+
+| Video nói | v1 | v2 |
+|---|---|---|
+| §5.2: phân kỳ CVD — giá đỉnh cao hơn, CVD đỉnh thấp hơn (cạn kiệt mua), và đối xứng | E1 | **Giữ E1.** Chỉ làm dạng "cạn kiệt"; dạng "hấp thụ" trên CVD (giá đỉnh thấp hơn, CVD đỉnh cao hơn) không đưa vào để giữ 6 cặp |
+| §6.2: nến giảm mà delta dương ⇒ người bán bị hấp thụ ⇒ **tăng**; ví dụ Dow Jones đi đúng chiều này | E2 làm **ngược chiều** (delta > 0, nến giảm ⇒ bán) | **E2 đảo chiều theo video**: d = dấu của delta. Giữ ngưỡng \|delta\| ≥ p90 của 5 phiên trước để loại nến delta lặt vặt |
+| §6.1: bộ đôi đảo chiều — nến t−1 **hấp thụ** (đóng cửa phía sau imbalance), nến t **khởi xướng** chiều ngược lại; imbalance chéo 3:1 | E3 chỉ là "≥ 3 mức imbalance liên tiếp", không xét giá đóng cửa | **E3 thay bằng bộ đôi hấp thụ → khởi xướng** của video |
+
+Phần video **không** đưa vào, kèm lý do:
+- **Đọc DOM / sổ lệnh chờ:** chính video khuyên không dùng (spoofing, iceberg). Mất cân bằng sổ lệnh top1/top5 đã nằm trong đợt 162.
+- **Ngữ cảnh "tại ngưỡng cản"** (POC, Value Area, trendline, pitchfork): video không cho quy tắc định lượng. Chọn tham số cho nó là tự bịa, và lọc thêm sẽ không đủ 100 sự kiện trong ~40 phiên. Hệ quả: kết quả âm ở đây **không** bác được phiên bản có ngữ cảnh. Phiên bản đó, nếu muốn, là một giả thuyết riêng.
+- **Khung 1 giờ** như ví dụ E-mini: VN30F chỉ có 4 nến 1 giờ mỗi phiên, không thể đủ mẫu. Dùng nến 5 phút.
+- **Lưu ý nguồn:** bản tóm tắt là tài liệu thứ cấp, Claude không xem được video để đối chiếu. Chiều của E2 dựa vào §6.2 và ví dụ 2 của bản tóm tắt.
 
 **Dữ liệu có thật (Claude đã kiểm 11/10, chỉ đếm, không tính mục tiêu nào):**
 - **Nguồn:** máy ghi sổ lệnh VN30F (`scripts/record_vn30f_orderbook.py`, tự chuyển sang hợp đồng tháng gần nhất), lưu tại `data/orderbook/<mã>/<ngày>.jsonl.gz`.
@@ -22,7 +36,7 @@ Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gi
 - **Đợt 162 (đã đăng ký, chờ tháng 12)** đã có OFI = Σ(khối lượng B) − Σ(khối lượng S) theo phút, cùng mất cân bằng top1/top5 của sổ lệnh, ở các chân trời 1/5/15 phút. **Delta theo phút chính là OFI của 162**, nên đợt này **không** đo lại delta trần.
 - **Đợt 105:** order flow trên BTC perp 1h là âm.
 
-**Ba sự kiện order flow MỚI (không trùng 162):** phân kỳ CVD, hấp thụ, chuỗi mất cân bằng chéo trên footprint. Ba sự kiện này được đo trên **cùng tập IS và holdout của 162**.
+**Ba sự kiện order flow MỚI (không trùng 162):** phân kỳ CVD, phân kỳ delta trong nến, bộ đôi hấp thụ → khởi xướng trên footprint. Ba sự kiện này được đo trên **cùng tập IS và holdout của 162**.
 
 **Ngân sách mục F:** đây là giả thuyết thứ 9 của tháng 10. Claude ghi dòng spec H **trước** khi giao. Kết quả mang cảnh báo đa so sánh. Lời giải thích quan trọng nhất: cùng dữ liệu với 162 nghĩa là tổng số cặp được thử trên tập này là 9 + 6 = 15.
 
@@ -51,8 +65,26 @@ Mỗi sự kiện có hướng d ∈ {+1 mua, −1 bán} và được xét **t�
 | Mã | Sự kiện | Định nghĩa |
 |---|---|---|
 | E1 | **Phân kỳ CVD** | Bán (d = −1): `close_t` **lớn hơn hẳn** mọi `close` của 11 nến trước **trong cùng phiên** (cần đủ 11 nến có giá), **và** `cvd_t` **nhỏ hơn** max `cvd` của 11 nến đó. Mua (d = +1): đối xứng (close thấp hơn hẳn, cvd lớn hơn min). |
-| E2 | **Hấp thụ** | `|delta_t|` ≥ phân vị 90% của `|delta|` mọi nến có giao dịch trong **5 phiên hợp lệ liền trước** (không gồm phiên hiện tại; phiên chưa đủ 5 phiên trước thì không xét). `delta_t > 0` và `close_t ≤ open_t` ⇒ bán (bên mua bị hấp thụ). `delta_t < 0` và `close_t ≥ open_t` ⇒ mua. |
-| E3 | **Chuỗi mất cân bằng chéo** | Mua: có **≥ 3 mức giá liên tiếp** p trong nến mà `buy_p ≥ 3 × max(sell_{p−0,1}, 1)` **và** `buy_p ≥ 5`. Bán: ≥ 3 mức liên tiếp mà `sell_p ≥ 3 × max(buy_{p+0,1}, 1)` và `sell_p ≥ 5`. So **chéo** (mua ở p với bán ở p − 0,1), **không** so cùng mức. Có cả hai hướng trong cùng nến ⇒ bỏ nến đó. |
+| E2 | **Phân kỳ delta trong nến** (video §6.2) | `|delta_t|` ≥ phân vị 90% của `|delta|` mọi nến có giao dịch trong **5 phiên hợp lệ liền trước** (không gồm phiên hiện tại; phiên chưa đủ 5 phiên trước thì không xét). `delta_t > 0` và `close_t < open_t` (**nhỏ hơn hẳn**) ⇒ **mua**, d = +1 (bên bán bị hấp thụ). `delta_t < 0` và `close_t > open_t` ⇒ **bán**, d = −1. Tức **d = dấu của delta**. `close_t = open_t` ⇒ không có sự kiện. |
+| E3 | **Bộ đôi hấp thụ → khởi xướng** (video §6.1) | Xem định nghĩa imbalance và quy tắc bên dưới bảng. |
+
+**Imbalance chéo trong một nến** (k = `round(p*10)`, tức mức giá theo bước 0,1):
+- **Ask imbalance** tại k: `buy[k] ≥ 3 × max(sell[k−1], 1)` **và** `buy[k] ≥ 5`.
+- **Bid imbalance** tại k: `sell[k] ≥ 3 × max(buy[k+1], 1)` **và** `sell[k] ≥ 5`.
+- So **chéo** (mua ở p với bán ở p − 0,1; bán ở p với mua ở p + 0,1), **không** so cùng mức. Mức không có giao dịch tính là 0.
+
+**Trạng thái của một nến** (cần ít nhất một imbalance cùng phía):
+- **Hấp thụ mua** (bên mua bị hấp thụ): có ask imbalance, và `close < giá ask imbalance THẤP nhất` (nhỏ hơn hẳn).
+- **Hấp thụ bán**: có bid imbalance, và `close > giá bid imbalance CAO nhất` (lớn hơn hẳn).
+- **Khởi xướng mua:** có ask imbalance, `close ≥ giá ask imbalance CAO nhất`, và nến **không** có bid imbalance nào.
+- **Khởi xướng bán:** có bid imbalance, `close ≤ giá bid imbalance THẤP nhất`, và nến **không** có ask imbalance nào.
+- Khởi xướng dùng `≥`/`≤` vì imbalance thường nằm đúng ở đỉnh/đáy nến, nơi giá đóng cửa trùng mức đó.
+
+**Sự kiện E3, xét tại cuối nến t:**
+- Nến t−1 **hấp thụ bán** và nến t **khởi xướng mua** ⇒ d = +1.
+- Nến t−1 **hấp thụ mua** và nến t **khởi xướng bán** ⇒ d = −1.
+- t−1 và t phải là hai nến 5 phút **liền nhau trong cùng một khung liên tục**: không ghép 11:25 với 13:00, không ghép qua phiên. Cả hai nến phải có giao dịch.
+- Hai chiều loại trừ nhau theo định nghĩa: khởi xướng mua cấm bid imbalance, khởi xướng bán lại cần nó.
 
 **Mục tiêu:** `y = d × (P(t_end + H) − close_t)`, tính bằng điểm, H ∈ {15, 30} phút.
 - `t_end` là mốc kết thúc nến t. `P(x)` là giá tin khớp cuối cùng có `trading_time ≤ x`.
@@ -74,7 +106,9 @@ Mỗi sự kiện có hướng d ∈ {+1 mua, −1 bán} và được xét **t�
 Một cặp **ĐẠT** khi đủ 1 + 2 + 3. Kết quả tốt nhất có thể là: một cặp được mở holdout. **Không có đường tới lệnh thật**: giao dịch phái sinh thật cần quyết định riêng của chủ dự án và một brief riêng.
 
 ### 1.5 Dự đoán của Claude (ghi trước)
-Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện 2, nhiều khả năng là E1 hoặc E2 ở H = 15, và biên độ nhỏ hơn chi phí cộng trượt giá.
+Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện 2, nhiều khả năng là E1 hoặc E2 ở H = 15, và biên độ nhỏ hơn chi phí cộng trượt giá. E3 có nguy cơ **không đủ 100 sự kiện**; khi đó công cụ báo "KHÔNG ĐỦ MẪU" cho E3, không nới định nghĩa.
+
+**Không đảo chiều sau khi thấy số.** Nếu trung bình y của một cặp âm rõ, tức chiều ngược với video mới đúng, thì công cụ chỉ in số đó để **mô tả**. Cặp đó không thành ĐẠT, và chiều ngược lại là một giả thuyết mới, cần dòng spec H riêng.
 
 ## 2. Việc agent làm BÂY GIỜ (11/10): dựng công cụ và test trên dữ liệu tổng hợp, KHÔNG đo
 
@@ -109,13 +143,18 @@ Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện
 4. **E2:**
    - ngưỡng chỉ lấy từ 5 phiên trước;
    - thêm một nến |delta| khổng lồ **sau** nến t trong cùng phiên thì ngưỡng của t **không đổi**;
-   - phiên thứ 5 (chỉ có 4 phiên trước) không sinh sự kiện.
-5. **E3:**
-   - 3 mức chéo thỏa ⇒ có sự kiện; 2 mức ⇒ không;
-   - **bẫy cùng mức:** dựng nến mà so cùng mức thì thỏa, nhưng so chéo thì không ⇒ không có sự kiện;
-   - `buy_p = 4` ⇒ không;
-   - hai hướng cùng nến ⇒ bỏ;
-   - giá 1935,3 và 1935,4 được coi là liền kề (kiểm làm tròn số nguyên).
+   - phiên thứ 5 (chỉ có 4 phiên trước) không sinh sự kiện;
+   - **chiều:** nến giảm có delta dương lớn ⇒ d = **+1**; nến tăng có delta âm lớn ⇒ d = **−1**;
+   - `close = open` với |delta| lớn ⇒ không có sự kiện.
+5. **Imbalance và E3:**
+   - **bẫy cùng mức:** dựng nến mà so cùng mức thì có ask imbalance, nhưng so chéo thì không ⇒ không có imbalance;
+   - `buy[k] = 4` (dưới sàn 5) ⇒ không có imbalance;
+   - giá 1935,3 và 1935,4 được coi là liền kề (kiểm làm tròn số nguyên);
+   - **bộ đôi mua đúng:** nến t−1 hấp thụ bán, nến t khởi xướng mua ⇒ đúng một sự kiện d = +1 tại cuối nến t. Ca đối xứng cho d = −1;
+   - nến t có thêm một bid imbalance ⇒ không còn khởi xướng mua ⇒ không có sự kiện;
+   - `close_{t−1}` **bằng** giá bid imbalance cao nhất ⇒ không phải hấp thụ (so sánh nghiêm ngặt) ⇒ không có sự kiện;
+   - `close_t` **bằng** giá ask imbalance cao nhất ⇒ vẫn là khởi xướng ⇒ có sự kiện;
+   - t−1 là nến 11:25 và t là nến 13:00 ⇒ không có sự kiện.
 6. **Mục tiêu và chồng lấn:**
    - y đúng dấu theo d;
    - `P(x)` lấy tin cuối có `trading_time ≤ x`;
@@ -138,15 +177,16 @@ Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện
       - Lấy lại theo phiên thì mỗi lần rút chỉ có ba tổ hợp {A,A}, {B,B}, {A,B}, nên `len(set(np.round(means, 9))) ≤ 3`.
       - Lấy lại theo sự kiện thì cho hàng chục giá trị khác nhau.
 
-**Năm phép phá bắt buộc.** Sao lưu file ra ngoài repo, khôi phục bằng `cp`, so `sha256`. Cấm `git checkout/restore/stash`. Mỗi phép phá phải làm đỏ đúng test nêu:
+**Sáu phép phá bắt buộc.** Sao lưu file ra ngoài repo, khôi phục bằng `cp`, so `sha256`. Cấm `git checkout/restore/stash`. Mỗi phép phá phải làm đỏ đúng test nêu:
 
 | Phép phá | Test phải đỏ |
 |---|---|
 | (i) gom nến theo `recv_ts` thay vì `trading_time` | ca 1 |
-| (ii) E3 so **cùng mức** thay vì chéo | ca 5 |
+| (ii) imbalance so **cùng mức** thay vì chéo | ca 5 |
 | (iii) ngưỡng E2 gồm cả phiên hiện tại | ca 4 |
 | (iv) bỏ cổng ngày | ca 7 |
 | (v) bootstrap lấy lại theo sự kiện thay vì theo phiên | ca 11 |
+| (vi) E2 đảo về chiều của v1 (delta > 0 và nến giảm ⇒ bán) | ca 4 |
 
 ## 4. Cổng kiểm cuối
 - **GitNexus** (chỉ `gitnexus ... -r AI_auto_trading_system` hoặc `node .gitnexus/run.cjs ...`, **không `npx`**):
@@ -165,6 +205,6 @@ Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện
 
 ## 6. Báo cáo cho Claude
 - Output pytest (trước/sau), ruff, `--help`, output cổng ngày.
-- Bảng năm phép phá, kết quả `impact` và `detect-changes`.
+- Bảng sáu phép phá, kết quả `impact` và `detect-changes`.
 - Mục "brief mơ hồ ở đâu", và mọi chỗ agent phải tự diễn giải.
 - Câu chốt: *"Tôi không mở file nào trong data/orderbook/. Công cụ chưa đo gì; phép đo thật chạy từ 01/12/2026 theo §1."*
