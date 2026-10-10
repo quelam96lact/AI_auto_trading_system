@@ -33,14 +33,16 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-try:
-    from _db_common import resolve_dsn
-    from screen_momentum_portfolio import is_stock_symbol
-except ImportError:
-    from scripts._db_common import resolve_dsn
-    from scripts.screen_momentum_portfolio import is_stock_symbol
+# Chay truc tiep `python scripts/...` thi thu muc goc repo phai nam trong sys.path
+# de import `scripts.*` (khuon cua screen_ml_cross_section.py, dot 169).
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
+from scripts._db_common import resolve_dsn
+from scripts.screen_momentum_portfolio import is_stock_symbol
 from trading.backtest import BacktestReport, run_backtest
 from trading.broker import Fill
 from trading.calendar_vn import TZ
