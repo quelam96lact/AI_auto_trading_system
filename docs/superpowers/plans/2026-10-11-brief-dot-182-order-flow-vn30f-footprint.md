@@ -115,6 +115,11 @@ Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện
 - **Mới:** `scripts/screen_vn30f_orderflow.py` gồm:
   - hàm thuần cho §1.2–§1.4 (dựng nến footprint, CVD, ba bộ phát hiện sự kiện, mục tiêu, lọc không chồng lấn, bootstrap, cổng);
   - `main()` có cổng ngày §1.1. Cổng hoạt động như sau: đọc ngày hôm nay qua một tham số tiêm được (mặc định `datetime.now(TZ).date()`); nếu ngày < 2026-12-01 thì in thông báo và `return 2` **trước** khi liệt kê hay mở file.
+- **Tách hàm để đợt 183 (crypto) dùng lại nguyên văn** (thêm 11/10). Hai lớp:
+  1. `imbalance_levels(fp, ratio=3, min_vol=5, denom_floor=1)` → `(ask_ks, bid_ks)`, với k là chỉ số mức giá nguyên.
+  2. Bộ phát hiện E1/E2/E3, hàm mục tiêu và lọc chồng lấn chỉ nhận **danh sách nến tóm tắt**: `session_id`, `block_id`, `t_end`, open/high/low/close, `close_k`, delta, cvd, `ask_k_min/max`, `bid_k_min/max`. Chúng **không** đọc `fp` trực tiếp.
+  - `session_id` là phiên (CVD reset, cửa sổ E1, ngưỡng E2, khối bootstrap). `block_id` là khung liên tục (E3 liền nhau, mục tiêu không vắt qua).
+  - Với VN30F: phiên = ngày, khung = sáng/chiều. Mặc định của tham số là giá trị VN30F; hành vi ở §1 không đổi.
 - **Mới:** `tests/test_screen_vn30f_orderflow.py`.
 - **Import, không sửa:**
   - `scripts/build_orderbook_features.py`: `iter_file_messages`, `session_date_from_filename`, `parse_trading_time`, `CONTINUOUS_AFTERNOON_END`;
