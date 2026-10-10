@@ -68,10 +68,6 @@ PHASE2_WARMUP_START = date(2019, 1, 1)
 
 SEALED_START = date(2023, 1, 1)
 DELISTED_CUTOFF_DATE = date(2022, 6, 30)
-# Sua cua Claude khi audit: DB truoc khi nap da co san 1 ma chet, nen cong '== 0'
-# mo truoc khi du lieu duoc nap. Khoi A** cua dot 170 rieng da co 4 ma chet trong IS.
-MIN_DELISTED_REQUIRED = 20
-
 
 
 @dataclass(frozen=True)
@@ -451,11 +447,6 @@ def evaluate_verification(
     )
 
 
-def delisted_gate_ok(delisted_count: int) -> bool:
-    """Cong du lieu: chi chay phep do that khi da nap du ma da huy niem yet."""
-    return delisted_count >= MIN_DELISTED_REQUIRED
-
-
 def count_delisted_before_cutoff(storage: Storage, symbols: Sequence[str]) -> int:
     """Đếm số mã có nến cuối trước 30/06/2022 (giờ VN) trong DB."""
     cutoff = datetime(
@@ -679,14 +670,12 @@ def main() -> None:
     # 2. Kiểm tra mã hủy niêm yết
     delisted_count = count_delisted_before_cutoff(storage, universe)
     print(f"Số mã có nến cuối trước 30/06/2022 (mã đã hủy niêm yết): {delisted_count}")
-    # Cong cung, khong co co bo qua (sua cua Claude khi audit: brief 171 §1.1 bat dung).
-    if not delisted_gate_ok(delisted_count) and not args.smoke:
-        print(
-            f"\n[CẢNH BÁO/DỪNG]: Số mã có nến cuối trước 30/06/2022 = {delisted_count} "
-            f"< {MIN_DELISTED_REQUIRED}.\n"
-            "Theo quy định Brief 171 §1.1, cần nạp dữ liệu mã đã hủy niêm yết trước."
-        )
-        sys.exit(1)
+    # Chu du an quyet dinh 10/10/2026: KHONG dung ma da huy niem yet (brief 171 §7).
+    # Bo cong du lieu; ket qua bat buoc mang canh bao thien lech song sot.
+    print(
+        "[CẢNH BÁO] Universe gần như chỉ gồm mã còn sống (thiên lệch sống sót, "
+        "đợt 169). Kết quả có thể bị thổi phồng; chỉ so được với mua-và-giữ cùng mã."
+    )
 
     # 3. Smoke timing mode
     if args.smoke:

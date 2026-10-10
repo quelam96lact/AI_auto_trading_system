@@ -64,3 +64,9 @@ uv run ruff check trading tests scripts
 
 ## 5. Bước sau (Claude)
 Sao lưu DB → chạy `--apply` → kiểm số mã có nến cuối trước 30/06/2022 (phải ≥ 20 để mở cổng đợt 171) → đo lại EW 2017–2022 có/không có mã chết để biết thiên lệch lớn bao nhiêu → chạy phép đo đợt 171.
+
+---
+
+## ĐÃ HỦY (10/10/2026)
+
+Chủ dự án quyết định không dùng mã đã hủy niêm yết. Brief này **không giao**. Script dò `scripts/probe_ssi_delisted_coverage.py` giữ lại trong repo; tiến độ dừng ở 6.836/17.576 mã (`data/probe_delisted_progress.json`, không vào git). Thiên lệch sống sót của `bars_daily` vẫn còn; mọi phép đo cổ phiếu phải ghi cảnh báo này.

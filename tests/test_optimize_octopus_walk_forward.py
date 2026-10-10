@@ -26,7 +26,6 @@ from scripts.optimize_octopus_walk_forward import (
     PhaseMetrics,
     build_grid_configs,
     compute_spearman_ic,
-    delisted_gate_ok,
     evaluate_verification,
     is_stock_symbol,
     run_symbol_phase_backtest,
@@ -413,11 +412,3 @@ def test_is_stock_symbol_and_spearman() -> None:
     p2 = [_make_dummy_metrics(c, net_pf=float(i + 1)) for i, c in enumerate(configs)]
     ic, _ = compute_spearman_ic(p1, p2)
     assert abs(ic - 1.0) < 1e-6
-
-
-def test_cong_ma_da_huy_khong_mo_voi_mot_ma_co_san():
-    """Sua cua Claude khi audit: DB chua nap ma chet van co 1 ma -> cong phai dong."""
-    assert delisted_gate_ok(0) is False
-    assert delisted_gate_ok(1) is False
-    assert delisted_gate_ok(19) is False
-    assert delisted_gate_ok(20) is True

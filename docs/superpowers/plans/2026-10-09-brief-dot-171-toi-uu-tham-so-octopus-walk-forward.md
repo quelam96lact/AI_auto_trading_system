@@ -95,3 +95,10 @@ uv run ruff check trading tests scripts
 
 ## 6. Báo cáo cho Claude (phần agent)
 Output pytest/ruff, bảng phá hoại, `detect_changes`, thời gian ước tính, lệnh chạy thật, cách xử lý warm-up, và mọi chỗ phải tự diễn giải.
+
+## 7. Sửa đổi trước khi chạy (10/10/2026, theo quyết định chủ dự án)
+
+Chủ dự án quyết định **không dùng mã đã hủy niêm yết** (đợt 172 hủy, đợt dò của đợt 170 dừng ở 6.836/17.576 mã và không chạy tiếp).
+- Bỏ cổng "≥ 20 mã có nến cuối trước 30/06/2022" (§1.1). Script vẫn in số mã đó, kèm **cảnh báo thiên lệch sống sót**.
+- Diễn giải kết quả: universe gần như chỉ gồm mã còn sống, nên PnL của cả chiến lược lẫn mua-và-giữ cùng mã đều bị thổi phồng. **Chỉ so được chiến lược với mua-và-giữ cùng mã và giữa các bộ tham số với nhau.** Không so với ETF hay mốc chuẩn đợt 165.
+- Mọi điều khác ở §1–§6 giữ nguyên: 12 bộ, quy tắc chọn, 5 điều kiện ĐẠT, chạy một lần.
