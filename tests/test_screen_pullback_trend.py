@@ -160,7 +160,7 @@ def _series_for_exit(kind: str) -> list[float]:
     closes = base + _pullback_and_bounce(peak, 0.10)
     entry_open = closes[-1]
     if kind == "stop":
-        # d=E bị chặn bởi T+2 -> chạm lại ở d=E+1, thoát ở close E+2 (cần đủ nến E+2)
+        # chạm cắt lỗ từ phiên E; T+2 làm bán muộn tới close E+2 (cần đủ nến E+2)
         closes += [entry_open * (1 - STOP_LOSS - 0.02)] * 4
     elif kind == "tp":
         closes += [peak * 1.001] * 4  # vượt H20
