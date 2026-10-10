@@ -7,6 +7,7 @@ from trading.calendar_vn import TZ, is_trading_day, trading_days_between
 from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
 from trading.config import Config
 from trading.real_order_reconcile import decide_update
+from trading.ssi_orders import fetch_order_history
 from trading.storage.db import Storage
 
 # Khử trùng lặp alert CRITICAL cho lệnh thật không rõ trạng thái (đúng 1 alert / dòng / ngày)
@@ -274,7 +275,7 @@ async def _reconcile_real_orders(
     from_date = earliest_date.strftime("%Y/%m/%d")
     to_date = today_date.strftime("%Y/%m/%d")
 
-    orders = await portfolio.get_historical_orders(account_no, from_date, to_date)
+    orders = await fetch_order_history(portfolio, account_no, from_date, to_date)
     orders_by_id = {
         str(o.order_id): o for o in (orders or []) if getattr(o, "order_id", None)
     }

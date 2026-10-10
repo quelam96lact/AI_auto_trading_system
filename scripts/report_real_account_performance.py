@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import inspect
 import io
 import os
 import statistics
@@ -17,7 +16,6 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 # Console encoding UTF-8
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
@@ -29,31 +27,15 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from ssi_sdk.models.portfolio import Order, OrderBookRequest, OrderSide
-from ssi_sdk.services.portfolio import EP_ORDER_HISTORY, OrderBook
+from ssi_sdk.models.portfolio import Order, OrderSide
 
 from scripts._db_common import load_dotenv, resolve_dsn
 from trading.calendar_vn import TZ
 from trading.collector.ssi_auth import decode_client_id, ensure_authenticated
 from trading.config import load_config
 from trading.paper_broker import FEE_RATE, SELL_TAX_RATE
+from trading.ssi_orders import fetch_order_history
 from trading.storage.db import Storage
-
-# SSI SDK bug workaround: SSI API /api/v3/trading/orderBook trả về "filledQty" và "cancelQty",
-# nhưng Order.from_dict chỉ đọc "filledQuantity" và "cancelQuantity".
-_orig_order_from_dict = Order.from_dict
-
-
-def _compat_order_from_dict(cls: Any, data: dict, account_no: str = "") -> Order:
-    d = dict(data)
-    if "filledQuantity" not in d and "filledQty" in d:
-        d["filledQuantity"] = d["filledQty"]
-    if "cancelQuantity" not in d and "cancelQty" in d:
-        d["cancelQuantity"] = d["cancelQty"]
-    return _orig_order_from_dict(d, account_no)
-
-
-Order.from_dict = classmethod(_compat_order_from_dict)
 
 
 @dataclass
@@ -393,101 +375,6 @@ def build_performance_report(
     )
 
 
-async def fetch_historical_orders_page(
-    portfolio: Any,
-    account_no: str,
-    from_date: str,
-    to_date: str,
-    page: int = 1,
-    size: int = 100,
-) -> tuple[list[Order], int]:
-    """Fetch 1 trang lịch sử lệnh từ portfolio service."""
-    # 1. Hỗ trợ phương thức get_historical_orders_page nếu có
-    if hasattr(portfolio, "get_historical_orders_page"):
-        res = await portfolio.get_historical_orders_page(
-            account_no, from_date, to_date, page=page, size=size
-        )
-        if isinstance(res, tuple):
-            return res[0], res[1]
-        return getattr(res, "orders", res), getattr(res, "total_orders", len(res))
-
-    # 2. Hỗ trợ get_historical_orders có tham số page/size
-    if hasattr(portfolio, "get_historical_orders"):
-        sig = inspect.signature(portfolio.get_historical_orders)
-        if "page" in sig.parameters or any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in sig.parameters.values()
-        ):
-            kwargs: dict[str, Any] = {"page": page}
-            if "size" in sig.parameters:
-                kwargs["size"] = size
-            res = await portfolio.get_historical_orders(
-                account_no, from_date, to_date, **kwargs
-            )
-            if isinstance(res, tuple):
-                return res[0], res[1]
-            if hasattr(res, "orders"):
-                return res.orders, getattr(
-                    res, "total_orders", len(res.orders)
-                )
-            total = getattr(res, "total_orders", None)
-            if total is None:
-                total = getattr(portfolio, "total_orders", None)
-            return list(res), (total if total is not None else len(res))
-
-    # 3. Hỗ trợ AsyncPortfolioService thực tế qua _rest
-    if hasattr(portfolio, "_rest"):
-        req = OrderBookRequest(
-            account_no=account_no,
-            from_date=from_date,
-            to_date=to_date,
-            page=page,
-            size=size,
-        ).to_dict()
-        data = await portfolio._rest.get(EP_ORDER_HISTORY, params=req)
-        book = OrderBook.from_dict(data)
-        return book.orders, book.total_orders
-
-    # 4. Fallback mặc định
-    res = await portfolio.get_historical_orders(account_no, from_date, to_date)
-    return res, len(res)
-
-
-async def fetch_all_historical_orders(
-    portfolio: Any,
-    account_no: str,
-    from_date: str,
-    to_date: str,
-    page_size: int = 100,
-) -> tuple[list[Order], int]:
-    """Lấy toàn bộ lịch sử lệnh qua tất cả các trang và kiểm tra total_orders."""
-    page = 1
-    all_orders: list[Order] = []
-    total_expected: int | None = None
-
-    while True:
-        orders, total_orders = await fetch_historical_orders_page(
-            portfolio, account_no, from_date, to_date, page=page, size=page_size
-        )
-        if total_expected is None:
-            total_expected = total_orders
-
-        all_orders.extend(orders)
-
-        if len(all_orders) >= total_orders or not orders:
-            break
-        page += 1
-
-    if total_expected is not None and len(all_orders) != total_expected:
-        raise ValueError(
-            f"Số lệnh lấy về ({len(all_orders)}) không khớp total_orders ({total_expected})"
-        )
-
-    return all_orders, (
-        total_expected if total_expected is not None else len(all_orders)
-    )
-
-
 def print_performance_report(rep: PerformanceReport) -> None:
     """In báo cáo định dạng chuẩn ra màn hình."""
     print("=" * 88)
@@ -607,7 +494,7 @@ async def run_report(
         else:
             api_to = datetime.now(TZ).strftime("%Y/%m/%d")
 
-        all_orders, _ = await fetch_all_historical_orders(
+        all_orders = await fetch_order_history(
             portfolio, account_no, api_from, api_to, page_size=100
         )
 

@@ -1,4 +1,4 @@
-"""Test suite cho scripts/report_real_account_performance.py (Brief đợt 174).
+"""Test suite cho scripts/report_real_account_performance.py (Brief đợt 174 & 176).
 
 TDD hoàn toàn trên lệnh giả, KHÔNG gọi mạng, KHÔNG ghi DB:
 1. test_mot_vong_lai_rong_tinh_tay_dung_toi_dong
@@ -6,19 +6,15 @@ TDD hoàn toàn trên lệnh giả, KHÔNG gọi mạng, KHÔNG ghi DB:
 3. test_lenh_khong_khop_hoac_huy_bi_bo
 4. test_khop_mot_phan_chi_tinh_phan_khop
 5. test_ban_khong_co_gia_von_trong_ky_vao_muc_rieng
-6. test_phan_trang_lay_du_tat_ca_cac_trang
-7. test_khong_co_loi_goi_ghi_nao
+6. test_khong_co_loi_goi_ghi_nao
 """
 
-from typing import Any
 
 import pytest
 from ssi_sdk.models.portfolio import Order, OrderSide, OrderStatus
-from ssi_sdk.services.portfolio import OrderBook
 
 from scripts.report_real_account_performance import (
     build_performance_report,
-    fetch_all_historical_orders,
     match_fifo_orders,
 )
 
@@ -187,39 +183,7 @@ def test_ban_khong_co_gia_von_trong_ky_vao_muc_rieng() -> None:
     assert report.total_net_pnl == 0.0  # Không vào PnL các vòng
 
 
-# --- 6. Test Phân trang lấy đủ tất cả các trang -------------------------------------
-
-class FakePortfolioWithPagination:
-    def __init__(self, pages: list[list[Order]], total_orders: int):
-        self.pages = pages
-        self.total_orders = total_orders
-        self.fetched_pages: list[int] = []
-
-    async def get_historical_orders(self, account_no: str, from_date: str, to_date: str, page: int = 1, size: int = 10) -> Any:
-        self.fetched_pages.append(page)
-        if 1 <= page <= len(self.pages):
-            return OrderBook(orders=list(self.pages[page - 1]), total_orders=self.total_orders)
-        return OrderBook(orders=[], total_orders=self.total_orders)
-
-
-@pytest.mark.asyncio
-async def test_phan_trang_lay_du_tat_ca_cac_trang() -> None:
-    # 3 trang, mỗi trang 10 lệnh, tổng 30 lệnh
-    page1 = [_make_order("AAA", OrderSide.BUY, 100, 100, 10_000.0, f"2026/09/01 10:0{i}:00", order_id=f"p1_{i}") for i in range(10)]
-    page2 = [_make_order("AAA", OrderSide.BUY, 100, 100, 10_000.0, f"2026/09/02 10:0{i}:00", order_id=f"p2_{i}") for i in range(10)]
-    page3 = [_make_order("AAA", OrderSide.BUY, 100, 100, 10_000.0, f"2026/09/03 10:0{i}:00", order_id=f"p3_{i}") for i in range(10)]
-
-    fake_client = FakePortfolioWithPagination([page1, page2, page3], total_orders=30)
-    all_orders, total_rep = await fetch_all_historical_orders(
-        fake_client, "0434226", "2026/08/01", "2026/10/10", page_size=10
-    )
-
-    assert len(all_orders) == 30
-    assert total_rep == 30
-    assert fake_client.fetched_pages == [1, 2, 3]
-
-
-# --- 7. Test Không có lời gọi ghi nào (Spy trên Client và Storage) -------------------
+# --- 6. Test Không có lời gọi ghi nào (Spy trên Client và Storage) -------------------
 
 class SpyPortfolioClient:
     def __init__(self, orders: list[Order]):
@@ -262,8 +226,8 @@ async def test_khong_co_loi_goi_ghi_nao() -> None:
     spy_portfolio = SpyPortfolioClient(orders)
     spy_storage = SpyStorage()
 
-    all_orders, _ = await fetch_all_historical_orders(
-        spy_portfolio, "0434226", "2026/08/01", "2026/10/10"
+    all_orders = await spy_portfolio.get_historical_orders(
+        "0434226", "2026/08/01", "2026/10/10"
     )
     rep = build_performance_report("0434226", "2026-08-01", "2026-10-10", all_orders)
 

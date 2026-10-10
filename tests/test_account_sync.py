@@ -753,6 +753,11 @@ async def test_11_reconcile_two_placed_rows_one_ssi_call_updates_both(monkeypatc
         account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
     )
 
+    async def fake_fetch_order_history(port, acc, f_d, t_d, **kwargs):
+        return await port.get_historical_orders(acc, f_d, t_d)
+
+    monkeypatch.setattr(account_sync, "fetch_order_history", fake_fetch_order_history)
+
     await account_sync._reconcile_real_orders(portfolio, "0434221", ts, storage)
 
     # SSI được gọi đúng 1 lần từ ngày của dòng cũ nhất
@@ -868,6 +873,12 @@ async def test_12_reconcile_ssi_error_skips_account_other_syncs_normally(monkeyp
                 raise RuntimeError("SSI API blip")
             return []
 
+    async def fake_fetch_order_history(port, acc, f_d, t_d, **kwargs):
+        if acc == "ACC_ERR":
+            raise RuntimeError("SSI API blip")
+        return []
+
+    monkeypatch.setattr(account_sync, "fetch_order_history", fake_fetch_order_history)
     monkeypatch.setattr("ssi_sdk.services.trading.AsyncTradingService", MockTradingService)
     monkeypatch.setattr("ssi_sdk.services.portfolio.AsyncPortfolioService", MockPortfolioService)
 
@@ -912,6 +923,11 @@ async def test_13_reconcile_stale_unmatched_placed_row_dedup_critical(monkeypatc
     monkeypatch.setattr(
         account_sync, "alert", lambda level, msg, **f: alerts.append((level, msg, f))
     )
+
+    async def fake_fetch_order_history(port, acc, f_d, t_d, **kwargs):
+        return await port.get_historical_orders(acc, f_d, t_d)
+
+    monkeypatch.setattr(account_sync, "fetch_order_history", fake_fetch_order_history)
 
     # Chạy lần 1
     await account_sync._reconcile_real_orders(portfolio, "0434221", now_ts, storage)
