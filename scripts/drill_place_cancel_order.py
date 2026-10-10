@@ -34,6 +34,7 @@ from trading.alerts import alert
 from trading.calendar_vn import TZ
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import Config, load_config
+from trading.ssi_orders import fetch_order_history
 from trading.storage.db import Storage
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -390,12 +391,13 @@ async def run_drill(
         order_status_dict = None
         found = None
         portfolio = getattr(trading_client, "portfolio", None)
-        if portfolio is not None and hasattr(portfolio, "get_today_orders"):
+        if portfolio is not None:
+            today = datetime.now(TZ).strftime("%Y/%m/%d")
             for attempt in range(STATUS_POLL_ATTEMPTS):
                 if attempt:
                     await sleep_fn(STATUS_POLL_SLEEP_SEC)
                 try:
-                    today_orders = await portfolio.get_today_orders(account)
+                    today_orders = await fetch_order_history(portfolio, account, today, today)
                 except Exception as e:
                     print(f"\nBước 10: lần {attempt + 1}: không đọc được sổ lệnh ({e}).")
                     continue

@@ -5,7 +5,7 @@ Mọi test đều dùng mock / fake client. TUYỆT ĐỐI KHÔNG gọi API SSI 
 
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +20,7 @@ from scripts.drill_place_cancel_order import (
     run_drill,
     select_reference_price,
 )
+from trading.calendar_vn import TZ
 
 
 @dataclass
@@ -58,6 +59,14 @@ class FakeOrderHistoryItem:
     cancel_quantity: int = 100
 
 
+class FakeRestPortfolio:
+    """Portfolio giả hỗ trợ _rest.get trả dict raw JSON từ SSI API (Brief đợt 178)."""
+
+    def __init__(self, raw_resp: dict):
+        self._rest = AsyncMock()
+        self._rest.get.return_value = raw_resp
+
+
 def make_mock_trading_client(
     max_buy_qty: int = 500,
     cancel_raises: bool = False,
@@ -75,8 +84,23 @@ def make_mock_trading_client(
     else:
         trading_svc.cancel_order.return_value = FakeCancelResponse(status=cancel_status)
 
-    portfolio_svc = AsyncMock()
-    portfolio_svc.get_today_orders.return_value = [FakeOrderHistoryItem()]
+    portfolio_svc = FakeRestPortfolio({
+        "totalRecord": 1,
+        "orderList": [
+            {
+                "orderId": "ORDER_12345",
+                "clientRequestId": "REQ_67890",
+                "orderStatus": "CL",
+                "quantity": 100,
+                "filledQty": 0,
+                "cancelQty": 100,
+                "avgPrice": 1000,
+                "side": "B",
+                "symbol": "VCB",
+                "inputTime": "2026/10/12 10:00:00",
+            }
+        ],
+    })
 
     client.trading = trading_svc
     client.portfolio = portfolio_svc
@@ -405,11 +429,15 @@ async def test_post_cancel_status_not_fully_cancelled_is_critical(
     """San nhan yeu cau huy CHUA co nghia lenh da huy: so lenh cho thay da khop (mot phan)
     hoac chua huy du 100 -> CRITICAL, exit 2 (truoc day in 'thanh cong')."""
     mock_trading = make_mock_trading_client()
-    mock_trading.portfolio.get_today_orders.return_value = [
-        FakeOrderHistoryItem(filled_quantity=filled, cancel_quantity=cancelled, status="X")
-    ]
+    mock_fetch = AsyncMock(
+        return_value=[
+            FakeOrderHistoryItem(filled_quantity=filled, cancel_quantity=cancelled, status="X")
+        ]
+    )
     mock_alert = MagicMock()
-    with patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path), pytest.raises(SystemExit) as exc:
+    with patch("scripts.drill_place_cancel_order.fetch_order_history", mock_fetch), \
+         patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path), \
+         pytest.raises(SystemExit) as exc:
         await run_drill(
             account="0434221", symbol="VCB", send=True,
             trading_client=mock_trading, data_client=make_mock_data_client(),
@@ -427,8 +455,9 @@ async def test_post_cancel_order_not_found_returns_1_after_polling(capsys, tmp_p
     """Khong tim thay lenh trong so lenh sau 3 lan doc: khong duoc bao 'thanh cong' -
     tra ma 1, yeu cau doi chieu tay tren iBoard."""
     mock_trading = make_mock_trading_client()
-    mock_trading.portfolio.get_today_orders.return_value = []
-    with patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path):
+    mock_fetch = AsyncMock(return_value=[])
+    with patch("scripts.drill_place_cancel_order.fetch_order_history", mock_fetch), \
+         patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path):
         code = await run_drill(
             account="0434221", symbol="VCB", send=True,
             trading_client=mock_trading, data_client=make_mock_data_client(),
@@ -436,7 +465,7 @@ async def test_post_cancel_order_not_found_returns_1_after_polling(capsys, tmp_p
             alert_fn=MagicMock(), sleep_fn=_no_sleep,
         )
     assert code == 1
-    assert mock_trading.portfolio.get_today_orders.call_count == 3
+    assert mock_fetch.call_count == 3
     out = capsys.readouterr()
     assert "ĐỐI CHIẾU TAY" in out.out + out.err
 
@@ -452,4 +481,114 @@ async def test_happy_path_returns_0_when_fully_cancelled(tmp_path):
             alert_fn=MagicMock(), sleep_fn=_no_sleep,
         )
     assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# Brief đợt 178: kiểm chứng đọc đúng số lượng khớp/hủy từ SSI API
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_step10_e2e_raw_json_partially_filled_is_critical(capsys, tmp_path):
+    """1. Đầu-cuối với JSON thô: orderStatus FFPC, filledQty 40, cancelQty 60
+    không monkeypatch fetch_order_history -> CRITICAL, exit 2, chứa 'ĐÃ KHỚP'."""
+    mock_trading = make_mock_trading_client()
+    mock_trading.portfolio = FakeRestPortfolio({
+        "totalRecord": 1,
+        "orderList": [
+            {
+                "orderId": "ORDER_12345",
+                "clientRequestId": "REQ_67890",
+                "orderStatus": "FFPC",
+                "quantity": 100,
+                "filledQty": 40,
+                "cancelQty": 60,
+                "avgPrice": 1000,
+                "side": "B",
+                "symbol": "VCB",
+                "inputTime": "2026/10/12 10:00:00",
+            }
+        ],
+    })
+    mock_alert = MagicMock()
+    with patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path), pytest.raises(SystemExit) as exc:
+        await run_drill(
+            account="0434221", symbol="VCB", send=True,
+            trading_client=mock_trading, data_client=make_mock_data_client(),
+            input_fn=lambda p: "YES", get_exchange_fn=lambda s: "HOSE",
+            alert_fn=mock_alert, sleep_fn=_no_sleep,
+        )
+    assert exc.value.code == 2
+    assert mock_alert.call_args.args[0] == "CRITICAL"
+    out = capsys.readouterr()
+    assert "ĐÃ KHỚP" in out.out + out.err
+
+
+@pytest.mark.asyncio
+async def test_step10_e2e_raw_json_fully_cancelled_returns_0(tmp_path):
+    """2. Hủy đủ: orderStatus CL, filledQty 0, cancelQty 100 -> exit 0, không CRITICAL."""
+    mock_trading = make_mock_trading_client()
+    mock_trading.portfolio = FakeRestPortfolio({
+        "totalRecord": 1,
+        "orderList": [
+            {
+                "orderId": "ORDER_12345",
+                "clientRequestId": "REQ_67890",
+                "orderStatus": "CL",
+                "quantity": 100,
+                "filledQty": 0,
+                "cancelQty": 100,
+                "avgPrice": 1000,
+                "side": "B",
+                "symbol": "VCB",
+                "inputTime": "2026/10/12 10:00:00",
+            }
+        ],
+    })
+    mock_alert = MagicMock()
+    with patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path):
+        code = await run_drill(
+            account="0434221", symbol="VCB", send=True,
+            trading_client=mock_trading, data_client=make_mock_data_client(),
+            input_fn=lambda p: "YES", get_exchange_fn=lambda s: "HOSE",
+            alert_fn=mock_alert, sleep_fn=_no_sleep,
+        )
+    assert code == 0
+    assert mock_alert.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_step10_date_params_matches_vn_today(tmp_path):
+    """3. Ngày đúng giờ VN: params gửi tới _rest.get có from == to == ngày VN hôm nay theo %Y/%m/%d."""
+    mock_trading = make_mock_trading_client()
+    portfolio = FakeRestPortfolio({
+        "totalRecord": 1,
+        "orderList": [
+            {
+                "orderId": "ORDER_12345",
+                "clientRequestId": "REQ_67890",
+                "orderStatus": "CL",
+                "quantity": 100,
+                "filledQty": 0,
+                "cancelQty": 100,
+                "avgPrice": 1000,
+                "side": "B",
+                "symbol": "VCB",
+                "inputTime": "2026/10/12 10:00:00",
+            }
+        ],
+    })
+    mock_trading.portfolio = portfolio
+    with patch("scripts.drill_place_cancel_order.LOGS_DIR", tmp_path):
+        await run_drill(
+            account="0434221", symbol="VCB", send=True,
+            trading_client=mock_trading, data_client=make_mock_data_client(),
+            input_fn=lambda p: "YES", get_exchange_fn=lambda s: "HOSE",
+            alert_fn=MagicMock(), sleep_fn=_no_sleep,
+        )
+
+    expected_today = datetime.now(TZ).strftime("%Y/%m/%d")
+    call_args = portfolio._rest.get.call_args
+    assert call_args is not None
+    params = call_args.kwargs.get("params") or call_args.args[1]
+    assert params["from"] == expected_today
+    assert params["to"] == expected_today
 
