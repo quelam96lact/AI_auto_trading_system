@@ -65,7 +65,7 @@ Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gi
 > - **E3 suy biến:** chỉ còn ~4% nến thỏa "không có imbalance phía ngược".
 > - E1 và E2 không dùng imbalance, nên không bị ảnh hưởng.
 >
-> Quyết định: E3 cho crypto sẽ được sửa ngưỡng bằng **brief 183b** trước 01/11, ghi vào spec H trước khi đo. Lý do sửa chỉ là độ phổ biến của đặc trưng, không phải kết quả. Nếu 183b không xong trước 01/11, E3 vẫn đo theo ngưỡng cũ, và phải báo kèm ghi chú này.
+> Quyết định: E3 cho crypto sẽ được sửa ngưỡng bằng **brief 183b** (`2026-10-11-brief-dot-183b-nguong-imbalance-tuong-doi-crypto.md`) trước 01/11, ghi vào spec H trước khi đo. Lý do sửa chỉ là độ phổ biến của đặc trưng, không phải kết quả. Nếu 183b không xong trước 01/11, E3 vẫn đo theo ngưỡng cũ, và phải báo kèm ghi chú này.
 
 ### 1.3 Sự kiện, mục tiêu, chồng lấn
 - **Sự kiện:** E1/E2/E3 đúng định nghĩa §1.3 brief 182 v2, gọi chính hàm của 182 trên nến tóm tắt.
