@@ -17,20 +17,26 @@ Gom 11 ca kiem chung:
 
 from __future__ import annotations
 
+import gzip
+import json
 import math
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from scripts.record_vn30f_orderbook import MORNING_START
+from scripts.screen_vn30f_orderbook import load_all_sessions
 from scripts.screen_vn30f_orderflow import (
     ALPHA_PER_PAIR,
     BarSummary,
     OrderFlowEvent,
     block_bootstrap_p_value,
     build_footprint_bars,
+    build_footprint_bars_and_trades,
+    build_price_lookup,
     calculate_event_targets,
     compute_economic_hurdle,
     detect_e1_events,
@@ -661,19 +667,15 @@ def test_6_muc_tieu_va_chong_lan():
     assert filtered[1].t_end == ev3.t_end
 
 
-def test_7_cong_ngay(capsys):
-    """Ca 7: today < 2026-12-01 tra ma 2 va mock list_files khong duoc goi; today >= 2026-12-01 di tiep."""
-    mock_list_files = MagicMock()
-
-    # today = 2026-11-30 -> tra 2, mock khong duoc goi
-    ret_before = main(today=date(2026, 11, 30), list_files_fn=mock_list_files)
+def test_7_cong_ngay(tmp_path):
+    """Ca 7: today < 2026-12-01 tra ma 2; today >= 2026-12-01 vuot qua cong ngay (tra 3 vi thu muc rong)."""
+    # today = 2026-11-30 -> tra 2 (bi chan tai cong ngay)
+    ret_before = main(args=["--data-dir", str(tmp_path)], today=date(2026, 11, 30))
     assert ret_before == 2
-    assert mock_list_files.call_count == 0
 
-    # today = 2026-12-01 -> di tiep va goi mock
-    ret_after = main(today=date(2026, 12, 1), list_files_fn=mock_list_files)
-    assert ret_after == 0
-    assert mock_list_files.call_count == 1
+    # today = 2026-12-01 -> vuot qua cong ngay, tiep tuc nap du lieu (tra 3 vi thu muc rong < 40 phien)
+    ret_after = main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+    assert ret_after == 3
 
 
 def test_8_niem_phong_holdout(tmp_path):
@@ -800,3 +802,320 @@ def test_11_bootstrap_theo_khoi_phien():
     _, means = block_bootstrap_p_value(evs_a + evs_b, n_bootstrap=1000, seed=42)
     unique_means = set(np.round(means, 9))
     assert len(unique_means) <= 3
+
+
+# --- Helpers & Ca kiem chung 12-18 (Brief dot 182b) ------------------------------
+
+
+def _make_synthetic_session_file(
+    session_date: date,
+    filepath: Path,
+    n_bars: int = 48,
+    correlated: bool = True,
+) -> None:
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    m_start = datetime.combine(session_date, datetime.strptime("09:00:00", "%H:%M:%S").time(), tzinfo=TZ)
+    a_start = datetime.combine(session_date, datetime.strptime("13:00:00", "%H:%M:%S").time(), tzinfo=TZ)
+
+    records = []
+    for b_idx in range(n_bars):
+        if b_idx < 30:
+            b_start = m_start + timedelta(minutes=5 * b_idx)
+        else:
+            b_start = a_start + timedelta(minutes=5 * (b_idx - 30))
+
+        if correlated:
+            if b_idx % 2 == 0:
+                p1, p2 = 1900.0, 1902.0
+                s1, s2 = "B", "B"
+            else:
+                p1, p2 = 1902.0, 1900.0
+                s1, s2 = "S", "S"
+        else:
+            # Ngich dao delta voi huong gia: gia tang thi ban, gia giam thi mua -> rho = -1.0 <= 0.3
+            if b_idx % 2 == 0:
+                p1, p2 = 1900.0, 1902.0
+                s1, s2 = "S", "S"  # gia tang, delta am
+            else:
+                p1, p2 = 1902.0, 1900.0
+                s1, s2 = "B", "B"  # gia giam, delta duong
+
+        for m in range(5):
+            m_dt = b_start + timedelta(minutes=m)
+            records.append({
+                "type": "QUOTE",
+                "bid_prices": [1900.0],
+                "ask_prices": [1900.2],
+                "bid_volumes": [10],
+                "ask_volumes": [10],
+                "trading_time": m_dt.strftime("%Y/%m/%d %H:%M:%S"),
+                "recv_ts": m_dt.isoformat(),
+            })
+
+        t1 = b_start + timedelta(minutes=1)
+        t2 = b_start + timedelta(minutes=3)
+        records.append({
+            "msg_type": "33",
+            "side": s1,
+            "price": p1,
+            "quantity": 10,
+            "trading_time": t1.strftime("%Y/%m/%d %H:%M:%S"),
+            "recv_ts": t1.isoformat(),
+        })
+        records.append({
+            "msg_type": "33",
+            "side": s2,
+            "price": p2,
+            "quantity": 20,
+            "trading_time": t2.strftime("%Y/%m/%d %H:%M:%S"),
+            "recv_ts": t2.isoformat(),
+        })
+
+    with gzip.open(filepath, "wt", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+
+def test_12_dau_cuoi_is_hop_le_va_khong_mo_holdout(tmp_path, monkeypatch, capsys):
+    """Ca 12: Dau-cuoi today=2026-12-01: 41 phien hop le, 1 file cat cut, 1 phien thua, 1 file holdout.
+    Assert return 0, bao 41 hop le, file hong, phien thua, bang 6 dong, file holdout KHONG bi mo.
+    """
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+
+    current_d = date(2026, 10, 1)
+    for _ in range(41):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(current_d, f, n_bars=48, correlated=True)
+        current_d += timedelta(days=1)
+
+    # 1 file IS bi cat cut
+    corrupt_d = date(2026, 11, 21)
+    corrupt_f = contract_dir / f"{corrupt_d.isoformat()}.jsonl.gz"
+    _make_synthetic_session_file(corrupt_d, corrupt_f, n_bars=48, correlated=True)
+    raw_bytes = corrupt_f.read_bytes()
+    corrupt_f.write_bytes(raw_bytes[: len(raw_bytes) // 2])
+
+    # 1 phien IS chi co 10 nen co giao dich
+    sparse_d = date(2026, 11, 22)
+    sparse_f = contract_dir / f"{sparse_d.isoformat()}.jsonl.gz"
+    _make_synthetic_session_file(sparse_d, sparse_f, n_bars=10, correlated=True)
+
+    # 1 file ngay 2026-12-02 (Holdout)
+    holdout_d = date(2026, 12, 2)
+    holdout_f = contract_dir / f"{holdout_d.isoformat()}.jsonl.gz"
+    _make_synthetic_session_file(holdout_d, holdout_f, n_bars=48, correlated=True)
+
+    opened_files: list[str] = []
+    import scripts.screen_vn30f_orderflow as mod
+    orig_iter = mod.iter_file_messages
+
+    def spy_iter(path):
+        opened_files.append(Path(path).name)
+        return orig_iter(path)
+
+    monkeypatch.setattr(mod, "iter_file_messages", spy_iter)
+
+    ret = mod.main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+    captured = capsys.readouterr()
+
+    assert ret == 0
+    assert "Số phiên hợp lệ (>= 44/48 nến): 41" in captured.out
+    assert "file hỏng" in captured.out
+    assert "phiên thưa" in captured.out
+    for p_name in ("E1_H15", "E1_H30", "E2_H15", "E2_H30", "E3_H15", "E3_H30"):
+        assert p_name in captured.out
+
+    assert "2026-12-02.jsonl.gz" not in opened_files
+
+
+def test_13_khong_du_phien_is_return_3(tmp_path, capsys):
+    """Ca 13: Chi co 39 phien hop le -> in KHONG DU PHIEN va return 3."""
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+
+    current_d = date(2026, 10, 1)
+    for _ in range(39):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(current_d, f, n_bars=48, correlated=True)
+        current_d += timedelta(days=1)
+
+    import scripts.screen_vn30f_orderflow as mod
+    ret = mod.main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+    captured = capsys.readouterr()
+
+    assert ret == 3
+    assert "KHÔNG ĐỦ PHIÊN" in captured.err
+
+
+def test_14_control_variable_that_bai_return_4(tmp_path, capsys):
+    """Ca 14: Side gan doc lap/nguoc huong gia -> rho <= 0.3 -> return 4."""
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+
+    current_d = date(2026, 10, 1)
+    for _ in range(40):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(current_d, f, n_bars=48, correlated=False)
+        current_d += timedelta(days=1)
+
+    import scripts.screen_vn30f_orderflow as mod
+    ret = mod.main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+    captured = capsys.readouterr()
+
+    assert ret == 4
+    assert "DỮ LIỆU SIDE KHÔNG ĐÁNG TIN" in captured.err
+
+
+def test_15_price_lookup():
+    """Ca 15: price_lookup: tin dung luc x duoc lay; x + 1s thi khong; tin U dung luc x bi bo qua."""
+    x = datetime(2026, 10, 1, 9, 15, 0, tzinfo=TZ)
+    msgs = [
+        {"msg_type": "33", "side": "B", "price": 1900.0, "quantity": 10, "trading_time": "2026/10/01 09:10:00"},
+        {"msg_type": "33", "side": "S", "price": 1905.0, "quantity": 10, "trading_time": "2026/10/01 09:15:00"},
+        {"msg_type": "33", "side": "U", "price": 1908.0, "quantity": 10, "trading_time": "2026/10/01 09:15:00"},
+        {"msg_type": "33", "side": "B", "price": 1910.0, "quantity": 10, "trading_time": "2026/10/01 09:15:01"},
+    ]
+    _, clean_trades, stats = build_footprint_bars_and_trades(msgs, session_date=date(2026, 10, 1))
+    lookup = build_price_lookup(clean_trades)
+
+    assert lookup(x) == 1905.0
+    assert lookup(x) != 1910.0
+    assert lookup(x) != 1908.0
+    assert stats["dropped_u_or_zero"] == 1
+    assert lookup(x + timedelta(seconds=1)) == 1910.0
+
+
+def test_16_holdout_quy_trinh_va_return_5(tmp_path, monkeypatch):
+    """Ca 16: Holdout:
+    - Cap khong DAT -> return 5, log khong doi, loader holdout khong duoc goi.
+    - Cap DAT -> trinh tu goi: GHI LOG ROI MOI NAP HOLDOUT.
+    - Lan hai cung cap -> return 5 (vi log da co).
+    """
+    import scripts.screen_vn30f_orderflow as mod
+
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    current_d = date(2026, 10, 1)
+    for _ in range(40):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(current_d, f, n_bars=48, correlated=True)
+        current_d += timedelta(days=1)
+
+    h_dir = tmp_path / "VN30F2612"
+    h_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(30):
+        h_d = date(2026, 12, 1) + timedelta(days=i)
+        f_h = h_dir / f"{h_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(h_d, f_h, n_bars=48, correlated=True)
+
+    dummy_log = tmp_path / "holdout-unlock-log.md"
+
+    # 1. Cap khong DAT o IS -> return 5, mock loader khong duoc goi
+    mock_load_holdout = MagicMock()
+    monkeypatch.setattr(mod, "load_holdout_sessions_orderflow", mock_load_holdout)
+
+    orig_eval = mod.evaluate_pair_criteria
+    def fail_eval(*args, **kwargs):
+        res = orig_eval(*args, **kwargs)
+        res["passed"] = False
+        return res
+    monkeypatch.setattr(mod, "evaluate_pair_criteria", fail_eval)
+
+    ret1 = mod.main(
+        args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
+        today=date(2026, 12, 1),
+        unlock_log_path=dummy_log,
+    )
+    assert ret1 == 5
+    assert not dummy_log.exists()
+    assert mock_load_holdout.call_count == 0
+
+    # 2. Cap DAT o IS -> trinh tu: GHI LOG ROI MOI NAP HOLDOUT
+    call_sequence = []
+    def pass_eval(*args, **kwargs):
+        res = orig_eval(*args, **kwargs)
+        res["passed"] = True
+        return res
+    monkeypatch.setattr(mod, "evaluate_pair_criteria", pass_eval)
+
+    def spy_load_holdout(*args, **kwargs):
+        assert dummy_log.exists()
+        log_text = dummy_log.read_text(encoding="utf-8").lower()
+        assert "đợt 182" in log_text
+        assert "e1_h15" in log_text
+        call_sequence.append("load_holdout")
+        return []
+    monkeypatch.setattr(mod, "load_holdout_sessions_orderflow", spy_load_holdout)
+
+    ret2 = mod.main(
+        args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
+        today=date(2026, 12, 1),
+        unlock_log_path=dummy_log,
+    )
+    assert ret2 == 0
+    assert "load_holdout" in call_sequence
+    assert dummy_log.exists()
+    assert "E1_H15" in dummy_log.read_text(encoding="utf-8")
+
+    # 3. Lan hai cung cap -> return 5 (vi log da ton tai dong dot 182)
+    ret3 = mod.main(
+        args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
+        today=date(2026, 12, 1),
+        unlock_log_path=dummy_log,
+    )
+    assert ret3 == 5
+
+
+def test_17_162_file_cat_cut_khong_sap(tmp_path):
+    """Ca 17: load_all_sessions cua 162 tren thu muc co file bi cat cut khong sap,
+    phien do is_valid=False, file lanh con lai van doc duoc.
+    """
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+
+    healthy_f = contract_dir / "2026-10-01.jsonl.gz"
+    _make_synthetic_session_file(date(2026, 10, 1), healthy_f, n_bars=48, correlated=True)
+
+    corrupt_f = contract_dir / "2026-10-02.jsonl.gz"
+    _make_synthetic_session_file(date(2026, 10, 2), corrupt_f, n_bars=48, correlated=True)
+    raw = corrupt_f.read_bytes()
+    corrupt_f.write_bytes(raw[: len(raw) // 2])
+
+    sessions = load_all_sessions(tmp_path)
+    assert len(sessions) == 2
+
+    s_healthy = next(s for s in sessions if s.session_date == date(2026, 10, 1))
+    s_corrupt = next(s for s in sessions if s.session_date == date(2026, 10, 2))
+
+    assert s_healthy.is_valid is True
+    assert s_corrupt.is_valid is False
+
+
+def test_18_calculate_event_targets_block_end_fn_rieng():
+    """Ca 18: calculate_event_targets voi block_end_fn rieng:
+    su kien co t_end + H bang dung gio ket thuc -> giu; vuot 1 phut -> bo.
+    """
+    t0 = datetime(2026, 10, 1, 10, 0, 0, tzinfo=TZ)
+    ev1 = OrderFlowEvent("E1", +1, date(2026, 10, 1), "morning", 12, t0, 1900.0)
+
+    t1 = datetime(2026, 10, 1, 10, 1, 0, tzinfo=TZ)
+    ev2 = OrderFlowEvent("E1", +1, date(2026, 10, 1), "morning", 12, t1, 1900.0)
+
+    custom_end = datetime(2026, 10, 1, 10, 15, 0, tzinfo=TZ)
+    fn_end = lambda e: custom_end
+    dummy_lookup = lambda dt: 1905.0
+
+    kept = calculate_event_targets([ev1, ev2], dummy_lookup, h_minutes=15, block_end_fn=fn_end)
+    assert len(kept) == 1
+    assert kept[0].t_end == ev1.t_end
+    assert kept[0].target_time == custom_end
+
+
+def test_19_phan_quyet_holdout_giong_162():
+    """Ca 19 (Claude bo sung khi audit 182b): Holdout dat khi p < 0.05 va mean_y >= hurdle, khong doi 100 su kien."""
+    from scripts.screen_vn30f_orderflow import holdout_verdict
+
+    assert holdout_verdict(0.049, 1.032, 1.032) is True
+    assert holdout_verdict(0.05, 2.0, 1.032) is False
+    assert holdout_verdict(0.01, 1.031, 1.032) is False

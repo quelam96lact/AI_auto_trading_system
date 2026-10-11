@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -527,17 +528,26 @@ def load_holdout_sessions(data_dir: Path | str = "data/orderbook") -> list[Sessi
 
     sessions: list[SessionData] = []
     for s_date, contract_name, fpath in sorted(file_entries, key=lambda x: x[0]):
-        stats: dict[str, Any] = {}
-        rows = build_minute_features(iter_file_messages(fpath), s_date, stats=stats)
-        usable = sum(1 for r in rows if r.usable())
-        ratio = usable / 240.0 if len(rows) == 240 else 0.0
+        try:
+            stats: dict[str, Any] = {}
+            rows = build_minute_features(iter_file_messages(fpath), s_date, stats=stats)
+            usable = sum(1 for r in rows if r.usable())
+            ratio = usable / 240.0 if len(rows) == 240 else 0.0
+            is_valid = (ratio >= 0.90)
+        except (EOFError, OSError, zlib.error) as exc:
+            print(f"[CẢNH BÁO] File hỏng '{fpath}': {exc}", file=sys.stderr)
+            rows = []
+            usable = 0
+            ratio = 0.0
+            is_valid = False
+
         sessions.append(
             SessionData(
                 session_date=s_date,
                 contract=contract_name,
                 rows=rows,
                 usable_count=usable,
-                is_valid=(ratio >= 0.90),
+                is_valid=is_valid,
                 usable_ratio=ratio,
             )
         )
@@ -586,17 +596,26 @@ def load_all_sessions(
         if s_date >= HOLDOUT_START_DATE:
             continue
 
-        stats: dict[str, Any] = {}
-        rows = build_minute_features(iter_file_messages(fpath), s_date, stats=stats)
-        usable = sum(1 for r in rows if r.usable())
-        ratio = usable / 240.0 if len(rows) == 240 else 0.0
+        try:
+            stats: dict[str, Any] = {}
+            rows = build_minute_features(iter_file_messages(fpath), s_date, stats=stats)
+            usable = sum(1 for r in rows if r.usable())
+            ratio = usable / 240.0 if len(rows) == 240 else 0.0
+            is_valid = (ratio >= 0.90)
+        except (EOFError, OSError, zlib.error) as exc:
+            print(f"[CẢNH BÁO] File hỏng '{fpath}': {exc}", file=sys.stderr)
+            rows = []
+            usable = 0
+            ratio = 0.0
+            is_valid = False
+
         sessions.append(
             SessionData(
                 session_date=s_date,
                 contract=contract_name,
                 rows=rows,
                 usable_count=usable,
-                is_valid=(ratio >= 0.90),
+                is_valid=is_valid,
                 usable_ratio=ratio,
             )
         )

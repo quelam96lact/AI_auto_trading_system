@@ -15,7 +15,9 @@ Cac ham gom:
 from __future__ import annotations
 
 import argparse
+import bisect
 import sys
+import zlib
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -38,8 +40,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.build_orderbook_features import (
     CONTINUOUS_AFTERNOON_END,
+    iter_file_messages,
     parse_recv_ts,
     parse_trading_time,
+    session_date_from_filename,
 )
 from scripts.record_vn30f_orderbook import (
     AFTERNOON_START,
@@ -48,10 +52,13 @@ from scripts.record_vn30f_orderbook import (
     classify_message,
 )
 from scripts.screen_vn30f_orderbook import (
+    ALPHA_LEVEL,
     CONTROL_MIN_RHO,
     DEFAULT_UNLOCK_LOG_PATH,
     ECONOMIC_HURDLE_FACTOR,
     HOLDOUT_START_DATE,
+    IS_END_DATE,
+    IS_START_DATE,
     MIN_INDEP_EVENTS,
     MIN_SIDE_EVENTS,
     compute_roundtrip_cost,
@@ -63,22 +70,34 @@ __all__ = [
     "ALPHA_PER_PAIR",
     "EVENT_NAMES",
     "HORIZONS",
+    "IS_END_DATE",
+    "IS_START_DATE",
+    "MIN_HOLDOUT_SESSIONS",
+    "MIN_IS_SESSIONS",
     "SLIPPAGE_PTS",
+    "VALID_BARS_THRESHOLD",
     "BarSummary",
     "FootprintBar",
     "OrderFlowEvent",
+    "OrderFlowSession",
     "block_bootstrap_p_value",
     "build_footprint_bars",
+    "build_footprint_bars_and_trades",
+    "build_price_lookup",
     "calculate_event_targets",
     "check_control_variable_orderflow",
     "compute_economic_hurdle",
+    "count_holdout_files",
     "detect_e1_events",
     "detect_e2_events",
     "detect_e3_events",
     "evaluate_pair_criteria",
     "filter_non_overlapping_events",
+    "holdout_verdict",
     "imbalance_levels",
     "load_holdout_sessions",
+    "load_holdout_sessions_orderflow",
+    "load_is_sessions_orderflow",
     "main",
     "verify_holdout_log_unlocked",
 ]
@@ -93,8 +112,26 @@ RATIO_IMBALANCE: float = 3.0
 MIN_VOL_IMBALANCE: float = 5.0
 DENOM_FLOOR_IMBALANCE: float = 1.0
 
+MIN_IS_SESSIONS: int = 40
+MIN_HOLDOUT_SESSIONS: int = 30
+VALID_BARS_THRESHOLD: int = 44  # ceil(0.9 * 48)
+
 
 # --- Cau truc du lieu -------------------------------------------------------------
+
+
+@dataclass
+class OrderFlowSession:
+    session_date: date
+    contract: str
+    file_path: Path
+    bars: list[FootprintBar]
+    clean_trades: list[tuple[datetime, float]]
+    price_lookup: Callable[[datetime], float | None]
+    is_valid: bool
+    invalid_reason: str | None
+    active_bars: int
+    stats: dict[str, Any]
 
 
 @dataclass
@@ -213,17 +250,40 @@ def _session_grid_5m(session_date: date) -> list[tuple[int, str, datetime, datet
     return grid
 
 
-def build_footprint_bars(
+def build_price_lookup(
+    clean_trades: Sequence[tuple[datetime, float]],
+) -> Callable[[datetime], float | None]:
+    """Tra cuu P(x) = gia cua tin khop cuoi cung co trading_time <= x.
+
+    Yeu cau: clean_trades da duoc sap xep theo trading_time tang dan.
+    """
+    if not clean_trades:
+        return lambda _x: None
+
+    times = [t[0] for t in clean_trades]
+    prices = [t[1] for t in clean_trades]
+
+    def _lookup(x: datetime) -> float | None:
+        idx = bisect.bisect_right(times, x)
+        if idx == 0:
+            return None
+        return prices[idx - 1]
+
+    return _lookup
+
+
+def build_footprint_bars_and_trades(
     messages: Iterable[dict[str, Any]],
     session_date: date,
     stats: dict[str, Any] | None = None,
     use_recv_ts_instead_of_trading_time: bool = False,
     same_level_instead_of_diagonal: bool = False,
-) -> tuple[list[FootprintBar], dict[str, Any]]:
-    """Dung 48 nen footprint 5 phut cho mot phien giao dich.
+) -> tuple[list[FootprintBar], list[tuple[datetime, float]], dict[str, Any]]:
+    """Dung 48 nen footprint 5 phut va trich xuat danh sach tin khop sach cho mot phien.
 
     Chi nhan tin classify_message(msg) == 'TRADE', side in {'B', 'S'}, quantity > 0.
     CVD reset ve 0 tai dau phien.
+    Tra ve (bars, clean_trades, stats).
     """
     if stats is None:
         stats = {}
@@ -294,6 +354,8 @@ def build_footprint_bars(
 
     # Sap xep tin theo thoi gian giao dich (on dinh thu tu xuat hien)
     valid_trades.sort(key=lambda t: t["ts"])
+
+    clean_trades = [(t["ts"], t["price"]) for t in valid_trades]
 
     # Nhom tin vao tung nen trong 48 nen
     # Moi nen: list tin
@@ -400,7 +462,25 @@ def build_footprint_bars(
             )
         )
 
-    return bars, stats
+    return bars, clean_trades, stats
+
+
+def build_footprint_bars(
+    messages: Iterable[dict[str, Any]],
+    session_date: date,
+    stats: dict[str, Any] | None = None,
+    use_recv_ts_instead_of_trading_time: bool = False,
+    same_level_instead_of_diagonal: bool = False,
+) -> tuple[list[FootprintBar], dict[str, Any]]:
+    """Dung 48 nen footprint 5 phut cho mot phien giao dich (tuong thich nguoc)."""
+    bars, _, st = build_footprint_bars_and_trades(
+        messages=messages,
+        session_date=session_date,
+        stats=stats,
+        use_recv_ts_instead_of_trading_time=use_recv_ts_instead_of_trading_time,
+        same_level_instead_of_diagonal=same_level_instead_of_diagonal,
+    )
+    return bars, st
 
 
 # --- 3. Bo phat hien su kien E1, E2, E3 (§1.3, §2) ----------------------------------
@@ -627,10 +707,12 @@ def calculate_event_targets(
     events: Sequence[OrderFlowEvent],
     price_lookup: Callable[[datetime], float | None],
     h_minutes: int,
+    block_end_fn: Callable[..., datetime] | None = None,
 ) -> list[OrderFlowEvent]:
     """Tinh bien muc tieu y = d * (P(t_end + H) - close_t).
 
-    Bo su kien neu t_end + H vuot qua ket thuc khung dang chua no (11:30 hoac 14:30).
+    Bo su kien neu t_end + H vuot qua ket thuc khung dang chua no (11:30 hoac 14:30 mac dinh,
+    hoac block_end_fn rieng neu truyen vao).
     """
     valid_events: list[OrderFlowEvent] = []
 
@@ -638,11 +720,17 @@ def calculate_event_targets(
         target_time = e.t_end + timedelta(minutes=h_minutes)
 
         # Kiem tra ket thuc khung
-        s_date = e.t_end.date()
-        if e.block_id == "morning":
-            block_end = datetime.combine(s_date, MORNING_END, tzinfo=TZ)
+        if block_end_fn is not None:
+            try:
+                block_end = block_end_fn(e)
+            except TypeError:
+                block_end = block_end_fn(e.t_end, e.block_id)
         else:
-            block_end = datetime.combine(s_date, CONTINUOUS_AFTERNOON_END, tzinfo=TZ)
+            s_date = e.t_end.date()
+            if e.block_id == "morning":
+                block_end = datetime.combine(s_date, MORNING_END, tzinfo=TZ)
+            else:
+                block_end = datetime.combine(s_date, CONTINUOUS_AFTERNOON_END, tzinfo=TZ)
 
         if target_time > block_end:
             # Vuot qua ket thuc khung -> bo qua
@@ -817,6 +905,7 @@ def evaluate_pair_criteria(
         "mean_y": mean_y,
         "hurdle": hurdle,
         "p_val": p_val,
+        "p_value": p_val,
         "control_rho": control_rho,
         "cond_control": cond_control,
         "cond1_sample": cond1_sample,
@@ -825,49 +914,222 @@ def evaluate_pair_criteria(
     }
 
 
-# --- 6. Niem phong Holdout (§1.1, §1.4) -------------------------------------------
+def holdout_verdict(p_val: float, mean_y: float, hurdle: float) -> bool:
+    """Phan quyet Holdout cho DUNG MOT cap da dat IS (Claude bo sung khi audit 182b, truoc 01/12).
+
+    Giong 162 (_evaluate_holdout_pair): p mot phia < 0.05 (khong chia 6 vi chi mo 1 cap)
+    VA mean_y >= hurdle cua IS. Khong doi >= 100 su kien: ~30 phien Holdout khong the du,
+    va doi vay se lam Holdout truot vi thieu mau chu khong vi khong co loi the.
+    """
+    return (p_val < ALPHA_LEVEL) and (mean_y >= hurdle)
+
+
+# --- 6. Niem phong Holdout & Loader du lieu (§1.1, §1.4, §1B) --------------------
+
+
+def count_holdout_files(data_dir: Path | str = "data/orderbook") -> int:
+    """Dem so file Holdout (>= 2026-12-01) chi theo ten file, KHONG mo file."""
+    p_dir = Path(data_dir)
+    if not p_dir.exists():
+        return 0
+    count = 0
+    for item in sorted(p_dir.iterdir()):
+        if item.is_dir():
+            for f in sorted(item.glob("*.jsonl.gz")):
+                s_date = session_date_from_filename(f)
+                if s_date is not None and s_date >= HOLDOUT_START_DATE:
+                    count += 1
+    return count
 
 
 def verify_holdout_log_unlocked(
     log_path: Path | str = DEFAULT_UNLOCK_LOG_PATH,
+    pair_name: str | None = None,
     tag: str = "đợt 182",
 ) -> bool:
-    """Kiem tra log mo niem phong holdout-unlock-log.md co dong dot 182 chua."""
+    """Kiem tra log mo niem phong holdout-unlock-log.md co dong dot 182 va ten cap chua."""
     p = Path(log_path)
     if not p.exists():
         raise RuntimeError(f"File log mo niem phong khong ton tai: {p}")
 
     text = p.read_text(encoding="utf-8")
     for line in text.splitlines():
-        if tag.lower() in line.lower():
+        line_lower = line.lower()
+        if tag.lower() in line_lower and (
+            pair_name is None or pair_name.lower() in line_lower
+        ):
             return True
 
+    detail = f"'{tag}'" if pair_name is None else f"'{tag}' và cặp '{pair_name}'"
     raise RuntimeError(
-        f"Vi pham niem phong: chua co dong mo khoa '{tag}' trong {log_path}"
+        f"Vi pham niem phong: chua co dong mo khoa {detail} trong {log_path}"
     )
 
 
-def load_holdout_sessions(
+def load_holdout_sessions_orderflow(
     data_dir: Path | str = "data/orderbook",
     log_path: Path | str = DEFAULT_UNLOCK_LOG_PATH,
-) -> list[Any]:
-    """Doc phien Holdout. BAT BUOC kiem tra dong log dot 182 truoc khi doc bat ky file nao."""
-    verify_holdout_log_unlocked(log_path, tag="đợt 182")
+    pair_name: str | None = None,
+) -> list[OrderFlowSession]:
+    """Doc phien Holdout (>= 2026-12-01). BAT BUOC kiem tra dong log truoc khi doc bat ky file nao."""
+    verify_holdout_log_unlocked(log_path=log_path, pair_name=pair_name, tag="đợt 182")
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
-    # Khong tu tien doc file that truoc 01/12
-    return []
+
+    date_to_contract: dict[date, str] = {}
+    file_entries: list[tuple[date, str, Path]] = []
+
+    for item in sorted(p_dir.iterdir()):
+        if item.is_dir():
+            contract_name = item.name
+            for f in sorted(item.glob("*.jsonl.gz")):
+                s_date = session_date_from_filename(f)
+                if s_date is None or s_date < HOLDOUT_START_DATE:
+                    continue
+                if s_date in date_to_contract:
+                    raise ValueError(
+                        f"Trùng ngày {s_date} giữa các hợp đồng Holdout: '{date_to_contract[s_date]}' và '{contract_name}'"
+                    )
+                date_to_contract[s_date] = contract_name
+                file_entries.append((s_date, contract_name, f))
+
+    sessions: list[OrderFlowSession] = []
+    for s_date, contract_name, fpath in sorted(file_entries, key=lambda x: x[0]):
+        try:
+            stats: dict[str, Any] = {}
+            bars, trades, stats = build_footprint_bars_and_trades(
+                iter_file_messages(fpath), s_date, stats=stats
+            )
+            lookup = build_price_lookup(trades)
+            active_bars = sum(1 for b in bars if b.trade_count > 0)
+            is_valid = (active_bars >= VALID_BARS_THRESHOLD)
+            reason = None if is_valid else f"phiên thưa ({active_bars}/48 nến)"
+        except (EOFError, OSError, zlib.error) as exc:
+            print(f"[CẢNH BÁO] File hỏng '{fpath}': {exc}", file=sys.stderr)
+            bars = []
+            trades = []
+            lookup = lambda _x: None
+            is_valid = False
+            reason = "file hỏng"
+            active_bars = 0
+            stats = {}
+
+        sessions.append(
+            OrderFlowSession(
+                session_date=s_date,
+                contract=contract_name,
+                file_path=fpath,
+                bars=bars,
+                clean_trades=trades,
+                price_lookup=lookup,
+                is_valid=is_valid,
+                invalid_reason=reason,
+                active_bars=active_bars,
+                stats=stats,
+            )
+        )
+
+    return sessions
 
 
-# --- 7. CLI Main Runner & Cong ngay chong nhin truoc (§1.1, §2) -------------------
+# Tuong thich nguoc voi import cu
+load_holdout_sessions = load_holdout_sessions_orderflow
+
+
+def load_is_sessions_orderflow(
+    data_dir: Path | str = "data/orderbook",
+) -> list[OrderFlowSession]:
+    """Doc cac phien In-Sample (2026-09-25 den 2026-11-30).
+
+    - TUYET DOI bo qua ngay >= HOLDOUT_START_DATE (2026-12-01) ma KHONG mo file.
+    - Bo qua ngay ngoai khoang [IS_START_DATE, IS_END_DATE].
+    - Hai hop dong trung ngay -> raise ValueError.
+    - Bat loi file cat cut / hong: EOFError, OSError, zlib.error -> is_valid=False, ly do 'file hỏng'.
+    - Phien hop le: >= 44 tren 48 nen co giao dich (ceil(0.9 * 48)).
+    """
+    p_dir = Path(data_dir)
+    if not p_dir.exists():
+        return []
+
+    date_to_contract: dict[date, str] = {}
+    file_entries: list[tuple[date, str, Path]] = []
+
+    for item in sorted(p_dir.iterdir()):
+        if item.is_dir():
+            contract_name = item.name
+            for f in sorted(item.glob("*.jsonl.gz")):
+                s_date = session_date_from_filename(f)
+                if s_date is None:
+                    continue
+                # NIEM PHONG: Tuyet doi bo qua ngay >= HOLDOUT_START_DATE ma KHONG mo file
+                if s_date >= HOLDOUT_START_DATE:
+                    continue
+                if s_date < IS_START_DATE:
+                    continue
+
+                if s_date in date_to_contract:
+                    raise ValueError(
+                        f"Trùng ngày {s_date} giữa các hợp đồng: '{date_to_contract[s_date]}' và '{contract_name}'"
+                    )
+                date_to_contract[s_date] = contract_name
+                file_entries.append((s_date, contract_name, f))
+        elif item.is_file() and item.name.endswith(".jsonl.gz"):
+            print(
+                f"[CẢNH BÁO] Bỏ qua file '{item.name}' nằm ngay thư mục gốc (yêu cầu cấu trúc <mã hợp đồng>/<ngày>.jsonl.gz)",
+                file=sys.stderr,
+            )
+
+    sessions: list[OrderFlowSession] = []
+    for s_date, contract_name, fpath in sorted(file_entries, key=lambda x: x[0]):
+        try:
+            stats: dict[str, Any] = {}
+            bars, trades, stats = build_footprint_bars_and_trades(
+                iter_file_messages(fpath), s_date, stats=stats
+            )
+            lookup = build_price_lookup(trades)
+            active_bars = sum(1 for b in bars if b.trade_count > 0)
+            if active_bars >= VALID_BARS_THRESHOLD:
+                is_valid = True
+                reason = None
+            else:
+                is_valid = False
+                reason = f"phiên thưa ({active_bars}/48 nến)"
+        except (EOFError, OSError, zlib.error) as exc:
+            print(f"[CẢNH BÁO] File hỏng '{fpath}': {exc}", file=sys.stderr)
+            bars = []
+            trades = []
+            lookup = lambda _x: None
+            is_valid = False
+            reason = "file hỏng"
+            active_bars = 0
+            stats = {}
+
+        sessions.append(
+            OrderFlowSession(
+                session_date=s_date,
+                contract=contract_name,
+                file_path=fpath,
+                bars=bars,
+                clean_trades=trades,
+                price_lookup=lookup,
+                is_valid=is_valid,
+                invalid_reason=reason,
+                active_bars=active_bars,
+                stats=stats,
+            )
+        )
+
+    return sessions
+
+
+# --- 7. CLI Main Runner & Cong ngay chong nhin truoc (§1.1, §1B) ------------------
 
 
 def main(
-    args: list[str] | None = None,
+    args: Sequence[str] | None = None,
     today: date | None = None,
-    list_files_fn: Callable[..., Any] | None = None,
-    bypass_date_gate: bool = False,
+    unlock_log_path: Path | str = DEFAULT_UNLOCK_LOG_PATH,
 ) -> int:
     parser = argparse.ArgumentParser(
         description="Cong cu sang loc 6 cap dac trung order flow VN30F footprint (Brief dot 182)"
@@ -882,7 +1144,7 @@ def main(
         default=None,
         help="Ten cap mo holdout neu dat IS (mac dinh: None)",
     )
-    effective_args = [] if args is None and "pytest" in sys.argv[0] else args
+    effective_args = sys.argv[1:] if args is None else list(args)
     parsed_args = parser.parse_args(effective_args)
 
     if today is None:
@@ -896,7 +1158,7 @@ def main(
 
     # CỔNG NGÀY CHỐNG NHÌN TRƯỚC (§1.1):
     # Từ chối chạy phần đo khi ngày hôm nay < 2026-12-01, TRƯỚC KHI MỞ BẤT KỲ FILE NÀO.
-    if not bypass_date_gate and today < HOLDOUT_START_DATE:
+    if today < HOLDOUT_START_DATE:
         print(
             f"\n[BẢO VỆ CHỐNG NHÌN TRƯỚC] Ngày hiện tại ({today}) chưa tới ngày kết thúc In-Sample "
             f"({HOLDOUT_START_DATE}).\nDừng toàn bộ chương trình và từ chối mở dữ liệu để bảo vệ "
@@ -905,11 +1167,171 @@ def main(
         )
         return 2
 
-    # Chi khi today >= 2026-12-01 moi duoc phep liet ke hoac mo file
-    if list_files_fn is not None:
-        list_files_fn(parsed_args.data_dir)
+    # --- 1. Nạp phiên IS (§1B) ---
+    sessions = load_is_sessions_orderflow(data_dir=parsed_args.data_dir)
+    valid_sessions = [s for s in sessions if s.is_valid]
+    invalid_sessions = [s for s in sessions if not s.is_valid]
 
-    print("\n[THÔNG BÁO] Ngày hợp lệ (>= 2026-12-01). Tiếp tục quy trình đo đạc...")
+    tot_u_zero = sum(s.stats.get("dropped_u_or_zero", 0) for s in sessions)
+    tot_outside = sum(s.stats.get("outside_session", 0) for s in sessions)
+
+    print(f"\n[DỮ LIỆU IN-SAMPLE] Tổng phiên đọc được: {len(sessions)}")
+    print(f"  - Số phiên hợp lệ (>= {VALID_BARS_THRESHOLD}/48 nến): {len(valid_sessions)}")
+    print(f"  - Số phiên không hợp lệ: {len(invalid_sessions)}")
+    for inv in invalid_sessions:
+        print(f"    * Ngày {inv.session_date} ({inv.contract}): {inv.invalid_reason}")
+    print(f"  - Tổng tin U hoặc khối lượng 0 bị loại: {tot_u_zero:,}")
+    print(f"  - Tổng tin ngoài khung liên tục bị loại: {tot_outside:,}")
+
+    # --- 2. Kiểm tra số phiên hợp lệ ---
+    if len(valid_sessions) < MIN_IS_SESSIONS:
+        print(
+            f"\n[LỖI] KHÔNG ĐỦ PHIÊN: Chỉ có {len(valid_sessions)}/{MIN_IS_SESSIONS} phiên hợp lệ.",
+            file=sys.stderr,
+        )
+        return 3
+
+    # --- 3. Kiểm đối chứng trên nến IS hợp lệ ---
+    valid_bars = [b for s in valid_sessions for b in s.bars]
+    ctrl_ok, ctrl_rho = check_control_variable_orderflow(valid_bars)
+    print(f"\n[BIẾN ĐỐI CHỨNG] Spearman rho giữa delta và ret_same_5m: {ctrl_rho:.4f}")
+    if not ctrl_ok:
+        print(
+            f"\n[LỖI] DỮ LIỆU SIDE KHÔNG ĐÁNG TIN: Spearman rho = {ctrl_rho:.4f} <= {CONTROL_MIN_RHO}",
+            file=sys.stderr,
+        )
+        return 4
+
+    # --- 4. Tính hurdle ---
+    closes = [b.close for b in valid_bars if b.close is not None]
+    median_close = float(np.median(closes)) if closes else 1300.0
+    hurdle = compute_economic_hurdle(median_close)
+    print(f"\n[TIÊU CHUẨN KINH TẾ] Median Close: {median_close:.2f} | Hurdle: {hurdle:.4f} điểm")
+
+    lookup_map = {s.session_date: s.price_lookup for s in valid_sessions}
+    def global_price_lookup(x: datetime) -> float | None:
+        fn = lookup_map.get(x.date())
+        return fn(x) if fn else None
+
+    # --- 5 & 6. Chạy 6 cặp đặc trưng và in bảng ---
+    print("\n" + "=" * 98)
+    print(f"{'Cặp':<10} {'N':>5} {'N Mua':>7} {'N Bán':>7} {'Mean y':>10} {'Hurdle':>8} {'p-value':>10} {'C1-4/Ctrl':>12} {'Kết quả':>10}")
+    print("-" * 98)
+
+    results: dict[str, dict[str, Any]] = {}
+
+    for ev_name in ("E1", "E2", "E3"):
+        if ev_name == "E1":
+            raw_events = detect_e1_events(valid_bars)
+        elif ev_name == "E2":
+            raw_events = detect_e2_events(valid_bars)
+        else:
+            raw_events = detect_e3_events(valid_bars)
+
+        for h in (15, 30):
+            pair_key = f"{ev_name}_H{h}"
+            ev_targets = calculate_event_targets(raw_events, global_price_lookup, h_minutes=h)
+            indep_events = filter_non_overlapping_events(ev_targets, h_minutes=h)
+            p_val, _ = block_bootstrap_p_value(indep_events, n_bootstrap=2000, seed=42)
+            res = evaluate_pair_criteria(indep_events, hurdle=hurdle, control_rho=ctrl_rho, p_val=p_val)
+            results[pair_key] = res
+
+            cond_str = f"{int(res['cond1_sample'])}{int(res['cond2_stat'])}{int(res['cond3_hurdle'])}{int(res['cond_control'])}"
+            verdict = "ĐẠT" if res["passed"] else "TRƯỢT"
+            print(
+                f"{pair_key:<10} {res['n_events']:>5} {res['n_buy']:>7} {res['n_sell']:>7} "
+                f"{res['mean_y']:>10.4f} {res['hurdle']:>8.4f} {res['p_value']:>10.4f} {cond_str:>12} {verdict:>10}"
+            )
+
+    print("=" * 98)
+
+    # --- 7. Holdout mở khóa (§1.1, §1.4, §1B) ---
+    unlock_pair = parsed_args.unlock_holdout_pair
+    if unlock_pair:
+        print(f"\n[YÊU CẦU MỞ NIÊM PHONG HOLDOUT] Cặp chỉ định: {unlock_pair}")
+
+        # Điều kiện 1: Cặp ĐẠT trong chính lượt chạy IS này
+        if unlock_pair not in results or not results[unlock_pair]["passed"]:
+            print(
+                f"[TỪ CHỐI MỞ HOLDOUT] Cặp '{unlock_pair}' không ĐẠT ở In-Sample. Không được mở niêm phong.",
+                file=sys.stderr,
+            )
+            return 5
+
+        # Điều kiện 2: Số file holdout đếm theo tên file >= MIN_HOLDOUT_SESSIONS
+        h_file_count = count_holdout_files(parsed_args.data_dir)
+        if h_file_count < MIN_HOLDOUT_SESSIONS:
+            print(
+                f"[TỪ CHỐI MỞ HOLDOUT] Số file Holdout ({h_file_count}) chưa đủ ngưỡng tối thiểu ({MIN_HOLDOUT_SESSIONS}).",
+                file=sys.stderr,
+            )
+            return 5
+
+        # Điều kiện 3: Log chưa có dòng mở holdout của đợt 182
+        p_log = Path(unlock_log_path)
+        if p_log.exists():
+            log_content = p_log.read_text(encoding="utf-8")
+            if "đợt 182" in log_content.lower():
+                print(
+                    "[TỪ CHỐI MỞ HOLDOUT] Log đã có dòng mở niêm phong của đợt 182 (chỉ mở duy nhất 1 lần).",
+                    file=sys.stderr,
+                )
+                return 5
+
+        # Đủ cả 3 điều kiện:
+        # a. GHI log trước
+        p_log.parent.mkdir(parents=True, exist_ok=True)
+        now_str = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+        with p_log.open("a", encoding="utf-8") as f_log:
+            f_log.write(f"\n- [{now_str}] Mở niêm phong đợt 182 cho cặp {unlock_pair} trên tập Holdout VN30F\n")
+        print(f"[ĐÃ GHI LOG] Ghi nhận mở niêm phong cho cặp {unlock_pair} vào {unlock_log_path}")
+
+        # b. Sau đó mới nạp phiên >= 2026-12-01
+        holdout_sessions = load_holdout_sessions_orderflow(
+            data_dir=parsed_args.data_dir,
+            log_path=unlock_log_path,
+            pair_name=unlock_pair,
+        )
+        valid_h_sessions = [s for s in holdout_sessions if s.is_valid]
+        print(f"[DỮ LIỆU HOLDOUT] Số phiên Holdout hợp lệ: {len(valid_h_sessions)}/{len(holdout_sessions)}")
+
+        # c. Đo riêng cặp đó với hurdle của IS
+        h_bars = [b for s in valid_h_sessions for b in s.bars]
+        ev_type, h_str = unlock_pair.split("_")
+        h_val = int(h_str.replace("H", ""))
+
+        # Noi nen IS hop le phia truoc de nguong E2 cua 5 phien Holdout dau lay tu 5 phien IS cuoi
+        # (chi la qua khu); E1/E3 gioi han trong phien nen khong doi. Chi giu su kien thuoc Holdout.
+        hist_bars = valid_bars + h_bars
+        if ev_type == "E1":
+            h_ev_all = detect_e1_events(hist_bars)
+        elif ev_type == "E2":
+            h_ev_all = detect_e2_events(hist_bars)
+        else:
+            h_ev_all = detect_e3_events(hist_bars)
+        h_ev_list = [e for e in h_ev_all if e.session_id >= HOLDOUT_START_DATE]
+
+        h_lookup_map = {s.session_date: s.price_lookup for s in valid_h_sessions}
+        def h_price_lookup(x: datetime) -> float | None:
+            fn = h_lookup_map.get(x.date())
+            return fn(x) if fn else None
+
+        h_ev_targets = calculate_event_targets(h_ev_list, h_price_lookup, h_minutes=h_val)
+        h_indep = filter_non_overlapping_events(h_ev_targets, h_minutes=h_val)
+        h_p_val, _ = block_bootstrap_p_value(h_indep, n_bootstrap=2000, seed=42)
+        h_res = evaluate_pair_criteria(h_indep, hurdle=hurdle, control_rho=ctrl_rho, p_val=h_p_val)
+
+        # d. In kết quả
+        print("\n" + "=" * 84)
+        print(f"  KẾT QUẢ ĐO HOLDOUT RIÊNG CHO CẶP: {unlock_pair}")
+        print(f"  Số sự kiện độc lập: {h_res['n_events']} (Mua: {h_res['n_buy']}, Bán: {h_res['n_sell']})")
+        print(f"  Mean y            : {h_res['mean_y']:.4f} (Hurdle IS: {hurdle:.4f})")
+        print(f"  p-value (Bootstrap): {h_res['p_value']:.4f}")
+        h_passed = holdout_verdict(h_p_val, h_res["mean_y"], hurdle)
+        print(f"  Tiêu chí Holdout  : p < {ALPHA_LEVEL} và Mean y >= Hurdle IS (giống đợt 162)")
+        print(f"  Kết luận Holdout  : {'ĐẠT' if h_passed else 'TRƯỢT'}")
+        print("=" * 84)
+
     return 0
 
 

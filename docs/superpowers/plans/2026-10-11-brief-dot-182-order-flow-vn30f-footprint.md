@@ -103,7 +103,12 @@ Mỗi sự kiện có hướng d ∈ {+1 mua, −1 bán} và được xét **t�
    - 0,2 điểm là trượt giá: một bước giá mỗi chiều, vì order flow vào và ra bằng lệnh thị trường. **Đợt này chặt hơn 162 ở điểm này, có chủ ý.**
 4. **Kiểm đối chứng trước khi đo (không chạm tương lai):** Spearman ρ giữa `delta_t` và `close_t − open_t` **cùng nến** trên IS phải > 0,3 (`CONTROL_MIN_RHO`). Không đạt nghĩa là `side` không phải bên chủ động, nên công cụ in "DỮ LIỆU SIDE KHÔNG ĐÁNG TIN" và dừng.
 
-Một cặp **ĐẠT** khi đủ 1 + 2 + 3. Kết quả tốt nhất có thể là: một cặp được mở holdout. **Không có đường tới lệnh thật**: giao dịch phái sinh thật cần quyết định riêng của chủ dự án và một brief riêng.
+Một cặp **ĐẠT** khi đủ 1 + 2 + 3.
+
+**Tiêu chí holdout.** Brief v1/v2 bỏ sót mục này. Claude bổ sung ngày 11/10 khi audit 182b, trước khi ai mở dữ liệu.
+- **Cách tính:** cặp duy nhất được mở ĐẠT holdout khi p một phía **< 0,05** (không chia 6, vì chỉ mở một cặp) **và** trung bình y ≥ hurdle của IS. Đây là tiêu chí của đợt 162.
+- **Không đòi ≥ 100 sự kiện:** khoảng 30 phiên không thể đủ số đó. Nếu đòi, holdout sẽ trượt vì thiếu mẫu chứ không phải vì không có lợi thế.
+- **Ngưỡng E2:** ở 5 phiên holdout đầu, ngưỡng E2 lấy từ 5 phiên IS cuối. Đó vẫn là quá khứ. Kết quả tốt nhất có thể là: một cặp được mở holdout. **Không có đường tới lệnh thật**: giao dịch phái sinh thật cần quyết định riêng của chủ dự án và một brief riêng.
 
 ### 1.5 Dự đoán của Claude (ghi trước)
 Không cặp nào đạt điều kiện 3. Nếu có cặp đạt điều kiện 2, nhiều khả năng là E1 hoặc E2 ở H = 15, và biên độ nhỏ hơn chi phí cộng trượt giá. E3 có nguy cơ **không đủ 100 sự kiện**; khi đó công cụ báo "KHÔNG ĐỦ MẪU" cho E3, không nới định nghĩa.
