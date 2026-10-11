@@ -1,10 +1,11 @@
-"""Cong cu sang loc 6 cap order flow footprint tren BTCUSDT perp (Brief dot 183).
+"""Cong cu sang loc 6 cap order flow footprint tren BTCUSDT perp v2 (Brief dot 183b).
 
-- Du lieu: data/crypto_footprint/BTCUSDT/<YYYY-MM>.csv.gz
+- Du lieu: data/crypto_footprint_v2/BTCUSDT/<YYYY-MM>.csv.gz
 - Cua so CHINH: 2023-01-01 -> 2024-12-31.
 - Cua so LAP LAI: 2025-01-01 -> 2026-08-31.
+- Nguong imbalance tuong doi: p90 (min_vol) va p50 (denom_floor) tinh tu 5 ngay truoc.
+- Quy tac suy bien: Ty le nen 'ca hai' > 50% tren CHINH => E3 bi LOAI, con 4 cap.
 - Cong ngay: Tu choi chay truoc 2026-11-01 (ngay VN).
-- Khong sua file khac, khong ghi DB, khong dat lenh.
 """
 
 from __future__ import annotations
@@ -15,7 +16,9 @@ import csv
 import gzip
 import math
 import sys
+from collections import defaultdict
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +34,7 @@ from scripts.screen_vn30f_orderflow import (
     OrderFlowEvent,
     block_bootstrap_p_value,
     calculate_event_targets,
+    calculate_percentile,
     detect_e1_events,
     detect_e2_events,
     detect_e3_events,
@@ -47,6 +51,7 @@ __all__ = [
     "ALPHA_PER_PAIR_INITIAL",
     "CONTROL_MIN_RHO",
     "DEFAULT_DATA_DIR",
+    "E3_DEGENERATE_BOTH_SHARE",
     "ECONOMIC_HURDLE",
     "EVENT_NAMES",
     "HOLDOUT_START_DATE",
@@ -57,6 +62,8 @@ __all__ = [
     "MIN_TOTAL_EVENTS",
     "REPEAT_END_DATE",
     "REPEAT_START_DATE",
+    "CryptoBarSummary",
+    "apply_relative_imbalance",
     "build_crypto_price_lookup",
     "check_control_variable_crypto",
     "crypto_block_end_fn",
@@ -66,8 +73,10 @@ __all__ = [
     "evaluate_crypto_pair",
     "get_crypto_block_id",
     "imbalance_levels",
+    "imbalance_prevalence",
     "load_crypto_footprint_bars",
     "main",
+    "parse_fp_string",
     "run_crypto_screening_pipeline",
 ]
 
@@ -92,7 +101,18 @@ MIN_TOTAL_EVENTS: int = 100
 MIN_DIRECTION_EVENTS: int = 30
 ALPHA_PER_PAIR_INITIAL: float = 0.05 / 6.0
 
-DEFAULT_DATA_DIR = Path("data/crypto_footprint/BTCUSDT")
+E3_DEGENERATE_BOTH_SHARE: float = 0.5
+
+DEFAULT_DATA_DIR = Path("data/crypto_footprint_v2/BTCUSDT")
+
+
+@dataclass
+class CryptoBarSummary(BarSummary):
+    """Nen BarSummary mo rong co chua thong tin phan bo footprint tai tung muc k."""
+
+    fp: dict[int, tuple[float, float]] | None = None
+    min_vol: float | None = None
+    denom_floor: float | None = None
 
 
 # --- 1. Khung 8 gio funding & Ket thuc khung (§1.2, §1.3) -------------------------
@@ -121,30 +141,49 @@ def crypto_block_end_fn(event: Any) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(hours=int(end_h))
 
 
-# --- 2. Doc file tom tat & Dung danh sach BarSummary (§1.2) -----------------------
+# --- 2. Doc file tom tat v2 & Parse footprint (§1.2) ------------------------------
+
+
+def parse_fp_string(fp_str: str) -> dict[int, tuple[float, float]]:
+    """Parse chuoi k:buy_usdt:sell_usdt|... thanh dict map k -> (buy_usdt, sell_usdt)."""
+    if not fp_str or not fp_str.strip():
+        return {}
+    res: dict[int, tuple[float, float]] = {}
+    for part in fp_str.strip().split("|"):
+        if not part:
+            continue
+        items = part.split(":")
+        if len(items) == 3:
+            try:
+                k = int(items[0])
+                buy_val = float(items[1])
+                sell_val = float(items[2])
+                res[k] = (buy_val, sell_val)
+            except ValueError:
+                continue
+    return res
 
 
 def load_crypto_footprint_bars(
     data_dir: Path | str = DEFAULT_DATA_DIR,
     start_date: date | None = None,
     end_date: date | None = None,
-) -> list[BarSummary]:
-    """Doc cac file <YYYY-MM>.csv.gz trong data_dir thanh danh sach BarSummary.
+) -> list[CryptoBarSummary]:
+    """Doc cac file <YYYY-MM>.csv.gz trong data_dir thanh danh sach CryptoBarSummary.
 
-    - CVD duoc reset luc 00:00 UTC moi ngay (= delta cua nen dau tien trong ngay).
-    - Nen khong co giao dich duoc giu voi close=None.
+    - File khong co cot 'fp' se bi nem loi ValueError (dinh dang v1).
+    - Cac truong imbalance khoi tao la None (se tinh boi apply_relative_imbalance).
     """
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
 
     files = sorted(p_dir.glob("*.csv.gz"))
-    bars: list[BarSummary] = []
+    bars: list[CryptoBarSummary] = []
     cur_session: date | None = None
     accum_cvd: float = 0.0
 
     for fpath in files:
-        # Lay YYYY-MM tu ten file de kiem tra khoang ngay
         stem = fpath.name.replace(".csv.gz", "")
         parts = stem.split("-")
         if len(parts) == 2:
@@ -164,92 +203,215 @@ def load_crypto_footprint_bars(
             except ValueError:
                 pass
 
-        try:
-            with gzip.open(fpath, "rt", encoding="utf-8") as gf:
-                reader = csv.DictReader(gf)
-                for row in reader:
-                    ts_str = row["ts"]
-                    dt = datetime.fromisoformat(ts_str)
-                    s_date = dt.date()
+        with gzip.open(fpath, "rt", encoding="utf-8") as gf:
+            reader = csv.DictReader(gf)
+            if reader.fieldnames is None or "fp" not in reader.fieldnames:
+                raise ValueError(
+                    f"File '{fpath.name}' su dung dinh dang v1 (thieu cot 'fp'). Yeu cau dinh dang v2."
+                )
 
-                    if start_date and s_date < start_date:
-                        continue
-                    if end_date and s_date > end_date:
-                        continue
+            for row in reader:
+                ts_str = row["ts"]
+                dt = datetime.fromisoformat(ts_str)
+                s_date = dt.date()
 
-                    # Reset CVD khi qua ngay moi UTC (§1.2)
-                    if cur_session != s_date:
-                        cur_session = s_date
-                        accum_cvd = 0.0
+                if start_date and s_date < start_date:
+                    continue
+                if end_date and s_date > end_date:
+                    continue
 
-                    block_id = get_crypto_block_id(dt)
-                    bar_idx = (dt.hour * 60 + dt.minute) // 5
+                # Reset CVD khi qua ngay moi UTC (§1.2)
+                if cur_session != s_date:
+                    cur_session = s_date
+                    accum_cvd = 0.0
 
-                    # Nen khong giao dich van giu cho (close=None) de E1/E3 chi xet nen lien nhau
-                    raw_n = row.get("n_trades")
-                    if not raw_n or int(raw_n) == 0 or not row.get("close"):
-                        bars.append(
-                            BarSummary(
-                                session_id=s_date,
-                                block_id=block_id,
-                                bar_idx=bar_idx,
-                                t_start=dt,
-                                t_end=dt + timedelta(minutes=5),
-                                open=None,
-                                high=None,
-                                low=None,
-                                close=None,
-                                close_k=None,
-                                delta=0.0,
-                                cvd=accum_cvd,
-                                ask_k_min=None,
-                                ask_k_max=None,
-                                bid_k_min=None,
-                                bid_k_max=None,
-                            )
-                        )
-                        continue
+                block_id = get_crypto_block_id(dt)
+                bar_idx = (dt.hour * 60 + dt.minute) // 5
 
-                    o = float(row["open"])
-                    h = float(row["high"])
-                    l = float(row["low"])
-                    c = float(row["close"])
-                    delta = float(row["delta"])
-                    accum_cvd += delta
-
-                    close_k = int(row["close_k"])
-                    ask_min = int(row["ask_k_min"]) if row.get("ask_k_min") else None
-                    ask_max = int(row["ask_k_max"]) if row.get("ask_k_max") else None
-                    bid_min = int(row["bid_k_min"]) if row.get("bid_k_min") else None
-                    bid_max = int(row["bid_k_max"]) if row.get("bid_k_max") else None
-
+                # Nen khong giao dich van giu cho (close=None) de E1/E3 chi xet nen lien nhau
+                raw_n = row.get("n_trades")
+                if not raw_n or int(raw_n) == 0 or not row.get("close"):
                     bars.append(
-                        BarSummary(
+                        CryptoBarSummary(
                             session_id=s_date,
                             block_id=block_id,
                             bar_idx=bar_idx,
                             t_start=dt,
                             t_end=dt + timedelta(minutes=5),
-                            open=o,
-                            high=h,
-                            low=l,
-                            close=c,
-                            close_k=close_k,
-                            delta=delta,
+                            open=None,
+                            high=None,
+                            low=None,
+                            close=None,
+                            close_k=None,
+                            delta=0.0,
                             cvd=accum_cvd,
-                            ask_k_min=ask_min,
-                            ask_k_max=ask_max,
-                            bid_k_min=bid_min,
-                            bid_k_max=bid_max,
+                            ask_k_min=None,
+                            ask_k_max=None,
+                            bid_k_min=None,
+                            bid_k_max=None,
+                            fp=None,
                         )
                     )
-        except Exception as exc:
-            print(f"[CANH BAO] File loi '{fpath}': {exc}", file=sys.stderr)
+                    continue
+
+                o = float(row["open"])
+                h = float(row["high"])
+                l = float(row["low"])
+                c = float(row["close"])
+                delta = float(row["delta"])
+                accum_cvd += delta
+
+                close_k = int(row["close_k"])
+                fp_dict = parse_fp_string(row.get("fp", ""))
+
+                bars.append(
+                    CryptoBarSummary(
+                        session_id=s_date,
+                        block_id=block_id,
+                        bar_idx=bar_idx,
+                        t_start=dt,
+                        t_end=dt + timedelta(minutes=5),
+                        open=o,
+                        high=h,
+                        low=l,
+                        close=c,
+                        close_k=close_k,
+                        delta=delta,
+                        cvd=accum_cvd,
+                        ask_k_min=None,
+                        ask_k_max=None,
+                        bid_k_min=None,
+                        bid_k_max=None,
+                        fp=fp_dict,
+                    )
+                )
 
     return bars
 
 
-# --- 3. Tra cuu gia P(x) cho Crypto (§1.3) ----------------------------------------
+# --- 3. Nguong Imbalance Tuong Doi & Pho Bien (§1.3, §1.4) -------------------------
+
+
+def apply_relative_imbalance(
+    bars: list[CryptoBarSummary],
+) -> list[CryptoBarSummary]:
+    """Ap nguong imbalance tuong doi cho tung ngay D:
+    min_vol(D) = p90 cua pool 5 ngay truoc; denom_floor(D) = p50 cua pool.
+    5 ngay dau khong co nguong => imbalance giu None.
+    """
+    sessions_order: list[date] = []
+    bars_by_session: dict[date, list[CryptoBarSummary]] = defaultdict(list)
+    for b in bars:
+        s_date = b.session_id
+        if s_date not in bars_by_session:
+            sessions_order.append(s_date)
+        bars_by_session[s_date].append(b)
+
+    for s_idx, d_date in enumerate(sessions_order):
+        if s_idx < 5:
+            # 5 ngay dau: khong du 5 ngay truoc, imbalance giu None
+            for b in bars_by_session[d_date]:
+                b.min_vol = None
+                b.denom_floor = None
+                b.ask_k_min = None
+                b.ask_k_max = None
+                b.bid_k_min = None
+                b.bid_k_max = None
+            continue
+
+        hist_days = sessions_order[s_idx - 5 : s_idx]
+        pool: list[float] = []
+        for h_d in hist_days:
+            for b in bars_by_session[h_d]:
+                if b.fp:
+                    for buy_val, sell_val in b.fp.values():
+                        if buy_val > 0.0:
+                            pool.append(buy_val)
+                        if sell_val > 0.0:
+                            pool.append(sell_val)
+
+        if not pool:
+            for b in bars_by_session[d_date]:
+                b.min_vol = None
+                b.denom_floor = None
+                b.ask_k_min = None
+                b.ask_k_max = None
+                b.bid_k_min = None
+                b.bid_k_max = None
+            continue
+
+        min_vol_d = calculate_percentile(pool, 90.0)
+        denom_floor_d = calculate_percentile(pool, 50.0)
+
+        for b in bars_by_session[d_date]:
+            b.min_vol = min_vol_d
+            b.denom_floor = denom_floor_d
+            if b.fp:
+                ask_ks, bid_ks = imbalance_levels(
+                    b.fp,
+                    ratio=3.0,
+                    min_vol=min_vol_d,
+                    denom_floor=denom_floor_d,
+                )
+                b.ask_k_min = ask_ks[0] if ask_ks else None
+                b.ask_k_max = ask_ks[-1] if ask_ks else None
+                b.bid_k_min = bid_ks[0] if bid_ks else None
+                b.bid_k_max = bid_ks[-1] if bid_ks else None
+            else:
+                b.ask_k_min = None
+                b.ask_k_max = None
+                b.bid_k_min = None
+                b.bid_k_max = None
+
+    return bars
+
+
+def imbalance_prevalence(
+    bars: Sequence[BarSummary],
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, int]:
+    """Dem ti le 4 nhom imbalance tren cac nen co giao dich:
+    - only ask
+    - only bid
+    - both (ca hai)
+    - neither (khong co)
+    """
+    filtered = [
+        b
+        for b in bars
+        if b.close is not None
+        and (start_date is None or b.session_id >= start_date)
+        and (end_date is None or b.session_id <= end_date)
+    ]
+
+    both = 0
+    ask_only = 0
+    bid_only = 0
+    neither = 0
+
+    for b in filtered:
+        has_ask = b.ask_k_min is not None
+        has_bid = b.bid_k_min is not None
+        if has_ask and has_bid:
+            both += 1
+        elif has_ask:
+            ask_only += 1
+        elif has_bid:
+            bid_only += 1
+        else:
+            neither += 1
+
+    return {
+        "both": both,
+        "ask_only": ask_only,
+        "bid_only": bid_only,
+        "neither": neither,
+        "total": len(filtered),
+    }
+
+
+# --- 4. Tra cuu gia P(x) cho Crypto (§1.3) ----------------------------------------
 
 
 def build_crypto_price_lookup(
@@ -273,7 +435,7 @@ def build_crypto_price_lookup(
     return lookup
 
 
-# --- 4. Tinh bien muc tieu & Danh gia tung cap (§1.3, §1.4) -----------------------
+# --- 5. Tinh bien muc tieu & Danh gia tung cap (§1.3, §1.4) -----------------------
 
 
 def check_control_variable_crypto(bars: Sequence[BarSummary]) -> float:
@@ -310,7 +472,6 @@ def evaluate_crypto_pair(
         block_end_fn=block_end_fn,
     )
 
-    # Chuyen bien muc tieu y sang ty le: y = d * (P(t_end + H) / close_t - 1)
     ratio_events: list[OrderFlowEvent] = []
     for e in raw_targets:
         if e.y is not None and e.close > 0.0:
@@ -368,7 +529,7 @@ def evaluate_crypto_pair(
     }
 
 
-# --- 5. Pipeline Sang loc toan dien 6 cap (§1.4) -----------------------------------
+# --- 6. Pipeline Sang loc toan dien 6 cap (§1.4) -----------------------------------
 
 
 def run_crypto_screening_pipeline(
@@ -376,11 +537,12 @@ def run_crypto_screening_pipeline(
     block_end_fn: Callable[..., datetime] = crypto_block_end_fn,
 ) -> dict[str, Any]:
     """Thuc hien sang loc 6 cap tren ca hai cua so CHINH va LAP LAI."""
-    all_bars = load_crypto_footprint_bars(
+    all_bars_raw = load_crypto_footprint_bars(
         data_dir=data_dir,
         start_date=MAIN_START_DATE,
         end_date=REPEAT_END_DATE,
     )
+    all_bars = apply_relative_imbalance(all_bars_raw)
 
     # 1. Kiem tra bien doi chung tren cua so CHINH
     main_bars = [
@@ -396,10 +558,19 @@ def run_crypto_screening_pipeline(
             "pairs": {},
         }
 
-    # 2. Phat hien su kien tren toan bo chuoi nen
+    # 2. Kiem tra quy tac suy bien E3 tren cua so CHINH (§1.4)
+    main_prev = imbalance_prevalence(
+        all_bars, start_date=MAIN_START_DATE, end_date=MAIN_END_DATE
+    )
+    both_ratio = (
+        main_prev["both"] / main_prev["total"] if main_prev["total"] > 0 else 0.0
+    )
+    e3_degenerate = both_ratio > E3_DEGENERATE_BOTH_SHARE
+
+    # 3. Phat hien su kien tren toan bo chuoi nen
     e1_all = detect_e1_events(all_bars)
     e2_all = detect_e2_events(all_bars)
-    e3_all = detect_e3_events(all_bars)
+    e3_all = detect_e3_events(all_bars) if not e3_degenerate else []
 
     events_by_type = {
         "E1": e1_all,
@@ -412,10 +583,32 @@ def run_crypto_screening_pipeline(
     results: dict[str, Any] = {}
     main_passed_pairs: list[str] = []
 
-    # 3. Danh gia cua so CHINH cho 6 cap
+    # 4. Danh gia cua so CHINH cho 6 cap (Bonferroni luon 0.05 / 6)
     for ev_name in EVENT_NAMES:
         for h_val in HORIZONS:
             pair_key = f"{ev_name}_{h_val}m"
+            if ev_name == "E3" and e3_degenerate:
+                results[pair_key] = {
+                    "main": {
+                        "n_events": 0,
+                        "n_buy": 0,
+                        "n_sell": 0,
+                        "mean_y": 0.0,
+                        "p_val": 1.0,
+                        "passed": False,
+                        "degenerate": True,
+                    },
+                    "repeat": {
+                        "n_events": 0,
+                        "mean_y": 0.0,
+                        "p_val": 1.0,
+                        "passed": False,
+                    },
+                    "final_passed": False,
+                    "degenerate": True,
+                }
+                continue
+
             ev_list = [
                 e
                 for e in events_by_type[ev_name]
@@ -436,10 +629,13 @@ def run_crypto_screening_pipeline(
     k_passed = len(main_passed_pairs)
     repeat_alpha = (0.05 / k_passed) if k_passed > 0 else 0.05
 
-    # 4. Danh gia cua so LAP LAI cho 6 cap
+    # 5. Danh gia cua so LAP LAI cho 6 cap
     for ev_name in EVENT_NAMES:
         for h_val in HORIZONS:
             pair_key = f"{ev_name}_{h_val}m"
+            if ev_name == "E3" and e3_degenerate:
+                continue
+
             ev_list_rep = [
                 e
                 for e in events_by_type[ev_name]
@@ -455,26 +651,25 @@ def run_crypto_screening_pipeline(
             )
             results[pair_key]["repeat"] = res_rep
 
-            # Danh gia DAT cuoi cung (§1.4)
             is_main_passed = results[pair_key]["main"]["passed"]
-            # Cap phai dat o CHINH, VA o LAP LAI co mean_y >= hurdle va p < 0.05 / k
             rep_satisfied = (res_rep["mean_y"] >= ECONOMIC_HURDLE) and (
                 res_rep["p_val"] < repeat_alpha
             )
-            final_passed = is_main_passed and rep_satisfied
-
-            results[pair_key]["final_passed"] = final_passed
+            results[pair_key]["final_passed"] = is_main_passed and rep_satisfied
+            results[pair_key]["degenerate"] = False
 
     return {
         "status": "SUCCESS",
         "ctrl_rho": ctrl_rho,
         "k_main_passed": k_passed,
         "repeat_alpha": repeat_alpha,
+        "e3_degenerate": e3_degenerate,
+        "both_share": both_ratio,
         "pairs": results,
     }
 
 
-# --- 6. CLI Main Runner & Cong ngay chong nhin truoc (§1.4, §2.B) -----------------
+# --- 7. CLI Main Runner & Cong ngay chong nhin truoc (§1.4, §2.B) -----------------
 
 
 def main(
@@ -483,12 +678,12 @@ def main(
     block_end_fn: Callable[..., datetime] = crypto_block_end_fn,
 ) -> int:
     parser = argparse.ArgumentParser(
-        description="Cong cu sang loc 6 cap order flow footprint tren BTCUSDT perp (Brief dot 183)"
+        description="Cong cu sang loc 6 cap order flow footprint tren BTCUSDT perp v2 (Brief dot 183b)"
     )
     parser.add_argument(
         "--data-dir",
         default=str(DEFAULT_DATA_DIR),
-        help=f"Thu muc chua nen footprint tom tat (mac dinh: {DEFAULT_DATA_DIR})",
+        help=f"Thu muc chua nen footprint tom tat v2 (mac dinh: {DEFAULT_DATA_DIR})",
     )
     effective_args = sys.argv[1:] if args is None else list(args)
     parsed_args = parser.parse_args(effective_args)
@@ -498,7 +693,7 @@ def main(
 
     print("=" * 84)
     print(
-        "  BRIEF ĐỢT 183 — SÀNG LỌC ORDER FLOW FOOTPRINT BTCUSDT PERP (ĐĂNG KÝ TRƯỚC)"
+        "  BRIEF ĐỢT 183b — SÀNG LỌC ORDER FLOW FOOTPRINT BTCUSDT PERP (ĐĂNG KÝ TRƯỚC)"
     )
     print(f"  Ngày hiện tại (giờ VN): {today}")
     print(f"  Mốc bắt đầu đo        : {HOLDOUT_START_DATE}")
@@ -528,6 +723,10 @@ def main(
         return 4
 
     print(f"\nKiểm đối chứng rho: {res['ctrl_rho']:.4f} > {CONTROL_MIN_RHO} (ĐẠT)")
+    if res.get("e3_degenerate"):
+        print(
+            f"Cảnh báo: E3 BỊ LOẠI do suy biến (tỷ lệ 'cả hai' = {res['both_share'] * 100:.2f}% > 50%). Còn 4 cặp."
+        )
     print(
         f"Số cặp đạt ở CHÍNH: {res['k_main_passed']}/6 (Ngưỡng p LẶP LẠI: {res['repeat_alpha']:.4f})"
     )
@@ -538,6 +737,10 @@ def main(
     print("-" * 84)
 
     for pair_key, val in res["pairs"].items():
+        if val.get("degenerate"):
+            print(f"{pair_key:<10} | E3 LOẠI (suy biến)")
+            continue
+
         m = val["main"]
         r = val["repeat"]
         m_str = f"{m['n_events']}/{m['n_buy']}/{m['n_sell']}"

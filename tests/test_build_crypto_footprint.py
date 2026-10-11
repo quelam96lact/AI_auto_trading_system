@@ -1,4 +1,4 @@
-"""Tests cho scripts/build_crypto_footprint.py (Brief dot 183 - Ca 1, 2, 3)."""
+"""Tests cho scripts/build_crypto_footprint.py (Brief dot 183b - Ca 1, 2, 3, 15, 17)."""
 
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -15,12 +15,7 @@ from scripts.build_crypto_footprint import (
 
 
 def test_1_gop_aggtrades_va_imbalance():
-    """Ca 1: Gop aggTrades, kiem tra is_buyer_maker, OHLC, moc :05:00.000 va imbalance USDT."""
-    # Tao 1 tap tin aggTrades synthetic cho thang 2023-01
-    # Header aggTrades: agg_trade_id, price, quantity, first_id, last_id, transact_time, is_buyer_maker
-    # Nen 1: [00:00:00, 00:05:00) UTC -> ts 1672531200000 -> 1672531499999
-    # Nen 2: [00:05:00, 00:10:00) UTC -> ts 1672531500000 -> 1672531799999
-
+    """Ca 1: Gop aggTrades v2, kiem tra is_buyer_maker, OHLC, moc :05:00.000 va chuoi fp."""
     t0_ms = int(datetime(2023, 1, 1, 0, 0, 0, tzinfo=UTC).timestamp() * 1000)
     t_0459_ms = t0_ms + 4 * 60 * 1000 + 59 * 1000  # 00:04:59.000
     t_0500_ms = t0_ms + 5 * 60 * 1000  # 00:05:00.000 (thuoc nen 2!)
@@ -69,54 +64,36 @@ def test_1_gop_aggtrades_va_imbalance():
     assert float(bar2["sell"]) == pytest.approx(1.5, abs=1e-4)
     assert float(bar2["buy"]) == 0.0
 
-    # Kiem tra Imbalance chéo theo USDT:
-    # Gia su open = 60000.0 => step = 12.0
-    # Muc k: k = floor(p / 12.0)
-    # Muc k = floor(60000 / 12.0) = 5000.
-    # Muc k-1 = 4999 (gia ~ 59988), k+1 = 5001 (gia ~ 60012)
-    # Ta test 2 tinh huong rieng biet:
-    # - Ca duoi san 50.000 USDT (khong dat imbalance)
-    # - Ca mau so cham san 10.000 USDT
-    t_imb_base = t0_ms + 10 * 60 * 1000  # Nen 3 (00:10:00)
-    # Nen 3: Open = 60000.0 (step 12.0).
-    # k = 5000 (price 60000.0), k-1 = 4999 (price 59988.0).
-    # Sub-case A: buy_usdt tai k = 45000 (qty = 45000 / 60000 = 0.75 BTC, buy), sell_usdt tai k-1 = 0
-    # Du ti le > 3 * 10000, nhung buy_usdt = 45000 < 50000 => KHONG CO ask imbalance.
-    rows_sub_a = [
-        ["agg_trade_id", "price", "quantity", "first_id", "last_id", "transact_time", "is_buyer_maker"],
-        ["1", "60000.0", "0.75", "1", "1", str(t_imb_base + 1000), "false"],  # 45k USDT buy
-    ]
-    bars_sub_a, _ = aggregate_aggtrades_to_5m_bars(rows_sub_a, year=2023, month=1)
-    bar_a = bars_sub_a[2]
-    assert bar_a["ask_k_min"] == ""
-    assert bar_a["ask_k_max"] == ""
+    # Kiem tra dinh dang chuoi fp trong nen 1
+    # step voi open 60000 = 6.0
+    # k = floor(price / 6.0)
+    # 59980.0 -> k = 9996, buy = 0.5 * 59980 = 29990, sell = 0
+    # 60000.0 -> k = 10000, buy = 1.0 * 60000 = 60000, sell = 0
+    # 60010.0 -> k = 10001, buy = 1.0 * 60010 = 60010, sell = 0
+    # 60020.0 -> k = 10003, buy = 0, sell = 2.0 * 60020 = 120040
+    fp_str = bar1["fp"]
+    assert "9996:29990:0" in fp_str
+    assert "10000:60000:0" in fp_str
+    assert "10001:60010:0" in fp_str
+    assert "10003:0:120040" in fp_str
 
-    # Sub-case B: sell_usdt tai k-1 = 2000 USDT (duoi san 10.000 USDT nen denom_floor = 10.000)
-    # Can buy_usdt >= 3 * 10000 = 30000 va >= 50000 => can buy_usdt >= 50000.
-    # Ta cho buy_usdt = 60000 (1.0 BTC buy tai 60000.0). Sell tai k-1 = 2000 USDT (qty 0.03334 tai 59988.0).
-    # => Co ask imbalance tai k = 5000!
-    rows_sub_b = [
-        ["agg_trade_id", "price", "quantity", "first_id", "last_id", "transact_time", "is_buyer_maker"],
-        ["1", "60000.0", "1.0", "1", "1", str(t_imb_base + 1000), "false"],  # 60k buy tai k=5000
-        ["2", "59988.0", "0.03334", "2", "2", str(t_imb_base + 2000), "true"],  # ~2k sell tai k-1=4999
-    ]
-    bars_sub_b, _ = aggregate_aggtrades_to_5m_bars(rows_sub_b, year=2023, month=1)
-    bar_b = bars_sub_b[2]
-    assert bar_b["ask_k_min"] == 5000
-    assert bar_b["ask_k_max"] == 5000
+    # Nen trong (nen 3) phai co fp rong ""
+    bar3 = bars[2]
+    assert bar3["n_trades"] == 0
+    assert bar3["fp"] == ""
 
 
 def test_2_buoc_footprint():
-    """Ca 2: Buoc footprint round(open * 0.0002, 1), toi thieu 0.1, va theo open chu khong theo close."""
-    # 1. Cong thuc chuan theo open
-    assert compute_footprint_step(60000.0) == 12.0
-    assert compute_footprint_step(7123.4) == 1.4
+    """Ca 2: Buoc footprint v2 round(open * 0.0001, 1) (~1 bp), toi thieu 0.1, va theo open."""
+    # 1. Cong thuc chuan theo open (1 bp)
+    assert compute_footprint_step(60000.0) == 6.0
+    assert compute_footprint_step(7123.4) == 0.7
     assert compute_footprint_step(100.0) == 0.1
 
     # 2. Nen co open va close cho buoc khac nhau
-    # open = 60000.0 -> buoc 12.0
-    # close = 50000.0 -> buoc neu theo close se la 10.0
-    # Ket qua phai tinh theo open (step = 12.0, close_k = floor(50000 / 12) = 4166)
+    # open = 60000.0 -> buoc 6.0
+    # close = 50000.0 -> buoc neu theo close se la 5.0
+    # Ket qua phai tinh theo open (step = 6.0, close_k = floor(50000 / 6) = 8333)
     t0_ms = int(datetime(2023, 1, 1, 0, 0, 0, tzinfo=UTC).timestamp() * 1000)
     rows = [
         ["agg_trade_id", "price", "quantity", "first_id", "last_id", "transact_time", "is_buyer_maker"],
@@ -125,8 +102,8 @@ def test_2_buoc_footprint():
     ]
     bars, _ = aggregate_aggtrades_to_5m_bars(rows, year=2023, month=1)
     b0 = bars[0]
-    assert b0["step"] == "12.0"
-    assert b0["close_k"] == 4166  # 50000 // 12 = 4166 (neu tinh theo close step 10 thi close_k = 5000)
+    assert b0["step"] == "6.0"
+    assert b0["close_k"] == 8333
 
 
 def test_3_kiem_tra_niem_phong():
@@ -152,3 +129,40 @@ def test_3_kiem_tra_niem_phong():
 
     with pytest.raises(ValueError, match="vuot qua moc niem phong"):
         aggregate_aggtrades_to_5m_bars(rows, year=2026, month=8)
+
+
+def test_17_prevalence_khong_cham_su_kien(tmp_path, capsys):
+    """Ca 17: --prevalence doc thu muc v2, in bang 4 nhom, KHONG goi bo phat hien E1/E2/E3 hay target."""
+    import gzip
+
+    # Tao file gia lap v2
+    contract_dir = tmp_path
+    f_path = contract_dir / "2023-01.csv.gz"
+    with gzip.open(f_path, "wt", encoding="utf-8") as gf:
+        gf.write("ts,open,high,low,close,buy,sell,delta,n_trades,step,close_k,fp\n")
+        # 6 ngay (moi ngay 1 nen)
+        for d in range(1, 7):
+            gf.write(
+                f"2023-01-{d:02d}T00:00:00Z,60000.00,60010.00,59990.00,60005.00,"
+                f"10.0000,5.0000,5.0000,10,6.0,10000,10000:600000:300000\n"
+            )
+
+    with (
+        patch("scripts.screen_crypto_orderflow.detect_e1_events") as mock_e1,
+        patch("scripts.screen_crypto_orderflow.detect_e2_events") as mock_e2,
+        patch("scripts.screen_crypto_orderflow.detect_e3_events") as mock_e3,
+        patch("scripts.screen_crypto_orderflow.calculate_event_targets") as mock_tgt,
+    ):
+        ret = main(["--prevalence", "--output-dir", str(contract_dir)])
+        assert ret == 0
+
+        # Assert tuyet doi khong cham su kien hay muc tieu
+        mock_e1.assert_not_called()
+        mock_e2.assert_not_called()
+        mock_e3.assert_not_called()
+        mock_tgt.assert_not_called()
+
+    captured = capsys.readouterr().out
+    assert "BÁO CÁO PHỔ BIẾN IMBALANCE" in captured
+    assert "TỔNG CHÍNH" in captured
+    assert "PHÁN QUYẾT: E3" in captured

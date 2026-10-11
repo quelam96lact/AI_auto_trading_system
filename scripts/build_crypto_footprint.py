@@ -1,10 +1,11 @@
-"""Tai va gop du lieu aggTrades cua Binance thanh nen footprint 5 phut (Brief dot 183).
+"""Tai va gop du lieu aggTrades cua Binance thanh nen footprint 5 phut v2 (Brief dot 183b).
 
 - Nguon: https://data.binance.vision/data/futures/um/monthly/aggTrades/BTCUSDT/
 - Pham vi: 2023-01 -> 2026-08 (44 thang).
-- Niem phong: thang >= 2026-09 bi tu choi truoc khi tai; dong > CRYPTO_SEALED_MAX_TS bi nem loi.
-- Dau ra: data/crypto_footprint/BTCUSDT/<YYYY-MM>.csv.gz
-- Khong ghi DB, khong tinh su kien hay muc tieu o day.
+- Buoc gia: step = max(0.1, round(open * 0.0001, 1)) (~1 bp theo open).
+- Dau ra: data/crypto_footprint_v2/BTCUSDT/<YYYY-MM>.csv.gz
+- Cot: ts, open, high, low, close, buy, sell, delta, n_trades, step, close_k, fp
+- Khong tinh imbalance o day (tinh luc do theo nguong tuong doi).
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ from scripts.binance_orderflow import (
     download_file_to_path,
     fetch_checksum_text,
 )
-from scripts.screen_vn30f_orderflow import imbalance_levels
 from scripts.seal import CRYPTO_SEALED_MAX_TS
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -47,9 +47,6 @@ if hasattr(sys.stdout, "reconfigure"):
 
 __all__ = [
     "DEFAULT_OUTPUT_DIR",
-    "IMBALANCE_DENOM_FLOOR",
-    "IMBALANCE_MIN_VOL",
-    "IMBALANCE_RATIO",
     "SEALED_CUTOFF_MONTH",
     "SEALED_MAX_MS",
     "aggregate_aggtrades_to_5m_bars",
@@ -67,11 +64,7 @@ SEALED_CUTOFF_MONTH = "2026-08"
 _dt_sealed = datetime.fromisoformat(CRYPTO_SEALED_MAX_TS.replace(" ", "T"))
 SEALED_MAX_MS: int = int(_dt_sealed.timestamp() * 1000) + 999
 
-IMBALANCE_RATIO: float = 3.0
-IMBALANCE_MIN_VOL: float = 50000.0  # USDT
-IMBALANCE_DENOM_FLOOR: float = 10000.0  # USDT
-
-DEFAULT_OUTPUT_DIR = Path("data/crypto_footprint/BTCUSDT")
+DEFAULT_OUTPUT_DIR = Path("data/crypto_footprint_v2/BTCUSDT")
 
 
 # --- 1. Buoc footprint va kiem tra niem phong (§1.1, §1.2) ------------------------
@@ -79,21 +72,20 @@ DEFAULT_OUTPUT_DIR = Path("data/crypto_footprint/BTCUSDT")
 
 def compute_footprint_step(open_price: float) -> float:
     """Tinh buoc gia footprint theo open cua chinh nen:
-    step = max(0.1, round(open * 0.0002, 1)).
+    step = max(0.1, round(open * 0.0001, 1)) (~1 bp).
     """
-    return max(0.1, round(open_price * 0.0002, 1))
+    return max(0.1, round(open_price * 0.0001, 1))
 
 
 def check_month_sealed(month_str: str) -> None:
     """Kiem tra thang theo moc niem phong. Thang >= 2026-09 bi tu choi TRUOC KHI TAI."""
-    # month_str dang YYYY-MM
     if month_str > SEALED_CUTOFF_MONTH:
         raise ValueError(
             f"Thang {month_str} vuot moc niem phong (toi da {SEALED_CUTOFF_MONTH}). Tu choi tai."
         )
 
 
-# --- 2. Gop aggTrades thanh nen footprint 5 phut (§1.1, §1.2) ---------------------
+# --- 2. Gop aggTrades thanh nen footprint 5 phut v2 (§1.1, §1.2) ------------------
 
 
 def aggregate_aggtrades_to_5m_bars(
@@ -101,14 +93,13 @@ def aggregate_aggtrades_to_5m_bars(
     year: int,
     month: int,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Gop stream aggTrades thanh danh sach nen 5 phut tom tat cho thang (year, month).
+    """Gop stream aggTrades thanh danh sach nen 5 phut tom tat v2 cho thang (year, month).
 
     Dau vao:
       row_iterator: iterable chua cac dong [agg_trade_id, price, qty, first_id, last_id, transact_time, is_buyer_maker].
     Tra ve:
-      (danh sach dict nen 5 phut tom tat, tong so trades da xu ly).
+      (danh sach dict nen 5 phut v2 kem cot fp, tong so trades da xu ly).
     """
-    # Xac dinh so ngay trong thang
     if month == 12:
         next_month_start = date(year + 1, 1, 1)
     else:
@@ -117,17 +108,10 @@ def aggregate_aggtrades_to_5m_bars(
     days_in_month = (next_month_start - cur_month_start).days
     total_bars_expected = days_in_month * 288
 
-    # Khoi tao luoi tat ca 288 * days_in_month nen 5 phut
     start_dt = datetime(year, month, 1, 0, 0, 0, tzinfo=UTC)
     start_ms = int(start_dt.timestamp() * 1000)
-    end_ms = int(
-        datetime(
-            next_month_start.year, next_month_start.month, 1, 0, 0, 0, tzinfo=UTC
-        ).timestamp()
-        * 1000
-    )
+    end_ms = int(datetime(next_month_start.year, next_month_start.month, 1, 0, 0, 0, tzinfo=UTC).timestamp() * 1000)
 
-    # Thu thap trades theo bucket nen 5m (300,000 ms)
     # trade_data: (price, qty, is_buy)
     trades_by_bucket: dict[int, list[tuple[float, float, bool]]] = defaultdict(list)
     total_trades = 0
@@ -150,12 +134,10 @@ def aggregate_aggtrades_to_5m_bars(
                 f"Dong co transact_time {ts_ms} vuot qua moc niem phong {SEALED_MAX_MS}. Tu choi du lieu."
             )
 
-        # Neu transact_time nam ngoai thang dang xet, bo qua
         if ts_ms < start_ms or ts_ms >= end_ms:
             continue
 
         total_trades += 1
-
         # Quy uoc Binance: is_buyer_maker = false => Mua chu dong; true => Ban chu dong
         is_buy = not raw_is_buyer_maker
 
@@ -170,7 +152,7 @@ def aggregate_aggtrades_to_5m_bars(
 
         t_list = trades_by_bucket.get(b_idx)
         if not t_list:
-            # Nen khong co giao dich
+            # Nen khong co giao dich: fp rong
             bars.append(
                 {
                     "ts": ts_str,
@@ -184,10 +166,7 @@ def aggregate_aggtrades_to_5m_bars(
                     "n_trades": 0,
                     "step": "",
                     "close_k": "",
-                    "ask_k_min": "",
-                    "ask_k_max": "",
-                    "bid_k_min": "",
-                    "bid_k_max": "",
+                    "fp": "",
                 }
             )
             continue
@@ -206,7 +185,7 @@ def aggregate_aggtrades_to_5m_bars(
         step = compute_footprint_step(o)
         close_k = math.floor(c / step)
 
-        # Footprint tinh theo gia tri USDT
+        # Footprint tinh theo gia tri USDT tai moi muc k
         fp_usdt: dict[int, list[float]] = defaultdict(lambda: [0.0, 0.0])
         for p, q, is_b in t_list:
             k = math.floor(p / step)
@@ -216,13 +195,15 @@ def aggregate_aggtrades_to_5m_bars(
             else:
                 fp_usdt[k][1] += val
 
-        fp_dict = {k: (v[0], v[1]) for k, v in fp_usdt.items()}
-        ask_ks, bid_ks = imbalance_levels(
-            fp_dict,
-            ratio=IMBALANCE_RATIO,
-            min_vol=IMBALANCE_MIN_VOL,
-            denom_floor=IMBALANCE_DENOM_FLOOR,
-        )
+        # Tao chuoi fp: k:buy_usdt:sell_usdt noi bang |, gia tri lam tron so nguyen
+        sorted_k = sorted(fp_usdt.keys())
+        fp_parts: list[str] = []
+        for k in sorted_k:
+            b_val = round(fp_usdt[k][0])
+            s_val = round(fp_usdt[k][1])
+            if b_val > 0 or s_val > 0:
+                fp_parts.append(f"{k}:{b_val}:{s_val}")
+        fp_str = "|".join(fp_parts)
 
         bars.append(
             {
@@ -237,10 +218,7 @@ def aggregate_aggtrades_to_5m_bars(
                 "n_trades": n_tr,
                 "step": f"{step:.1f}",
                 "close_k": close_k,
-                "ask_k_min": ask_ks[0] if ask_ks else "",
-                "ask_k_max": ask_ks[-1] if ask_ks else "",
-                "bid_k_min": bid_ks[0] if bid_ks else "",
-                "bid_k_max": bid_ks[-1] if bid_ks else "",
+                "fp": fp_str,
             }
         )
 
@@ -256,7 +234,7 @@ def process_month(
     output_dir: Path | str = DEFAULT_OUTPUT_DIR,
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
-    """Tai zip aggTrades tu Binance Vision, doi chieu checksum va gop thanh .csv.gz."""
+    """Tai zip aggTrades tu Binance Vision, doi chieu checksum va gop thanh .csv.gz v2."""
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     month_str = f"{year:04d}-{month:02d}"
@@ -264,7 +242,6 @@ def process_month(
     # Kiem tra niem phong truoc khi lam bat cu dieu gi
     check_month_sealed(month_str)
 
-    # Tinh so ngay va so nen ky vong
     if month == 12:
         next_m = date(year + 1, 1, 1)
     else:
@@ -274,25 +251,39 @@ def process_month(
 
     target_file = out_dir / f"{month_str}.csv.gz"
 
-    # Chay lai an toan: neu file da co voi du so dong (expected_bars + 1 dong header) thi bo qua
+    # Chay lai an toan: du so dong VA header co cot fp thi bo qua
     if target_file.exists():
         try:
             with gzip.open(target_file, "rt", encoding="utf-8") as gf:
-                line_count = sum(1 for _ in gf)
-            if line_count == expected_bars + 1:
-                # File hop le va day du
+                first_line = gf.readline()
+                has_fp = "fp" in [c.strip() for c in first_line.split(",")]
+                line_count = 1 + sum(1 for _ in gf)
+
+            if has_fp and line_count == expected_bars + 1:
                 active_count = 0
+                fp_levels_list: list[int] = []
                 with gzip.open(target_file, "rt", encoding="utf-8") as gf:
                     reader = csv.DictReader(gf)
                     for r in reader:
                         if r.get("n_trades") and int(r["n_trades"]) > 0:
                             active_count += 1
+                            fp_s = r.get("fp", "")
+                            n_levels = len(fp_s.split("|")) if fp_s else 0
+                            fp_levels_list.append(n_levels)
+
+                med_levels = 0.0
+                if fp_levels_list:
+                    fp_levels_list.sort()
+                    mid = len(fp_levels_list) // 2
+                    med_levels = float(fp_levels_list[mid])
+
                 return {
                     "month": month_str,
                     "total_bars": expected_bars,
                     "active_bars": active_count,
                     "expected_bars": expected_bars,
                     "file_size": target_file.stat().st_size,
+                    "median_fp_levels": med_levels,
                     "skipped": True,
                 }
         except Exception:
@@ -354,10 +345,7 @@ def process_month(
             "n_trades",
             "step",
             "close_k",
-            "ask_k_min",
-            "ask_k_max",
-            "bid_k_min",
-            "bid_k_max",
+            "fp",
         ]
         with gzip.open(tmp_out, "wt", encoding="utf-8", newline="") as gf:
             writer = csv.DictWriter(gf, fieldnames=fieldnames)
@@ -370,6 +358,13 @@ def process_month(
         tmp_out.rename(target_file)
 
     active_count = sum(1 for b in bars if b["n_trades"] > 0)
+    fp_levels_list = [len(b["fp"].split("|")) for b in bars if b["fp"]]
+    med_levels = 0.0
+    if fp_levels_list:
+        fp_levels_list.sort()
+        mid = len(fp_levels_list) // 2
+        med_levels = float(fp_levels_list[mid])
+
     time.sleep(MIN_RATE_LIMIT_SLEEP)
 
     return {
@@ -378,11 +373,12 @@ def process_month(
         "active_bars": active_count,
         "expected_bars": expected_bars,
         "file_size": target_file.stat().st_size,
+        "median_fp_levels": med_levels,
         "skipped": False,
     }
 
 
-# --- 4. CLI Runner ----------------------------------------------------------------
+# --- 4. CLI Runner & Prevalence (§2.A, §2.C) --------------------------------------
 
 
 def parse_month_str(m_str: str) -> tuple[int, int]:
@@ -392,9 +388,7 @@ def parse_month_str(m_str: str) -> tuple[int, int]:
     return int(parts[0]), int(parts[1])
 
 
-def month_range(
-    start_ym: tuple[int, int], end_ym: tuple[int, int]
-) -> list[tuple[int, int]]:
+def month_range(start_ym: tuple[int, int], end_ym: tuple[int, int]) -> list[tuple[int, int]]:
     cur_y, cur_m = start_ym
     end_y, end_m = end_ym
     res: list[tuple[int, int]] = []
@@ -407,9 +401,77 @@ def month_range(
     return res
 
 
+def run_prevalence_report(output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> int:
+    """Dem ti le pho bien 4 nhom imbalance tren thu muc v2 va phan quyet E3.
+
+    Chi goi load_crypto_footprint_bars, apply_relative_imbalance va imbalance_prevalence.
+    Tuyet doi KHONG goi detect_e1/e2/e3 hay calculate_event_targets.
+    """
+    from scripts.screen_crypto_orderflow import (
+        E3_DEGENERATE_BOTH_SHARE,
+        MAIN_END_DATE,
+        MAIN_START_DATE,
+        apply_relative_imbalance,
+        imbalance_prevalence,
+        load_crypto_footprint_bars,
+    )
+
+    out_p = Path(output_dir)
+    print("=" * 88)
+    print("  BRIEF ĐỢT 183b — BÁO CÁO PHỔ BIẾN IMBALANCE TRÊN DỮ LIỆU FOOTPRINT V2")
+    print(f"  Thư mục dữ liệu: {out_p}")
+    print("=" * 88)
+
+    bars_raw = load_crypto_footprint_bars(data_dir=out_p)
+    if not bars_raw:
+        print(f"[CẢNH BÁO] Không tìm thấy dữ liệu footprint v2 trong '{out_p}'.", file=sys.stderr)
+        return 1
+
+    bars = apply_relative_imbalance(bars_raw)
+
+    # Gom theo từng tháng
+    bars_by_month: dict[str, list[Any]] = defaultdict(list)
+    for b in bars:
+        m_key = b.session_id.strftime("%Y-%m")
+        bars_by_month[m_key].append(b)
+
+    print(f"{'Tháng':<10} | {'Tổng nến':<10} | {'Chỉ Ask':<10} | {'Chỉ Bid':<10} | {'Cả hai':<10} | {'Không có':<10} | {'% Cả hai'}")
+    print("-" * 88)
+
+    for m_key in sorted(bars_by_month.keys()):
+        m_bars = bars_by_month[m_key]
+        p_res = imbalance_prevalence(m_bars)
+        tot = p_res["total"]
+        both_pct = (p_res["both"] / tot * 100.0) if tot > 0 else 0.0
+        print(
+            f"{m_key:<10} | {tot:<10} | {p_res['ask_only']:<10} | {p_res['bid_only']:<10} | "
+            f"{p_res['both']:<10} | {p_res['neither']:<10} | {both_pct:>6.2f}%"
+        )
+
+    # Tổng cửa sổ CHÍNH (2023-01-01 -> 2024-12-31)
+    main_res = imbalance_prevalence(bars, start_date=MAIN_START_DATE, end_date=MAIN_END_DATE)
+    main_tot = main_res["total"]
+    main_both_pct = (main_res["both"] / main_tot * 100.0) if main_tot > 0 else 0.0
+    main_both_share = (main_res["both"] / main_tot) if main_tot > 0 else 0.0
+
+    print("=" * 88)
+    print(
+        f"{'TỔNG CHÍNH':<10} | {main_tot:<10} | {main_res['ask_only']:<10} | {main_res['bid_only']:<10} | "
+        f"{main_res['both']:<10} | {main_res['neither']:<10} | {main_both_pct:>6.2f}%"
+    )
+    print("=" * 88)
+
+    if main_both_share > E3_DEGENERATE_BOTH_SHARE:
+        verdict = f"PHÁN QUYẾT: E3 BỊ LOẠI (suy biến: cả hai {main_both_pct:.2f}% > 50%)"
+    else:
+        verdict = f"PHÁN QUYẾT: E3 ĐƯỢC GIỮ (cả hai {main_both_pct:.2f}% <= 50%)"
+    print(f"\n  {verdict}\n")
+    return 0
+
+
 def main(args: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Dung du lieu nen footprint 5 phut tu Binance aggTrades (Brief dot 183)"
+        description="Dung du lieu nen footprint 5 phut v2 tu Binance aggTrades (Brief dot 183b)"
     )
     parser.add_argument(
         "--from",
@@ -428,8 +490,16 @@ def main(args: list[str] | None = None) -> int:
         default=str(DEFAULT_OUTPUT_DIR),
         help=f"Thu muc dau ra (mac dinh: {DEFAULT_OUTPUT_DIR})",
     )
+    parser.add_argument(
+        "--prevalence",
+        action="store_true",
+        help="Dem ti le pho bien 4 nhom imbalance tren thu muc v2 va phan quyet E3",
+    )
     effective_args = sys.argv[1:] if args is None else list(args)
     parsed = parser.parse_args(effective_args)
+
+    if parsed.prevalence:
+        return run_prevalence_report(output_dir=parsed.output_dir)
 
     try:
         start_ym = parse_month_str(parsed.from_month)
@@ -452,21 +522,19 @@ def main(args: list[str] | None = None) -> int:
             print(f"[LOI NIEM PHONG] {exc}", file=sys.stderr)
             return 2
 
-    print("=" * 84)
-    print("  BRIEF DOT 183 — DUNG DU LIEU FOOTPRINT BTCUSDT PERP (BINANCE VISION)")
-    print(
-        f"  Pham vi      : {parsed.from_month} -> {parsed.to_month} ({len(months)} thang)"
-    )
-    print(f"  Thu muc luu  : {parsed.output_dir}")
-    print(f"  Niem phong   : Thang <= {SEALED_CUTOFF_MONTH}")
-    print("=" * 84)
+    print("=" * 88)
+    print("  BRIEF ĐỢT 183b — DỰNG DỮ LIỆU FOOTPRINT V2 BTCUSDT PERP (BINANCE VISION)")
+    print(f"  Phạm vi      : {parsed.from_month} -> {parsed.to_month} ({len(months)} tháng)")
+    print(f"  Thư mục lưu  : {parsed.output_dir}")
+    print(f"  Niêm phong   : Tháng <= {SEALED_CUTOFF_MONTH}")
+    print("=" * 88)
 
     session = requests.Session()
     stats_list: list[dict[str, Any]] = []
 
     for idx, (y, m) in enumerate(months, 1):
         m_str = f"{y:04d}-{m:02d}"
-        print(f"[{idx}/{len(months)}] Dang xu ly {m_str}...", end="", flush=True)
+        print(f"[{idx}/{len(months)}] Đang xử lý {m_str}...", end="", flush=True)
         try:
             st = process_month(
                 year=y,
@@ -475,18 +543,19 @@ def main(args: list[str] | None = None) -> int:
                 session=session,
             )
             stats_list.append(st)
-            status = "DA CO (bo qua)" if st["skipped"] else "XONG"
+            status = "ĐÃ CÓ (bỏ qua)" if st["skipped"] else "XONG"
             print(
-                f" {status} | Nen: {st['active_bars']}/{st['total_bars']} (ky vong {st['expected_bars']}) | Size: {st['file_size'] / 1024 / 1024:.2f} MB"
+                f" {status} | Nến: {st['active_bars']}/{st['total_bars']} (kỳ vọng {st['expected_bars']}) | "
+                f"Mức trung vị: {st['median_fp_levels']:.0f} | Size: {st['file_size'] / 1024 / 1024:.2f} MB"
             )
         except Exception as e:
-            print(f" THAT BAI: {e}", file=sys.stderr)
+            print(f" THẤT BẠI: {e}", file=sys.stderr)
             return 3
 
-    print("\n" + "=" * 84)
-    print("  TONG KET DUNG DU LIEU FOOTPRINT")
-    print(f"  Tong so thang da xu ly: {len(stats_list)}")
-    print("=" * 84)
+    print("\n" + "=" * 88)
+    print("  TỔNG KẾT DỰNG DỮ LIỆU FOOTPRINT V2")
+    print(f"  Tổng số tháng đã xử lý: {len(stats_list)}")
+    print("=" * 88)
     return 0
 
 
