@@ -1,9 +1,9 @@
-"""Công cụ sàng lọc 9 cặp đặc trưng sổ lệnh VN30F theo đăng ký trước ở Brief 162 & 163.
+"""Công cụ sàng lọc 9 cặp đặc trưng sổ lệnh VN30F theo đăng ký trước ở Brief 162 & 163 (sửa IS Brief 185).
 
 Quy trình:
-1. Cổng ngày chống nhìn trước: chỉ chạy khi đã bước sang tập Holdout (>= 2026-12-01).
+1. Cổng số phiên IS: IS = 40 phiên hợp lệ đầu tiên từ 2026-09-25. Holdout là các phiên sau phiên thứ 40.
 2. Kiểm tra biến đối chứng (OFI vs Delta Mid cùng phút): rho_truoc > 0.3.
-3. Tính 9 cặp (3 đặc trưng x 3 chân trời) trên In-Sample (2026-09-25 đến 2026-11-30).
+3. Tính 9 cặp (3 đặc trưng x 3 chân trời) trên In-Sample (40 phiên hợp lệ đầu tiên).
 4. Kiểm định thống kê (Block Permutation Test) + Tiêu chuẩn kinh tế (Lợi nhuận trừ phí theo trung vị giá P).
 5. Niêm phong Holdout: chỉ mở duy nhất 1 cặp khi thỏa mãn đủ 3 điều kiện (thuộc 9 cặp, ĐÁNG KỂ ở IS,
    và >= 30 phiên Holdout hợp lệ), bắt buộc ghi log vào docs/holdout-unlock-log.md TRƯỚC khi đọc phiên Holdout.
@@ -43,8 +43,6 @@ HORIZONS: tuple[int, ...] = (1, 5, 15)
 TARGET_MID_NAMES: tuple[str, ...] = ("mid_chg_1", "mid_chg_5", "mid_chg_15")
 
 IS_START_DATE: date = date(2026, 9, 25)
-IS_END_DATE: date = date(2026, 11, 30)
-HOLDOUT_START_DATE: date = date(2026, 12, 1)
 
 MIN_IS_SESSIONS: int = 40
 MIN_HOLDOUT_SESSIONS: int = 30
@@ -55,6 +53,20 @@ ECONOMIC_HURDLE_FACTOR: float = 1.5
 CONTROL_MIN_RHO: float = 0.3
 
 DEFAULT_UNLOCK_LOG_PATH: Path = Path("docs/holdout-unlock-log.md")
+
+
+def compute_is_boundary(
+    sessions_validity: Sequence[tuple[date, bool]],
+    n: int = MIN_IS_SESSIONS,
+) -> date | None:
+    """Ngày của phiên hợp lệ thứ n (theo thứ tự ngày tăng dần); None nếu chưa đủ n."""
+    valid_count = 0
+    for s_date, is_valid in sorted(sessions_validity, key=lambda x: x[0]):
+        if is_valid:
+            valid_count += 1
+            if valid_count == n:
+                return s_date
+    return None
 
 
 @dataclass
@@ -319,15 +331,17 @@ def _write_holdout_log(
     pair_name: str,
     is_sessions_count: int,
     holdout_sessions_count: int,
+    is_boundary: date | None = None,
 ) -> None:
     """Ghi nhật ký mở niêm phong Holdout trước khi đọc phiên Holdout."""
     log_p = Path(log_path)
     log_p.parent.mkdir(parents=True, exist_ok=True)
     now_str = datetime.now(TZ).isoformat()
+    boundary_info = f", IS boundary: {is_boundary}" if is_boundary is not None else ""
     with open(log_p, "a", encoding="utf-8") as lf:
         lf.write(
             f"- [{now_str}] MỞ NIÊM PHONG HOLDOUT cho cặp: {pair_name} "
-            f"(IS sessions: {is_sessions_count}, Holdout sessions: {holdout_sessions_count})\n"
+            f"(IS sessions: {is_sessions_count}{boundary_info}, Holdout sessions: {holdout_sessions_count})\n"
         )
 
 
@@ -395,7 +409,7 @@ def run_screening(
     seed: int = 42,
 ) -> dict[str, Any]:
     """Thực hiện toàn bộ quy trình sàng lọc 9 cặp đặc trưng trên tập In-Sample."""
-    valid_is_sessions = [s for s in sessions if s.is_valid and IS_START_DATE <= s.session_date <= IS_END_DATE]
+    valid_is_sessions = [s for s in sessions if s.is_valid and s.session_date >= IS_START_DATE]
     invalid_sessions = [s for s in sessions if not s.is_valid]
 
     # Cổng số lượng phiên IS: >= 40 phiên hợp lệ
@@ -490,8 +504,16 @@ def run_screening(
     }
 
 
-def count_holdout_files(data_dir: Path | str = "data/orderbook") -> int:
-    """Đếm số lượng file phiên Holdout (>= 2026-12-01) trên đĩa chỉ qua tên file trong các thư mục con, KHÔNG mở file."""
+def count_holdout_files(
+    data_dir: Path | str = "data/orderbook",
+    boundary: date | None = None,
+    today: date | None = None,
+) -> int:
+    """Đếm số lượng file phiên Holdout (boundary < ngày < today) trên đĩa chỉ qua tên file trong các thư mục con, KHÔNG mở file."""
+    if boundary is None:
+        return 0
+    if today is None:
+        today = datetime.now(TZ).date()
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return 0
@@ -500,13 +522,21 @@ def count_holdout_files(data_dir: Path | str = "data/orderbook") -> int:
         if item.is_dir():
             for f in sorted(item.glob("*.jsonl.gz")):
                 s_date = session_date_from_filename(f)
-                if s_date is not None and s_date >= HOLDOUT_START_DATE:
+                if s_date is not None and boundary < s_date < today:
                     count += 1
     return count
 
 
-def load_holdout_sessions(data_dir: Path | str = "data/orderbook") -> list[SessionData]:
-    """Đọc các phiên Holdout (>= 2026-12-01). CHỈ được gọi sau khi kiểm tra đủ điều kiện và ghi log."""
+def load_holdout_sessions(
+    data_dir: Path | str = "data/orderbook",
+    boundary: date | None = None,
+    today: date | None = None,
+) -> list[SessionData]:
+    """Đọc các phiên Holdout (boundary < ngày < today). CHỈ được gọi sau khi kiểm tra đủ điều kiện và ghi log."""
+    if boundary is None:
+        return []
+    if today is None:
+        today = datetime.now(TZ).date()
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
@@ -517,7 +547,7 @@ def load_holdout_sessions(data_dir: Path | str = "data/orderbook") -> list[Sessi
             contract_name = item.name
             for f in sorted(item.glob("*.jsonl.gz")):
                 s_date = session_date_from_filename(f)
-                if s_date is None or s_date < HOLDOUT_START_DATE:
+                if s_date is None or not (boundary < s_date < today):
                     continue
                 if s_date in date_to_contract:
                     raise ValueError(
@@ -556,13 +586,19 @@ def load_holdout_sessions(data_dir: Path | str = "data/orderbook") -> list[Sessi
 
 def load_all_sessions(
     data_dir: Path | str = "data/orderbook",
+    today: date | None = None,
 ) -> list[SessionData]:
     """Đọc các file phiên In-Sample từ cấu trúc thư mục con data_dir/<mã hợp đồng>/<ngày>.jsonl.gz.
 
-    - LUÔN LUÔN bỏ qua phiên >= 01/12/2026 (KHÔNG mở file, KHÔNG gọi build_minute_features).
+    - Chỉ xét file có IS_START_DATE <= ngày < today. File của hôm nay đang được ghi, KHÔNG mở.
+    - Dừng ngay sau phiên hợp lệ thứ 40. Không mở thêm file nào sau đó.
     - File nằm ngay thư mục gốc (không trong thư mục con) -> bỏ qua và in cảnh báo.
     - Nếu có 2 thư mục con chứa cùng 1 ngày -> dừng và raise ValueError.
+    - Bắt lỗi file cắt cụt / hỏng: EOFError, OSError, zlib.error.
     """
+    if today is None:
+        today = datetime.now(TZ).date()
+
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
@@ -591,9 +627,10 @@ def load_all_sessions(
             )
 
     sessions: list[SessionData] = []
+    valid_count = 0
     for s_date, contract_name, fpath in sorted(file_entries, key=lambda x: x[0]):
-        # NIÊM PHONG: Tuyệt đối KHÔNG mở file / gọi build_minute_features cho phiên Holdout
-        if s_date >= HOLDOUT_START_DATE:
+        # Chỉ xét file có IS_START_DATE <= ngày < today
+        if not (IS_START_DATE <= s_date < today):
             continue
 
         try:
@@ -619,6 +656,10 @@ def load_all_sessions(
                 usable_ratio=ratio,
             )
         )
+        if is_valid:
+            valid_count += 1
+            if valid_count >= MIN_IS_SESSIONS:
+                break
 
     return sessions
 
@@ -700,17 +741,23 @@ def main(
     if today is None:
         today = datetime.now(TZ).date()
 
-    # CỔNG NGÀY CHỐNG NHÌN TRƯỚC (Brief 163 §3)
-    if today < HOLDOUT_START_DATE:
+    # CỔNG SỐ PHIÊN IS (Brief 185 §1.2)
+    is_sessions = load_all_sessions(parsed_args.data_dir, today=today)
+    sessions_validity = [(s.session_date, s.is_valid) for s in is_sessions]
+    boundary = compute_is_boundary(sessions_validity, n=MIN_IS_SESSIONS)
+    if boundary is None:
+        k = sum(1 for s in is_sessions if s.is_valid)
+        last_checked = max((s.session_date for s in is_sessions), default=IS_START_DATE)
         print(
-            f"[BẢO VỆ CHỐNG NHÌN TRƯỚC] Ngày hiện tại ({today}) chưa tới ngày kết thúc In-Sample "
-            f"({HOLDOUT_START_DATE}). Dừng toàn bộ chương trình để bảo vệ tính vô tư của tập dữ liệu.",
+            f"[BẢO VỆ CHỐNG NHÌN TRƯỚC] CHƯA ĐỦ PHIÊN IS: {k}/{MIN_IS_SESSIONS} phiên hợp lệ "
+            f"(đã kiểm tới {last_checked}). Dừng toàn bộ chương trình để bảo vệ tính vô tư của tập dữ liệu.",
             file=sys.stderr,
         )
         return 2
 
+    print(f"Ranh giới IS: phiên hợp lệ thứ 40 = {boundary}; holdout là các phiên sau ngày này")
+
     # 1. Chạy trọn phép đo IS trước
-    is_sessions = load_all_sessions(parsed_args.data_dir)
     res = run_screening(
         sessions=is_sessions,
         n_permutations=parsed_args.permutations,
@@ -725,7 +772,7 @@ def main(
         pair_name = parsed_args.unlock_holdout_pair
         cond1_valid_name = pair_name in res["table"]
         cond2_is_significant = cond1_valid_name and (res["table"][pair_name]["label"] == "ĐÁNG KỂ")
-        n_holdout_files = count_holdout_files(parsed_args.data_dir)
+        n_holdout_files = count_holdout_files(parsed_args.data_dir, boundary=boundary, today=today)
         cond3_enough_files = n_holdout_files >= MIN_HOLDOUT_SESSIONS
 
         unlock_rejected_reason: str | None = None
@@ -749,10 +796,11 @@ def main(
             pair_name=pair_name,
             is_sessions_count=res["n_is_sessions"],
             holdout_sessions_count=n_holdout_files,
+            is_boundary=boundary,
         )
 
         # RỒI MỚI ĐỌC CÁC PHIÊN NIÊM PHONG
-        holdout_sessions = load_holdout_sessions(parsed_args.data_dir)
+        holdout_sessions = load_holdout_sessions(parsed_args.data_dir, boundary=boundary, today=today)
         valid_holdout = [s for s in holdout_sessions if s.is_valid]
 
         if len(valid_holdout) < MIN_HOLDOUT_SESSIONS:

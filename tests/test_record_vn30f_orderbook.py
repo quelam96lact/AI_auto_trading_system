@@ -691,3 +691,10 @@ def test_task1_early_stop_tolerance_60s_no_false_alarm():
     assert should_alert_early_stop(
         time(10, 0, 33), until, is_trading_day=True, tolerance_seconds=60.0
     )
+
+
+async def test_resolve_front_month_symbol_on_expiry_date():
+    """T9 (Brief 185 §1.4): Ngay dao han (15/10/2026) van ghi hop dong cu 41I1GA000."""
+    symbol = await resolve_front_month_symbol(date(2026, 10, 15))
+    assert symbol == "41I1GA000"
+

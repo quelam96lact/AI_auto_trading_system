@@ -10,7 +10,8 @@ import gzip
 import json
 import random
 from datetime import date, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -18,13 +19,13 @@ from scripts.audit_information import fast_spearman_rank_correlation
 from scripts.build_orderbook_features import MinuteRow, session_minutes
 from scripts.screen_vn30f_orderbook import (
     FEATURE_NAMES,
-    HOLDOUT_START_DATE,
-    IS_END_DATE,
     IS_START_DATE,
     SessionData,
     calculate_p90_thresholds,
+    compute_is_boundary,
     compute_roundtrip_cost,
     compute_session_target_rows,
+    count_holdout_files,
     evaluate_pairs,
     load_all_sessions,
     main,
@@ -313,15 +314,15 @@ def test_main_niem_phong_khong_doc_holdout_khi_khong_co_co(tmp_path):
         return _make_synthetic_session(s_date).rows
 
     with patch("scripts.screen_vn30f_orderbook.build_minute_features", side_effect=fake_build):
-        rc = main(today=date(2026, 12, 1), args=["--data-dir", str(tmp_path), "--permutations", "10"])
+        rc = main(today=date(2027, 2, 1), args=["--data-dir", str(tmp_path), "--permutations", "10"])
         assert rc == 0
         assert len(called_dates) == 40
-        assert all(d < HOLDOUT_START_DATE for d in called_dates)
+        assert all(d < d_hold_start for d in called_dates)
 
 
 # --- 9. Niêm phong (ii): Từ chối mở niêm phong & KHÔNG ghi log & KHÔNG đọc holdout (Brief 163 vòng 3 §1c, §34) ---
 def test_main_niem_phong_tu_choi_khong_ghi_log_khong_doc_holdout(tmp_path):
-    """Cờ mở niêm phong bị từ chối, KHÔNG ghi log, KHÔNG gọi build_minute_features với ngày >= 01/12/2026 trong cả 3 trường hợp:
+    """Cờ mở niêm phong bị từ chối, KHÔNG ghi log, KHÔNG gọi build_minute_features với ngày holdout trong cả 3 trường hợp:
     (a) Cặp chưa ĐÁNG KỂ ở IS.
     (b) Dưới 30 file phiên niêm phong trên đĩa.
     (c) Tên cặp không thuộc 9 cặp.
@@ -374,13 +375,13 @@ def test_main_niem_phong_tu_choi_khong_ghi_log_khong_doc_holdout(tmp_path):
             }
         }
         rc_a = main(
-            today=date(2026, 12, 1),
+            today=date(2027, 2, 1),
             args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "imb_top5_fwd_5", "--permutations", "10"],
             unlock_log_path=log_a,
         )
         assert rc_a != 0
         assert not log_a.exists()
-        assert all(d < HOLDOUT_START_DATE for d in called_dates_a)
+        assert all(d < d_hold_start for d in called_dates_a)
 
     # Trường hợp (b): Dưới 30 file niêm phong trên đĩa (tạo thư mục riêng chỉ có 20 file holdout)
     tmp_path_b = tmp_path / "case_b"
@@ -425,13 +426,13 @@ def test_main_niem_phong_tu_choi_khong_ghi_log_khong_doc_holdout(tmp_path):
             }
         }
         rc_b = main(
-            today=date(2026, 12, 1),
+            today=date(2027, 2, 1),
             args=["--data-dir", str(tmp_path_b), "--unlock-holdout-pair", "imb_top5_fwd_5", "--permutations", "10"],
             unlock_log_path=log_b,
         )
         assert rc_b != 0
         assert not log_b.exists()
-        assert all(d < HOLDOUT_START_DATE for d in called_dates_b)
+        assert all(d < d_hold_start for d in called_dates_b)
 
     # Trường hợp (c): Tên cặp không thuộc 9 cặp
     called_dates_c: list[date] = []
@@ -443,13 +444,13 @@ def test_main_niem_phong_tu_choi_khong_ghi_log_khong_doc_holdout(tmp_path):
     log_c = tmp_path / "log_c.md"
     with patch("scripts.screen_vn30f_orderbook.build_minute_features", side_effect=fake_build_c):
         rc_c = main(
-            today=date(2026, 12, 1),
+            today=date(2027, 2, 1),
             args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "invalid_pair_xyz", "--permutations", "10"],
             unlock_log_path=log_c,
         )
         assert rc_c != 0
         assert not log_c.exists()
-        assert all(d < HOLDOUT_START_DATE for d in called_dates_c)
+        assert all(d < d_hold_start for d in called_dates_c)
 
 
 # --- 10. Niêm phong (iii): Đủ điều kiện thì GHI LOG TRƯỚC, ĐỌC HOLDOUT SAU (Brief 163 vòng 3 §1d, §34) ---
@@ -484,7 +485,7 @@ def test_main_niem_phong_du_dieu_kien_ghi_log_truoc_doc_holdout_sau(tmp_path):
         return orig_write_log(*args, **kwargs)
 
     def spy_build_minute_features(messages, s_date, stats=None):
-        if s_date >= HOLDOUT_START_DATE:
+        if s_date >= d_hold_start:
             events_order.append(f"BUILD_HOLDOUT_{s_date}")
         return _make_synthetic_session(s_date).rows
 
@@ -522,7 +523,7 @@ def test_main_niem_phong_du_dieu_kien_ghi_log_truoc_doc_holdout_sau(tmp_path):
             "label": "ĐÁNG KỂ",
         }
         rc = main(
-            today=date(2026, 12, 1),
+            today=date(2027, 2, 1),
             args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "imb_top5_fwd_5", "--permutations", "10"],
             unlock_log_path=log_file,
         )
@@ -558,7 +559,7 @@ def test_main_niem_phong_du_30_file_nhung_duoi_30_phien_hop_le(tmp_path, capsys)
     log_file = tmp_path / "holdout-unlock-log.md"
 
     def fake_build(messages, s_date, stats=None):
-        if s_date >= HOLDOUT_START_DATE and s_date.day > 20:
+        if s_date >= d_hold_start and s_date.day > 20:
             # 15 phiên holdout bị thiếu dữ liệu (usable = 0 -> không hợp lệ)
             return _make_synthetic_session(s_date, skip_minutes=set(range(240))).rows
         return _make_synthetic_session(s_date).rows
@@ -584,7 +585,7 @@ def test_main_niem_phong_du_30_file_nhung_duoi_30_phien_hop_le(tmp_path, capsys)
             }
         }
         rc = main(
-            today=date(2026, 12, 1),
+            today=date(2027, 2, 1),
             args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "imb_top5_fwd_5", "--permutations", "10"],
             unlock_log_path=log_file,
         )
@@ -648,8 +649,8 @@ def test_load_all_sessions_doc_dung_cau_truc_thu_muc_con(tmp_path):
         with gzip.open(f, "wt", encoding="utf-8") as gf:
             gf.write(json.dumps({"trading_time": "2026/10/05 09:00:00", "recv_ts": "2026-10-05T09:00:01+07:00"}) + "\n")
 
-    # Đọc bình thường
-    sessions = load_all_sessions(tmp_path)
+    # Đọc bình thường (truyền today sau 2026-11-05 để không bị lọc vì tính năng không mở file hôm nay/tương lai)
+    sessions = load_all_sessions(tmp_path, today=date(2026, 12, 1))
     assert len(sessions) == 2
     contracts = {s.contract for s in sessions}
     assert "VN30F2610" in contracts
@@ -662,27 +663,26 @@ def test_load_all_sessions_doc_dung_cau_truc_thu_muc_con(tmp_path):
 
     # Phải raise ValueError do trùng ngày
     with pytest.raises(ValueError, match="Trùng ngày"):
-        load_all_sessions(tmp_path)
+        load_all_sessions(tmp_path, today=date(2026, 12, 1))
 
 
-# --- 13. Phiên 25/09 được tính vào IS, phiên 24/09 không (Brief 163 A.1 & B) ---
-def test_phien_25_09_tinh_vao_is_va_24_09_khong():
+# --- 13. Phiên 25/09 được tính vào IS, phiên 24/09 không (Brief 163 A.1 & B, Brief 185) ---
+def test_phien_25_09_tinh_vao_is_va_24_09_khong(tmp_path):
     """IS bắt đầu từ 25/09/2026. Phiên 25/09 thuộc IS, phiên 24/09 nằm ngoài IS."""
     assert IS_START_DATE == date(2026, 9, 25)
-    s_24 = _make_synthetic_session(date(2026, 9, 24))
-    s_25 = _make_synthetic_session(date(2026, 9, 25))
-    s_30 = _make_synthetic_session(date(2026, 11, 30))
-    s_01_12 = _make_synthetic_session(date(2026, 12, 1))
+    c_dir = tmp_path / "VN30F2610"
+    c_dir.mkdir(parents=True)
+    for d_str in ("2026-09-24", "2026-09-25", "2026-09-26"):
+        f_p = c_dir / f"{d_str}.jsonl.gz"
+        with gzip.open(f_p, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{d_str.replace('-', '/')} 09:00:00"}) + "\n")
 
-    # Kiểm tra phân loại IS
-    valid_sessions = [s_24, s_25, s_30, s_01_12]
-    is_sessions = [s for s in valid_sessions if IS_START_DATE <= s.session_date <= IS_END_DATE]
-    is_dates = [s.session_date for s in is_sessions]
+    sessions = load_all_sessions(tmp_path, today=date(2026, 10, 1))
+    is_dates = [s.session_date for s in sessions]
 
-    assert date(2026, 9, 25) in is_dates
-    assert date(2026, 11, 30) in is_dates
     assert date(2026, 9, 24) not in is_dates
-    assert date(2026, 12, 1) not in is_dates
+    assert date(2026, 9, 25) in is_dates
+    assert date(2026, 9, 26) in is_dates
 
 
 # --- 14. Chi phí dùng trung vị mid_close của IS (Brief 163 A.7 & B) ---
@@ -833,19 +833,40 @@ def test_kiem_tra_bien_doi_chung_control():
     assert res_fail["table"] is None
 
 
-# --- 19. Cổng ngày chống nhìn trước (163 §4.13) ---
+# --- 19. Cổng số phiên chống nhìn trước (163 §4.13, Brief 185) ---
 def test_cong_ngay_chong_nhin_truoc():
-    """today = 30/11/2026 -> dừng, không gọi hàm đọc file; today = 01/12/2026 -> đi tiếp."""
-    mock_loader = MagicMock(return_value=[])
-
-    with patch("scripts.screen_vn30f_orderbook.load_all_sessions", mock_loader):
-        rc = main(today=date(2026, 11, 30))
-        assert rc == 2
-        mock_loader.assert_not_called()
-
-    with patch("scripts.screen_vn30f_orderbook.load_all_sessions", mock_loader):
+    """Brief 185: Chưa đủ 40 phiên hợp lệ -> trả 2, không gọi run_screening. Đủ 40 -> đi tiếp."""
+    fake_39 = [_make_synthetic_session(date(2026, 9, 25) + timedelta(days=i)) for i in range(39)]
+    with (
+        patch("scripts.screen_vn30f_orderbook.load_all_sessions", return_value=fake_39),
+        patch("scripts.screen_vn30f_orderbook.run_screening") as mock_screen,
+    ):
         rc = main(today=date(2026, 12, 1))
-        mock_loader.assert_called_once()
+        assert rc == 2
+        mock_screen.assert_not_called()
+
+    fake_40 = [_make_synthetic_session(date(2026, 9, 25) + timedelta(days=i)) for i in range(40)]
+    with (
+        patch("scripts.screen_vn30f_orderbook.load_all_sessions", return_value=fake_40),
+        patch("scripts.screen_vn30f_orderbook.run_screening") as mock_screen_ok,
+    ):
+        mock_screen_ok.return_value = {
+            "status": "SUCCESS",
+            "table": {},
+            "n_is_sessions": 40,
+            "n_holdout_sessions": 0,
+            "n_invalid_sessions": 0,
+            "dropped_minutes_ratio": 0.0,
+            "rho_control": 0.5,
+            "control_ok": True,
+            "roundtrip_cost": 0.49,
+            "hurdle": 0.735,
+            "contracts_is": [],
+            "contracts_holdout": [],
+        }
+        rc_ok = main(today=date(2026, 12, 1))
+        assert rc_ok == 0
+        mock_screen_ok.assert_called_once()
 
 
 # --- 20. Chi phí lấy từ hàm, không gắn cứng (163 §4.14) ---
@@ -860,3 +881,227 @@ def test_chi_phi_lay_tu_ham_khong_gan_cung():
         cost_doubled = compute_roundtrip_cost(1300.0)
         assert cost_doubled == pytest.approx((20_000.0 + 20_000.0) / DERIVATIVE_CONTRACT_MULTIPLIER)
         assert cost_doubled != pytest.approx(cost_standard)
+
+
+# --- 21. T1: compute_is_boundary (Brief 185 §2) ---
+def test_t1_compute_is_boundary():
+    """T1: compute_is_boundary:
+    - 39 hợp lệ -> None
+    - 40 hợp lệ -> ngày của phiên thứ 40
+    - Phiên không hợp lệ xen giữa bị bỏ qua, không được đếm
+    """
+    d0 = date(2026, 9, 25)
+    # 39 phien hop le
+    valid_39 = [(d0 + timedelta(days=i), True) for i in range(39)]
+    assert compute_is_boundary(valid_39, n=40) is None
+
+    # 39 phien hop le + 3 phien khong hop le (tong 42 phien nhung chi 39 hop le) -> None
+    mixed_under_40 = list(valid_39)
+    mixed_under_40.append((date(2026, 11, 4), False))
+    mixed_under_40.append((date(2026, 11, 5), False))
+    mixed_under_40.append((date(2026, 11, 6), False))
+    assert compute_is_boundary(mixed_under_40, n=40) is None
+
+    # 40 phien hop le lien tiep
+    valid_40 = [(d0 + timedelta(days=i), True) for i in range(40)]
+    expected_d40 = d0 + timedelta(days=39)
+    assert compute_is_boundary(valid_40, n=40) == expected_d40
+
+    # 40 phien hop le kem 3 phien khong hop le xen giua
+    mixed = []
+    for i in range(39):
+        mixed.append((d0 + timedelta(days=i), True))
+    # Xen giua 3 phien khong hop le
+    mixed.append((date(2026, 11, 4), False))
+    mixed.append((date(2026, 11, 5), False))
+    mixed.append((date(2026, 11, 6), False))
+    # Phien hop le thu 40
+    target_date = date(2026, 11, 7)
+    mixed.append((target_date, True))
+    assert compute_is_boundary(mixed, n=40) == target_date
+
+
+# --- 22. T2: 162 loader dung sau phien 40 va khong mo today (Brief 185 §2) ---
+def test_t2_162_loader_dung_sau_phien_40_va_khong_mo_today(tmp_path, monkeypatch):
+    """T2: 162 loader: 42 file (40 hợp lệ + 1 cắt cụt xen giữa + 1 sau phiên 40) và 1 file ngày today.
+    Spy iter_file_messages: file sau phiên 40 và file today KHÔNG bị mở; file cắt cụt không làm sập và không được đếm.
+    """
+    c_dir = tmp_path / "VN30F2610"
+    c_dir.mkdir(parents=True)
+    today = date(2026, 11, 20)
+    d_start = date(2026, 9, 25)
+
+    # 20 phien hop le dau
+    dates_valid = [d_start + timedelta(days=i) for i in range(20)]
+    # 1 file cat cut o ngay 21
+    corrupt_date = d_start + timedelta(days=20)
+    # 20 phien hop le tiep (tong 40 hop le)
+    dates_valid += [d_start + timedelta(days=21 + i) for i in range(20)]
+    # 1 file sau phien 40
+    after_date = d_start + timedelta(days=41)
+    # 1 file ngay today
+    today_date = today
+
+    for d in dates_valid:
+        f = c_dir / f"{d.isoformat()}.jsonl.gz"
+        with gzip.open(f, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{d.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    # File cat cut
+    cf = c_dir / f"{corrupt_date.isoformat()}.jsonl.gz"
+    with gzip.open(cf, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{corrupt_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+    cf.write_bytes(cf.read_bytes()[:10])
+
+    # File sau phien 40
+    af = c_dir / f"{after_date.isoformat()}.jsonl.gz"
+    with gzip.open(af, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{after_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    # File today
+    tf = c_dir / f"{today_date.isoformat()}.jsonl.gz"
+    with gzip.open(tf, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{today_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    opened_paths: list[Path] = []
+    from scripts import screen_vn30f_orderbook as mod
+    orig_iter = mod.iter_file_messages
+
+    def spy_iter(path):
+        opened_paths.append(Path(path))
+        return orig_iter(path)
+
+    def fake_build(messages, s_date, stats=None):
+        list(messages)
+        return _make_synthetic_session(s_date).rows
+
+    monkeypatch.setattr(mod, "iter_file_messages", spy_iter)
+    monkeypatch.setattr(mod, "build_minute_features", fake_build)
+
+    sessions = load_all_sessions(tmp_path, today=today)
+    opened_names = {p.name for p in opened_paths}
+
+    assert f"{after_date.isoformat()}.jsonl.gz" not in opened_names
+    assert f"{today_date.isoformat()}.jsonl.gz" not in opened_names
+    assert f"{corrupt_date.isoformat()}.jsonl.gz" in opened_names
+
+    valid_sessions = [s for s in sessions if s.is_valid]
+    assert len(valid_sessions) == 40
+    corrupt_sess = [s for s in sessions if s.session_date == corrupt_date]
+    assert len(corrupt_sess) == 1
+    assert corrupt_sess[0].is_valid is False
+
+    # Kiem tra file ngay today khong bi mo ngay ca khi chua du 40 phien (ngay 2026-10-05):
+    opened_paths.clear()
+    load_all_sessions(tmp_path, today=date(2026, 10, 5))
+    opened_today = {p.name for p in opened_paths}
+    assert "2026-10-05.jsonl.gz" not in opened_today
+
+
+# --- 23. T3: 162 main chua du phien tra 2 khong chay screening (Brief 185 §2) ---
+def test_t3_162_main_chua_du_phien_tra_2_khong_chay_screening(tmp_path, capsys):
+    """T3: 162 main khi 39 phiên hợp lệ -> return 2, output có 39/40, run_screening không được gọi."""
+    c_dir = tmp_path / "VN30F2610"
+    c_dir.mkdir(parents=True)
+    d_start = date(2026, 9, 25)
+    for i in range(39):
+        d = d_start + timedelta(days=i)
+        f = c_dir / f"{d.isoformat()}.jsonl.gz"
+        with gzip.open(f, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{d.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    def fake_build(messages, s_date, stats=None):
+        return _make_synthetic_session(s_date).rows
+
+    with (
+        patch("scripts.screen_vn30f_orderbook.build_minute_features", side_effect=fake_build),
+        patch("scripts.screen_vn30f_orderbook.run_screening") as mock_screen,
+    ):
+        rc = main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+        captured = capsys.readouterr()
+        assert rc == 2
+        assert "39/40" in captured.err
+        mock_screen.assert_not_called()
+
+
+# --- 24. T4: 162 count_holdout_files khong dem ngay boundary (Brief 185 §2) ---
+def test_t4_162_count_holdout_files_khong_dem_ngay_boundary(tmp_path):
+    """T4: count_holdout_files chỉ đếm boundary < ngày < today; không đếm file ngày boundary."""
+    c_dir = tmp_path / "VN30F2612"
+    c_dir.mkdir(parents=True)
+    boundary = date(2026, 11, 10)
+    today = date(2026, 11, 20)
+
+    # File ngày boundary (phải bị bỏ qua)
+    f_b = c_dir / f"{boundary.isoformat()}.jsonl.gz"
+    f_b.touch()
+    # File sau boundary trước today (phải được đếm)
+    f_valid1 = c_dir / "2026-11-11.jsonl.gz"
+    f_valid1.touch()
+    f_valid2 = c_dir / "2026-11-12.jsonl.gz"
+    f_valid2.touch()
+    # File ngày today (phải bị bỏ qua)
+    f_today = c_dir / f"{today.isoformat()}.jsonl.gz"
+    f_today.touch()
+    # File sau today (phải bị bỏ qua)
+    f_after = c_dir / "2026-11-25.jsonl.gz"
+    f_after.touch()
+
+    count = count_holdout_files(tmp_path, boundary=boundary, today=today)
+    assert count == 2
+
+
+# --- 25. T8: IS keo dai sang thang 12 khi thieu phien (Brief 185 §2) ---
+def test_t8_is_keo_dai_sang_thang_12_khi_thieu_phien():
+    """T8: Thiếu phiên khiến phiên hợp lệ thứ 40 rơi vào tháng 12:
+    IS gồm phiên tháng 12 đó, holdout bắt đầu sau nó (chứng minh không còn mốc 30/11).
+    """
+    valid_dates = [date(2026, 9, 25) + timedelta(days=i * 2) for i in range(40)]
+    sessions_validity = [(d, True) for d in valid_dates]
+
+    boundary = compute_is_boundary(sessions_validity, n=40)
+    assert boundary is not None
+    # Boundary phải rơi vào tháng 12 (vượt qua mốc cũ 2026-11-30)
+    assert boundary == date(2026, 9, 25) + timedelta(days=78)  # 2026-12-12
+    assert boundary > date(2026, 11, 30)
+    assert boundary.month == 12
+
+
+
+def test_t10_loader_162_keo_is_qua_01_12_va_qua_roll(tmp_path, monkeypatch):
+    """Claude audit 185: loader 162 phai mo phien thang 12 khi phien hop le thu 40 roi vao thang 12.
+
+    Hai hop dong (roll 19/11 -> 20/11); mot nua phien la file cat cut nen phien thu 40 nam sau 01/12.
+    """
+    from scripts import screen_vn30f_orderbook as mod
+
+    d0 = date(2026, 11, 1)
+    valid_dates: list[date] = []
+    d = d0
+    i = 0
+    while len(valid_dates) < 41:
+        folder = tmp_path / ("41I1GB000" if d <= date(2026, 11, 19) else "41I1GC000")
+        folder.mkdir(exist_ok=True)
+        f = folder / f"{d.isoformat()}.jsonl.gz"
+        with gzip.open(f, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{d.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+        if i % 4 == 3:
+            f.write_bytes(f.read_bytes()[:10])
+        else:
+            valid_dates.append(d)
+        d += timedelta(days=1)
+        i += 1
+
+    def fake_build(messages, s_date, stats=None):
+        list(messages)
+        return _make_synthetic_session(s_date).rows
+
+    monkeypatch.setattr(mod, "build_minute_features", fake_build)
+
+    sessions = load_all_sessions(tmp_path, today=date(2027, 1, 31))
+    valid = [s for s in sessions if s.is_valid]
+    assert len(valid) == 40
+    assert valid[-1].session_date == valid_dates[39]
+    assert valid[-1].session_date > date(2026, 11, 30)
+    assert {s.contract for s in valid} == {"41I1GB000", "41I1GC000"}
+    assert all(s.session_date != valid_dates[40] for s in sessions)

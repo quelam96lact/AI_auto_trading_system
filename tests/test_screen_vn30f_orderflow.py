@@ -668,14 +668,13 @@ def test_6_muc_tieu_va_chong_lan():
 
 
 def test_7_cong_ngay(tmp_path):
-    """Ca 7: today < 2026-12-01 tra ma 2; today >= 2026-12-01 vuot qua cong ngay (tra 3 vi thu muc rong)."""
-    # today = 2026-11-30 -> tra 2 (bi chan tai cong ngay)
+    """Ca 7 (Brief 185): Cổng số phiên IS: chưa đủ 40 phiên hợp lệ -> trả mã 2 (bảo vệ chống nhìn trước)."""
+    # Thư mục rỗng (< 40 phiên) -> trả 2 bất kể ngày
     ret_before = main(args=["--data-dir", str(tmp_path)], today=date(2026, 11, 30))
     assert ret_before == 2
 
-    # today = 2026-12-01 -> vuot qua cong ngay, tiep tuc nap du lieu (tra 3 vi thu muc rong < 40 phien)
     ret_after = main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
-    assert ret_after == 3
+    assert ret_after == 2
 
 
 def test_8_niem_phong_holdout(tmp_path):
@@ -877,29 +876,37 @@ def _make_synthetic_session_file(
 
 
 def test_12_dau_cuoi_is_hop_le_va_khong_mo_holdout(tmp_path, monkeypatch, capsys):
-    """Ca 12: Dau-cuoi today=2026-12-01: 41 phien hop le, 1 file cat cut, 1 phien thua, 1 file holdout.
-    Assert return 0, bao 41 hop le, file hong, phien thua, bang 6 dong, file holdout KHONG bi mo.
+    """Ca 12: Dau-cuoi today=2026-12-01: 40 phien hop le, 1 file cat cut, 1 phien thua, 1 file holdout.
+    Assert return 0, bao 40 hop le, file hong, phien thua, bang 6 dong, file holdout KHONG bi mo.
     """
     contract_dir = tmp_path / "VN30F2610"
     contract_dir.mkdir(parents=True, exist_ok=True)
 
     current_d = date(2026, 10, 1)
-    for _ in range(41):
+    for _ in range(20):
         f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
         _make_synthetic_session_file(current_d, f, n_bars=48, correlated=True)
         current_d += timedelta(days=1)
 
-    # 1 file IS bi cat cut
-    corrupt_d = date(2026, 11, 21)
+    # 1 file IS bi cat cut (nam giua cac phien de loader doc qua no)
+    corrupt_d = current_d
     corrupt_f = contract_dir / f"{corrupt_d.isoformat()}.jsonl.gz"
     _make_synthetic_session_file(corrupt_d, corrupt_f, n_bars=48, correlated=True)
     raw_bytes = corrupt_f.read_bytes()
     corrupt_f.write_bytes(raw_bytes[: len(raw_bytes) // 2])
+    current_d += timedelta(days=1)
 
     # 1 phien IS chi co 10 nen co giao dich
-    sparse_d = date(2026, 11, 22)
+    sparse_d = current_d
     sparse_f = contract_dir / f"{sparse_d.isoformat()}.jsonl.gz"
     _make_synthetic_session_file(sparse_d, sparse_f, n_bars=10, correlated=True)
+    current_d += timedelta(days=1)
+
+    # 20 phien hop le tiep theo de dat du 40 phien hop le
+    for _ in range(20):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        _make_synthetic_session_file(current_d, f, n_bars=48, correlated=True)
+        current_d += timedelta(days=1)
 
     # 1 file ngay 2026-12-02 (Holdout)
     holdout_d = date(2026, 12, 2)
@@ -920,7 +927,7 @@ def test_12_dau_cuoi_is_hop_le_va_khong_mo_holdout(tmp_path, monkeypatch, capsys
     captured = capsys.readouterr()
 
     assert ret == 0
-    assert "Số phiên hợp lệ (>= 44/48 nến): 41" in captured.out
+    assert "Số phiên hợp lệ (>= 44/48 nến): 40" in captured.out
     assert "file hỏng" in captured.out
     assert "phiên thưa" in captured.out
     for p_name in ("E1_H15", "E1_H30", "E2_H15", "E2_H30", "E3_H15", "E3_H30"):
@@ -930,7 +937,7 @@ def test_12_dau_cuoi_is_hop_le_va_khong_mo_holdout(tmp_path, monkeypatch, capsys
 
 
 def test_13_khong_du_phien_is_return_3(tmp_path, capsys):
-    """Ca 13: Chi co 39 phien hop le -> in KHONG DU PHIEN va return 3."""
+    """Ca 13 (Brief 185): Chi co 39 phien hop le -> in CHUA DU PHIEN IS va return 2."""
     contract_dir = tmp_path / "VN30F2610"
     contract_dir.mkdir(parents=True, exist_ok=True)
 
@@ -944,8 +951,8 @@ def test_13_khong_du_phien_is_return_3(tmp_path, capsys):
     ret = mod.main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
     captured = capsys.readouterr()
 
-    assert ret == 3
-    assert "KHÔNG ĐỦ PHIÊN" in captured.err
+    assert ret == 2
+    assert "CHƯA ĐỦ PHIÊN IS: 39/40" in captured.err
 
 
 def test_14_control_variable_that_bai_return_4(tmp_path, capsys):
@@ -1024,7 +1031,7 @@ def test_16_holdout_quy_trinh_va_return_5(tmp_path, monkeypatch):
 
     ret1 = mod.main(
         args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
-        today=date(2026, 12, 1),
+        today=date(2027, 1, 1),
         unlock_log_path=dummy_log,
     )
     assert ret1 == 5
@@ -1050,7 +1057,7 @@ def test_16_holdout_quy_trinh_va_return_5(tmp_path, monkeypatch):
 
     ret2 = mod.main(
         args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
-        today=date(2026, 12, 1),
+        today=date(2027, 1, 1),
         unlock_log_path=dummy_log,
     )
     assert ret2 == 0
@@ -1061,7 +1068,7 @@ def test_16_holdout_quy_trinh_va_return_5(tmp_path, monkeypatch):
     # 3. Lan hai cung cap -> return 5 (vi log da ton tai dong dot 182)
     ret3 = mod.main(
         args=["--data-dir", str(tmp_path), "--unlock-holdout-pair", "E1_H15"],
-        today=date(2026, 12, 1),
+        today=date(2027, 1, 1),
         unlock_log_path=dummy_log,
     )
     assert ret3 == 5
@@ -1119,3 +1126,222 @@ def test_19_phan_quyet_holdout_giong_162():
     assert holdout_verdict(0.049, 1.032, 1.032) is True
     assert holdout_verdict(0.05, 2.0, 1.032) is False
     assert holdout_verdict(0.01, 1.031, 1.032) is False
+
+
+# --- T5: 182 loader dung sau phien 40 va khong mo today (Brief 185 §2) ---
+def test_t5_182_loader_dung_sau_phien_40_va_khong_mo_today(tmp_path, monkeypatch):
+    """T5 (Brief 185 §2): 182 loader: 42 file (40 hợp lệ + 1 cắt cụt xen giữa + 1 sau phiên 40) và 1 file ngày today.
+    Spy iter_file_messages: file sau phiên 40 và file today KHÔNG bị mở; file cắt cụt không làm sập và không được đếm.
+    """
+    import scripts.screen_vn30f_orderflow as mod
+
+    c_dir = tmp_path / "VN30F2610"
+    c_dir.mkdir(parents=True)
+    today = date(2026, 11, 20)
+    d_start = date(2026, 9, 25)
+
+    # 20 phien hop le dau
+    dates_valid = [d_start + timedelta(days=i) for i in range(20)]
+    # 1 file cat cut o ngay 21
+    corrupt_date = d_start + timedelta(days=20)
+    # 20 phien hop le tiep (tong 40 hop le)
+    dates_valid += [d_start + timedelta(days=21 + i) for i in range(20)]
+    # 1 file sau phien 40
+    after_date = d_start + timedelta(days=41)
+    # 1 file ngay today
+    today_date = today
+
+    for d in dates_valid:
+        f = c_dir / f"{d.isoformat()}.jsonl.gz"
+        with gzip.open(f, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{d.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    # File cat cut
+    cf = c_dir / f"{corrupt_date.isoformat()}.jsonl.gz"
+    with gzip.open(cf, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{corrupt_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+    cf.write_bytes(cf.read_bytes()[:10])
+
+    # File sau phien 40
+    af = c_dir / f"{after_date.isoformat()}.jsonl.gz"
+    with gzip.open(af, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{after_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    # File today
+    tf = c_dir / f"{today_date.isoformat()}.jsonl.gz"
+    with gzip.open(tf, "wt", encoding="utf-8") as gf:
+        gf.write(json.dumps({"trading_time": f"{today_date.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+
+    opened_paths: list[Path] = []
+    orig_iter = mod.iter_file_messages
+
+    def spy_iter(path):
+        opened_paths.append(Path(path))
+        return orig_iter(path)
+
+    def fake_build(messages, s_date, stats=None):
+        list(messages)
+        bars = [
+            mod.FootprintBar(
+                session_id=s_date,
+                block_id="morning",
+                bar_idx=i,
+                t_start=datetime(2026, 10, 1, 9, 0, tzinfo=TZ),
+                t_end=datetime(2026, 10, 1, 9, 5, tzinfo=TZ),
+                open=1900.0,
+                high=1905.0,
+                low=1895.0,
+                close=1900.0,
+                close_k=19000,
+                delta=10.0,
+                cvd=10.0,
+                ask_k_min=None,
+                ask_k_max=None,
+                bid_k_min=None,
+                bid_k_max=None,
+                buy=20.0,
+                sell=10.0,
+                fp=None,
+                trade_count=10,
+            )
+            for i in range(48)
+        ]
+        return bars, [], {}
+
+    monkeypatch.setattr(mod, "iter_file_messages", spy_iter)
+    monkeypatch.setattr(mod, "build_footprint_bars_and_trades", fake_build)
+
+    sessions = mod.load_is_sessions_orderflow(tmp_path, today=today)
+    opened_names = {p.name for p in opened_paths}
+
+    assert f"{after_date.isoformat()}.jsonl.gz" not in opened_names
+    assert f"{today_date.isoformat()}.jsonl.gz" not in opened_names
+    assert f"{corrupt_date.isoformat()}.jsonl.gz" in opened_names
+
+    valid_sessions = [s for s in sessions if s.is_valid]
+    assert len(valid_sessions) == 40
+    corrupt_sess = [s for s in sessions if s.session_date == corrupt_date]
+    assert len(corrupt_sess) == 1
+    assert corrupt_sess[0].is_valid is False
+    assert corrupt_sess[0].invalid_reason == "file hỏng"
+
+    # Kiem tra file ngay today khong bi mo ngay ca khi chua du 40 phien (ngay 2026-10-05):
+    opened_paths.clear()
+    mod.load_is_sessions_orderflow(tmp_path, today=date(2026, 10, 5))
+    opened_today = {p.name for p in opened_paths}
+    assert "2026-10-05.jsonl.gz" not in opened_today
+
+
+# --- T6: 182 main chua du phien tra 2 khong goi detect_e1 (Brief 185 §2) ---
+def test_t6_182_main_chua_du_phien_tra_2_khong_goi_detect_e1(tmp_path, monkeypatch, capsys):
+    """T6 (Brief 185 §2): 182 main khi 39 phiên -> return 2; detect_e1_events (spy) không được gọi."""
+    import scripts.screen_vn30f_orderflow as mod
+
+    contract_dir = tmp_path / "VN30F2610"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    current_d = date(2026, 9, 25)
+    for _ in range(39):
+        f = contract_dir / f"{current_d.isoformat()}.jsonl.gz"
+        with gzip.open(f, "wt", encoding="utf-8") as gf:
+            gf.write(json.dumps({"trading_time": f"{current_d.strftime('%Y/%m/%d')} 09:00:00"}) + "\n")
+        current_d += timedelta(days=1)
+
+    def fake_build(messages, s_date, stats=None):
+        list(messages)
+        bars = [
+            mod.FootprintBar(
+                session_id=s_date,
+                block_id="morning",
+                bar_idx=i,
+                t_start=datetime(2026, 10, 1, 9, 0, tzinfo=TZ),
+                t_end=datetime(2026, 10, 1, 9, 5, tzinfo=TZ),
+                open=1900.0,
+                high=1905.0,
+                low=1895.0,
+                close=1900.0,
+                close_k=19000,
+                delta=10.0,
+                cvd=10.0,
+                ask_k_min=None,
+                ask_k_max=None,
+                bid_k_min=None,
+                bid_k_max=None,
+                buy=20.0,
+                sell=10.0,
+                fp=None,
+                trade_count=10,
+            )
+            for i in range(48)
+        ]
+        return bars, [], {}
+
+    called_e1 = False
+    def spy_e1(*args, **kwargs):
+        nonlocal called_e1
+        called_e1 = True
+        return []
+
+    monkeypatch.setattr(mod, "build_footprint_bars_and_trades", fake_build)
+    monkeypatch.setattr(mod, "detect_e1_events", spy_e1)
+
+    ret = mod.main(args=["--data-dir", str(tmp_path)], today=date(2026, 12, 1))
+    captured = capsys.readouterr()
+
+    assert ret == 2
+    assert "39/40" in captured.err
+    assert called_e1 is False
+
+
+# --- T7: 182 holdout su kien ngay boundary khong vao h_ev_list (Brief 185 §2) ---
+def test_t7_182_holdout_su_kien_ngay_boundary_khong_vao_h_ev_list():
+    """T7 (Brief 185 §2): Sự kiện của ngày boundary không vào h_ev_list; sự kiện của phiên sau đó thì có."""
+    from scripts.screen_vn30f_orderflow import filter_holdout_events
+
+    boundary = date(2026, 11, 10)
+    day_before = date(2026, 11, 9)
+    day_boundary = date(2026, 11, 10)
+    day_after = date(2026, 11, 11)
+
+    t0 = datetime(2026, 11, 10, 9, 30, tzinfo=TZ)
+    t1 = datetime(2026, 11, 11, 9, 30, tzinfo=TZ)
+
+    ev_before = OrderFlowEvent("E1", +1, day_before, "morning", 5, t0, 1900.0)
+    ev_boundary = OrderFlowEvent("E1", +1, day_boundary, "morning", 5, t0, 1900.0)
+    ev_after = OrderFlowEvent("E1", +1, day_after, "morning", 5, t1, 1905.0)
+
+    h_ev_list = filter_holdout_events([ev_before, ev_boundary, ev_after], boundary=boundary)
+
+    assert ev_before not in h_ev_list
+    assert ev_boundary not in h_ev_list
+    assert ev_after in h_ev_list
+    assert len(h_ev_list) == 1
+
+
+def test_t10_loader_182_keo_is_qua_01_12_va_qua_roll(tmp_path):
+    """Claude audit 185: loader 182 phai mo phien thang 12 khi phien hop le thu 40 roi vao thang 12.
+
+    Hai hop dong (roll 19/11 -> 20/11); xen phien thua nen phien hop le thu 40 nam sau 01/12.
+    """
+    d = date(2026, 11, 1)
+    valid_dates: list[date] = []
+    i = 0
+    while len(valid_dates) < 41:
+        folder = tmp_path / ("41I1GB000" if d <= date(2026, 11, 19) else "41I1GC000")
+        f = folder / f"{d.isoformat()}.jsonl.gz"
+        if i % 4 == 3:
+            _make_synthetic_session_file(d, f, n_bars=10, correlated=True)
+        else:
+            _make_synthetic_session_file(d, f, n_bars=48, correlated=True)
+            valid_dates.append(d)
+        d += timedelta(days=1)
+        i += 1
+
+    from scripts import screen_vn30f_orderflow as mod
+
+    sessions = mod.load_is_sessions_orderflow(tmp_path, today=date(2027, 1, 31))
+    valid = [s for s in sessions if s.is_valid]
+    assert len(valid) == 40
+    assert valid[-1].session_date == valid_dates[39]
+    assert valid[-1].session_date > date(2026, 11, 30)
+    assert {s.contract for s in valid} == {"41I1GB000", "41I1GC000"}
+    assert all(s.session_date != valid_dates[40] for s in sessions)

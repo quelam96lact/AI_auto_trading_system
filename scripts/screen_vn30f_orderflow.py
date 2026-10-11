@@ -9,7 +9,7 @@ Cac ham gom:
 5. `filter_non_overlapping_events`: loc su kien khong chong lan.
 6. `block_bootstrap_p_value`: bootstrap theo khoi phien kiem dinh p mot phia.
 7. `evaluate_pair_criteria`: cong kiem IS §1.4.
-8. `main`: cong ngay chong nhin truoc (today < 2026-12-01 thi dung va tra ma 2).
+8. `main`: cong so phien IS (IS = 40 phien hop le dau tien; chua du thi dung va tra ma 2).
 """
 
 from __future__ import annotations
@@ -56,11 +56,10 @@ from scripts.screen_vn30f_orderbook import (
     CONTROL_MIN_RHO,
     DEFAULT_UNLOCK_LOG_PATH,
     ECONOMIC_HURDLE_FACTOR,
-    HOLDOUT_START_DATE,
-    IS_END_DATE,
     IS_START_DATE,
     MIN_INDEP_EVENTS,
     MIN_SIDE_EVENTS,
+    compute_is_boundary,
     compute_roundtrip_cost,
 )
 from trading.calendar_vn import TZ
@@ -70,7 +69,6 @@ __all__ = [
     "ALPHA_PER_PAIR",
     "EVENT_NAMES",
     "HORIZONS",
-    "IS_END_DATE",
     "IS_START_DATE",
     "MIN_HOLDOUT_SESSIONS",
     "MIN_IS_SESSIONS",
@@ -87,11 +85,13 @@ __all__ = [
     "calculate_event_targets",
     "check_control_variable_orderflow",
     "compute_economic_hurdle",
+    "compute_is_boundary",
     "count_holdout_files",
     "detect_e1_events",
     "detect_e2_events",
     "detect_e3_events",
     "evaluate_pair_criteria",
+    "filter_holdout_events",
     "filter_non_overlapping_events",
     "holdout_verdict",
     "imbalance_levels",
@@ -924,11 +924,27 @@ def holdout_verdict(p_val: float, mean_y: float, hurdle: float) -> bool:
     return (p_val < ALPHA_LEVEL) and (mean_y >= hurdle)
 
 
+def filter_holdout_events(
+    events: Sequence[OrderFlowEvent],
+    boundary: date,
+) -> list[OrderFlowEvent]:
+    """Loc cac su kien thuoc tap Holdout (session_id > boundary). Ngay boundary thuoc IS, KHONG vao holdout."""
+    return [e for e in events if e.session_id > boundary]
+
+
 # --- 6. Niem phong Holdout & Loader du lieu (§1.1, §1.4, §1B) --------------------
 
 
-def count_holdout_files(data_dir: Path | str = "data/orderbook") -> int:
-    """Dem so file Holdout (>= 2026-12-01) chi theo ten file, KHONG mo file."""
+def count_holdout_files(
+    data_dir: Path | str = "data/orderbook",
+    boundary: date | None = None,
+    today: date | None = None,
+) -> int:
+    """Dem so file Holdout (boundary < ngay < today) chi theo ten file, KHONG mo file."""
+    if boundary is None:
+        return 0
+    if today is None:
+        today = datetime.now(TZ).date()
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return 0
@@ -937,7 +953,7 @@ def count_holdout_files(data_dir: Path | str = "data/orderbook") -> int:
         if item.is_dir():
             for f in sorted(item.glob("*.jsonl.gz")):
                 s_date = session_date_from_filename(f)
-                if s_date is not None and s_date >= HOLDOUT_START_DATE:
+                if s_date is not None and boundary < s_date < today:
                     count += 1
     return count
 
@@ -970,9 +986,15 @@ def load_holdout_sessions_orderflow(
     data_dir: Path | str = "data/orderbook",
     log_path: Path | str = DEFAULT_UNLOCK_LOG_PATH,
     pair_name: str | None = None,
+    boundary: date | None = None,
+    today: date | None = None,
 ) -> list[OrderFlowSession]:
-    """Doc phien Holdout (>= 2026-12-01). BAT BUOC kiem tra dong log truoc khi doc bat ky file nao."""
+    """Doc phien Holdout (boundary < ngay < today). BAT BUOC kiem tra dong log truoc khi doc bat ky file nao."""
     verify_holdout_log_unlocked(log_path=log_path, pair_name=pair_name, tag="đợt 182")
+    if boundary is None:
+        return []
+    if today is None:
+        today = datetime.now(TZ).date()
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
@@ -985,7 +1007,7 @@ def load_holdout_sessions_orderflow(
             contract_name = item.name
             for f in sorted(item.glob("*.jsonl.gz")):
                 s_date = session_date_from_filename(f)
-                if s_date is None or s_date < HOLDOUT_START_DATE:
+                if s_date is None or not (boundary < s_date < today):
                     continue
                 if s_date in date_to_contract:
                     raise ValueError(
@@ -1039,15 +1061,19 @@ load_holdout_sessions = load_holdout_sessions_orderflow
 
 def load_is_sessions_orderflow(
     data_dir: Path | str = "data/orderbook",
+    today: date | None = None,
 ) -> list[OrderFlowSession]:
-    """Doc cac phien In-Sample (2026-09-25 den 2026-11-30).
+    """Doc cac phien In-Sample (IS_START_DATE <= ngay < today, dung sau phien hop le thu 40).
 
-    - TUYET DOI bo qua ngay >= HOLDOUT_START_DATE (2026-12-01) ma KHONG mo file.
-    - Bo qua ngay ngoai khoang [IS_START_DATE, IS_END_DATE].
+    - Chi xet file co IS_START_DATE <= ngay < today. File cua hom nay dang duoc ghi, KHONG mo.
+    - Dung ngay sau phien hop le thu 40. Khong mo them file nao sau do.
     - Hai hop dong trung ngay -> raise ValueError.
     - Bat loi file cat cut / hong: EOFError, OSError, zlib.error -> is_valid=False, ly do 'file hỏng'.
     - Phien hop le: >= 44 tren 48 nen co giao dich (ceil(0.9 * 48)).
     """
+    if today is None:
+        today = datetime.now(TZ).date()
+
     p_dir = Path(data_dir)
     if not p_dir.exists():
         return []
@@ -1062,12 +1088,6 @@ def load_is_sessions_orderflow(
                 s_date = session_date_from_filename(f)
                 if s_date is None:
                     continue
-                # NIEM PHONG: Tuyet doi bo qua ngay >= HOLDOUT_START_DATE ma KHONG mo file
-                if s_date >= HOLDOUT_START_DATE:
-                    continue
-                if s_date < IS_START_DATE:
-                    continue
-
                 if s_date in date_to_contract:
                     raise ValueError(
                         f"Trùng ngày {s_date} giữa các hợp đồng: '{date_to_contract[s_date]}' và '{contract_name}'"
@@ -1081,7 +1101,12 @@ def load_is_sessions_orderflow(
             )
 
     sessions: list[OrderFlowSession] = []
+    valid_count = 0
     for s_date, contract_name, fpath in sorted(file_entries, key=lambda x: x[0]):
+        # Chi xet file co IS_START_DATE <= ngay < today
+        if not (IS_START_DATE <= s_date < today):
+            continue
+
         try:
             stats: dict[str, Any] = {}
             bars, trades, stats = build_footprint_bars_and_trades(
@@ -1119,6 +1144,10 @@ def load_is_sessions_orderflow(
                 stats=stats,
             )
         )
+        if is_valid:
+            valid_count += 1
+            if valid_count >= MIN_IS_SESSIONS:
+                break
 
     return sessions
 
@@ -1153,22 +1182,10 @@ def main(
     print("=" * 84)
     print("  BRIEF ĐỢT 182 — SÀNG LỌC ORDER FLOW VN30F THEO FOOTPRINT (ĐĂNG KÝ TRƯỚC)")
     print(f"  Ngày hiện tại (giờ VN): {today}")
-    print(f"  Mốc bắt đầu Holdout    : {HOLDOUT_START_DATE}")
     print("=" * 84)
 
-    # CỔNG NGÀY CHỐNG NHÌN TRƯỚC (§1.1):
-    # Từ chối chạy phần đo khi ngày hôm nay < 2026-12-01, TRƯỚC KHI MỞ BẤT KỲ FILE NÀO.
-    if today < HOLDOUT_START_DATE:
-        print(
-            f"\n[BẢO VỆ CHỐNG NHÌN TRƯỚC] Ngày hiện tại ({today}) chưa tới ngày kết thúc In-Sample "
-            f"({HOLDOUT_START_DATE}).\nDừng toàn bộ chương trình và từ chối mở dữ liệu để bảo vệ "
-            f"tính vô tư của tập nghiên cứu.",
-            file=sys.stderr,
-        )
-        return 2
-
-    # --- 1. Nạp phiên IS (§1B) ---
-    sessions = load_is_sessions_orderflow(data_dir=parsed_args.data_dir)
+    # --- 1. Nạp phiên IS (§1B, Brief 185 §1.3) ---
+    sessions = load_is_sessions_orderflow(data_dir=parsed_args.data_dir, today=today)
     valid_sessions = [s for s in sessions if s.is_valid]
     invalid_sessions = [s for s in sessions if not s.is_valid]
 
@@ -1183,13 +1200,21 @@ def main(
     print(f"  - Tổng tin U hoặc khối lượng 0 bị loại: {tot_u_zero:,}")
     print(f"  - Tổng tin ngoài khung liên tục bị loại: {tot_outside:,}")
 
-    # --- 2. Kiểm tra số phiên hợp lệ ---
-    if len(valid_sessions) < MIN_IS_SESSIONS:
+    # CỔNG SỐ PHIÊN IS (Brief 185 §1.3):
+    sessions_validity = [(s.session_date, s.is_valid) for s in sessions]
+    boundary = compute_is_boundary(sessions_validity, n=MIN_IS_SESSIONS)
+    if boundary is None:
+        k = len(valid_sessions)
+        last_checked = max((s.session_date for s in sessions), default=IS_START_DATE)
         print(
-            f"\n[LỖI] KHÔNG ĐỦ PHIÊN: Chỉ có {len(valid_sessions)}/{MIN_IS_SESSIONS} phiên hợp lệ.",
+            f"\n[BẢO VỆ CHỐNG NHÌN TRƯỚC] CHƯA ĐỦ PHIÊN IS: {k}/{MIN_IS_SESSIONS} phiên hợp lệ "
+            f"(đã kiểm tới {last_checked}). Dừng toàn bộ chương trình và từ chối mở dữ liệu để bảo vệ "
+            f"tính vô tư của tập nghiên cứu.",
             file=sys.stderr,
         )
-        return 3
+        return 2
+
+    print(f"\nRanh giới IS: phiên hợp lệ thứ 40 = {boundary}; holdout là các phiên sau ngày này")
 
     # --- 3. Kiểm đối chứng trên nến IS hợp lệ ---
     valid_bars = [b for s in valid_sessions for b in s.bars]
@@ -1245,7 +1270,7 @@ def main(
 
     print("=" * 98)
 
-    # --- 7. Holdout mở khóa (§1.1, §1.4, §1B) ---
+    # --- 7. Holdout mở khóa (§1.1, §1.4, §1B, Brief 185 §1.3) ---
     unlock_pair = parsed_args.unlock_holdout_pair
     if unlock_pair:
         print(f"\n[YÊU CẦU MỞ NIÊM PHONG HOLDOUT] Cặp chỉ định: {unlock_pair}")
@@ -1259,7 +1284,7 @@ def main(
             return 5
 
         # Điều kiện 2: Số file holdout đếm theo tên file >= MIN_HOLDOUT_SESSIONS
-        h_file_count = count_holdout_files(parsed_args.data_dir)
+        h_file_count = count_holdout_files(parsed_args.data_dir, boundary=boundary, today=today)
         if h_file_count < MIN_HOLDOUT_SESSIONS:
             print(
                 f"[TỪ CHỐI MỞ HOLDOUT] Số file Holdout ({h_file_count}) chưa đủ ngưỡng tối thiểu ({MIN_HOLDOUT_SESSIONS}).",
@@ -1279,18 +1304,23 @@ def main(
                 return 5
 
         # Đủ cả 3 điều kiện:
-        # a. GHI log trước
+        # a. GHI log trước (ghi thêm ranh giới IS)
         p_log.parent.mkdir(parents=True, exist_ok=True)
         now_str = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
         with p_log.open("a", encoding="utf-8") as f_log:
-            f_log.write(f"\n- [{now_str}] Mở niêm phong đợt 182 cho cặp {unlock_pair} trên tập Holdout VN30F\n")
+            f_log.write(
+                f"\n- [{now_str}] Mở niêm phong đợt 182 cho cặp {unlock_pair} trên tập Holdout VN30F "
+                f"(IS boundary: {boundary})\n"
+            )
         print(f"[ĐÃ GHI LOG] Ghi nhận mở niêm phong cho cặp {unlock_pair} vào {unlock_log_path}")
 
-        # b. Sau đó mới nạp phiên >= 2026-12-01
+        # b. Sau đó mới nạp phiên > boundary
         holdout_sessions = load_holdout_sessions_orderflow(
             data_dir=parsed_args.data_dir,
             log_path=unlock_log_path,
             pair_name=unlock_pair,
+            boundary=boundary,
+            today=today,
         )
         valid_h_sessions = [s for s in holdout_sessions if s.is_valid]
         print(f"[DỮ LIỆU HOLDOUT] Số phiên Holdout hợp lệ: {len(valid_h_sessions)}/{len(holdout_sessions)}")
@@ -1309,7 +1339,7 @@ def main(
             h_ev_all = detect_e2_events(hist_bars)
         else:
             h_ev_all = detect_e3_events(hist_bars)
-        h_ev_list = [e for e in h_ev_all if e.session_id >= HOLDOUT_START_DATE]
+        h_ev_list = filter_holdout_events(h_ev_all, boundary=boundary)
 
         h_lookup_map = {s.session_date: s.price_lookup for s in valid_h_sessions}
         def h_price_lookup(x: datetime) -> float | None:
