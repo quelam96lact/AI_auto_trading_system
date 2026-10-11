@@ -54,6 +54,19 @@ Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gi
   - **khung** = ba khúc 8 giờ giữa các mốc funding: 00–08, 08–16, 16–24 UTC.
   - Mục tiêu không vắt qua mốc funding, nên **không cần mô hình funding**.
 
+> **Ghi chú audit 11/10 (Claude), trước mọi phép đo. Chỉ đếm đặc trưng, chưa tính sự kiện hay mục tiêu nào.**
+>
+> Kiểm dữ liệu thật ba tháng 2023-01, 2024-06 và 2025-06:
+> - mỗi nến chỉ trải khoảng 5–6 mức giá (trung vị);
+> - 92–96% nến có imbalance **cả ask lẫn bid**;
+> - chỉ khoảng 0–3 nến mỗi tháng không có imbalance nào.
+>
+> Ngưỡng `min_vol = 50.000 USDT` quá thấp so với khối lượng mỗi mức của BTC, nên "imbalance" không còn là tín hiệu hiếm như trong video.
+> - **E3 suy biến:** chỉ còn ~4% nến thỏa "không có imbalance phía ngược".
+> - E1 và E2 không dùng imbalance, nên không bị ảnh hưởng.
+>
+> Quyết định: E3 cho crypto sẽ được sửa ngưỡng bằng **brief 183b** trước 01/11, ghi vào spec H trước khi đo. Lý do sửa chỉ là độ phổ biến của đặc trưng, không phải kết quả. Nếu 183b không xong trước 01/11, E3 vẫn đo theo ngưỡng cũ, và phải báo kèm ghi chú này.
+
 ### 1.3 Sự kiện, mục tiêu, chồng lấn
 - **Sự kiện:** E1/E2/E3 đúng định nghĩa §1.3 brief 182 v2, gọi chính hàm của 182 trên nến tóm tắt.
 - **Mục tiêu:** `y = d × (P(t_end + H) / close_t − 1)`, tính theo **tỷ lệ**, H ∈ {15, 30} phút.
