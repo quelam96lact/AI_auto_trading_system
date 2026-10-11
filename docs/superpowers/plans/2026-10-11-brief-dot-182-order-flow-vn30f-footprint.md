@@ -1,5 +1,7 @@
 # Brief đợt 182 — Order flow VN30F theo footprint (ĐĂNG KÝ TRƯỚC; dựng công cụ trên dữ liệu tổng hợp, đo tháng 12)
 
+> **Sửa 11/10/2026 (đợt 185, commit `3c19786`):** IS/holdout không còn theo mốc ngày 30/11 / 01/12. IS = 40 phiên hợp lệ đầu tiên kể từ 25/09 (theo quy tắc hợp lệ của công cụ này), holdout = các phiên sau phiên hợp lệ thứ 40. Công cụ trả 2 khi chưa đủ 40. Mọi tiêu chí khác giữ nguyên. Xem brief đợt 185 và spec H.
+
 Ngày: 11/10/2026. Người giao, audit, commit, push: Claude. Người thực thi: agent khác, **KHÔNG commit, KHÔNG push**.
 Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gia-chien-luoc.md`. Làm theo khuôn của đợt 162/163.
 

@@ -1,5 +1,7 @@
 # Brief đợt 162 — Sàng lọc đặc trưng sổ lệnh VN30F, ĐĂNG KÝ TRƯỚC (giả thuyết số 1 của tháng 10/2026)
 
+> **Sửa 11/10/2026 (đợt 185, commit `3c19786`):** IS/holdout không còn theo mốc ngày 30/11 / 01/12. IS = 40 phiên hợp lệ đầu tiên kể từ 25/09 (theo quy tắc hợp lệ của công cụ này), holdout = các phiên sau phiên hợp lệ thứ 40. Công cụ trả 2 khi chưa đủ 40. Mọi tiêu chí khác giữ nguyên. Xem brief đợt 185 và spec H.
+
 Ngày: 04/10/2026. Người giao, audit, commit, push: Claude. Người thực thi: agent khác, **KHÔNG commit, KHÔNG push**.
 Khung đánh giá: `docs/superpowers/specs/2026-10-04-muc-tieu-va-nguong-danh-gia-chien-luoc.md` (vốn rủi ro 100 triệu, MDD 7%, backtest ≤ 4,7%, hurdle 9%/năm).
 
