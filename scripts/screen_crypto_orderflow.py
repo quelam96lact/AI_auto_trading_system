@@ -5,7 +5,7 @@
 - Cua so LAP LAI: 2025-01-01 -> 2026-08-31.
 - Nguong imbalance tuong doi: p90 (min_vol) va p50 (denom_floor) tinh tu 5 ngay truoc.
 - Quy tac suy bien: Ty le nen 'ca hai' > 50% tren CHINH => E3 bi LOAI, con 4 cap.
-- Cong ngay: Tu choi chay truoc 2026-11-01 (ngay VN).
+- Cong ngay: Tu choi chay truoc 2026-10-12 (ngay VN).
 """
 
 from __future__ import annotations
@@ -85,7 +85,8 @@ __all__ = [
 EVENT_NAMES: tuple[str, ...] = ("E1", "E2", "E3")
 HORIZONS: tuple[int, ...] = (15, 30)
 
-HOLDOUT_START_DATE: date = date(2026, 11, 1)
+# Mo som theo cho phep cua chu du an 11/10 (gia thuyet 10 thang 10, spec H)
+HOLDOUT_START_DATE: date = date(2026, 10, 12)
 
 MAIN_START_DATE: date = date(2023, 1, 1)
 MAIN_END_DATE: date = date(2024, 12, 31)
@@ -700,7 +701,7 @@ def main(
     print("=" * 84)
 
     # CỔNG NGÀY CHỐNG NHÌN TRƯỚC (§1.4, §2.B):
-    # Từ chối chạy trước 2026-11-01, TRƯỚC KHI MỞ BẤT KỲ FILE NÀO.
+    # Từ chối chạy trước 2026-10-12, TRƯỚC KHI MỞ BẤT KỲ FILE NÀO.
     if today < HOLDOUT_START_DATE:
         print(
             f"\n[BẢO VỆ CHỐNG NHÌN TRƯỚC] Ngày hiện tại ({today}) chưa tới ngày bắt đầu đo "

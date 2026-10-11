@@ -216,9 +216,9 @@ def test_6_muc_tieu_va_hurdle():
 
 
 def test_7_cong_ngay_chong_nhin_truoc():
-    """Ca 7: Cong ngay tu choi truoc 2026-11-01 (tra ve 2, khong mo file); tu 2026-11-01 di tiep."""
+    """Ca 7: Cong ngay tu choi truoc 2026-10-12 (tra ve 2, khong mo file); tu 2026-10-12 di tiep."""
     with patch("scripts.screen_crypto_orderflow.run_crypto_screening_pipeline") as mock_pipe:
-        ret_block = main(args=[], today=date(2026, 10, 31))
+        ret_block = main(args=[], today=date(2026, 10, 11))
         assert ret_block == 2
         mock_pipe.assert_not_called()
 
@@ -229,7 +229,7 @@ def test_7_cong_ngay_chong_nhin_truoc():
             "message": "DỮ LIỆU SIDE KHÔNG ĐÁNG TIN",
             "pairs": {},
         }
-        ret_pass = main(args=[], today=date(2026, 11, 1))
+        ret_pass = main(args=[], today=date(2026, 10, 12))
         mock_pipe.assert_called_once()
         assert ret_pass == 4
 
