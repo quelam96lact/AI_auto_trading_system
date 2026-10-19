@@ -28,6 +28,38 @@ CREATE TABLE IF NOT EXISTS bars_derivative (
 -- Dot 128 (2026-09-29): chunk 30 ngay cho bars_derivative (tranh bung no chunk tren VPS).
 SELECT create_hypertable('bars_derivative', 'ts', chunk_time_interval => INTERVAL '30 days', if_not_exists => TRUE);
 
+-- Da khung thoi gian phai sinh VN: 15m, 1h, 4h
+CREATE TABLE IF NOT EXISTS bars_derivative_tf (
+  symbol text NOT NULL,
+  interval text NOT NULL,
+  ts timestamptz NOT NULL,
+  open double precision NOT NULL,
+  high double precision NOT NULL,
+  low double precision NOT NULL,
+  close double precision NOT NULL,
+  volume bigint NOT NULL,
+  source text NOT NULL DEFAULT 'resample',
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (symbol, interval, ts)
+);
+SELECT create_hypertable('bars_derivative_tf', 'ts', chunk_time_interval => INTERVAL '30 days', if_not_exists => TRUE);
+
+-- Da khung thoi gian co phieu VN: 15m, 1h, 4h
+CREATE TABLE IF NOT EXISTS bars_tf (
+  symbol text NOT NULL,
+  interval text NOT NULL,
+  ts timestamptz NOT NULL,
+  open double precision NOT NULL,
+  high double precision NOT NULL,
+  low double precision NOT NULL,
+  close double precision NOT NULL,
+  volume bigint NOT NULL,
+  source text NOT NULL DEFAULT 'resample',
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (symbol, interval, ts)
+);
+SELECT create_hypertable('bars_tf', 'ts', chunk_time_interval => INTERVAL '30 days', if_not_exists => TRUE);
+
 CREATE TABLE IF NOT EXISTS bars_daily (
   symbol text NOT NULL,
   ts timestamptz NOT NULL,

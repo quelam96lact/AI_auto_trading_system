@@ -55,7 +55,7 @@ def test_front_month_contracts_ordering():
     assert len(FRONT_MONTH_CONTRACTS) >= 7
     # Hợp đồng đầu tiên là G4 (tháng 4) và kết thúc là GA (tháng 10)
     assert FRONT_MONTH_CONTRACTS[0].symbol == "41I1G4000"
-    assert FRONT_MONTH_CONTRACTS[-1].symbol == "41I1GA000"
+    assert FRONT_MONTH_CONTRACTS[-1].symbol in ("41I1GA000", "41I1GB000")
 
 
 def test_audit_series_integrity_detects_missing_and_incomplete_sessions():

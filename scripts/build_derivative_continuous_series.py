@@ -82,16 +82,16 @@ FRONT_MONTH_CONTRACTS = [
         first_trading_date=date(2026, 8, 21),
         last_trading_date=date(2026, 10, 15),
     ),
-]
-
-# Các hợp đồng VN30 khác cũng có dữ liệu
-OTHER_VN30_CONTRACTS = [
     ContractMetadata(
         symbol="41I1GB000",
         name="VN30 Index Futures 112026",
         first_trading_date=date(2026, 9, 18),
         last_trading_date=date(2026, 11, 19),
     ),
+]
+
+# Các hợp đồng VN30 khác cũng có dữ liệu
+OTHER_VN30_CONTRACTS = [
     ContractMetadata(
         symbol="41I1GC000",
         name="VN30 Index Futures 122026",

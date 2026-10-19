@@ -49,6 +49,22 @@ ON CONFLICT (symbol, ts) DO UPDATE SET
   close = EXCLUDED.close, volume = EXCLUDED.volume, source = EXCLUDED.source
 """
 
+_UPSERT_TF_BAR = """
+INSERT INTO bars_derivative_tf (symbol, interval, ts, open, high, low, close, volume, source)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (symbol, interval, ts) DO UPDATE SET
+  open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+  close = EXCLUDED.close, volume = EXCLUDED.volume, source = EXCLUDED.source
+"""
+
+_UPSERT_STOCK_TF_BAR = """
+INSERT INTO bars_tf (symbol, interval, ts, open, high, low, close, volume, source)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (symbol, interval, ts) DO UPDATE SET
+  open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+  close = EXCLUDED.close, volume = EXCLUDED.volume, source = EXCLUDED.source
+"""
+
 
 _POOLS: dict[str, ConnectionPool] = {}
 _POOL_LOCK = threading.Lock()
@@ -128,23 +144,109 @@ class Storage:
     def write_derivative_bars(self, bars: list[Bar]) -> None:
         self._write("bars_derivative", bars)
 
-    def read_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
+    def write_derivative_tf_bars(self, bars: list[Bar], interval: str) -> None:
+        if not bars:
+            return
         with self.conn() as c:
-            rows = c.execute(
-                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
-                "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
-                (symbol, start, end),
-            ).fetchall()
+            c.cursor().executemany(
+                _UPSERT_TF_BAR,
+                [
+                    (b.symbol, interval, b.ts, b.open, b.high, b.low, b.close, b.volume, b.source)
+                    for b in bars
+                ],
+            )
+
+    def write_stock_tf_bars(self, bars: list[Bar], interval: str) -> None:
+        if not bars:
+            return
+        with self.conn() as c:
+            c.cursor().executemany(
+                _UPSERT_STOCK_TF_BAR,
+                [
+                    (b.symbol, interval, b.ts, b.open, b.high, b.low, b.close, b.volume, b.source)
+                    for b in bars
+                ],
+            )
+
+    def read_stock_tf_bars(
+        self,
+        symbol: str,
+        interval: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[Bar]:
+        query = (
+            "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_tf "
+            "WHERE symbol = %s AND interval = %s"
+        )
+        params: list[object] = [symbol, interval]
+        if start is not None:
+            query += " AND ts >= %s"
+            params.append(start)
+        if end is not None:
+            query += " AND ts < %s"
+            params.append(end)
+        query += " ORDER BY ts"
+        with self.conn() as c:
+            rows = c.execute(query, tuple(params)).fetchall()
         return [Bar(*r) for r in rows]
 
-    def read_derivative_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
+    def read_bars(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        interval: str = "5m",
+    ) -> list[Bar]:
+        if interval == "5m":
+            with self.conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, ts, open, high, low, close, volume, source FROM bars "
+                    "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
+                    (symbol, start, end),
+                ).fetchall()
+            return [Bar(*r) for r in rows]
+        return self.read_stock_tf_bars(symbol, interval, start, end)
+
+    def read_derivative_tf_bars(
+        self,
+        symbol: str,
+        interval: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[Bar]:
+        query = (
+            "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_derivative_tf "
+            "WHERE symbol = %s AND interval = %s"
+        )
+        params: list[object] = [symbol, interval]
+        if start is not None:
+            query += " AND ts >= %s"
+            params.append(start)
+        if end is not None:
+            query += " AND ts < %s"
+            params.append(end)
+        query += " ORDER BY ts"
         with self.conn() as c:
-            rows = c.execute(
-                "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_derivative "
-                "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
-                (symbol, start, end),
-            ).fetchall()
+            rows = c.execute(query, tuple(params)).fetchall()
         return [Bar(*r) for r in rows]
+
+    def read_derivative_bars(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        interval: str = "5m",
+    ) -> list[Bar]:
+        if interval == "5m":
+            with self.conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, ts, open, high, low, close, volume, source FROM bars_derivative "
+                    "WHERE symbol = %s AND ts >= %s AND ts < %s ORDER BY ts",
+                    (symbol, start, end),
+                ).fetchall()
+            return [Bar(*r) for r in rows]
+        return self.read_derivative_tf_bars(symbol, interval, start, end)
 
     def read_daily_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
         with self.conn() as c:

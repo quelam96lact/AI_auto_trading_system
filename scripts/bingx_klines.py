@@ -290,7 +290,7 @@ def get_top_crypto_symbols(limit: int = 20, session: requests.Session | None = N
 def main() -> None:
     ap = argparse.ArgumentParser(description="Nạp nến lịch sử từ BingX vào DB")
     ap.add_argument("--symbols", default=None, help="Danh sách mã phân cách bởi dấu phẩy (VD: BTC-USDT,ETH-USDT)")
-    ap.add_argument("--interval", default="1d", choices=["1d", "1h", "5m"])
+    ap.add_argument("--interval", default="1d", choices=["1d", "1h", "15m", "5m"])
     ap.add_argument("--from", dest="frm", default=None, help="YYYY-MM-DD")
     ap.add_argument("--to", dest="to", default=None, help="YYYY-MM-DD")
     ap.add_argument("--dsn", default=None)
