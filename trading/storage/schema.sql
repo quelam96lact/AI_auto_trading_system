@@ -350,3 +350,19 @@ CREATE TABLE IF NOT EXISTS backtest_fills (
   price double precision NOT NULL,
   fee double precision NOT NULL
 );
+
+-- Brief 190 (2026-10-23): Du lieu giao dich khoi ngoai theo ngay tu SSI DailyStockPrice
+CREATE TABLE IF NOT EXISTS foreign_flow_daily (
+  symbol text NOT NULL,
+  trading_date date NOT NULL,
+  buy_vol bigint NOT NULL,
+  sell_vol bigint NOT NULL,
+  buy_val double precision NOT NULL,
+  sell_val double precision NOT NULL,
+  net_vol bigint NOT NULL,
+  net_val double precision NOT NULL,
+  current_room bigint,          -- ForeignCurrentRoom; NULL neu API tra rong
+  close_price double precision, -- ClosePrice, chi de doi chieu voi bars_daily
+  ingested_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (symbol, trading_date)
+);

@@ -9,6 +9,7 @@ from psycopg_pool import ConnectionPool
 
 from trading.broker import Fill, Position
 from trading.calendar_vn import TZ
+from trading.collector.foreign_flow import ForeignFlow
 from trading.models import Bar, IndexValue
 
 
@@ -1230,6 +1231,88 @@ class Storage:
                 "SELECT symbol FROM symbol_universe WHERE is_active ORDER BY symbol"
             ).fetchall()
         return [r[0] for r in rows]
+
+    def read_symbol_universe(self) -> set[str]:
+        """Doc toan bo ma trong symbol_universe (khong loc is_active)."""
+        with self.conn() as c:
+            rows = c.execute("SELECT symbol FROM symbol_universe").fetchall()
+        return {r[0] for r in rows}
+
+    def write_foreign_flow(self, rows: list[ForeignFlow]) -> int:
+        """Ghi hoac cap nhat du lieu giao dich khoi ngoai theo ngay (Brief 190).
+
+        Upsert bang ON CONFLICT (symbol, trading_date) DO UPDATE.
+        Khong delete, khong truncate.
+        Tra ve so dong ghi/cap nhat.
+        """
+        if not rows:
+            return 0
+        sql = """
+            INSERT INTO foreign_flow_daily (
+                symbol, trading_date, buy_vol, sell_vol, buy_val, sell_val,
+                net_vol, net_val, current_room, close_price
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, trading_date) DO UPDATE SET
+                buy_vol = EXCLUDED.buy_vol,
+                sell_vol = EXCLUDED.sell_vol,
+                buy_val = EXCLUDED.buy_val,
+                sell_val = EXCLUDED.sell_val,
+                net_vol = EXCLUDED.net_vol,
+                net_val = EXCLUDED.net_val,
+                current_room = EXCLUDED.current_room,
+                close_price = EXCLUDED.close_price,
+                ingested_at = now()
+        """
+        params = [
+            (
+                r.symbol,
+                r.trading_date,
+                r.buy_vol,
+                r.sell_vol,
+                r.buy_val,
+                r.sell_val,
+                r.net_vol,
+                r.net_val,
+                r.current_room,
+                r.close_price,
+            )
+            for r in rows
+        ]
+        with self.conn() as c:
+            c.cursor().executemany(sql, params)
+        return len(params)
+
+    def read_foreign_flow(
+        self, symbol: str, frm: date, to: date
+    ) -> list[ForeignFlow]:
+        """Doc du lieu giao dich khoi ngoai cua symbol tu ngay frm den to (Brief 190).
+        Sap theo trading_date ASC.
+        """
+        sql = """
+            SELECT symbol, trading_date, buy_vol, sell_vol, buy_val, sell_val,
+                   net_vol, net_val, current_room, close_price, ingested_at
+            FROM foreign_flow_daily
+            WHERE symbol = %s AND trading_date >= %s AND trading_date <= %s
+            ORDER BY trading_date ASC
+        """
+        with self.conn() as c:
+            rows = c.execute(sql, (symbol, frm, to)).fetchall()
+        return [
+            ForeignFlow(
+                symbol=r[0],
+                trading_date=r[1],
+                buy_vol=r[2],
+                sell_vol=r[3],
+                buy_val=r[4],
+                sell_val=r[5],
+                net_vol=r[6],
+                net_val=r[7],
+                current_room=r[8],
+                close_price=r[9],
+                ingested_at=r[10],
+            )
+            for r in rows
+        ]
 
     def read_must_price_symbols(
         self, accounts: list[str], extra: list[str]

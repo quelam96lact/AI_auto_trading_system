@@ -4,6 +4,7 @@ import pytest
 
 from tests.conftest import TEST_DSN
 from trading.calendar_vn import TZ
+from trading.collector.foreign_flow import ForeignFlow
 from trading.models import Bar
 from trading.storage.db import RealPosition, Storage
 
@@ -48,6 +49,7 @@ def storage():
     s.init_schema()
     with s.conn() as c:
         c.execute("DELETE FROM bars WHERE symbol = 'TEST'")
+        c.execute("DELETE FROM foreign_flow_daily WHERE symbol = 'TEST'")
         c.execute("DELETE FROM account_balance_snapshot WHERE account_no = 'ACC_TEST'")
         c.execute("DELETE FROM account_position_snapshot WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
         c.execute("DELETE FROM account_sync_log WHERE account_no IN ('ACC_TEST', 'ACC_TEST2')")
@@ -1230,3 +1232,83 @@ def test_read_latest_account_navs_empty_table_returns_empty_dict(storage):
     navs = storage.read_latest_account_navs()
     assert navs == {}
 
+# ============ Brief 190 Step 3.4: Foreign flow storage integration ============
+
+
+def test_foreign_flow_storage_roundtrip_upsert_and_read(storage):
+    """Brief 190 Step 3.4:
+    - write_foreign_flow hai lan cung du lieu thi so dong khong doi. Lan hai co net_val khac thi cap nhat.
+    - read_foreign_flow tra dung khoang ngay, sap theo ngay tang dan.
+    - init_schema chay hai lan khong loi."""
+    # 1. init_schema chay lai khong loi
+    storage.init_schema()
+    storage.init_schema()
+
+    d1 = date(2026, 10, 20)
+    d2 = date(2026, 10, 21)
+    d3 = date(2026, 10, 22)
+
+    rows = [
+        ForeignFlow(
+            symbol="TEST",
+            trading_date=d2,
+            buy_vol=100,
+            sell_vol=50,
+            buy_val=1000.0,
+            sell_val=500.0,
+            net_vol=50,
+            net_val=500.0,
+            current_room=1000000,
+            close_price=50.0,
+        ),
+        ForeignFlow(
+            symbol="TEST",
+            trading_date=d1,
+            buy_vol=200,
+            sell_vol=100,
+            buy_val=2000.0,
+            sell_val=1000.0,
+            net_vol=100,
+            net_val=1000.0,
+            current_room=2000000,
+            close_price=52.0,
+        ),
+    ]
+
+    # Lan 1: ghi 2 dong
+    n1 = storage.write_foreign_flow(rows)
+    assert n1 == 2
+
+    # Doc lai: phai sap theo trading_date ASC (d1 truoc d2)
+    got = storage.read_foreign_flow("TEST", d1, d3)
+    assert len(got) == 2
+    assert [g.trading_date for g in got] == [d1, d2]
+    assert got[0].net_val == 1000.0
+    assert got[1].net_val == 500.0
+
+    # Lan 2: ghi lai dong d2 voi net_val duoc cap nhat thanh 999.0 (upsert)
+    updated_row = ForeignFlow(
+        symbol="TEST",
+        trading_date=d2,
+        buy_vol=100,
+        sell_vol=50,
+        buy_val=1000.0,
+        sell_val=500.0,
+        net_vol=50,
+        net_val=999.0,  # thay doi
+        current_room=1000000,
+        close_price=50.0,
+    )
+    n2 = storage.write_foreign_flow([updated_row])
+    assert n2 == 1
+
+    # So dong van khong doi (2 dong), nhung d2 co net_val moi
+    got2 = storage.read_foreign_flow("TEST", d1, d3)
+    assert len(got2) == 2
+    assert got2[1].trading_date == d2
+    assert got2[1].net_val == 999.0
+
+    # Kiem tra filter khoang ngay: chi doc d2 den d3 -> chi co 1 dong
+    got_sub = storage.read_foreign_flow("TEST", d2, d3)
+    assert len(got_sub) == 1
+    assert got_sub[0].trading_date == d2
