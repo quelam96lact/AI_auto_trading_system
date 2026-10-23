@@ -200,6 +200,111 @@ def test_init_schema_idempotent_and_default_zero_balance(storage):
     assert row == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
+def test_read_balance_for_nav_returns_latest_and_sums_buy_t0_t1_only(storage):
+    """Brief 189 Buoc 2: read_balance_for_nav doc dong moi nhat, tra
+    (withdrawable, total_debt, buy_t0 + buy_t1, ts). buy_t2 KHONG duoc tinh."""
+    ts1 = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
+    ts2 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
+
+    # Dong 1: ts cu hon
+    storage.save_account_balance(
+        account_no="ACC_TEST",
+        ts=ts1,
+        account_balance=5_000_000.0,
+        total_debt=100_000.0,
+        withdrawable=5_000_000.0,
+        buy_unmatched=0.0,
+        sell_unmatched=0.0,
+        buy_t0=500_000.0,
+        buy_t1=300_000.0,
+        buy_t2=999_999.0,
+    )
+    # Dong 2: ts moi nhat
+    storage.save_account_balance(
+        account_no="ACC_TEST",
+        ts=ts2,
+        account_balance=6_848_691.0,
+        total_debt=50_000.0,
+        withdrawable=6_848_691.0,
+        buy_unmatched=0.0,
+        sell_unmatched=0.0,
+        buy_t0=2_746_850.0,
+        buy_t1=1_000_000.0,
+        buy_t2=9_999_999.0,
+    )
+
+    got = storage.read_balance_for_nav("ACC_TEST")
+    assert got is not None
+    w, debt, pending_buy, ts = got
+    assert ts == ts2, "Phai lay dong moi nhat theo ts"
+    assert w == 6_848_691.0
+    assert debt == 50_000.0
+    # pending_buy = buy_t0 + buy_t1 cua dong moi nhat
+    assert pending_buy == 2_746_850.0 + 1_000_000.0 == 3_746_850.0
+    # buy_t2 tuyet doi KHONG duoc cong
+    assert pending_buy != 3_746_850.0 + 9_999_999.0
+
+    # Khong tim thay tai khoan
+    assert storage.read_balance_for_nav("ACC_NONEXISTENT") is None
+
+
+def test_read_balance_for_nav_lifecycle_states_abc(storage):
+    """Brief 189: Kiem tra read_balance_for_nav qua 3 trang thai (A), (B), (C).
+    (A) buy_t0 co tien -> pending = buy_t0.
+    (B) buy_t1 co tien -> pending = buy_t1 (m1: bo buy_t1 se do o day!).
+    (C) buy_t2 co tien -> pending = 0 (m2: cong buy_t2 se do o day!)."""
+    ts_a = datetime(2026, 7, 15, 13, 13, tzinfo=TZ)
+    storage.save_account_balance(
+        account_no="ACC_STATE_A",
+        ts=ts_a,
+        account_balance=6_848_691.0,
+        total_debt=0.0,
+        withdrawable=6_848_691.0,
+        buy_unmatched=0.0,
+        sell_unmatched=0.0,
+        buy_t0=2_746_850.0,
+        buy_t1=0.0,
+        buy_t2=0.0,
+    )
+    got_a = storage.read_balance_for_nav("ACC_STATE_A")
+    assert got_a is not None
+    assert got_a[2] == 2_746_850.0
+
+    ts_b = datetime(2026, 7, 16, 7, 32, tzinfo=TZ)
+    storage.save_account_balance(
+        account_no="ACC_STATE_B",
+        ts=ts_b,
+        account_balance=6_848_658.0,
+        total_debt=0.0,
+        withdrawable=6_848_658.0,
+        buy_unmatched=0.0,
+        sell_unmatched=0.0,
+        buy_t0=0.0,
+        buy_t1=2_746_850.0,
+        buy_t2=0.0,
+    )
+    got_b = storage.read_balance_for_nav("ACC_STATE_B")
+    assert got_b is not None
+    assert got_b[2] == 2_746_850.0
+
+    ts_c = datetime(2026, 7, 16, 22, 31, tzinfo=TZ)
+    storage.save_account_balance(
+        account_no="ACC_STATE_C",
+        ts=ts_c,
+        account_balance=6_848_625.0,
+        total_debt=0.0,
+        withdrawable=6_848_625.0,
+        buy_unmatched=0.0,
+        sell_unmatched=0.0,
+        buy_t0=0.0,
+        buy_t1=0.0,
+        buy_t2=2_746_850.0,
+    )
+    got_c = storage.read_balance_for_nav("ACC_STATE_C")
+    assert got_c is not None
+    assert got_c[2] == 0.0  # buy_t2 khong tinh
+
+
 def test_save_account_positions_upsert(storage):
     ts = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
     storage.save_account_positions(

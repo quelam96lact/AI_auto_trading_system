@@ -427,6 +427,26 @@ class Storage:
             ).fetchone()
         return (row[0], row[1], row[2]) if row else None
 
+    def read_balance_for_nav(
+        self, account_no: str
+    ) -> tuple[float, float, float, datetime] | None:
+        """(withdrawable, total_debt, buy_t0 + buy_t1, ts) moi nhat cho cong thuc NAV.
+
+        Brief 189 (docs/superpowers/plans/2026-10-23-brief-dot-189-sua-nav-cong-lenh-mua-chua-ve.md):
+        Khi lenh mua khop (T0/T+1), SSI tru tien ngay nhung co phieu chua vao quantity (dang o
+        buy_t0 hoac buy_t1). NAV can cong khoan pending_buy_cost = buy_t0 + buy_t1 tu CUNG DONG
+        snapshot moi nhat de bu dap so tien da tru, khong bi sut giam dot ngot hon 1 ngay.
+        TUYET DOI KHONG cong buy_t2 vi buy_t2 xuat hien cung luc hoac vai phut truoc khi co phieu
+        vao quantity dem T+1 (se bi tinh trung).
+        """
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT withdrawable, total_debt, buy_t0, buy_t1, ts FROM account_balance_snapshot "
+                "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
+                (account_no,),
+            ).fetchone()
+        return (float(row[0]), float(row[1]), float(row[2]) + float(row[3]), row[4]) if row else None
+
     def read_nav(self, account_no: str) -> tuple[float, datetime, list[str]] | None:
         """Tai san rong (NAV) moi nhat cua tai khoan — nguon CAPITAL cho
         RiskManager luong lenh that tu 2026-08-18 (quyet dinh chu du an 14/08:
@@ -992,8 +1012,15 @@ class Storage:
         now: datetime,
         max_price_age_days: int = 5,
         price_age_ok: Callable[[datetime, datetime], bool] | None = None,
+        pending_buy_cost: float = 0.0,
     ) -> tuple[float, list[str]]:
-        """NAV = tien mat + Σ(qty × gia) − no. THUAN — test duoc khong can DB.
+        """NAV = tien mat + Σ(qty × gia) − no + pending_buy_cost. THUAN — test duoc khong can DB.
+
+        pending_buy_cost (2026-10-23, Brief 189): tong gia tri cac lenh mua da khop
+        (da bi tru tien) nhung co phieu chua vao quantity (buy_t0 + buy_t1). Bu dap
+        khoan sut giam NAV trong thoi gian cho co phieu ve (T0 den het T+1).
+        KHONG cong buy_t2 vi buy_t2 xuat hien cung luc/vai phut truoc khi co phieu
+        vao quantity (se bi tinh trung).
 
         price_fn(symbol) -> (price, ts) | None: gia + moc thoi gian gan nhat.
 
@@ -1009,7 +1036,7 @@ class Storage:
         SSI (account_sync.py) truyen vị từ dem NGAY GIAO DICH (trading_days_
         between); khi None -> fallback ngay LICH (hanh vi cu) cho caller khong
         co lich VN."""
-        nav = cash - debt
+        nav = cash - debt + pending_buy_cost
         unpriced = []
         for symbol, qty in positions.items():
             if qty <= 0:

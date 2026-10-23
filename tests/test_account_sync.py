@@ -63,6 +63,16 @@ class FakeStorage:
     def read_account_balance_with_debt(self, account_no):
         return self._prev_balance
 
+    # Brief 189: stub cho _sync_nav
+    def read_balance_for_nav(self, account_no):
+        if self._prev_balance is None:
+            return None
+        w = self._prev_balance[0]
+        d = self._prev_balance[1]
+        pending = self._prev_balance[2] if len(self._prev_balance) > 3 else 0.0
+        ts = self._prev_balance[-1]
+        return (w, d, pending, ts)
+
 
 async def test_sync_balance_maps_real_api_fields():
     storage = FakeStorage()

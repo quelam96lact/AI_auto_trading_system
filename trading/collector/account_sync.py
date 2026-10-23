@@ -362,7 +362,7 @@ async def _sync_buying_power(trading, account_no: str, ts: datetime, symbols: li
 
 async def _sync_nav(account_no: str, ts: datetime, storage: Storage,
                     holidays: frozenset) -> None:
-    """MARGIN-1 (phan 1): tinh tai san rong (NAV) = tien mat + Σ(qty × gia) − no
+    """MARGIN-1 (phan 1): tinh tai san rong (NAV) = tien mat + Σ(qty × gia) − no + buy_t0 + buy_t1
     tu account_balance_snapshot (moi nhat) + account_position_snapshot (moi nhat)
     + gia tu bars_daily/bars. Fail-safe: ma khong dinh gia duoc (khong co gia /
     gia qua cu > 5 ngay giao dich) -> TINH 0 + WARN neu danh sach khong rong
@@ -372,11 +372,16 @@ async def _sync_nav(account_no: str, ts: datetime, storage: Storage,
     cung 0.0 — truoc day tai khoan margin (withdrawable=0, no 68,6tr) ra NAV
     = 0.0 sai ~160tr; (2) do tuoi gia theo NGAY GIAO DICH (trading_days_between
     + holidays) thay vi ngay lich — truoc day nghi le 31/08-02/09 lam gia daily
-    28/08 (chi cach 1 phien) bi loai nham, NAV = 0."""
-    bal = storage.read_account_balance_with_debt(account_no)
+    28/08 (chi cach 1 phien) bi loai nham, NAV = 0.
+
+    2026-10-23 (Brief 189): doc qua read_balance_for_nav de lay ca buy_t0 + buy_t1
+    (pending_buy_cost) tu CUNG DONG snapshot moi nhat, bu dap so tien bi tru ngay
+    khi lenh mua khop ma co phieu chua vao quantity (T0 den het T+1). Tuyet doi
+    khong cong buy_t2 (tranh tinh trung)."""
+    bal = storage.read_balance_for_nav(account_no)
     if bal is None:
         return  # chua co balance -> chua tinh duoc, khong bao (heartbeat da phu)
-    withdrawable, total_debt = bal[0], bal[1]
+    withdrawable, total_debt, pending_buy_cost = bal[0], bal[1], bal[2]
 
     # positions moi nhat (account_position_snapshot) — dung read_real_positions
     # (da xu ly moc sync) de lay danh sach vi the dang giu
@@ -397,6 +402,7 @@ async def _sync_nav(account_no: str, ts: datetime, storage: Storage,
     nav, unpriced = storage.compute_nav(
         withdrawable, total_debt, {s: p.qty for s, p in pos.items()},
         price_fn, ts, price_age_ok=price_age_ok,
+        pending_buy_cost=pending_buy_cost,
     )
     storage.record_nav(account_no, ts, nav, unpriced)
     if unpriced:
