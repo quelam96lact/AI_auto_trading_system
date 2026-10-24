@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 
 from trading.calendar_vn import TZ
 from trading.collector.foreign_flow import fetch_day, parse_daily_stock_price
-from trading.config import Config
+from trading.config import Config, load_config
 from trading.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -71,8 +71,9 @@ def main(argv: list[str] | None = None, client=None, storage=None) -> int:
         print(f"ERROR: Invalid date format: {e}", file=sys.stderr)
         return 1
 
+    # Audit 24/10: Config khong co from_yaml; chay that dau tien chet AttributeError
     if storage is None:
-        cfg = Config.from_yaml(args.config)
+        cfg = load_config(args.config)
         storage = Storage(cfg.db_dsn)
     else:
         cfg = None
@@ -84,7 +85,7 @@ def main(argv: list[str] | None = None, client=None, storage=None) -> int:
 
     if client is None:
         if cfg is None:
-            cfg = Config.from_yaml(args.config)
+            cfg = load_config(args.config)
         client = build_legacy_client(cfg)
 
     cur = start_date

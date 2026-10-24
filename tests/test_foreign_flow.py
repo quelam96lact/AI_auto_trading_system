@@ -33,7 +33,8 @@ def _load_fixture() -> dict:
 def test_parse_daily_stock_price_fixture_vcb_hpg():
     """3.1.1: Fixture voi allowed = {'VCB', 'HPG'}:
     - giu 2 dong, not_in_universe = 1 (E1VFVN30)
-    - VCB co net_vol == -310798, buy_val == 9944021500.0, trading_date == date(2026, 10, 22)."""
+    - VCB co net_vol == -310798, buy_val == 9944021500.0, trading_date == date(2026, 10, 22).
+    """
     fixture = _load_fixture()
     allowed = {"VCB", "HPG"}
     flows, counts = parse_daily_stock_price(fixture, allowed)
@@ -239,6 +240,7 @@ def test_fetch_day_retry_success():
 
 def test_fetch_day_retry_failure_raises():
     """3.2.4: Loi hai lan lien tiep: raise RuntimeError."""
+
     class FailingClient:
         def daily_stock_price(self, _input_data, req):
             return {"status": "Error", "message": "Persistent failure"}
@@ -252,8 +254,16 @@ def test_fetch_day_sleep_callable():
     """3.2.5: Tham so sleep truyen vao duoc (callable), test khong phai ngu that."""
     slept = []
     responses = {
-        ("HOSE", 1): {"status": "Success", "totalRecord": 2, "data": [{"Symbol": "VCB"}]},
-        ("HOSE", 2): {"status": "Success", "totalRecord": 2, "data": [{"Symbol": "HPG"}]},
+        ("HOSE", 1): {
+            "status": "Success",
+            "totalRecord": 2,
+            "data": [{"Symbol": "VCB"}],
+        },
+        ("HOSE", 2): {
+            "status": "Success",
+            "totalRecord": 2,
+            "data": [{"Symbol": "HPG"}],
+        },
     }
     client = FakeMarketDataClient(responses)
     fetch_day(
@@ -330,9 +340,12 @@ def test_backfill_foreign_flow_main_success(capsys):
     client = MultiDayClient()
 
     args = [
-        "--from", "2026-10-21",
-        "--to", "2026-10-23",
-        "--sleep", "0",
+        "--from",
+        "2026-10-21",
+        "--to",
+        "2026-10-23",
+        "--sleep",
+        "0",
     ]
     code = bff_module.main(args, client=client, storage=storage)
     assert code == 0
@@ -373,9 +386,12 @@ def test_backfill_foreign_flow_main_api_error_exit_2(capsys):
     client = FailingDay2Client()
 
     args = [
-        "--from", "2026-10-21",
-        "--to", "2026-10-22",
-        "--sleep", "0",
+        "--from",
+        "2026-10-21",
+        "--to",
+        "2026-10-22",
+        "--sleep",
+        "0",
     ]
     code = bff_module.main(args, client=client, storage=storage)
     assert code == 2
@@ -385,15 +401,42 @@ def test_backfill_foreign_flow_main_api_error_exit_2(capsys):
     assert "last_done=2026-10-21" in captured.out
 
 
+def test_backfill_foreign_flow_main_loads_real_config_path(monkeypatch):
+    """Audit 24/10: nhanh khong tiem storage phai nap config bang load_config
+    va tao Storage tu cfg.db_dsn (truoc day goi Config.from_yaml khong ton tai)."""
+    seen = {}
+
+    class _Cfg:
+        db_dsn = "postgresql://gia"
+
+    def fake_load_config(path):
+        seen["path"] = path
+        return _Cfg()
+
+    def fake_storage(dsn):
+        seen["dsn"] = dsn
+        return FakeStorage([])
+
+    monkeypatch.setattr(bff_module, "load_config", fake_load_config)
+    monkeypatch.setattr(bff_module, "Storage", fake_storage)
+
+    code = bff_module.main(["--from", "2026-10-21", "--to", "2026-10-21"])
+    assert code == 3  # universe rong -> dung truoc khi tao client that
+    assert seen == {"path": "config/config.yaml", "dsn": "postgresql://gia"}
+
+
 def test_backfill_foreign_flow_main_empty_universe_exit_3(capsys):
     """3.3.3: symbol_universe rong: ma thoat 3."""
     storage = FakeStorage([])  # rong
     client = FakeMarketDataClient({})
 
     args = [
-        "--from", "2026-10-21",
-        "--to", "2026-10-21",
-        "--sleep", "0",
+        "--from",
+        "2026-10-21",
+        "--to",
+        "2026-10-21",
+        "--sleep",
+        "0",
     ]
     code = bff_module.main(args, client=client, storage=storage)
     assert code == 3
