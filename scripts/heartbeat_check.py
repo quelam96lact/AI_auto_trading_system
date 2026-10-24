@@ -25,6 +25,7 @@ còn sống nhưng việc thật đã chết):
 import argparse
 import os
 import re
+import statistics
 import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -106,6 +107,7 @@ HEARTBEAT_OUTBOX_NAME = outbox_name("heartbeat")
 # .schedule_health_state.json: file kia bị evaluate_schedule_health dựng lại toàn bộ
 # mỗi lần chạy nên khoá lạ sẽ bị xoá mất.
 PREV_DAY_BARS_STATE_NAME = ".prev_day_bars_state.json"
+PREV_DAY_FOREIGN_FLOW_STATE_NAME = ".prev_day_foreign_flow_state.json"
 
 
 class WatchJobConfig(NamedTuple):
@@ -161,12 +163,13 @@ SCHEDULE_WATCH_JOBS: dict[str, WatchJobConfig] = {
     ),
 }
 
-# 11 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do phân loại).
+# 12 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do phân loại).
 # LƯU Ý: Giờ chạy thật của từng job nằm ở DEPLOYMENT.md §9, không chép lại ở đây.
 KHONG_CANH: dict[str, str] = {
     "heartbeat": "Chính là heartbeat (tự canh là đệ quy), do container-health canh chéo trong giờ giao dịch.",
     "daily-check": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 160): mỗi ngày giao dịch, heartbeat kiểm độ đủ nến NGÀY của ngày giao dịch liền trước, nên job này chết thì sáng hôm sau có tin.",
     "backfill": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 160): mỗi ngày giao dịch, heartbeat kiểm độ đủ nến NGÀY của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
+    "foreign-flow": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 190b): mỗi ngày giao dịch, heartbeat kiểm số dòng khối ngoại của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
     "deploy-drift": "Chỉ chạy trước phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-cam": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-consumer": "Chỉ chạy lặp trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",
@@ -186,7 +189,7 @@ class JobExitPolicy(NamedTuple):
     reason: str  # Căn cứ dòng code và lý do phân loại
 
 
-# Bảng chính sách mã thoát cho cả 16 nhánh sched.sh (Brief đợt 156)
+# Bảng chính sách mã thoát cho cả 17 nhánh sched.sh (Brief đợt 156, cập nhật đợt 190b)
 SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
     "heartbeat": JobExitPolicy(
         branch="heartbeat",
@@ -208,6 +211,13 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         label="backfill",
         normal_exit_codes=frozenset({0}),
         reason="backfill_universe.py:223-261. Script không có cơ chế gửi Telegram. Mã 0 là nạp xong bình thường; mọi mã khác 0 là lỗi nạp/mạng/DB chưa ai báo.",
+    ),
+    "foreign-flow": JobExitPolicy(
+        branch="foreign-flow",
+        log_file="foreign-flow.log",
+        label="foreign-flow",
+        normal_exit_codes=frozenset({0}),
+        reason="backfill_foreign_flow.py:78 (mã 1 sai định dạng ngày), :115 (mã 2 lỗi API SSI), :90 (mã 3 universe rỗng). Mã 0 là nạp xong bình thường; script không gửi Telegram nên mọi mã khác 0 là lỗi chưa ai báo.",
     ),
     "deploy-drift": JobExitPolicy(
         branch="deploy-drift",
@@ -825,6 +835,46 @@ def prev_day_bars_alert(
     return tin, p_iso
 
 
+def prev_day_foreign_flow_alert(
+    storage: Storage,
+    now: datetime,
+    holidays: frozenset[date],
+    alerted_for: str | None,
+) -> tuple[str | None, str]:
+    """Tin cảnh báo số dòng khối ngoại của ngày giao dịch liền trước (đợt 190b).
+
+    Trả về (tin, ngày P dạng ISO). Tin là None khi không có gì để báo: hoặc đủ dòng,
+    hoặc đã báo cho đúng ngày P đó rồi, hoặc không có ngày nào trước P (bảng rỗng).
+    """
+    p = previous_trading_day(now.date(), holidays)
+    p_iso = p.isoformat()
+    if alerted_for == p_iso or alerted_for == p:
+        return None, p_iso
+
+    counts = storage.read_foreign_flow_day_counts(p - timedelta(days=30), p)
+    n_p = counts.get(p, 0)
+
+    prior_days = sorted([d for d in counts if d < p], reverse=True)[:5]
+    if not prior_days:
+        return None, p_iso
+
+    prior_counts = [counts[d] for d in prior_days]
+    base = statistics.median(prior_counts)
+    if isinstance(base, float) and base.is_integer():
+        base_display = int(base)
+    else:
+        base_display = base
+
+    if n_p < 0.8 * base:
+        tin = (
+            f"[WARN] khối ngoại ngày {p_iso}: {n_p} dòng (trung vị 5 phiên trước {base_display}) "
+            "— Khắc phục: ./scripts/sched.sh foreign-flow (idempotent)"
+        )
+        return tin, p_iso
+
+    return None, p_iso
+
+
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
     # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
@@ -1062,6 +1112,36 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 print(
                     "[WARN] heartbeat khong kiem duoc nen ngay cua ngay lien truoc: "
+                    f"{type(e).__name__}: {e}"[:300],
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
+
+        # Đợt 190b: kiểm số dòng khối ngoại của ngày giao dịch liền trước
+        try:
+            prev_flow_state_file = (
+                Path(logs_dir) / PREV_DAY_FOREIGN_FLOW_STATE_NAME
+            )
+            prev_flow_state = load_json_state(
+                prev_flow_state_file, "prev-day-foreign-flow"
+            )
+            tin, p_iso = prev_day_foreign_flow_alert(
+                Storage(dsn),
+                now,
+                holidays,
+                prev_flow_state.get("alerted_for"),
+            )
+            if tin:
+                messages.append(tin)
+                if not args.dry_run:
+                    save_json_state(
+                        prev_flow_state_file, {"alerted_for": p_iso}
+                    )
+        except Exception as e:
+            try:
+                print(
+                    "[WARN] heartbeat khong kiem duoc khoi ngoai: "
                     f"{type(e).__name__}: {e}"[:300],
                     file=sys.stderr,
                 )

@@ -347,7 +347,7 @@ def test_backfill_foreign_flow_main_success(capsys):
         "--sleep",
         "0",
     ]
-    code = bff_module.main(args, client=client, storage=storage)
+    code = bff_module.run(bff_module.build_parser().parse_args(args), client=client, storage=storage)
     assert code == 0
     assert len(storage.written_flows) == 2
     dates = {f.trading_date for f in storage.written_flows}
@@ -393,7 +393,7 @@ def test_backfill_foreign_flow_main_api_error_exit_2(capsys):
         "--sleep",
         "0",
     ]
-    code = bff_module.main(args, client=client, storage=storage)
+    code = bff_module.run(bff_module.build_parser().parse_args(args), client=client, storage=storage)
     assert code == 2
     assert len(storage.written_flows) == 1
 
@@ -438,7 +438,7 @@ def test_backfill_foreign_flow_main_empty_universe_exit_3(capsys):
         "--sleep",
         "0",
     ]
-    code = bff_module.main(args, client=client, storage=storage)
+    code = bff_module.run(bff_module.build_parser().parse_args(args), client=client, storage=storage)
     assert code == 3
     captured = capsys.readouterr()
     assert "symbol_universe is empty" in captured.err

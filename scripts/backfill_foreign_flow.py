@@ -35,7 +35,7 @@ def build_legacy_client(cfg: Config):
     return MarketDataClient(_SdkCfg())
 
 
-def main(argv: list[str] | None = None, client=None, storage=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Backfill foreign flow data from SSI DailyStockPrice into DB"
     )
@@ -61,9 +61,15 @@ def main(argv: list[str] | None = None, client=None, storage=None) -> int:
         default=1.1,
         help="Sleep seconds between requests (default: 1.1)",
     )
+    return parser
 
-    args = parser.parse_args(argv)
 
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return run(args)
+
+
+def run(args, client=None, storage=None) -> int:
     try:
         start_date = date.fromisoformat(args.from_date)
         end_date = date.fromisoformat(args.to_date)

@@ -1312,3 +1312,57 @@ def test_foreign_flow_storage_roundtrip_upsert_and_read(storage):
     got_sub = storage.read_foreign_flow("TEST", d2, d3)
     assert len(got_sub) == 1
     assert got_sub[0].trading_date == d2
+
+
+def test_read_foreign_flow_day_counts(storage):
+    """Brief 190b: read_foreign_flow_day_counts tra dict {date: count}.
+    3 ngay co 2/1/0 dong -> tra {d1: 2, d2: 1}, khong co khoa cho ngay 0 dong.
+    """
+    storage.init_schema()
+    d1 = date(2026, 10, 20)
+    d2 = date(2026, 10, 21)
+    d3 = date(2026, 10, 22)  # 0 dong
+
+    rows = [
+        ForeignFlow(
+            symbol="VCB",
+            trading_date=d1,
+            buy_vol=10,
+            sell_vol=5,
+            buy_val=100.0,
+            sell_val=50.0,
+            net_vol=5,
+            net_val=50.0,
+            current_room=100,
+            close_price=50.0,
+        ),
+        ForeignFlow(
+            symbol="HPG",
+            trading_date=d1,
+            buy_vol=20,
+            sell_vol=10,
+            buy_val=200.0,
+            sell_val=100.0,
+            net_vol=10,
+            net_val=100.0,
+            current_room=200,
+            close_price=25.0,
+        ),
+        ForeignFlow(
+            symbol="VCB",
+            trading_date=d2,
+            buy_vol=30,
+            sell_vol=15,
+            buy_val=300.0,
+            sell_val=150.0,
+            net_vol=15,
+            net_val=150.0,
+            current_room=100,
+            close_price=51.0,
+        ),
+    ]
+    storage.write_foreign_flow(rows)
+
+    counts = storage.read_foreign_flow_day_counts(d1, d3)
+    assert counts == {d1: 2, d2: 1}
+    assert d3 not in counts

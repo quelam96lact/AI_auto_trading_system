@@ -1314,6 +1314,23 @@ class Storage:
             for r in rows
         ]
 
+    def read_foreign_flow_day_counts(
+        self, frm: date, to: date
+    ) -> dict[date, int]:
+        """Doc so dong giao dich khoi ngoai theo ngay trong khoang [frm, to] (Brief 190b).
+        Tra ve dict {trading_date: count}. Ngay khong co dong nao khong co trong dict.
+        """
+        sql = """
+            SELECT trading_date, count(*)
+            FROM foreign_flow_daily
+            WHERE trading_date >= %s AND trading_date <= %s
+            GROUP BY 1
+            ORDER BY 1 ASC
+        """
+        with self.conn() as c:
+            rows = c.execute(sql, (frm, to)).fetchall()
+        return {r[0]: r[1] for r in rows}
+
     def read_must_price_symbols(
         self, accounts: list[str], extra: list[str]
     ) -> list[str]:
