@@ -14,6 +14,7 @@ Thiết kế (bắt buộc từ plan 2026-08-09-multi-timeframe-data.md Task 5):
   chờ backoff 1s, 2s, 4s... tối đa 60s, thử lại tối đa 3 lần cho CÙNG mã.
 - Chunk daily (366 ngày) và 5m (7 ngày) do SSIRestClient tự xử lý nội bộ
   (backfill.py); re-auth tự động 1 lần khi access token hết hạn (401).
+- Đường 5m lọc nến bẩn (is_dirty_bar: giá <= 0) trước khi ghi (brief đợt 196).
 - write_daily/write_bars UPSERT theo (symbol, ts) — chạy lại an toàn.
 """
 
@@ -26,6 +27,7 @@ from pathlib import Path
 
 from trading.collector.backfill import SSIRestClient
 from trading.config import load_config
+from trading.data_quality import is_dirty_bar
 from trading.storage.db import Storage
 
 # Script nay chay qua CRON (DEPLOYMENT.md §9.5), stdout la file log chu khong
@@ -112,9 +114,17 @@ async def backfill_one(
                 if timeframe == "1d":
                     bars = await client.daily_ohlc(symbol, frm, to)
                     storage.write_daily(bars)
+                    detail = f"{len(bars)} bar"
                 else:
-                    bars = await client.intraday_ohlc(symbol, frm, to)
+                    raw_bars = await client.intraday_ohlc(symbol, frm, to)
+                    bars = [b for b in raw_bars if not is_dirty_bar(b)]
                     storage.write_bars(bars)
+                    dropped = len(raw_bars) - len(bars)
+                    detail = (
+                        f"{len(bars)} bar, bo {dropped} bar rac"
+                        if dropped > 0
+                        else f"{len(bars)} bar"
+                    )
                 # last_done_date = ngày bar cuối THẬT (không tiến khi rỗng);
                 # attempted_until = to (đã hỏi tới đó, kể cả rỗng).
                 last_done = (
@@ -125,7 +135,7 @@ async def backfill_one(
                 storage.set_backfill_progress(
                     symbol, timeframe, last_done, "ok", attempted_until=to
                 )
-                return symbol, "ok", f"{len(bars)} bar"
+                return symbol, "ok", detail
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"[:200]
                 if (

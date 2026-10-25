@@ -14,17 +14,30 @@ Phương án: tách hai khái niệm:
 Nguyên tắc chỉ đạo: KHÔNG BAO GIỜ ghi nhận độ phủ mà mình không có.
 """
 from datetime import date, datetime
+from typing import Any
 
 from scripts.backfill_universe import backfill_one
 from trading.calendar_vn import TZ
 from trading.models import Bar
 
 
-def _bar(symbol: str, d: date) -> Bar:
+def _bar(
+    symbol: str,
+    d: date,
+    open_: float = 10.0,
+    high: float = 11.0,
+    low: float = 9.0,
+    close: float = 10.5,
+    volume: int = 1000,
+) -> Bar:
     return Bar(
         symbol,
         datetime(d.year, d.month, d.day, tzinfo=TZ),
-        10.0, 11.0, 9.0, 10.5, 1000,
+        open_,
+        high,
+        low,
+        close,
+        volume,
     )
 
 
@@ -34,6 +47,7 @@ class FakeStorage:
     def __init__(self):
         self.progress: dict[tuple[str, str], dict] = {}
         self.written: list[list[Bar]] = []
+        self.written_bars: list[list[Bar]] = []
 
     def get_backfill_progress(self, symbol: str, timeframe: str) -> dict | None:
         return self.progress.get((symbol, timeframe))
@@ -54,14 +68,22 @@ class FakeStorage:
     def write_daily(self, bars: list[Bar]) -> None:
         self.written.append(bars)
 
+    def write_bars(self, bars: list[Bar]) -> None:
+        self.written_bars.append(bars)
+
 
 class FakeClient:
     def __init__(self, bars_by_symbol: dict[str, list[Bar]]):
         self.bars_by_symbol = bars_by_symbol
         self.calls: list[tuple[str, date, date]] = []
+        self.intraday_calls: list[tuple[str, date, date]] = []
 
     async def daily_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
         self.calls.append((symbol, frm, to))
+        return self.bars_by_symbol.get(symbol, [])
+
+    async def intraday_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
+        self.intraday_calls.append((symbol, frm, to))
         return self.bars_by_symbol.get(symbol, [])
 
 
@@ -261,4 +283,105 @@ def test_spike_all_symbols_classified_file_contract():
             break
 
     assert found_valid, "Phai co it nhat 1 entry chua du 3 truong: symbol, listed_shares, cw_underlying_symbol"
+
+
+# ============ Brief 2026-10-25 (dot 196): loc nen gia 0 o duong 5 phut ============
+
+
+async def test_5m_drops_dirty_bars_before_write():
+    """Client tra 3 nen sach va 2 nen ban (1 close=0, 1 open=0).
+    write_bars nhan dung 3 nen sach, status=='ok', detail chua so 2."""
+    clean_bars = [
+        _bar("SDC", date(2026, 8, 3)),
+        _bar("SDC", date(2026, 8, 4)),
+        _bar("SDC", date(2026, 8, 5)),
+    ]
+    dirty_bars = [
+        _bar("SDC", date(2026, 8, 1), close=0.0),
+        _bar("SDC", date(2026, 8, 2), open_=0.0),
+    ]
+    storage: Any = FakeStorage()
+    client: Any = FakeClient({"SDC": dirty_bars + clean_bars})
+
+    _, status, detail = await backfill_one(
+        client, storage, "SDC", "5m",
+        date(2026, 8, 1), date(2026, 8, 18), 0,
+    )
+
+    assert status == "ok"
+    assert len(storage.written_bars) == 1
+    assert storage.written_bars[0] == clean_bars
+    assert "2" in detail, f"detail phai chua so bar rac bi bo (2), thuc te: {detail}"
+
+
+async def test_5m_last_done_date_ignores_dirty_bars():
+    """Nen sach cuoi ngay 05/08, nen ban ngay 07/08, to la 18/08.
+    last_done_date == 05/08 va attempted_until == 18/08."""
+    bars = [
+        _bar("SDC", date(2026, 8, 3)),
+        _bar("SDC", date(2026, 8, 5)),
+        _bar("SDC", date(2026, 8, 7), close=0.0),
+    ]
+    storage: Any = FakeStorage()
+    client: Any = FakeClient({"SDC": bars})
+
+    _, status, _ = await backfill_one(
+        client, storage, "SDC", "5m",
+        date(2026, 8, 1), date(2026, 8, 18), 0,
+    )
+
+    prog = storage.get_backfill_progress("SDC", "5m")
+    assert status == "ok"
+    assert prog is not None
+    assert prog["last_done_date"] == date(2026, 8, 5), (
+        f"last_done_date phai tinh tren nen sach (05/08), thuc te: {prog['last_done_date']}"
+    )
+    assert prog["attempted_until"] == date(2026, 8, 18)
+
+
+async def test_5m_all_dirty_does_not_advance_last_done_date():
+    """Progress cu co last_done_date 01/08, client chi tra nen ban.
+    Khong ghi nen nao, last_done_date van la 01/08, attempted_until == to."""
+    storage: Any = FakeStorage()
+    storage.set_backfill_progress(
+        "SDC", "5m", date(2026, 8, 1), "ok", attempted_until=date(2026, 8, 1)
+    )
+    dirty_bars = [
+        _bar("SDC", date(2026, 8, 5), close=0.0),
+        _bar("SDC", date(2026, 8, 7), open_=0.0),
+    ]
+    client: Any = FakeClient({"SDC": dirty_bars})
+
+    _, status, _ = await backfill_one(
+        client, storage, "SDC", "5m",
+        date(2026, 8, 1), date(2026, 8, 18), 0,
+    )
+
+    prog = storage.get_backfill_progress("SDC", "5m")
+    assert status == "ok"
+    assert not storage.written_bars or storage.written_bars == [[]], (
+        f"Khong duoc ghi nen rac nao vao storage, thuc te: {storage.written_bars}"
+    )
+    assert prog is not None
+    assert prog["last_done_date"] == date(2026, 8, 1), (
+        f"last_done_date khong duoc tien khi tat ca bar la rac, thuc te: {prog['last_done_date']}"
+    )
+    assert prog["attempted_until"] == date(2026, 8, 18)
+
+
+async def test_1d_still_writes_zero_price_bars_unchanged():
+    """Nhanh 1d voi mot nen gia 0: write_daily van nhan du nen ke ca nen gia 0."""
+    bars = [_bar("SDC", date(2026, 8, 5), close=0.0)]
+    storage: Any = FakeStorage()
+    client: Any = FakeClient({"SDC": bars})
+
+    _, status, detail = await backfill_one(
+        client, storage, "SDC", "1d",
+        date(2026, 8, 1), date(2026, 8, 18), 0,
+    )
+
+    assert status == "ok"
+    assert len(storage.written) == 1
+    assert storage.written[0] == bars, "1d phai ghi du ca nen gia 0"
+    assert detail == "1 bar"
 
