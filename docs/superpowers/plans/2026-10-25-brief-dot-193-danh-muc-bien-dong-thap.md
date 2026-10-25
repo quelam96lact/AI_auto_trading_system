@@ -62,7 +62,7 @@
   - `scripts/research188_core.py`: `deflated_sharpe`.
   - `scripts/research188_ledger.py`: `evaluate_and_log`.
   - `scripts/research191_data.py`: `load_stocks`, `load_exchanges`.
-  - `scripts/research191_exits.py`: `is_liquid`, `assert_ledger_safety`.
+  - `scripts/research191_exits.py`: `is_liquid`, `is_floor_locked`, `assert_ledger_safety`.
   - `scripts/research192_core.py`: `load_sessions`.
   - `trading/stock_study.py`: `bootstrap_by_month`, `limit_rate`.
   - `trading/paper_broker.py`: `FEE_RATE`, `SELL_TAX_RATE`, `SLIPPAGE_BPS`.
@@ -133,6 +133,8 @@ Lợi nhuận ngày `ret_t = close_t / close_{t−1} − 1` tính trên **nến 
   - Không **bán** được nếu `r` khoá sàn (`high == low` và `close ≤ prev_close × (1 − limit_rate + 0,001)`) hoặc mã không có nến ở `r`. Khi đó giữ nguyên vị thế tới phiên xoay vòng sau.
   - Không **mua** được nếu `r` khoá trần (`high == low` và `close ≥ prev_close × (1 + limit_rate − 0,001)`) hoặc mã không có nến ở `r`. Khi đó phần đó để tiền mặt tới phiên xoay vòng sau.
   - `prev_close` là close của nến liền trước **của chính mã đó**.
+  - **Khoá sàn:** gọi `is_floor_locked(prev_close, high, low, exchange)` của `research191_exits.py`, không tự viết lại.
+  - **Khoá trần:** chưa có hàm dùng chung. Viết **một** hàm `is_ceiling_locked` trong `research193_core.py` và dùng nó ở mọi chỗ.
 - **Phí** tính trên **giá trị giao dịch**, theo hằng số của `paper_broker`:
   - mua: tiền mặt bị trừ `giá trị × (1 + FEE_RATE + SLIPPAGE_BPS/10⁴)`;
   - bán: tiền mặt được cộng `giá trị × (1 − FEE_RATE − SELL_TAX_RATE − SLIPPAGE_BPS/10⁴)`.
