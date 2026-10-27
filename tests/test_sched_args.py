@@ -289,3 +289,15 @@ def test_cong_cu_ast_phan_biet_dung_sai():
     assert _is_unconditional_parse_statement(first(bare))
     for bad in (guarded, wrapped, two_step, other_list, in_try):
         assert not _is_unconditional_parse_statement(first(bad))
+
+
+def test_backfill_5m_branch_flags():
+    """Nhánh backfill-5m trong sched.sh phải có đủ --timeframe 5m, --use-universe, --skip-config-symbols và $@ (Brief 198)."""
+    branches = parse_sched_branches(SCHED_SH)
+    assert "backfill-5m" in branches, "sched.sh thiếu nhánh backfill-5m"
+    code = branches["backfill-5m"]
+    assert "--timeframe 5m" in code, "backfill-5m thiếu cờ --timeframe 5m"
+    assert "--use-universe" in code, "backfill-5m thiếu cờ --use-universe"
+    assert "--skip-config-symbols" in code, "backfill-5m thiếu cờ --skip-config-symbols"
+    assert '"$@"' in code, "backfill-5m thiếu \"$@\""
+

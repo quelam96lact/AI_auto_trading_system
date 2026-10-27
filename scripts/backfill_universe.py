@@ -226,6 +226,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--symbols", default=None, help="A,B (thay the toan bo danh sach)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--use-universe", action="store_true")
+    ap.add_argument(
+        "--skip-config-symbols",
+        action="store_true",
+        help="bo qua symbols trong cfg.symbols (tranh ghi de nen collector stream)",
+    )
     ap.add_argument("--sleep-ms", type=int, default=200)
     return ap
 
@@ -262,9 +267,16 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.limit:
         symbols = symbols[: args.limit]
-    print(f"Backfill {args.timeframe}: {len(symbols)} ma, {frm} -> {to}")
 
-    asyncio.run(run(cfg, storage, args.timeframe, frm, to, symbols, args.sleep_ms))
+    kept = symbols
+    if args.skip_config_symbols:
+        cfg_set = set(cfg.symbols)
+        kept = [s for s in symbols if s not in cfg_set]
+        skipped = [s for s in symbols if s in cfg_set]
+        print(f"[load] bo {len(skipped)} ma collector dang stream: {skipped}")
+    print(f"Backfill {args.timeframe}: {len(kept)} ma, {frm} -> {to}")
+
+    asyncio.run(run(cfg, storage, args.timeframe, frm, to, kept, args.sleep_ms))
 
 
 if __name__ == "__main__":

@@ -556,6 +556,9 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # BẮT BUỘC 21:00: backfill đêm nạp nến lúc 20:30; kiểm trước giờ đó thì bảng nến ngày luôn rỗng!
 0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check
 
+# 9b. Nạp nến 5 phút cho các mã thanh khoản ban đêm (21:15, T2–T6 — đợt 198)
+15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
+
 # 10. Sao lưu cơ sở dữ liệu TimescaleDB ban đêm (02:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
 0 2 * * * cd /opt/trading && scripts/sched.sh backup
@@ -595,10 +598,10 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười bảy task tương ứng với các dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười tám task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả mười bảy gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười tám gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -615,6 +618,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
 | `trading-foreign-flow` | 20:45 T2–T6 | cùng vbs, tham số `foreign-flow` |
 | `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
+| `trading-backfill-5m` | 21:15 T2–T6 | cùng vbs, tham số `backfill-5m` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
@@ -723,6 +727,7 @@ Chạy bằng cron **trên host**, sau giờ đóng cửa, ngày trong tuần.
 # Tham khảo (đã có trong khối cron §9):
 # 30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
 # 45 20 * * 1-5 cd /opt/trading && scripts/sched.sh foreign-flow
+# 15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
 #
 # Lần chạy ĐẦU sau thời gian dài không chạy sẽ NẶNG: nhiều ngày × ~1.594 mã,
 # có thể chạm SSI rate-limit. Giới hạn phạm vi nếu cần: thêm --symbols A,B,C
@@ -761,6 +766,7 @@ Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ng
 | Job | Chạy bù được không? | Lệnh chạy bù khuyến nghị | Cờ bắt buộc / Lưu ý quan trọng |
 |---|---|---|---|
 | `backfill` | **Có** (rất an toàn) | `scripts/sched.sh backfill` | Idempotent (UPSERT theo mã và ts). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
+| `backfill-5m` | **Có** (rất an toàn) | `scripts/sched.sh backfill-5m` | Idempotent (UPSERT theo mã và ts). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
 | `foreign-flow` | **Có** (rất an toàn) | `scripts/sched.sh foreign-flow` | Idempotent (UPSERT theo mã và trading_date). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
 | `daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh daily-check --date <ngày_lỡ> --dry-run` | **BẮT BUỘC** `--date <ngày_lỡ>` VÀ `--dry-run`. Xem kết quả in ra màn hình trước; chỉ bỏ `--dry-run` khi thực sự muốn gửi cảnh báo. **TUYỆT ĐỐI KHÔNG** dùng `Start-ScheduledTask` hoặc chạy không cờ vào hôm sau vì sẽ kiểm nhầm ngày hôm nay. |
 | `backup` | **Có** (rất an toàn) | `scripts/sched.sh backup` | Dump lại database Postgres và lập bản kê `.counts`. Nên chạy bù trước khi chạy `backup-check`. |
@@ -1100,7 +1106,7 @@ docker compose up -d --build
 # Kiểm tra trạng thái các container:
 docker compose ps
 
-# Cài đặt 17 cron job vào crontab theo hướng dẫn tại §9:
+# Cài đặt 18 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```
 

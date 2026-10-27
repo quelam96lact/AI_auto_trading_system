@@ -14,9 +14,10 @@ Phương án: tách hai khái niệm:
 Nguyên tắc chỉ đạo: KHÔNG BAO GIỜ ghi nhận độ phủ mà mình không có.
 """
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
 
-from scripts.backfill_universe import backfill_one
+from scripts.backfill_universe import backfill_one, main
 from trading.calendar_vn import TZ
 from trading.models import Bar
 
@@ -384,4 +385,64 @@ async def test_1d_still_writes_zero_price_bars_unchanged():
     assert len(storage.written) == 1
     assert storage.written[0] == bars, "1d phai ghi du ca nen gia 0"
     assert detail == "1 bar"
+
+
+def test_skip_config_symbols_removes_stream_symbols(monkeypatch, capsys):
+    cfg_mock = SimpleNamespace(symbols=["HPG", "IJC", "AAA"], db_dsn="postgresql://mock")
+    monkeypatch.setattr("scripts.backfill_universe.load_config", lambda path: cfg_mock)
+
+    class DummyStorage:
+        def __init__(self, dsn):
+            pass
+
+        def init_schema(self):
+            pass
+
+    monkeypatch.setattr("scripts.backfill_universe.Storage", DummyStorage)
+    monkeypatch.setattr(
+        "scripts.backfill_universe.resolve_use_universe_symbols",
+        lambda storage, cfg: (["AAA", "FPT", "HPG", "VCB"], ["AAA", "FPT", "HPG", "VCB"], cfg.symbols, 0),
+    )
+
+    run_calls = []
+
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+        run_calls.append(list(symbols))
+
+    monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
+
+    main(["--timeframe", "5m", "--from", "2026-10-20", "--to", "2026-10-25", "--use-universe", "--skip-config-symbols"])
+
+    assert run_calls == [["FPT", "VCB"]]
+    out = capsys.readouterr().out
+    assert "bo 2 ma collector" in out
+
+
+def test_without_skip_flag_list_unchanged(monkeypatch):
+    cfg_mock = SimpleNamespace(symbols=["HPG", "IJC", "AAA"], db_dsn="postgresql://mock")
+    monkeypatch.setattr("scripts.backfill_universe.load_config", lambda path: cfg_mock)
+
+    class DummyStorage:
+        def __init__(self, dsn):
+            pass
+
+        def init_schema(self):
+            pass
+
+    monkeypatch.setattr("scripts.backfill_universe.Storage", DummyStorage)
+    monkeypatch.setattr(
+        "scripts.backfill_universe.resolve_use_universe_symbols",
+        lambda storage, cfg: (["AAA", "FPT", "HPG", "VCB"], ["AAA", "FPT", "HPG", "VCB"], cfg.symbols, 0),
+    )
+
+    run_calls = []
+
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+        run_calls.append(list(symbols))
+
+    monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
+
+    main(["--timeframe", "5m", "--from", "2026-10-20", "--to", "2026-10-25", "--use-universe"])
+
+    assert run_calls == [["AAA", "FPT", "HPG", "VCB"]]
 

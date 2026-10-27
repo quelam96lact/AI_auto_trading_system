@@ -6,6 +6,7 @@
 #   scripts/sched.sh heartbeat
 #   scripts/sched.sh daily-check
 #   scripts/sched.sh backfill
+#   scripts/sched.sh backfill-5m
 #   scripts/sched.sh foreign-flow
 #   scripts/sched.sh deploy-drift
 #   scripts/sched.sh container-health
@@ -70,6 +71,16 @@ case "${1:-}" in
       --from "$(date -d "$BACKFILL_DAYS days ago" +%F)" \
       --to "$(date +%F)" \
       --use-universe --sleep-ms 200 \
+      "$@"
+    ;;
+  backfill-5m)
+    shift || true
+    exec "$RUN" backfill-5m.log backfill-5m \
+      uv run python scripts/backfill_universe.py \
+      --timeframe 5m \
+      --from "$(date -d "$BACKFILL_DAYS days ago" +%F)" \
+      --to "$(date +%F)" \
+      --use-universe --skip-config-symbols --sleep-ms 200 \
       "$@"
     ;;
   foreign-flow)
@@ -165,7 +176,7 @@ case "${1:-}" in
       uv run python scripts/restore_drill.py "$@"
     ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill}" >&2
     exit 2
     ;;
 esac

@@ -2,7 +2,7 @@ import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from importlib.resources import files
 
 from psycopg_pool import ConnectionPool
@@ -1329,6 +1329,32 @@ class Storage:
         """
         with self.conn() as c:
             rows = c.execute(sql, (frm, to)).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    def read_5m_active_symbol_day_counts(
+        self, frm: date, to: date
+    ) -> dict[date, int]:
+        """Doc so ma khac nhau trong bars theo ngay gio VN trong khoang [frm, to] (Brief 198),
+        chi tinh cac ma co symbol_universe.is_active = true.
+        Ngay tinh theo gio VN: (b.ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date.
+        Loc khoang bang ts de dung index: b.ts >= 00:00 VN cua frm va b.ts < 00:00 VN cua to + 1 ngay.
+        Ngay khong co ma nao thi khong co khoa trong dict.
+        """
+        ts_frm = datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=TZ)
+        to_next = to + timedelta(days=1)
+        ts_to = datetime(to_next.year, to_next.month, to_next.day, 0, 0, 0, tzinfo=TZ)
+        sql = """
+            SELECT (b.ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, count(DISTINCT b.symbol)
+            FROM bars b
+            JOIN symbol_universe u ON u.symbol = b.symbol
+            WHERE u.is_active = true
+              AND b.ts >= %s
+              AND b.ts < %s
+            GROUP BY 1
+            ORDER BY 1 ASC
+        """
+        with self.conn() as c:
+            rows = c.execute(sql, (ts_frm, ts_to)).fetchall()
         return {r[0]: r[1] for r in rows}
 
     def read_must_price_symbols(
