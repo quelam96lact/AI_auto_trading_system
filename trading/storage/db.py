@@ -1331,6 +1331,15 @@ class Storage:
             rows = c.execute(sql, (frm, to)).fetchall()
         return {r[0]: r[1] for r in rows}
 
+    def read_foreign_flow_last_date(self) -> date | None:
+        """Doc ngay lon nhat co du lieu trong foreign_flow_daily (Brief 200).
+        Tra ve None neu bang trong hoac tat ca NULL.
+        """
+        sql = "SELECT max(trading_date) FROM foreign_flow_daily"
+        with self.conn() as c:
+            row = c.execute(sql).fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def read_5m_active_symbol_day_counts(
         self, frm: date, to: date
     ) -> dict[date, int]:

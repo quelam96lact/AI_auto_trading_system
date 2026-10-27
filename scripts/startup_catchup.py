@@ -44,20 +44,19 @@ def catchup_end(now: datetime, holidays: Any = frozenset()) -> date:
     return previous_trading_day(d, holidays)
 
 
-def plan_universe_start(
+def _thresholds(
     progress: dict[str, dict[str, Any] | None],
     end: date,
-    max_days: int,
     default_days: int = 7,
-) -> tuple[date | None, bool]:
-    """Lap ke hoach ngay bat dau nap cho danh muc (Brief 199 §1.1).
+) -> list[date]:
+    """Trich xuat danh sach ngay bat dau cho tung ma tu tien trinh backfill.
 
-    Tra ve (start, is_clamped).
-    start = None nghia la moi ma da duoc hoi toi end, khong can nap.
-    is_clamped = True nghia la khoang hong vuot qua max_days va da bi cat.
+    - Ma co status == "ok" va attempted_until: lay attempted_until (parse neu la str).
+    - Ma khac (None, status != "ok", thieu attempted_until): lay end - default_days.
+    - Neu progress rong: tra ve [end - default_days].
     """
     if not progress:
-        return (end - timedelta(days=default_days), False)
+        return [end - timedelta(days=default_days)]
 
     thresholds: list[date] = []
     for p in progress.values():
@@ -72,8 +71,37 @@ def plan_universe_start(
             thresholds.append(attempted)
         else:
             thresholds.append(end - timedelta(days=default_days))
+    return thresholds
 
-    start = min(thresholds)
+
+def gap_origin(
+    progress: dict[str, dict[str, Any] | None],
+    end: date,
+    default_days: int = 7,
+) -> date:
+    """Xac dinh ngay bat dau thuc te cua khoang hong (Brief 200 §1.2).
+
+    Tra ve min cua tat ca cac nguong ngay trong tien trinh, khong bi cat boi max_days.
+    """
+    return min(_thresholds(progress, end, default_days))
+
+
+def plan_universe_start(
+    progress: dict[str, dict[str, Any] | None],
+    end: date,
+    max_days: int,
+    default_days: int = 7,
+) -> tuple[date | None, bool]:
+    """Lap ke hoach ngay bat dau nap cho danh muc (Brief 199 §1.1, Brief 200).
+
+    Tra ve (start, is_clamped).
+    start = None nghia la moi ma da duoc hoi toi end, khong can nap.
+    is_clamped = True nghia la khoang hong vuot qua max_days va da bi cat.
+    """
+    if not progress:
+        return (end - timedelta(days=default_days), False)
+
+    start = gap_origin(progress, end, default_days)
     if start >= end:
         return (None, False)
 
@@ -178,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     # 4. Nen ngay (1d)
     start_1d: date | None = None
     clamped_1d = False
+    progress_1d: dict[str, dict[str, Any] | None] = {}
     try:
         symbols, *_ = resolve_use_universe_symbols(storage, cfg)
         progress_1d = {s: storage.get_backfill_progress(s, "1d") for s in symbols}
@@ -212,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     # 5. Nen 5 phut (5m)
     start_5m: date | None = None
     clamped_5m = False
+    progress_5m: dict[str, dict[str, Any] | None] = {}
     try:
         symbols, *_ = resolve_use_universe_symbols(storage, cfg)
         symbols_5m = [s for s in symbols if s not in set(cfg.symbols)]
@@ -319,18 +349,22 @@ def main(argv: list[str] | None = None) -> int:
     clamped = False
     if clamped_1d and start_1d is not None:
         clamped = True
+        origin_1d = gap_origin(progress_1d, end)
         print(
-            f"[catchup] CANH BAO: khoang hong vuot {args.max_days} ngay, can chay tay --from {start_1d.isoformat()}"
+            f"[catchup] CANH BAO: khoang hong vuot {args.max_days} ngay, can chay tay --from {origin_1d.isoformat()}"
         )
     if clamped_5m and start_5m is not None:
         clamped = True
+        origin_5m = gap_origin(progress_5m, end)
         print(
-            f"[catchup] CANH BAO: khoang hong vuot {args.max_days} ngay, can chay tay --from {start_5m.isoformat()}"
+            f"[catchup] CANH BAO: khoang hong vuot {args.max_days} ngay, can chay tay --from {origin_5m.isoformat()}"
         )
     if clamped_ff and start_ff is not None:
         clamped = True
+        last_ff = storage.read_foreign_flow_last_date()
+        from_date = last_ff.isoformat() if last_ff else "2020-02-26"
         print(
-            f"[catchup] CANH BAO: khoang hong vuot {args.max_days} ngay, can chay tay --from {start_ff.isoformat()}"
+            f"[catchup] CANH BAO: khoi ngoai khong co du lieu trong {args.max_days} ngay, can chay tay --from {from_date}"
         )
 
     has_short = bool(short_1d or short_5m or short_ff)

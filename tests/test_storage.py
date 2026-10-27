@@ -1368,6 +1368,53 @@ def test_read_foreign_flow_day_counts(storage):
     assert d3 not in counts
 
 
+def test_read_foreign_flow_last_date(storage):
+    """Brief 200: read_foreign_flow_last_date tra max(trading_date) hoac None."""
+    storage.init_schema()
+    with storage.conn() as c:
+        c.execute("DELETE FROM foreign_flow_daily WHERE symbol LIKE 'TEST_FF%'")
+
+    # Neu bang chi co du lieu cu hoac khong co TEST_FF, test van doc duoc max.
+    # De kiem tra truong hop bang trong (None), chung ta kiem tra bang cach tao storage doc lap hoac xoa tam
+    # Trong moi truong test, co the xoa toan bo foreign_flow_daily de test None roi ghi va test max
+    with storage.conn() as c:
+        c.execute("DELETE FROM foreign_flow_daily")
+    assert storage.read_foreign_flow_last_date() is None
+
+    d1 = date(2026, 10, 10)
+    d2 = date(2026, 10, 25)
+    rows = [
+        ForeignFlow(
+            symbol="TEST_FF",
+            trading_date=d1,
+            buy_vol=10,
+            sell_vol=5,
+            buy_val=100.0,
+            sell_val=50.0,
+            net_vol=5,
+            net_val=50.0,
+            current_room=100,
+            close_price=50.0,
+        ),
+        ForeignFlow(
+            symbol="TEST_FF",
+            trading_date=d2,
+            buy_vol=20,
+            sell_vol=10,
+            buy_val=200.0,
+            sell_val=100.0,
+            net_vol=10,
+            net_val=100.0,
+            current_room=200,
+            close_price=55.0,
+        ),
+    ]
+    storage.write_foreign_flow(rows)
+    assert storage.read_foreign_flow_last_date() == d2
+    with storage.conn() as c:
+        c.execute("DELETE FROM foreign_flow_daily WHERE symbol LIKE 'TEST_FF%'")
+
+
 def test_read_5m_active_symbol_day_counts(storage):
     """Brief 198: read_5m_active_symbol_day_counts đếm số mã active theo ngày VN.
     - mã active A có bar 2026-10-22 02:15 UTC và 2026-10-22 07:45 UTC

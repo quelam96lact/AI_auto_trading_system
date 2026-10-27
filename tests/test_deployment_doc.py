@@ -74,3 +74,13 @@ def test_deployment_md_contains_alert_outbox_documentation():
     assert "10001:10001" in text, "DEPLOYMENT.md thiếu hướng dẫn phân quyền uid 10001!"
     assert "3.900 ký tự" in text or "3900" in text, "DEPLOYMENT.md thiếu giới hạn cắt ngắn tin!"
 
+
+def test_deployment_md_contains_catchup_cron_entries():
+    """Brief 200: DEPLOYMENT.md phải có cả 2 crontab entries của catchup và 20 cron job."""
+    text = DEPLOYMENT_MD.read_text(encoding="utf-8")
+    # Phải có dòng thực thi thật (không bị comment) trong khối crontab §9
+    assert "\n40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup\n" in text
+    assert "\n@reboot cd /opt/trading && scripts/sched.sh catchup\n" in text
+    assert "# 40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup" in text
+    assert "20 cron job" in text
+

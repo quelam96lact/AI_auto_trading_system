@@ -172,7 +172,7 @@ KHONG_CANH: dict[str, str] = {
     "backfill": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 160): mỗi ngày giao dịch, heartbeat kiểm độ đủ nến NGÀY của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
     "backfill-5m": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 198): mỗi ngày giao dịch, heartbeat kiểm số mã thanh khoản có nến 5 phút của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
     "foreign-flow": "Chỉ chạy buổi tối ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được. Kết quả của nó được heartbeat kiểm GIÁN TIẾP (đợt 190b): mỗi ngày giao dịch, heartbeat kiểm số dòng khối ngoại của ngày giao dịch liền trước, nên lần chạy SKIP thì sáng hôm sau có tin.",
-    "catchup": "Chỉ chạy khi khởi động máy, không có nhịp cố định nên không canh tuổi được; kết quả được canh bằng mã thoát.",
+    "catchup": "Chạy khi khởi động máy và buổi sáng thứ Hai–thứ Sáu, tuổi phụ thuộc ngày nghỉ, cuối tuần và lần khởi động nên không canh tuổi được; kết quả được canh bằng mã thoát.",
     "deploy-drift": "Chỉ chạy trước phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-cam": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "engine-consumer": "Chỉ chạy lặp trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",

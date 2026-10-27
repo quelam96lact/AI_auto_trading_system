@@ -325,3 +325,67 @@ def test_catchup_branch_flags():
         'DOCKER_GATE_WAIT_SECONDS="${DOCKER_GATE_WAIT_SECONDS:-900}"' in code
     ), "catchup phải chờ postgres mặc định 900 giây sau reboot"
     assert '"$@"' in code, 'catchup thiếu "$@"'
+
+
+def test_catchup_branch_dry_run_log_selection():
+    """Brief 200 (A): đọc scripts/sched.sh assert đoạn catchup có kiểm --dry-run và trỏ catchup-dryrun.log."""
+    branches = parse_sched_branches(SCHED_SH)
+    assert "catchup" in branches, "sched.sh thiếu nhánh catchup"
+    code = branches["catchup"]
+    assert "--dry-run" in code
+    assert "catchup-dryrun.log" in code
+    assert "catchup-dryrun" in code
+    assert 'log_file="catchup.log"' in code
+    assert 'label="catchup"' in code
+    assert 'exec "$RUN" "$log_file" "$label"' in code
+
+
+def test_sched_sh_catchup_log_selection_simulated(tmp_path):
+    """Brief 200 (B): chạy thực nghiệm sched.sh trong tmp_path với mock run_if_docker_up.sh."""
+    sched_text = SCHED_SH.read_text(encoding="utf-8")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    temp_sched = scripts_dir / "sched.sh"
+    temp_sched.write_text(sched_text, encoding="utf-8")
+
+    mock_run = scripts_dir / "run_if_docker_up.sh"
+    mock_run.write_text(
+        "#!/usr/bin/env bash\necho \"RUN_LOG=$1\"\necho \"RUN_LABEL=$2\"\nexit 0\n",
+        encoding="utf-8",
+    )
+
+    # 1. sched.sh catchup -> catchup.log / catchup
+    res1 = subprocess.run(
+        [BASH, _posix_path(temp_sched), "catchup"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert res1.returncode == 0, f"res1 failed: {res1.stderr}"
+    assert "RUN_LOG=catchup.log" in res1.stdout.splitlines()
+    assert "RUN_LABEL=catchup" in res1.stdout.splitlines()
+
+    # 2. sched.sh catchup --dry-run -> catchup-dryrun.log / catchup-dryrun
+    res2 = subprocess.run(
+        [BASH, _posix_path(temp_sched), "catchup", "--dry-run"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert res2.returncode == 0, f"res2 failed: {res2.stderr}"
+    assert "RUN_LOG=catchup-dryrun.log" in res2.stdout.splitlines()
+    assert "RUN_LABEL=catchup-dryrun" in res2.stdout.splitlines()
+
+    # 3. sched.sh catchup --config test.yaml (không có --dry-run) -> catchup.log / catchup
+    res3 = subprocess.run(
+        [BASH, _posix_path(temp_sched), "catchup", "--config", "test.yaml"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert res3.returncode == 0, f"res3 failed: {res3.stderr}"
+    assert "RUN_LOG=catchup.log" in res3.stdout.splitlines()
+    assert "RUN_LABEL=catchup" in res3.stdout.splitlines()

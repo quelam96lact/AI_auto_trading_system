@@ -179,7 +179,16 @@ case "${1:-}" in
   catchup)
     shift || true
     export DOCKER_GATE_WAIT_SECONDS="${DOCKER_GATE_WAIT_SECONDS:-900}"
-    exec "$RUN" catchup.log catchup \
+    log_file="catchup.log"
+    label="catchup"
+    for a in "$@"; do
+      if [ "$a" = "--dry-run" ]; then
+        log_file="catchup-dryrun.log"
+        label="catchup-dryrun"
+        break
+      fi
+    done
+    exec "$RUN" "$log_file" "$label" \
       uv run python -m scripts.startup_catchup "$@"
     ;;
   *)

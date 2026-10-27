@@ -14,10 +14,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from scripts.startup_catchup import (
     catchup_end,
     find_short_days,
+    gap_origin,
     main,
     plan_foreign_flow_start,
     plan_universe_start,
@@ -135,6 +137,47 @@ def test_plan_universe_start_empty_progress():
     """(k) Progress rỗng -> (end - 7, False)."""
     end = date(2026, 10, 27)
     assert plan_universe_start({}, end, max_days=90) == (end - timedelta(days=7), False)
+
+
+def test_gap_origin_three_symbols_min_date():
+    """Brief 200 (C): gap_origin với 3 mã ok (20/10, 22/10, 26/10) -> 20/10."""
+    end = date(2026, 10, 27)
+    progress = {
+        "AAA": {"status": "ok", "attempted_until": date(2026, 10, 20)},
+        "HPG": {"status": "ok", "attempted_until": date(2026, 10, 22)},
+        "VIC": {"status": "ok", "attempted_until": "2026-10-26"},
+    }
+    assert gap_origin(progress, end) == date(2026, 10, 20)
+
+
+def test_gap_origin_not_clamped_beyond_max_days():
+    """Brief 200 (D): gap_origin trả đúng ngày bắt đầu gốc (end - 120 ngày), không bị clamp."""
+    end = date(2026, 10, 27)
+    origin_expected = end - timedelta(days=120)
+    progress = {
+        "AAA": {"status": "ok", "attempted_until": origin_expected},
+        "HPG": {"status": "ok", "attempted_until": end - timedelta(days=10)},
+    }
+    assert gap_origin(progress, end) == origin_expected
+
+
+def test_gap_origin_error_or_none_uses_default_days():
+    """Brief 200 (E): gap_origin khi có mã error hoặc None -> dùng end - default_days."""
+    end = date(2026, 10, 27)
+    # Riêng mã lỗi: nếu bỏ kiểm status == "ok" sẽ lấy nhầm attempted_until (26/10) thay vì end - 7
+    progress_error_only = {
+        "AAA": {"status": "error", "attempted_until": date(2026, 10, 26)},
+        "VIC": {"status": "ok", "attempted_until": date(2026, 10, 26)},
+    }
+    assert gap_origin(progress_error_only, end, default_days=7) == end - timedelta(days=7)
+
+    progress = {
+        "AAA": {"status": "error", "attempted_until": date(2026, 10, 26)},
+        "HPG": None,
+        "VIC": {"status": "ok", "attempted_until": date(2026, 10, 26)},
+    }
+    assert gap_origin(progress, end, default_days=7) == end - timedelta(days=7)
+    assert gap_origin(progress, end, default_days=14) == end - timedelta(days=14)
 
 
 def test_plan_foreign_flow_start_normal_gap():
@@ -271,6 +314,7 @@ class FakeCatchupStorage:
         daily_counts: dict[date, int] | None = None,
         m5_counts: dict[date, int] | None = None,
         fails_before_ready: int = 0,
+        ff_last_date: Any = ...,
     ):
         self.symbols = symbols or ["AAA", "HPG", "VIC", "VNM"]
         self.progress = progress or {}
@@ -278,6 +322,7 @@ class FakeCatchupStorage:
         self.daily_counts = daily_counts or {}
         self.m5_counts = m5_counts or {}
         self.fails_left = fails_before_ready
+        self.ff_last_date = ff_last_date
 
     def read_active_universe(self) -> list[str]:
         if self.fails_left > 0:
@@ -295,6 +340,12 @@ class FakeCatchupStorage:
 
     def read_foreign_flow_day_counts(self, frm: date, to: date) -> dict[date, int]:
         return {d: c for d, c in self.ff_counts.items() if frm <= d <= to}
+
+    def read_foreign_flow_last_date(self) -> date | None:
+        if self.ff_last_date is not ...:
+            return self.ff_last_date
+        positive_ff = [d for d, c in self.ff_counts.items() if c > 0]
+        return max(positive_ff) if positive_ff else None
 
     def read_daily_active_symbol_day_counts(
         self, frm: date, to: date
@@ -763,6 +814,109 @@ def test_main_clamped_5m_only_returns_1(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "can chay tay --from" in out
+
+
+def test_main_clamped_1d_prints_real_gap_origin(monkeypatch, capsys):
+    """Brief 200 (F): 1d bị clamp (120 ngày) -> cảnh báo in đúng ngày bắt đầu gốc (end - 120), không phải (end - 90)."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end, n_days=200)
+    origin_1d = end - timedelta(days=120)
+    clamped_date = end - timedelta(days=90)
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": origin_1d},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=clean,
+        m5_counts=clean,
+    )
+    setup_base_env(monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ))
+
+    rc = main(["--max-days", "90"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert f"[catchup] CANH BAO: khoang hong vuot 90 ngay, can chay tay --from {origin_1d.isoformat()}" in out
+    assert f"can chay tay --from {clamped_date.isoformat()}" not in out
+
+
+def test_main_clamped_5m_prints_real_gap_origin(monkeypatch, capsys):
+    """Brief 200 (G): 5m bị clamp (120 ngày) -> cảnh báo in đúng ngày bắt đầu gốc (end - 120), không phải (end - 90)."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end, n_days=200)
+    origin_5m = end - timedelta(days=120)
+    clamped_date = end - timedelta(days=90)
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": origin_5m},
+        },
+        ff_counts=clean,
+        daily_counts=clean,
+        m5_counts=clean,
+    )
+    setup_base_env(monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ))
+
+    rc = main(["--max-days", "90"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert f"[catchup] CANH BAO: khoang hong vuot 90 ngay, can chay tay --from {origin_5m.isoformat()}" in out
+    assert f"can chay tay --from {clamped_date.isoformat()}" not in out
+
+
+def test_main_clamped_foreign_flow_warning_with_data(monkeypatch, capsys):
+    """Brief 200 (H - case 1): foreign flow bị clamp, có dữ liệu cũ -> in ngày cuối có dữ liệu."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end, n_days=200)
+    last_ff_date = date(2026, 6, 1)
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts={},  # Trống trong 90 ngày qua -> clamped_ff = True
+        daily_counts=clean,
+        m5_counts=clean,
+        ff_last_date=last_ff_date,
+    )
+    setup_base_env(monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ))
+
+    rc = main(["--max-days", "90"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert (
+        f"[catchup] CANH BAO: khoi ngoai khong co du lieu trong 90 ngay, can chay tay --from {last_ff_date.isoformat()}"
+        in out
+    )
+
+
+def test_main_clamped_foreign_flow_warning_empty_data_defaults_to_2020(monkeypatch, capsys):
+    """Brief 200 (H - case 2): foreign flow bị clamp, bảng trống hoàn toàn -> fallback 2020-02-26."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end, n_days=200)
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts={},  # Trống trong 90 ngày qua -> clamped_ff = True
+        daily_counts=clean,
+        m5_counts=clean,
+        ff_last_date=None,  # DB chưa từng có dữ liệu khối ngoại
+    )
+    setup_base_env(monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ))
+
+    rc = main(["--max-days", "90"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert (
+        "[catchup] CANH BAO: khoi ngoai khong co du lieu trong 90 ngay, can chay tay --from 2020-02-26"
+        in out
+    )
 
 
 def test_main_db_retry_success_and_failure(monkeypatch, capsys):
