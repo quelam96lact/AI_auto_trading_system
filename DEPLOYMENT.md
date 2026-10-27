@@ -141,7 +141,8 @@ docker compose logs -f collector
 
 Docker's `restart: unless-stopped` (already set on every service) handles
 restart-on-boot and restart-on-crash — no separate systemd units are needed
-for the services themselves.
+for the services themselves. Sau khi stack dừng lâu (bảo trì, chuyển máy) mà
+host không reboot, chạy `scripts/sched.sh catchup` một lần.
 
 ## 6. Backups
 
@@ -559,6 +560,9 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 9b. Nạp nến 5 phút cho các mã thanh khoản ban đêm (21:15, T2–T6 — đợt 198)
 15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
 
+# 9c. Tự kiểm + nạp bù khi khởi động máy (đợt 199). Chờ postgres tối đa 15 phút.
+@reboot cd /opt/trading && scripts/sched.sh catchup
+
 # 10. Sao lưu cơ sở dữ liệu TimescaleDB ban đêm (02:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
 0 2 * * * cd /opt/trading && scripts/sched.sh backup
@@ -598,10 +602,10 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười tám task tương ứng với các dòng
+Máy Windows dùng Task Scheduler, không phải cron. Mười chín task tương ứng với các dòng
 cron ở trên (tên task `trading-*`):
 
-Cả mười tám gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Cả mười chín gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -619,6 +623,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-foreign-flow` | 20:45 T2–T6 | cùng vbs, tham số `foreign-flow` |
 | `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
 | `trading-backfill-5m` | 21:15 T2–T6 | cùng vbs, tham số `backfill-5m` |
+| `trading-catchup` | khi đăng nhập Windows | cùng vbs, tham số `catchup` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
@@ -728,6 +733,7 @@ Chạy bằng cron **trên host**, sau giờ đóng cửa, ngày trong tuần.
 # 30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
 # 45 20 * * 1-5 cd /opt/trading && scripts/sched.sh foreign-flow
 # 15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
+# @reboot cd /opt/trading && scripts/sched.sh catchup
 #
 # Lần chạy ĐẦU sau thời gian dài không chạy sẽ NẶNG: nhiều ngày × ~1.594 mã,
 # có thể chạm SSI rate-limit. Giới hạn phạm vi nếu cần: thêm --symbols A,B,C
@@ -767,6 +773,7 @@ Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ng
 |---|---|---|---|
 | `backfill` | **Có** (rất an toàn) | `scripts/sched.sh backfill` | Idempotent (UPSERT theo mã và ts). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
 | `backfill-5m` | **Có** (rất an toàn) | `scripts/sched.sh backfill-5m` | Idempotent (UPSERT theo mã và ts). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
+| `catchup` | **Có** | `scripts/sched.sh catchup` | Xem trước bằng `scripts/sched.sh catchup --dry-run`. Không bao giờ nạp ngày hôm nay trước 21:30; khoảng hỏng trên 90 ngày thì in lệnh chạy tay và thoát 1. |
 | `foreign-flow` | **Có** (rất an toàn) | `scripts/sched.sh foreign-flow` | Idempotent (UPSERT theo mã và trading_date). Cửa sổ trượt mặc định nạp 7 ngày gần nhất (`BACKFILL_DAYS=7`). Nếu máy tắt > 7 ngày, thêm cờ `--from YYYY-MM-DD`. |
 | `daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh daily-check --date <ngày_lỡ> --dry-run` | **BẮT BUỘC** `--date <ngày_lỡ>` VÀ `--dry-run`. Xem kết quả in ra màn hình trước; chỉ bỏ `--dry-run` khi thực sự muốn gửi cảnh báo. **TUYỆT ĐỐI KHÔNG** dùng `Start-ScheduledTask` hoặc chạy không cờ vào hôm sau vì sẽ kiểm nhầm ngày hôm nay. |
 | `backup` | **Có** (rất an toàn) | `scripts/sched.sh backup` | Dump lại database Postgres và lập bản kê `.counts`. Nên chạy bù trước khi chạy `backup-check`. |
@@ -1106,7 +1113,7 @@ docker compose up -d --build
 # Kiểm tra trạng thái các container:
 docker compose ps
 
-# Cài đặt 18 cron job vào crontab theo hướng dẫn tại §9:
+# Cài đặt 19 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```
 

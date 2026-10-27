@@ -102,6 +102,17 @@ export PYTHONIOENCODING=utf-8
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$REPO" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/_/g')}"
 DEFAULT_GATE="${PROJECT_NAME}-postgres-1"
 GATE_CONTAINER="${DOCKER_GATE_CONTAINER:-$DEFAULT_GATE}"
+
+WAIT="${DOCKER_GATE_WAIT_SECONDS:-0}"
+POLL="${DOCKER_GATE_POLL_SECONDS:-5}"
+waited=0
+while [ "$waited" -lt "$WAIT" ] && ! docker ps -q \
+    --filter name="$GATE_CONTAINER" \
+    --filter status=running 2>/dev/null | grep -q .; do
+  sleep "$POLL"
+  waited=$((waited + POLL))
+done
+
 if ! docker ps -q \
     --filter name="$GATE_CONTAINER" \
     --filter status=running 2>/dev/null | grep -q .; then

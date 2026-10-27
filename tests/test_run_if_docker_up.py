@@ -213,3 +213,128 @@ def test_a4_logs_created_not_root(tmp_path):
     ), f"Expected rc 0, got {res.returncode}. Stderr: {res.stderr}"
     assert logs_dir.exists(), "logs/ directory should have been created"
     assert not chown_marker.exists(), "chown should NOT be called when not root"
+
+
+def test_w1_docker_gate_waits_until_running(tmp_path):
+    """(W1) docker giả trả 'không chạy' 2 lần rồi 'chạy', với WAIT=10, POLL=0 -> log có start + EXIT=0, không có SKIP."""
+    repo = _setup_repo(tmp_path)
+    marker = repo / "marker.txt"
+    (repo / ".env").write_bytes(
+        b"FOO=bar\nDB_DSN=postgres://trading:pwd@127.0.0.1:5432/trading\n"
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    count_file = tmp_path / "docker_count.txt"
+
+    # docker stub: 2 lần đầu không in id, lần thứ 3 trở đi in id
+    posix_cnt = _to_posix(count_file)
+    docker_script = (
+        f"#!/bin/sh\n"
+        f'cnt=$(cat "{posix_cnt}" 2>/dev/null || echo 0)\n'
+        f'cnt=$((cnt + 1))\n'
+        f'echo "$cnt" > "{posix_cnt}"\n'
+        f'if [ "$cnt" -gt 2 ]; then\n'
+        f'  echo "fake-container-id-123"\n'
+        f"fi\n"
+    )
+    docker_stub = bin_dir / "docker"
+    docker_stub.write_bytes(docker_script.encode("utf-8"))
+    docker_stub.chmod(0o755)
+
+    res = _run(
+        repo,
+        ["w1.log", "W1_TEST", "touch", "marker.txt"],
+        env_extra={
+            "DOCKER_GATE_CONTAINER": "x",
+            "DOCKER_GATE_WAIT_SECONDS": "10",
+            "DOCKER_GATE_POLL_SECONDS": "0",
+        },
+        bin_dir=bin_dir,
+    )
+
+    assert res.returncode == 0, f"Expected rc 0, got {res.returncode}. Stderr: {res.stderr}"
+    assert marker.exists()
+    log_file = repo / "logs" / "w1.log"
+    content = log_file.read_text(encoding="utf-8")
+    assert "start" in content
+    assert "EXIT=0" in content
+    assert "SKIP" not in content
+
+
+def test_w2_docker_gate_timeout_skips(tmp_path):
+    """(W2) luôn 'không chạy', với WAIT=2, POLL=1 -> SKIP như cũ."""
+    repo = _setup_repo(tmp_path)
+    (repo / ".env").write_bytes(
+        b"FOO=bar\nDB_DSN=postgres://trading:pwd@127.0.0.1:5432/trading\n"
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    count_file = tmp_path / "docker_count.txt"
+
+    posix_cnt = _to_posix(count_file)
+    docker_script = (
+        f"#!/bin/sh\n"
+        f'cnt=$(cat "{posix_cnt}" 2>/dev/null || echo 0)\n'
+        f'cnt=$((cnt + 1))\n'
+        f'echo "$cnt" > "{posix_cnt}"\n'
+    )
+    docker_stub = bin_dir / "docker"
+    docker_stub.write_bytes(docker_script.encode("utf-8"))
+    docker_stub.chmod(0o755)
+
+    res = _run(
+        repo,
+        ["w2.log", "W2_TEST", "echo", "should_not_run"],
+        env_extra={
+            "DOCKER_GATE_CONTAINER": "x",
+            "DOCKER_GATE_WAIT_SECONDS": "2",
+            "DOCKER_GATE_POLL_SECONDS": "1",
+        },
+        bin_dir=bin_dir,
+    )
+
+    assert res.returncode == 0
+    log_file = repo / "logs" / "w2.log"
+    content = log_file.read_text(encoding="utf-8")
+    assert "SKIP: docker chua chay" in content
+
+
+def test_w3_no_wait_skips_immediately_calls_docker_once(tmp_path):
+    """(W3) không đặt WAIT, docker 'không chạy' lần đầu -> SKIP ngay, docker giả chỉ bị gọi một lần cho cổng."""
+    repo = _setup_repo(tmp_path)
+    (repo / ".env").write_bytes(
+        b"FOO=bar\nDB_DSN=postgres://trading:pwd@127.0.0.1:5432/trading\n"
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    count_file = tmp_path / "docker_count.txt"
+
+    posix_cnt = _to_posix(count_file)
+    docker_script = (
+        f"#!/bin/sh\n"
+        f'cnt=$(cat "{posix_cnt}" 2>/dev/null || echo 0)\n'
+        f'cnt=$((cnt + 1))\n'
+        f'echo "$cnt" > "{posix_cnt}"\n'
+    )
+    docker_stub = bin_dir / "docker"
+    docker_stub.write_bytes(docker_script.encode("utf-8"))
+    docker_stub.chmod(0o755)
+
+    res = _run(
+        repo,
+        ["w3.log", "W3_TEST", "echo", "should_not_run"],
+        env_extra={"DOCKER_GATE_CONTAINER": "x"},
+        bin_dir=bin_dir,
+    )
+
+    assert res.returncode == 0
+    log_file = repo / "logs" / "w3.log"
+    content = log_file.read_text(encoding="utf-8")
+    assert "SKIP: docker chua chay" in content
+    # Docker stub was called exactly once for the gate check
+    call_count = int(count_file.read_text(encoding="utf-8").strip())
+    assert call_count == 1
+

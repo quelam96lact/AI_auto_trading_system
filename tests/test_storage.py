@@ -1419,3 +1419,55 @@ def test_read_5m_active_symbol_day_counts(storage):
             c.execute("DELETE FROM bars WHERE symbol IN (%s, %s, %s, %s)", syms)
             c.execute("DELETE FROM symbol_universe WHERE symbol IN (%s, %s, %s, %s)", syms)
 
+
+def test_read_daily_active_symbol_day_counts(storage):
+    """Brief 199: read_daily_active_symbol_day_counts đếm số mã active trong bars_daily theo ngày VN.
+    - mã active A có bar 2026-10-22 02:15 UTC và 2026-10-22 07:45 UTC
+    - mã active B có bar 2026-10-22 03:00 UTC
+    - mã không active C có bar 2026-10-22 03:00 UTC
+    - mã active A có bar 2026-10-22 17:30 UTC (tức 00:30 ngày 23/10 giờ VN)
+    - mã active D có bar 2026-10-21 17:30 UTC (00:30 ngày 22/10 VN, trong cửa sổ) và
+      2026-10-21 16:30 UTC (23:30 ngày 21/10 VN, ngoài cửa sổ)
+    Kết quả mong đợi: {2026-10-22: 3, 2026-10-23: 1}.
+    """
+    from zoneinfo import ZoneInfo
+    utc = ZoneInfo("UTC")
+
+    storage.init_schema()
+    sym_a = "TEST_1D_A"
+    sym_b = "TEST_1D_B"
+    sym_c = "TEST_1D_C"
+    sym_d = "TEST_1D_D"
+    syms = (sym_a, sym_b, sym_c, sym_d)
+
+    with storage.conn() as c:
+        c.execute("DELETE FROM bars_daily WHERE symbol IN (%s, %s, %s, %s)", syms)
+        c.execute("DELETE FROM symbol_universe WHERE symbol IN (%s, %s, %s, %s)", syms)
+
+    try:
+        storage.upsert_symbol_universe([
+            {"symbol": sym_a, "exchange": "HOSE", "is_active": True},
+            {"symbol": sym_b, "exchange": "HOSE", "is_active": True},
+            {"symbol": sym_c, "exchange": "HOSE", "is_active": False},
+            {"symbol": sym_d, "exchange": "HOSE", "is_active": True},
+        ])
+
+        bars = [
+            Bar(sym_a, datetime(2026, 10, 22, 2, 15, tzinfo=utc), 10.0, 11.0, 9.0, 10.5, 100),
+            Bar(sym_a, datetime(2026, 10, 22, 7, 45, tzinfo=utc), 10.5, 12.0, 10.0, 11.5, 100),
+            Bar(sym_b, datetime(2026, 10, 22, 3, 0, tzinfo=utc), 20.0, 21.0, 19.0, 20.5, 200),
+            Bar(sym_c, datetime(2026, 10, 22, 3, 0, tzinfo=utc), 30.0, 31.0, 29.0, 30.5, 300),
+            Bar(sym_a, datetime(2026, 10, 22, 17, 30, tzinfo=utc), 11.5, 12.0, 11.0, 11.8, 100),
+            Bar(sym_d, datetime(2026, 10, 21, 17, 30, tzinfo=utc), 40.0, 41.0, 39.0, 40.5, 400),
+            Bar(sym_d, datetime(2026, 10, 21, 16, 30, tzinfo=utc), 40.0, 41.0, 39.0, 40.5, 400),
+        ]
+        storage.write_daily(bars)
+
+        res = storage.read_daily_active_symbol_day_counts(date(2026, 10, 22), date(2026, 10, 23))
+        assert res == {date(2026, 10, 22): 3, date(2026, 10, 23): 1}
+    finally:
+        with storage.conn() as c:
+            c.execute("DELETE FROM bars_daily WHERE symbol IN (%s, %s, %s, %s)", syms)
+            c.execute("DELETE FROM symbol_universe WHERE symbol IN (%s, %s, %s, %s)", syms)
+
+

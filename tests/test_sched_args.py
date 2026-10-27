@@ -65,7 +65,9 @@ def test_every_exec_run_branch_forwards_args():
     Phá thử: nếu gỡ \"$@\" khỏi bất kỳ nhánh nào, test này sẽ đỏ và chỉ đích danh tên nhánh.
     """
     branches = parse_sched_branches(SCHED_SH)
-    assert len(branches) >= 16, f"sched.sh phải có ít nhất 16 nhánh, tìm thấy: {len(branches)}"
+    assert (
+        len(branches) >= 16
+    ), f"sched.sh phải có ít nhất 16 nhánh, tìm thấy: {len(branches)}"
 
     missing_at_branches: list[str] = []
     missing_exec_branches: list[str] = []
@@ -77,12 +79,12 @@ def test_every_exec_run_branch_forwards_args():
         else:
             missing_exec_branches.append(name)
 
-    assert not missing_exec_branches, (
-        f"Các nhánh sau trong sched.sh thiếu exec \"$RUN\": {missing_exec_branches}"
-    )
-    assert not missing_at_branches, (
-        f"Các nhánh sau trong sched.sh có exec \"$RUN\" nhưng THIẾU \"$@\": {missing_at_branches}"
-    )
+    assert (
+        not missing_exec_branches
+    ), f'Các nhánh sau trong sched.sh thiếu exec "$RUN": {missing_exec_branches}'
+    assert (
+        not missing_at_branches
+    ), f'Các nhánh sau trong sched.sh có exec "$RUN" nhưng THIẾU "$@": {missing_at_branches}'
 
 
 @pytest.mark.parametrize("mod_name", extract_python_modules(SCHED_SH))
@@ -106,22 +108,24 @@ def test_python_script_has_build_parser_and_rejects_unknown_flag(mod_name: str):
 
     # 2. build_parser() phải trả về ArgumentParser
     parser = build_parser_fn()
-    assert isinstance(parser, argparse.ArgumentParser), (
-        f"{mod_name}.build_parser() trả về {type(parser)}, không phải argparse.ArgumentParser"
-    )
+    assert isinstance(
+        parser, argparse.ArgumentParser
+    ), f"{mod_name}.build_parser() trả về {type(parser)}, không phải argparse.ArgumentParser"
 
     # 3. Không được dùng parse_known_args trong mã nguồn
     mod_file = Path(getattr(mod, "__file__", ""))
     if mod_file.is_file():
         source_code = mod_file.read_text(encoding="utf-8")
-        assert "parse_known_args" not in source_code, (
-            f"Module {mod_name} chứa parse_known_args — vi phạm nguyên tắc từ chối cờ lạ!"
-        )
+        assert (
+            "parse_known_args" not in source_code
+        ), f"Module {mod_name} chứa parse_known_args — vi phạm nguyên tắc từ chối cờ lạ!"
 
     # 4. Gọi với cờ lạ phải ném SystemExit với mã khác 0
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(["--khong-ton-tai"])
-    assert exc_info.value.code != 0, f"{mod_name} không ném SystemExit mã != 0 khi gặp cờ lạ"
+    assert (
+        exc_info.value.code != 0
+    ), f"{mod_name} không ném SystemExit mã != 0 khi gặp cờ lạ"
 
 
 def test_daily_data_check_has_dry_run_flag():
@@ -157,9 +161,9 @@ def test_shell_scripts_reject_unknown_flags():
             text=True,
             check=False,
         )
-        assert res.returncode == 2, (
-            f"{sh_script} không thoát mã 2 khi nhận cờ lạ. Mã: {res.returncode}, stderr: {res.stderr}"
-        )
+        assert (
+            res.returncode == 2
+        ), f"{sh_script} không thoát mã 2 khi nhận cờ lạ. Mã: {res.returncode}, stderr: {res.stderr}"
         assert "ERROR:" in res.stderr or "Usage:" in res.stderr
 
 
@@ -183,7 +187,8 @@ def _module_path(mod_name: str) -> Path:
 
 def _top_level_function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
     return next(
-        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name),
+        None,
     )
 
 
@@ -217,7 +222,11 @@ def _is_unconditional_parse_statement(stmt: ast.stmt) -> bool:
     ):
         return False
     # Phai chuyen tiep `argv` cua main (khong parse mot danh sach khac).
-    return len(call.args) == 1 and isinstance(call.args[0], ast.Name) and call.args[0].id == "argv"
+    return (
+        len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "argv"
+    )
 
 
 @pytest.mark.parametrize("mod_name", extract_python_modules(SCHED_SH))
@@ -228,9 +237,9 @@ def test_main_goi_build_parser_parse_args_vo_dieu_kien_o_cau_dau(mod_name: str):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     main_fn = _top_level_function(tree, "main")
     assert main_fn is not None, f"{mod_name} khong co ham main() o cap module"
-    assert [a.arg for a in main_fn.args.args] == ["argv"], (
-        f"{mod_name}.main phai nhan dung mot tham so `argv`"
-    )
+    assert [a.arg for a in main_fn.args.args] == [
+        "argv"
+    ], f"{mod_name}.main phai nhan dung mot tham so `argv`"
 
     body = _body_without_docstring(main_fn)
     skip = STATEMENTS_ALLOWED_BEFORE_PARSE.get(mod_name, 0)
@@ -277,7 +286,9 @@ def test_cong_cu_ast_phan_biet_dung_sai():
     two_step = ast.parse(
         "def main(argv=None):\n    parser = build_parser()\n    args = parser.parse_args(argv)\n"
     )
-    other_list = ast.parse("def main(argv=None):\n    args = build_parser().parse_args([])\n")
+    other_list = ast.parse(
+        "def main(argv=None):\n    args = build_parser().parse_args([])\n"
+    )
     in_try = ast.parse(
         "def main(argv=None):\n    try:\n        args = build_parser().parse_args(argv)\n    except Exception:\n        pass\n"
     )
@@ -299,5 +310,18 @@ def test_backfill_5m_branch_flags():
     assert "--timeframe 5m" in code, "backfill-5m thiếu cờ --timeframe 5m"
     assert "--use-universe" in code, "backfill-5m thiếu cờ --use-universe"
     assert "--skip-config-symbols" in code, "backfill-5m thiếu cờ --skip-config-symbols"
-    assert '"$@"' in code, "backfill-5m thiếu \"$@\""
+    assert '"$@"' in code, 'backfill-5m thiếu "$@"'
 
+
+def test_catchup_branch_flags():
+    """Nhánh catchup trong sched.sh phải có python -m scripts.startup_catchup, DOCKER_GATE_WAIT_SECONDS và $@ (Brief 199)."""
+    branches = parse_sched_branches(SCHED_SH)
+    assert "catchup" in branches, "sched.sh thiếu nhánh catchup"
+    code = branches["catchup"]
+    assert (
+        "python -m scripts.startup_catchup" in code
+    ), "catchup thiếu python -m scripts.startup_catchup"
+    assert (
+        'DOCKER_GATE_WAIT_SECONDS="${DOCKER_GATE_WAIT_SECONDS:-900}"' in code
+    ), "catchup phải chờ postgres mặc định 900 giây sau reboot"
+    assert '"$@"' in code, 'catchup thiếu "$@"'

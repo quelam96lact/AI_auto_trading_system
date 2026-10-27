@@ -21,6 +21,7 @@
 #   scripts/sched.sh disk-check
 #   scripts/sched.sh host-preflight
 #   scripts/sched.sh restore-drill
+#   scripts/sched.sh catchup
 #
 # Cong Docker nam trong run_if_docker_up.sh — xem file do.
 
@@ -175,8 +176,14 @@ case "${1:-}" in
     exec "$RUN" restore-drill.log restore-drill \
       uv run python scripts/restore_drill.py "$@"
     ;;
+  catchup)
+    shift || true
+    export DOCKER_GATE_WAIT_SECONDS="${DOCKER_GATE_WAIT_SECONDS:-900}"
+    exec "$RUN" catchup.log catchup \
+      uv run python -m scripts.startup_catchup "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup}" >&2
     exit 2
     ;;
 esac

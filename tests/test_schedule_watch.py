@@ -63,7 +63,7 @@ def extract_sched_branches(sched_sh_path: Path) -> set[str]:
 def test_sched_branches_covered_in_watch_or_khong_canh():
     """Mọi nhánh trong sched.sh phải nằm trong SCHEDULE_WATCH_JOBS hoặc KHONG_CANH (không sót, không trùng)."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 18, f"Kỳ vọng 18 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
+    assert len(sched_branches) == 19, f"Kỳ vọng 19 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
 
     watch_branches = set(SCHEDULE_WATCH_JOBS.keys())
     skip_branches = set(KHONG_CANH.keys())
@@ -284,7 +284,7 @@ def test_heartbeat_check_build_parser_has_dry_run():
 def test_sched_branches_covered_in_exit_policies():
     """Việc 2 (Brief 156): Mọi nhánh trong sched.sh phải có chính sách mã thoát rõ ràng."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 18
+    assert len(sched_branches) == 19
 
     policy_branches = set(SCHEDULE_EXIT_POLICIES.keys())
     missing = sched_branches - policy_branches
