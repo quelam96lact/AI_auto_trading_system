@@ -681,6 +681,9 @@ def test_main_dry_run_skips_all_loads_runs_checks(monkeypatch, capsys):
     # Không nạp nên phiên 26/10 khối ngoại vẫn thiếu (24-25/10 là cuối tuần) -> return 1.
     assert rc == 1
     assert "[kiem] foreign-flow: 11 ngay, thieu: ['2026-10-26']" in out
+    # 1d: mã bắt buộc của FakeConfig chưa có progress -> lùi end - 7 = 19/10.
+    assert "[ke hoach] 1d: nap 2026-10-19 -> 2026-10-26" in out
+    assert "[ke hoach] foreign-flow: nap 2026-10-24 -> 2026-10-26" in out
     assert len(env["bu_calls"]) == 0
     assert len(env["bff_calls"]) == 0
     assert "[kiem] 1d:" in out

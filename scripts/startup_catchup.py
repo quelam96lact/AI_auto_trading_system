@@ -120,6 +120,10 @@ def find_short_days(
     return sorted(short)
 
 
+def _plan_text(start: date | None, end: date) -> str:
+    return "khong can nap" if start is None else f"nap {start} -> {end}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Tao argument parser cho scripts.startup_catchup."""
     parser = argparse.ArgumentParser(
@@ -180,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         start_1d, clamped_1d = plan_universe_start(
             progress_1d, end, max_days=args.max_days
         )
+        print(f"[ke hoach] 1d: {_plan_text(start_1d, end)}")
         if start_1d is not None and not args.dry_run:
             ret = backfill_universe.main(
                 [
@@ -214,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         start_5m, clamped_5m = plan_universe_start(
             progress_5m, end, max_days=args.max_days
         )
+        print(f"[ke hoach] 5m: {_plan_text(start_5m, end)}")
         if start_5m is not None and not args.dry_run:
             ret = backfill_universe.main(
                 [
@@ -249,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         start_ff, clamped_ff = plan_foreign_flow_start(
             day_counts, end, max_days=args.max_days
         )
+        print(f"[ke hoach] foreign-flow: {_plan_text(start_ff, end)}")
         if start_ff is not None and not args.dry_run:
             ret = backfill_foreign_flow.main(
                 [
