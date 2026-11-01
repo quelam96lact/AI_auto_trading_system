@@ -431,7 +431,13 @@ class Storage:
     def read_balance_for_nav(
         self, account_no: str
     ) -> tuple[float, float, float, datetime] | None:
-        """(withdrawable, total_debt, buy_t0 + buy_t1, ts) moi nhat cho cong thuc NAV.
+        """(account_balance, total_debt, buy_t0 + buy_t1, ts) moi nhat cho cong thuc NAV.
+
+        Dot 203 (01/11/2026): doc `account_balance` thay vi `withdrawable`. Tren tai khoan margin
+        (0434226), SSI dat withdrawable = 0 du tien mat thuc con ~49,5tr. Ngoai ra, account_balance
+        da gom san khoan vay (khi dung margin mua co phieu, account_balance am tuong ung total_debt),
+        nen _sync_nav se khong tru no nua de tranh tru hai lan.
+        Tuple tra ve giu nguyen 4 phan tu de giu on dinh caller/fake tests.
 
         Brief 189 (docs/superpowers/plans/2026-10-23-brief-dot-189-sua-nav-cong-lenh-mua-chua-ve.md):
         Khi lenh mua khop (T0/T+1), SSI tru tien ngay nhung co phieu chua vao quantity (dang o
@@ -442,7 +448,7 @@ class Storage:
         """
         with self.conn() as c:
             row = c.execute(
-                "SELECT withdrawable, total_debt, buy_t0, buy_t1, ts FROM account_balance_snapshot "
+                "SELECT account_balance, total_debt, buy_t0, buy_t1, ts FROM account_balance_snapshot "
                 "WHERE account_no = %s ORDER BY ts DESC LIMIT 1",
                 (account_no,),
             ).fetchone()
@@ -450,14 +456,15 @@ class Storage:
 
     def read_nav(self, account_no: str) -> tuple[float, datetime, list[str]] | None:
         """Tai san rong (NAV) moi nhat cua tai khoan — nguon CAPITAL cho
-        RiskManager luong lenh that tu 2026-08-18 (quyet dinh chu du an 14/08:
-        von rui ro = NAV = tien mat + Σ(qty × gia) − no, KHONG phai tien mat
-        rut duoc). Bang rieng account_nav_snapshot vi NAV tinh tu positions +
-        gia (nguon khac field SSI). Tra (nav, ts, unpriced_symbols) — KHONG
-        duoc bo unpriced: main.py can no de WARN ma nao bi tinh 0 (NAV tinh
-        hut la an toan nhung khong duoc im lang). Tra None neu chua co dong
-        nao — main.py alert CRITICAL + capital=0 (fail-safe), KHONG duoc roi
-        ve so du kha dung cho \"do gat\"."""
+        RiskManager luong lenh that tu 2026-08-18 (quyet dinh chu du an 14/08,
+        cap nhat Dot 203 01/11/2026: von rui ro = NAV = account_balance +
+        Σ(qty × gia) + pending_buy_cost, vi account_balance da gom san khoan vay,
+        khong tru total_debt hai lan, KHONG phai tien mat rut duoc). Bang rieng
+        account_nav_snapshot vi NAV tinh tu positions + gia (nguon khac field SSI).
+        Tra (nav, ts, unpriced_symbols) — KHONG duoc bo unpriced: main.py can no
+        de WARN ma nao bi tinh 0 (NAV tinh hut la an toan nhung khong duoc im lang).
+        Tra None neu chua co dong nao — main.py alert CRITICAL + capital=0 (fail-safe),
+        KHONG duoc roi ve so du kha dung cho \"do gat\"."""
         with self.conn() as c:
             row = c.execute(
                 "SELECT nav, ts, unpriced_symbols FROM account_nav_snapshot "

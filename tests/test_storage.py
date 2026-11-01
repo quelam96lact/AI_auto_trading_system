@@ -204,7 +204,8 @@ def test_init_schema_idempotent_and_default_zero_balance(storage):
 
 def test_read_balance_for_nav_returns_latest_and_sums_buy_t0_t1_only(storage):
     """Brief 189 Buoc 2: read_balance_for_nav doc dong moi nhat, tra
-    (withdrawable, total_debt, buy_t0 + buy_t1, ts). buy_t2 KHONG duoc tinh."""
+    (account_balance, total_debt, buy_t0 + buy_t1, ts). buy_t2 KHONG duoc tinh.
+    Dot 203: tra account_balance (khong phai withdrawable)."""
     ts1 = datetime(2026, 7, 15, 9, 0, tzinfo=TZ)
     ts2 = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
 
@@ -221,13 +222,13 @@ def test_read_balance_for_nav_returns_latest_and_sums_buy_t0_t1_only(storage):
         buy_t1=300_000.0,
         buy_t2=999_999.0,
     )
-    # Dong 2: ts moi nhat
+    # Dong 2: ts moi nhat (margin: withdrawable=0 nhung account_balance co tien)
     storage.save_account_balance(
         account_no="ACC_TEST",
         ts=ts2,
         account_balance=6_848_691.0,
         total_debt=50_000.0,
-        withdrawable=6_848_691.0,
+        withdrawable=0.0,  # Dot 203: khac account_balance de chung minh lay dung cot
         buy_unmatched=0.0,
         sell_unmatched=0.0,
         buy_t0=2_746_850.0,
@@ -239,7 +240,7 @@ def test_read_balance_for_nav_returns_latest_and_sums_buy_t0_t1_only(storage):
     assert got is not None
     w, debt, pending_buy, ts = got
     assert ts == ts2, "Phai lay dong moi nhat theo ts"
-    assert w == 6_848_691.0
+    assert w == 6_848_691.0, "Dot 203: lay account_balance chu khong lay withdrawable (=0)"
     assert debt == 50_000.0
     # pending_buy = buy_t0 + buy_t1 cua dong moi nhat
     assert pending_buy == 2_746_850.0 + 1_000_000.0 == 3_746_850.0

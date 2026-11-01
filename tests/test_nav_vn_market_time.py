@@ -173,7 +173,7 @@ class _NavFakeStorage:
 
     def __init__(
         self,
-        withdrawable,
+        account_balance,
         total_debt,
         positions,
         bar_row,
@@ -183,12 +183,12 @@ class _NavFakeStorage:
         pending_buy_cost=None,
         bought_quantities=None,
     ):
-        self._bal_with_debt = (withdrawable, total_debt, NOW_0309)
+        self._bal_with_debt = (account_balance, total_debt, NOW_0309)
         cost = buy_t0 + buy_t1 if pending_buy_cost is None else pending_buy_cost
-        self._bal_for_nav = (withdrawable, total_debt, cost, NOW_0309)
+        self._bal_for_nav = (account_balance, total_debt, cost, NOW_0309)
         self._positions = positions  # symbol -> qty
         self._bought_quantities = bought_quantities or {}
-        self._bar = bar_row  # (ts, close) hoac None
+        self._bar = bar_row  # (ts, close), dict[str, tuple[datetime, float]], hoac None
         self.nav_calls = []  # (account_no, ts, nav, unpriced) tu record_nav
         self.compute_nav_calls = []  # kiem tra tham so truyen vao
 
@@ -205,6 +205,8 @@ class _NavFakeStorage:
         }
 
     def read_latest_bar(self, symbol):
+        if isinstance(self._bar, dict):
+            return self._bar.get(symbol)
         return self._bar
 
     def record_nav(self, account_no, ts, nav, unpriced_symbols):
@@ -217,7 +219,7 @@ class _NavFakeStorage:
 
 
 def _captured_nav(
-    withdrawable,
+    account_balance,
     total_debt,
     positions,
     bar_row,
@@ -226,9 +228,10 @@ def _captured_nav(
     buy_t2=0.0,
     pending_buy_cost=None,
     bought_quantities=None,
+    account_no="0434226",
 ):
     storage = _NavFakeStorage(
-        withdrawable,
+        account_balance,
         total_debt,
         positions,
         bar_row,
@@ -238,7 +241,7 @@ def _captured_nav(
         pending_buy_cost=pending_buy_cost,
         bought_quantities=bought_quantities,
     )
-    asyncio.run(_sync_nav("0434226", NOW_0309, storage, HOLIDAYS))
+    asyncio.run(_sync_nav(account_no, NOW_0309, storage, HOLIDAYS))
     assert (
         len(storage.nav_calls) == 1
     ), f"record_nav phai duoc goi dung 1 lan, thuc te: {storage.nav_calls}"
@@ -246,20 +249,21 @@ def _captured_nav(
 
 
 def test_sync_nav_truyen_no_that():
-    """NOI DAY lop 1: _sync_nav phai truyen total_debt doc tu snapshot vao
-    compute_nav (khong phai 0.0). Tai khoan margin: withdrawable=0, no
-    68.607.848, giu 1200 CAP gia 90 -> NAV = -68.607.848 + 108.000."""
+    """Dot 203 cap nhat: _sync_nav truyen debt=0.0 vao compute_nav vi account_balance
+    da gom san khoan vay tren tai khoan margin (truoc day goi A truyen total_debt
+    lam bi tru hai lan).
+    Giu 1200 CAP gia 90, account_balance=0 -> NAV = 108.000 (khong tru 68.607.848)."""
     st = _captured_nav(
         0.0,
         68_607_848.0,
         {"CAP": 1200},
         (datetime(2026, 8, 28, tzinfo=TZ), 90.0),
     )
-    # compute_nav nhan debt = 68.607.848 (khong phai 0.0)
-    assert st.compute_nav_calls[0][0] == 68_607_848.0
+    # Dot 203: compute_nav nhan debt = 0.0 (khong phai total_debt)
+    assert st.compute_nav_calls[0][0] == 0.0
     acc, nav, unpriced = st.nav_calls[0]
     assert acc == "0434226"
-    assert nav == -68_607_848.0 + 1200 * 90.0
+    assert nav == 1200 * 90.0
     assert unpriced == []
 
 
@@ -277,7 +281,87 @@ def test_sync_nav_truyen_vi_tu_tuoi_gia():
     assert st.compute_nav_calls[0][1] is not None
     _, nav, unpriced = st.nav_calls[0]
     assert unpriced == []  # gia 28/08 con tuoi sau le -> khong loai
-    assert nav == -68_607_848.0 + 1200 * 90.0
+    assert nav == 1200 * 90.0
+
+
+# ============ Dot 203: Tai hien va kiem chung NAV margin & tai khoan thuong ============
+
+
+def test_sync_nav_reproduce_0111_margin_account():
+    """Dot 203: Tai hien snapshot 01/11 tren SSI:
+    account_balance=49.529.624, withdrawable=0, total_debt=0, buy_t0=buy_t1=0.
+    4 vi the: BSR 1500 @ 27.600, DRI 4000 @ 14.000, MSN 400 @ 70.000, TCX 1200 @ 27.500.
+    Gia tri vi the = 41.400.000 + 56.000.000 + 28.000.000 + 33.000.000 = 158.400.000.
+    NAV == 49.529.624 + 158.400.000 == 207.929.624 (khong bi sut mat 49,5tr nhu truoc)."""
+    bars = {
+        "BSR": (NOW_0309, 27_600.0),
+        "DRI": (NOW_0309, 14_000.0),
+        "MSN": (NOW_0309, 70_000.0),
+        "TCX": (NOW_0309, 27_500.0),
+    }
+    positions = {"BSR": 1500, "DRI": 4000, "MSN": 400, "TCX": 1200}
+    st = _captured_nav(
+        49_529_624.0,
+        0.0,
+        positions,
+        bars,
+        buy_t0=0.0,
+        buy_t1=0.0,
+    )
+    acc, nav, unpriced = st.nav_calls[0]
+    assert acc == "0434226"
+    assert unpriced == []
+    assert nav == 207_929_624.0
+    assert int(nav) == 207_929_624
+
+
+def test_sync_nav_margin_debt_not_subtracted_twice():
+    """Dot 203: Moc 31/10 02:52 tren SSI:
+    ab=49.529.624, withdrawable=0, total_debt=29.514.623, cung vi the/gia.
+    Vi account_balance da gom san khoan vay, _sync_nav truyen debt=0.0 vao compute_nav.
+    NAV van phai la 207.929.624 (khong tru 29.514.623 thanh 178.414.001)."""
+    bars = {
+        "BSR": (NOW_0309, 27_600.0),
+        "DRI": (NOW_0309, 14_000.0),
+        "MSN": (NOW_0309, 70_000.0),
+        "TCX": (NOW_0309, 27_500.0),
+    }
+    positions = {"BSR": 1500, "DRI": 4000, "MSN": 400, "TCX": 1200}
+    st = _captured_nav(
+        49_529_624.0,
+        29_514_623.0,
+        positions,
+        bars,
+        buy_t0=0.0,
+        buy_t1=0.0,
+    )
+    assert st.compute_nav_calls[0][0] == 0.0, "debt truyen vao compute_nav phai la 0.0"
+    acc, nav, unpriced = st.nav_calls[0]
+    assert acc == "0434226"
+    assert unpriced == []
+    assert nav == 207_929_624.0
+    assert int(nav) == 207_929_624
+
+
+def test_sync_nav_standard_account_unchanged():
+    """Dot 203: Tai khoan thuong (0434221):
+    account_balance == withdrawable = 100.000.000, total_debt = 0.
+    NAV tinh ra hoan toan khong doi so voi truoc day."""
+    bar = (NOW_0309, 50_000.0)
+    positions = {"VCB": 1000}
+    st = _captured_nav(
+        100_000_000.0,
+        0.0,
+        positions,
+        bar,
+        buy_t0=0.0,
+        buy_t1=0.0,
+        account_no="0434221",
+    )
+    acc, nav, unpriced = st.nav_calls[0]
+    assert acc == "0434221"
+    assert unpriced == []
+    assert nav == 100_000_000.0 + 1000 * 50_000.0 == 150_000_000.0
 
 
 # ============ Brief 189 Buoc 3: 4 test vong doi lenh mua _sync_nav ============
