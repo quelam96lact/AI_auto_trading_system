@@ -492,3 +492,11 @@ def test_su_co_MOI_van_bao_khi_read_error_dang_keo_dai():
     assert any("service-1 vẫn lỗi đọc" in i for i in info), info
 
 
+def test_scheduler_in_default_services():
+    """Đợt 202: scheduler phải nằm trong danh sách DEFAULT_SERVICES."""
+    from scripts.container_health_check import DEFAULT_SERVICES
+
+    assert "scheduler" in DEFAULT_SERVICES
+
+
+

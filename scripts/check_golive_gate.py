@@ -132,21 +132,22 @@ def check_deploy_drift() -> tuple[bool, str]:
     try:
         from scripts.deploy_drift_check import (
             SERVICES,
-            _git_trading_commit_epoch,
             _image_created_epoch,
             drift_report,
             get_container_name,
+            get_service_commit_epochs,
         )
 
-        commit_epoch = _git_trading_commit_epoch()
-        if commit_epoch is None:
-            return False, "Không đọc được commit git gần nhất chạm trading/"
+        # Mốc commit riêng từng service (đợt 202): scheduler chạy cả scripts/.
+        commit_epochs = get_service_commit_epochs()
+        if commit_epochs is None:
+            return False, "Không đọc được commit git gần nhất chạm code nguồn"
 
         images = {svc: _image_created_epoch(get_container_name(svc)) for svc in SERVICES}
-        msgs = drift_report(commit_epoch, images)
+        msgs = drift_report(commit_epochs, images)
         if msgs:
             return False, "; ".join(msgs)
-        return True, "Image collector và engine mới hơn hoặc bằng commit trading/"
+        return True, "Image collector, engine và scheduler mới hơn hoặc bằng commit code nguồn"
     except Exception as e:
         return False, f"Lỗi kiểm tra deploy drift: {e}"
 

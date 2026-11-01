@@ -37,7 +37,13 @@ except ImportError:
 from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
-SERVICES = ("collector", "engine")
+SERVICES = ("collector", "engine", "scheduler")
+
+SERVICE_WATCH_PATHS: dict[str, tuple[str, ...]] = {
+    "collector": ("trading/",),
+    "engine": ("trading/",),
+    "scheduler": ("trading/", "scripts/"),
+}
 
 # Neo theo vi tri CHINH SCRIPT, khong theo cwd. Do that 01/09: chay tu thu muc
 # khac (scheduled task co the co cwd bat ky) thi `git log -- trading/` that bai
@@ -55,13 +61,19 @@ def _human_drift(seconds: int) -> str:
     return f"{seconds // 86400} ngày {seconds % 86400 // 3600} giờ"
 
 
-def drift_report(commit_epoch: int, images: dict[str, int | str | None]) -> list[str]:
-    """So mốc build image với commit gần nhất chạm trading/.
+def drift_report(
+    commit_epoch: int | dict[str, int], images: dict[str, int | str | None]
+) -> list[str]:
+    """So mốc build image với commit gần nhất chạm code nguồn của service.
 
-    images: {"collector": epoch_or_status, "engine": epoch_or_status};
+    images: {"collector": epoch_or_status, "engine": epoch_or_status, ...};
     - int: epoch giây build image
     - 'image_missing': container đang chạy nhưng image đã biến mất
     - None / 'container_down': container không chạy
+
+    commit_epoch:
+    - int: mốc commit dùng chung cho tất cả service (tương thích ngược).
+    - dict[str, int]: mốc commit riêng cho từng service theo SERVICE_WATCH_PATHS.
 
     Quy tắc:
     - container đang chạy nhưng image biến mất ⇒ cảnh báo nghiêm trọng (chạy code không ai truy được).
@@ -71,6 +83,11 @@ def drift_report(commit_epoch: int, images: dict[str, int | str | None]) -> list
     """
     messages = []
     for service, val in images.items():
+        if isinstance(commit_epoch, dict):
+            target_commit = commit_epoch.get(service)
+        else:
+            target_commit = commit_epoch
+
         if val == "image_missing":
             messages.append(
                 f"[deploy-drift] {service}: container đang chạy nhưng image đã BIẾN MẤT "
@@ -81,21 +98,27 @@ def drift_report(commit_epoch: int, images: dict[str, int | str | None]) -> list
                 f"[deploy-drift] {service}: container KHÔNG chạy — "
                 "không xác nhận được đang chạy code hiện tại"
             )
-        elif isinstance(val, (int, float)) and val < commit_epoch:
+        elif (
+            target_commit is not None
+            and isinstance(val, (int, float))
+            and val < target_commit
+        ):
+            watch_paths = SERVICE_WATCH_PATHS.get(service, ("trading/",))
+            watch_desc = " hoặc ".join(watch_paths)
             messages.append(
                 f"[deploy-drift] {service}: image CŨ hơn commit gần nhất chạm "
-                f"trading/ ({_human_drift(commit_epoch - int(val))}) — "
-                "dựng lại container (docker compose build collector engine && "
-                "docker compose up -d --no-deps collector engine)"
+                f"{watch_desc} ({_human_drift(target_commit - int(val))}) — "
+                "dựng lại container (docker compose build collector engine scheduler && "
+                "docker compose up -d --no-deps collector engine scheduler)"
             )
     return messages
 
 
-def _git_trading_commit_epoch() -> int | None:
-    """Epoch giây của commit gần nhất chạm trading/. None = không đọc được."""
+def _git_commit_epoch(paths: tuple[str, ...]) -> int | None:
+    """Epoch giây của commit gần nhất chạm danh sách paths. None = không đọc được."""
     try:
         r = subprocess.run(
-            ["git", "-C", REPO, "log", "-1", "--format=%ct", "--", "trading/"],
+            ["git", "-C", REPO, "log", "-1", "--format=%ct", "--", *paths],
             capture_output=True,
             text=True,
             timeout=30,
@@ -109,6 +132,31 @@ def _git_trading_commit_epoch() -> int | None:
         return int(r.stdout.strip())
     except ValueError:
         return None
+
+
+def _git_trading_commit_epoch() -> int | None:
+    """Epoch giây của commit gần nhất chạm trading/. None = không đọc được."""
+    return _git_commit_epoch(("trading/",))
+
+
+def get_service_commit_epochs() -> dict[str, int] | None:
+    """Epoch commit gần nhất cho từng service theo SERVICE_WATCH_PATHS.
+
+    Nếu có bất kỳ service nào không đọc được commit -> trả về None.
+    Ưu tiên gọi _git_trading_commit_epoch() cho service chỉ theo dõi trading/
+    để tương thích ngược với các test hoặc monkeypatch cũ.
+    """
+    epochs: dict[str, int] = {}
+    for svc in SERVICES:
+        paths = SERVICE_WATCH_PATHS.get(svc, ("trading/",))
+        if paths == ("trading/",):
+            ep = _git_trading_commit_epoch()
+        else:
+            ep = _git_commit_epoch(paths)
+        if ep is None:
+            return None
+        epochs[svc] = ep
+    return epochs
 
 
 def _image_created_epoch(container: str) -> int | str | None:
@@ -194,27 +242,27 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
-    commit_epoch = _git_trading_commit_epoch()
-    if commit_epoch is None:
+    commit_epochs = get_service_commit_epochs()
+    if commit_epochs is None:
         # Cung phai KEU: mot chuong tu bao ma im lang dung luc chinh no hong
         # thi vo dung. Truoc day nhanh nay chi in ra stdout roi return 1.
         return _alert(
             [
                 (
                     "[deploy-drift] KHÔNG đọc được commit gần nhất chạm "
-                    "trading/ (git lỗi?) — không xác nhận được trạng thái "
+                    "code nguồn (git lỗi?) — không xác nhận được trạng thái "
                     "triển khai"
                 )
             ]
         )
 
     images = {svc: _image_created_epoch(get_container_name(svc)) for svc in SERVICES}
-    messages = drift_report(commit_epoch, images)
+    messages = drift_report(commit_epochs, images)
 
     if messages:
         return _alert(messages)
     _print_safe(
-        "OK: không lệch triển khai — image của collector và engine mới hơn commit gần nhất chạm trading/"
+        "OK: không lệch triển khai — image của collector, engine và scheduler mới hơn commit gần nhất"
     )
     return 0
 

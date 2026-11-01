@@ -127,3 +127,56 @@ def test_image_missing_warns_specifically():
     assert "đang chạy code không ai truy được" in msgs[0]
 
 
+def test_scheduler_in_services():
+    """Đợt 202: scheduler phải nằm trong SERVICES và theo dõi cả trading/ lẫn scripts/."""
+    assert "scheduler" in deploy_drift_check.SERVICES
+    assert deploy_drift_check.SERVICE_WATCH_PATHS["collector"] == ("trading/",)
+    assert deploy_drift_check.SERVICE_WATCH_PATHS["engine"] == ("trading/",)
+    assert deploy_drift_check.SERVICE_WATCH_PATHS["scheduler"] == ("trading/", "scripts/")
+
+
+def test_drift_report_scripts_commit_warns_scheduler_only():
+    """Đợt 202: Commit chạm scripts/ mới hơn image scheduler:
+    báo lệch CHO scheduler, không làm collector/engine bị báo lệch."""
+    commit_epochs = {
+        "collector": 1_000_000,
+        "engine": 1_000_000,
+        "scheduler": 2_000_000,
+    }
+    images = {
+        "collector": 1_500_000,
+        "engine": 1_500_000,
+        "scheduler": 1_500_000,
+    }
+    msgs = drift_report(commit_epochs, images)
+    assert len(msgs) == 1
+    assert msgs[0].startswith("[deploy-drift] scheduler:")
+    assert "[deploy-drift] collector:" not in msgs[0]
+    assert "[deploy-drift] engine:" not in msgs[0]
+    assert "scripts/" in msgs[0]
+
+
+def test_main_scripts_commit_warns_scheduler_only(monkeypatch):
+    """Đợt 202: Kiểm tra main() khi commit chạm scripts/ mới hơn image scheduler."""
+    monkeypatch.setattr(
+        deploy_drift_check, "_git_trading_commit_epoch", lambda: 1_000_000
+    )
+    monkeypatch.setattr(
+        deploy_drift_check,
+        "_git_commit_epoch",
+        lambda paths: 2_000_000 if "scripts/" in paths else 1_000_000,
+    )
+    monkeypatch.setattr(
+        deploy_drift_check, "_image_created_epoch", lambda _cname: 1_500_000
+    )
+    sent = _capture_sent(monkeypatch)
+    rc = deploy_drift_check.main([])
+
+    assert rc == 1
+    assert len(sent) == 1
+    assert "[deploy-drift] scheduler:" in sent[0]
+    assert "[deploy-drift] collector:" not in sent[0]
+    assert "[deploy-drift] engine:" not in sent[0]
+
+
+

@@ -1,7 +1,7 @@
 """Cảnh báo khi container tự khởi động lại hoặc bị kill vì hết bộ nhớ.
 
 Brief đợt 130 (2026-09-29):
-Giám sát các service postgres, collector, engine, nats, grafana:
+Giám sát các service postgres, collector, engine, nats, grafana, scheduler:
 - Phát hiện crash/restart (RestartCount tăng).
 - Phát hiện OOMKilled (State.OOMKilled == true).
 - Phát hiện kernel kill tiến trình con trong container (cgroup memory.events oom_kill tăng).
@@ -62,7 +62,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_SERVICES = ("postgres", "collector", "engine", "nats", "grafana")
+DEFAULT_SERVICES = ("postgres", "collector", "engine", "nats", "grafana", "scheduler")
 
 DEFAULT_STATE_FILE = os.path.join(
     os.path.dirname(SPAM_GUARD_FILE),
