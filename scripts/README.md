@@ -81,7 +81,6 @@ kiểm file được dẫn **còn chứa tên script**.
 | `probe_timestamp_semantics` | Đo hướng ngữ nghĩa timestamp (đợt 72, lớp vỏ cho công cụ đợt 42). | CÒN CẦN | Code đang chạy trỏ vào: `scripts/leakage_audit.py:4`. |
 | `record_fixtures` | Ghi raw message SSI thành fixtures cho test. | CÒN CẦN | Fixtures được ghi bằng nó: `tests/fixtures/README.md:3`. |
 | `scan_mojibake` | Quét file văn bản trong repo tìm dấu vết mojibake. | CÒN CẦN | `scripts/README.md:14`. |
-| `screen_liquidity` | Lọc thanh khoản từ `bars_daily` sang `symbol_universe.is_active`. | CÒN CẦN | `GO_LIVE_AUDIT.md:490`. |
 | `spike_securities_summary_raw` | Kiểm khả thi endpoint tóm tắt chứng khoán (bước 0 của prompt 15/08). | CÒN CẦN | Chỉ nhắc trong kế hoạch/prompt cũ và một báo cáo dọn rác ghi "giữ có chủ ý" (quyết định giữ, không phải bằng chứng còn cần): `docs/superpowers/research/2026-09-18-dot-53-don-rac-va-kiem-dinh-image.md:215`. |
 | `spike_ssi_history_depth` | Đo độ sâu lịch sử SSI và liệt kê mã 3 sàn. | ĐÃ GHI SỐ ĐO | `docs/superpowers/research/2026-08-09-ssi-history-depth.md:4`. |
 | `spike_ssi_sdk_account` | Phase 0 spike: xác nhận Portfolio/Account API thật (số dư, vị thế). | CÒN CẦN | Chỉ được `scripts/spike_ssi_sdk_derivative_account.py:232` nhắc trong comment làm mẫu, và trong `docs/plans-legacy/`. |

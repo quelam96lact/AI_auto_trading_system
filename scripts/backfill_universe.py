@@ -225,6 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--exchanges", default=None, help="HOSE,HNX,UPCOM (loc tu file)")
     ap.add_argument("--symbols", default=None, help="A,B (thay the toan bo danh sach)")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument(
+        "--all-universe",
+        action="store_true",
+        help="nap toan bo danh muc ma (symbol_universe) ma khong goi load_symbols/upsert",
+    )
     ap.add_argument("--use-universe", action="store_true")
     ap.add_argument(
         "--skip-config-symbols",
@@ -247,6 +252,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",")]
+    elif args.all_universe:
+        symbols = sorted(storage.read_symbol_universe())
+        print(f"[load] toan bo universe: {len(symbols)} ma (khong ghi de cờ active)")
     elif args.use_universe:
         # Brief 2026-09-01 (dot 2): tach hai vai cua is_active. Backfill chay
         # tren HOP cua hai tap: (1) ma thanh khoan (is_active — vai "dang giao

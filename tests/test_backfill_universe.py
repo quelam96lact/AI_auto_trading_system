@@ -446,3 +446,46 @@ def test_without_skip_flag_list_unchanged(monkeypatch):
 
     assert run_calls == [["AAA", "FPT", "HPG", "VCB"]]
 
+
+def test_all_universe_flag_reads_symbol_universe_without_upsert(monkeypatch, capsys):
+    """Brief dot 206 §1.1: --all-universe lay toan bo read_symbol_universe(),
+    khong goi load_symbols/upsert_symbol_universe."""
+    cfg_mock = SimpleNamespace(symbols=["HPG"], db_dsn="postgresql://mock")
+    monkeypatch.setattr("scripts.backfill_universe.load_config", lambda path: cfg_mock)
+
+    upsert_called = []
+
+    class DummyStorage:
+        def __init__(self, dsn):
+            pass
+
+        def init_schema(self):
+            pass
+
+        def read_symbol_universe(self):
+            return {"VCB", "ACB", "TCB", "MSN"}
+
+        def upsert_symbol_universe(self, *args, **kwargs):
+            upsert_called.append(True)
+
+    monkeypatch.setattr("scripts.backfill_universe.Storage", DummyStorage)
+
+    def fake_load_symbols(*args, **kwargs):
+        raise AssertionError("load_symbols khong duoc goi khi co --all-universe")
+
+    monkeypatch.setattr("scripts.backfill_universe.load_symbols", fake_load_symbols)
+
+    run_calls = []
+
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+        run_calls.append(list(symbols))
+
+    monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
+
+    main(["--timeframe", "1d", "--from", "2026-10-01", "--to", "2026-10-25", "--all-universe"])
+
+    assert run_calls == [["ACB", "MSN", "TCB", "VCB"]]
+    assert not upsert_called, "upsert_symbol_universe khong duoc goi"
+    out = capsys.readouterr().out
+    assert "toan bo universe: 4 ma" in out
+

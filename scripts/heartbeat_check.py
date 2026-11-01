@@ -327,6 +327,13 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         normal_exit_codes=frozenset({0}),
         reason="startup_catchup.py. Mã 0 là nạp bù xong và kiểm tra đủ; mã 1 là có bước lỗi, ngày thiếu, hoặc khoảng hỏng vượt --max-days.",
     ),
+    "universe-refresh": JobExitPolicy(
+        branch="universe-refresh",
+        log_file="universe-refresh.log",
+        label="universe-refresh",
+        normal_exit_codes=frozenset({0}),
+        reason="refresh_universe.py. Mã 0 là làm mới xong hoặc chưa tới hạn; mã 1 là backfill lỗi hoặc cổng co rút chặn (cổng đã gửi Telegram).",
+    ),
 }
 
 

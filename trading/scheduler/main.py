@@ -33,6 +33,7 @@ ADVISORY_LOCK_DAILY_CHECK = 2026110102
 # Job timeouts
 TIMEOUT_CATCHUP_SECONDS = 3 * 3600  # 3 hours (10,800s)
 TIMEOUT_DAILY_CHECK_SECONDS = 30 * 60  # 30 minutes (1,800s)
+TIMEOUT_UNIVERSE_REFRESH_SECONDS = 3600  # 1 hour (3,600s)
 
 # Schedule times
 MORNING_CATCHUP_TIME = time(6, 40)
@@ -308,6 +309,19 @@ def run_event(
             command=cmd_daily_check,
             timeout_seconds=TIMEOUT_DAILY_CHECK_SECONDS,
             lock_id=ADVISORY_LOCK_DAILY_CHECK,
+            logs_dir=logs_dir,
+            cwd=cwd,
+            dsn=dsn,
+            lock_manager=lock_manager,
+        )
+
+        cmd_universe_refresh = [python_exe, "-m", "scripts.refresh_universe"]
+        run_job(
+            label="universe-refresh",
+            log_file="universe-refresh.log",
+            command=cmd_universe_refresh,
+            timeout_seconds=TIMEOUT_UNIVERSE_REFRESH_SECONDS,
+            lock_id=ADVISORY_LOCK_CATCHUP,
             logs_dir=logs_dir,
             cwd=cwd,
             dsn=dsn,

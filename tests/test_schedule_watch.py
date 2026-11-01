@@ -286,7 +286,8 @@ def test_sched_branches_covered_in_exit_policies():
     sched_branches = extract_sched_branches(SCHED_SH)
     assert len(sched_branches) == 19
 
-    policy_branches = set(SCHEDULE_EXIT_POLICIES.keys())
+    # universe-refresh chay qua scheduler daemon trong container, khong qua sched.sh
+    policy_branches = set(SCHEDULE_EXIT_POLICIES.keys()) - {"universe-refresh"}
     missing = sched_branches - policy_branches
     assert not missing, f"Các nhánh sau trong sched.sh thiếu chính sách mã thoát trong SCHEDULE_EXIT_POLICIES: {missing}"
 

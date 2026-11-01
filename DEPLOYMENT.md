@@ -569,7 +569,8 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # các dòng nạp dữ liệu ở trên (8, 9, 9b, 9c và foreign-flow): khi container khởi động
 # nó chạy `scripts.startup_catchup` ngay (1d + 5m + khối ngoại, vá tối đa 90 ngày),
 # rồi 06:40 mỗi ngày giao dịch (catchup) và 21:45 mỗi ngày giao dịch (catchup rồi
-# daily_data_check). Log ghi vào logs/catchup.log và logs/daily-data-check.log cùng
+# daily_data_check, và từ đợt 206 chạy thêm scripts/refresh_universe.py: tối đa 1 lần/6 ngày, cổng co rút 50%).
+# Log ghi vào logs/catchup.log, logs/daily-data-check.log và logs/universe-refresh.log cùng
 # định dạng run_if_docker_up.sh nên heartbeat vẫn canh mã thoát. Có scheduler thì
 # KHÔNG cài các dòng cron 8/9/9b/9c — chạy hai nơi sẽ gọi SSI trùng.
 # Các job giám sát và sao lưu (heartbeat, deploy-drift, container-health, backup...)

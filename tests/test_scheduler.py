@@ -298,25 +298,56 @@ def test_rotate_log_if_needed(tmp_path: Path):
 # ==============================================================================
 
 
-def test_run_startup_and_run_event(tmp_path: Path):
-    logs_dir = tmp_path / "logs"
+def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
+    executed_labels = []
+    import trading.scheduler.main as sm
+
+    orig_run_job = sm.run_job
+
+    def spy_run_job(*args, **kwargs):
+        label = kwargs.get("label", args[0] if args else None)
+        executed_labels.append(label)
+        return orig_run_job(*args, **kwargs)
+
+    monkeypatch.setattr(sm, "run_job", spy_run_job)
 
     # Startup goi catchup
+    startup_logs_dir = tmp_path / "startup_logs"
     _ = run_startup(
-        logs_dir=logs_dir,
+        logs_dir=startup_logs_dir,
         lock_manager=mock_lock_acquired,
         python_exe=sys.executable,
     )
-    assert (logs_dir / "catchup.log").exists()
+    assert (startup_logs_dir / "catchup.log").exists()
+    assert executed_labels == ["catchup"]
 
-    # Evening event goi catchup roi daily-data-check
+    # Morning event chi goi catchup
+    executed_labels.clear()
+    morning_logs_dir = tmp_path / "morning_logs"
+    run_event(
+        event_type="morning_catchup",
+        logs_dir=morning_logs_dir,
+        lock_manager=mock_lock_acquired,
+        python_exe=sys.executable,
+    )
+    assert (morning_logs_dir / "catchup.log").exists()
+    assert not (morning_logs_dir / "daily-data-check.log").exists()
+    assert not (morning_logs_dir / "universe-refresh.log").exists()
+    assert executed_labels == ["catchup"]
+
+    # Evening event goi ca 3 job theo thu tu: catchup -> daily-data-check -> universe-refresh
+    executed_labels.clear()
+    evening_logs_dir = tmp_path / "evening_logs"
     run_event(
         event_type="evening_jobs",
-        logs_dir=logs_dir,
+        logs_dir=evening_logs_dir,
         lock_manager=mock_lock_acquired,
         python_exe=sys.executable,
     )
-    assert (logs_dir / "daily-data-check.log").exists()
+    assert (evening_logs_dir / "catchup.log").exists()
+    assert (evening_logs_dir / "daily-data-check.log").exists()
+    assert (evening_logs_dir / "universe-refresh.log").exists()
+    assert executed_labels == ["catchup", "daily-data-check", "universe-refresh"]
 
 
 def test_scheduler_loop_once(tmp_path: Path, monkeypatch):

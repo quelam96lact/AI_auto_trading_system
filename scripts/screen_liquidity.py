@@ -93,14 +93,36 @@ def print_distribution(data: dict, cutoff) -> None:
         print(f"  >= {t / 1e9:>5} ty: {per_san}")
 
 
-def main() -> None:
+def active_set(stats: dict, cutoff, min_value: float) -> set[str]:
+    """Tap hop cac ma dat dieu kien thanh khoan (khong stale va avg_value >= min_value)."""
+    return {
+        sym
+        for sym, (ex, avg_val, avg_vol, max_ts) in stats.items()
+        if not is_stale((ex, avg_val, avg_vol, max_ts), cutoff) and avg_val >= min_value
+    }
+
+
+def apply(stats: dict, cutoff, min_value: float, dsn: str) -> int:
+    """Ghi avg_value_20d, avg_volume_20d va is_active vao symbol_universe. Tra ve so ma active."""
+    actives = active_set(stats, cutoff, min_value)
+    with psycopg.connect(dsn) as c:
+        for sym, (_ex, avg_value, avg_volume, _max_ts) in stats.items():
+            c.execute(
+                "UPDATE symbol_universe SET avg_value_20d = %s, avg_volume_20d = %s, "
+                "is_active = %s, updated_at = now() WHERE symbol = %s",
+                (avg_value, avg_volume, sym in actives, sym),
+            )
+    return len(actives)
+
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--window-days", type=int, default=20)
     ap.add_argument("--min-value", type=float, default=1e9)
     ap.add_argument("--max-stale-days", type=int, default=30)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--dsn", default=DSN_DEFAULT)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     data, cutoff = compute(args.window_days, args.max_stale_days, args.dsn)
 
@@ -109,18 +131,10 @@ def main() -> None:
         print("\n(dry-run: chua ghi is_active - cho user chot nguong)")
         return
 
-    n_active = 0
-    with psycopg.connect(args.dsn) as c:
-        for sym, (ex, avg_value, avg_volume, max_ts) in data.items():
-            active = not is_stale((ex, avg_value, avg_volume, max_ts), cutoff) and avg_value >= args.min_value
-            c.execute(
-                "UPDATE symbol_universe SET avg_value_20d = %s, avg_volume_20d = %s, "
-                "is_active = %s, updated_at = now() WHERE symbol = %s",
-                (avg_value, avg_volume, active, sym),
-            )
-            if active:
-                n_active += 1
-    print(f"Da ghi is_active: {n_active}/{len(data)} ma (nguong >= {args.min_value / 1e9} ty, stale <= {args.max_stale_days} ngay)")
+    n_active = apply(data, cutoff, args.min_value, args.dsn)
+    print(
+        f"Da ghi is_active: {n_active}/{len(data)} ma (nguong >= {args.min_value / 1e9} ty, stale <= {args.max_stale_days} ngay)"
+    )
 
 
 if __name__ == "__main__":
