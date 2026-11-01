@@ -16,6 +16,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from scripts._ssi_spike_common import tolerate_unknown_board
 from trading.calendar_vn import TZ
 from trading.collector.backfill import SSIRestClient
 from trading.collector.ssi_auth import ensure_authenticated
@@ -87,6 +88,7 @@ async def main() -> int:
     auth = await ensure_authenticated(cfg, storage)
     from ssi_sdk import AsyncData
 
+    tolerate_unknown_board()
     data = AsyncData(auth)
 
     try:

@@ -19,40 +19,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from scripts._ssi_spike_common import tolerate_unknown_board
 from trading.calendar_vn import TZ
 from trading.collector.ssi_auth import ensure_authenticated
 from trading.config import load_config
 from trading.storage.db import Storage
 
 OUT = Path(__file__).parent / ".spike_all_symbols_classified.json"
-
-
-def _tolerate_unknown_board() -> None:
-    """Do 01/11/2026: SSI tra phan tu board='DERIVATIVES' trong danh sach HNX ma
-    enum Board cua ssi_sdk chi co HOSE/HNX/UPCOM -> SecuritiesInfo.from_list nem
-    ValueError va lam chet ca san. Board la thi ghi None (dong do khong co
-    listed_shares nen backfill_universe.load_symbols van loai)."""
-    from ssi_sdk.enums import Board
-    from ssi_sdk.models.market_data import SecuritiesInfo
-
-    valid = {b.value for b in Board}
-    orig = SecuritiesInfo.from_list.__func__
-
-    def from_list(cls, data):
-        return orig(
-            cls,
-            [
-                (
-                    d
-                    if str(d.get("board") or "").upper() in valid or not d.get("board")
-                    else {**d, "board": None}
-                )
-                for d in data
-            ],
-        )
-
-    SecuritiesInfo.from_list = classmethod(from_list)
-
 
 async def main() -> None:
     cfg = load_config("config/config.yaml")
@@ -63,7 +36,7 @@ async def main() -> None:
     from ssi_sdk import AsyncData
     from ssi_sdk.enums import Board
 
-    _tolerate_unknown_board()
+    tolerate_unknown_board()
     data = AsyncData(auth)
 
     try:

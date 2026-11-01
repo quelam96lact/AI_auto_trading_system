@@ -64,6 +64,7 @@ async def make_auth():
     from ssi_sdk.exceptions import SSIError
     from ssi_sdk.models import Token
 
+    tolerate_unknown_board()
     saved = load_saved_token()
     auth = AsyncAuth(make_config())
     # to_dict() trả key camelCase → phải dùng from_dict(), không phải Token(**saved)
@@ -81,3 +82,31 @@ async def make_auth():
         save_token(token)
         print("refresh() OK — đã cập nhật token file.")
     return auth
+
+
+def tolerate_unknown_board() -> None:
+    """Do 01/11/2026: SSI tra phan tu board='DERIVATIVES' (danh sach HNX) ma enum
+    Board cua ssi_sdk chi co HOSE/HNX/UPCOM -> SecuritiesInfo.from_list nem
+    ValueError va lam chet ca loi goi get_securities_info*. Board la thi ghi None.
+    Goi nhieu lan an toan (chi va mot lan)."""
+    from ssi_sdk.enums import Board
+    from ssi_sdk.models.market_data import SecuritiesInfo
+
+    if getattr(SecuritiesInfo.from_list, "_tolerates_unknown_board", False):
+        return
+    valid = {b.value for b in Board}
+    orig = SecuritiesInfo.from_list.__func__
+
+    def from_list(cls, data):
+        return orig(
+            cls,
+            [
+                d
+                if not d.get("board") or str(d["board"]).upper() in valid
+                else {**d, "board": None}
+                for d in data
+            ],
+        )
+
+    from_list._tolerates_unknown_board = True
+    SecuritiesInfo.from_list = classmethod(from_list)
