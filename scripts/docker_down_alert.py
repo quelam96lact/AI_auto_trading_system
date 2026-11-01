@@ -37,12 +37,25 @@ ALERT_END = time(15, 0)
 # Chong spam: khong gui lan hai trong vong 30 phut.
 SPAM_GUARD_SECONDS = 30 * 60
 
+# Dot 205 (01/11/2026): Bao Docker tat ngoai gio giao dich sau su co 45h im lang (30/10 - 01/11).
+# Ngoai khung 08:00-15:00 ngay giao dich (moi gio, moi ngay ke ca T7/CN/le): keu khi Docker da
+# tat lien tuc >= 2 gio va lan gui gan nhat cach >= 6 gio.
+OFF_HOURS_MIN_DOWN_SECONDS = 2 * 3600
+OFF_HOURS_REPEAT_SECONDS = 6 * 3600
+
 # File dau moc lan gui cuoi. Nam trong logs/ (gitignored) nhu cac file log.
 # Doc hong/khong co => coi nhu chua tung gui (fail-safe nghieng ve KEU).
 SPAM_GUARD_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "logs",
     ".docker_down_last_alert",
+)
+
+# File ghi moc "Docker tat tu luc nao" (dot 205). Xoa boi run_if_docker_up.sh khi Docker chay lai.
+DOWN_SINCE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs",
+    ".docker_down_since",
 )
 
 
@@ -92,32 +105,85 @@ def _write_last_alert(now: datetime, stamp_file: str) -> None:
         pass  # ghi hong khong duoc lam chet chuong — lan sau co the keu lai
 
 
+def _get_or_set_down_since(now: datetime, since_file: str) -> int:
+    """Epoch moc Docker bat dau tat (dot 205).
+
+    Neu file chua co hoac doc hong => ghi now (epoch) vao file roi tra ve moc do.
+    """
+    try:
+        with open(since_file, encoding="utf-8") as f:
+            val = int(f.read().strip())
+            if val > 0:
+                return val
+    except Exception:
+        pass
+
+    epoch = int(now.timestamp())
+    try:
+        with open(since_file, "w", encoding="utf-8") as f:
+            f.write(str(epoch))
+    except Exception:
+        pass
+    return epoch
+
+
 def should_alert(
-    now: datetime, holidays: frozenset, last_alert_epoch: int | None
+    now: datetime,
+    holidays: frozenset,
+    last_alert_epoch: int | None,
+    down_since_epoch: int | None = None,
 ) -> bool:
-    """Quyet dinh co keu khong, theo bang cua brief dot 8:
-    - trong khung 08:00-15:00 ngay giao dich (T2-T6, khong le)  => KEU
-    - ngoai khung / T7-CN / ngay le                              => im
-    - da gui trong 30 phut gan nhat                              => im
+    """Quyet dinh co keu khong (brief dot 8 + dot 205):
+    1. Trong khung 08:00-15:00 ngay giao dich (T2-T6, khong le):
+       - da gui trong 30 phut gan nhat                              => im
+       - con lai                                                    => KEU
+    2. Ngoai khung (moi gio, moi ngay ke ca T7/CN/le):
+       - tat lien tuc >= 2 gio VA lan gui gan nhat cach >= 6 gio   => KEU
+       - con lai                                                    => im
     """
     now = now.astimezone(TZ)
-    if not (ALERT_START <= now.time() <= ALERT_END):
+    is_trading_window = (ALERT_START <= now.time() <= ALERT_END) and _is_trading_day(
+        now, holidays
+    )
+    if is_trading_window:
+        return not (
+            last_alert_epoch is not None
+            and now.timestamp() - last_alert_epoch < SPAM_GUARD_SECONDS
+        )
+
+    # Nhanh ngoai khung (dot 205):
+    if down_since_epoch is None:
         return False
-    if not _is_trading_day(now, holidays):
+    down_duration = now.timestamp() - down_since_epoch
+    if down_duration < OFF_HOURS_MIN_DOWN_SECONDS:
         return False
     return not (
         last_alert_epoch is not None
-        and now.timestamp() - last_alert_epoch < SPAM_GUARD_SECONDS
+        and now.timestamp() - last_alert_epoch < OFF_HOURS_REPEAT_SECONDS
     )
 
 
-def _message(now: datetime) -> str:
+def _message(
+    now: datetime,
+    down_since_epoch: int | None = None,
+    is_trading_window: bool = True,
+) -> str:
     """Phai tra loi duoc: cai gi dang khong chay va hau qua la gi."""
     now = now.astimezone(TZ)
+    if is_trading_window:
+        return (
+            f"[CRITICAL] Docker khong chay luc {now:%H:%M} ngay giao dich {now:%d/%m}.\n"
+            "Collector/engine deu dung. Khong co bar moi, khong co lenh.\n"
+            "Cac job giam sat dang bi bo qua — day la tin nhan DUY NHAT ban se nhan."
+        )
+    down_epoch = down_since_epoch if down_since_epoch is not None else int(now.timestamp())
+    down_since = datetime.fromtimestamp(down_epoch, TZ)
+    hours = int((now.timestamp() - down_epoch) // 3600)
     return (
-        f"[CRITICAL] Docker khong chay luc {now:%H:%M} ngay giao dich {now:%d/%m}.\n"
-        "Collector/engine deu dung. Khong co bar moi, khong co lenh.\n"
-        "Cac job giam sat dang bi bo qua — day la tin nhan DUY NHAT ban se nhan."
+        f"[CRITICAL] Docker tat tu {down_since:%H:%M %d/%m} ({hours}h).\n"
+        "Cac job nap du lieu / sao luu / ghi so lenh dang bi bo qua.\n"
+        "Viec can lam: mo Docker Desktop (tren VPS: kiem `systemctl status docker`).\n"
+        "Nho rang so lenh VN30F khong nap bu duoc."
     )
 
 
@@ -126,6 +192,7 @@ def run_alert(
     holidays: frozenset,
     send=send_telegram,
     stamp_file: str = SPAM_GUARD_FILE,
+    since_file: str | None = None,
 ) -> int:
     """Mot lan kiem: quyet dinh, keu neu can. KHONG BAO GIO nem — chuong bao
     chet cam con te hon khong co chuong bao (FEE-ALARM-2).
@@ -134,10 +201,22 @@ def run_alert(
     - Tra 2: can keu nhung gui that bai (send tra False / None / nem loi) hoac loi ngoai cung.
     """
     try:
+        now = now.astimezone(TZ)
+        is_trading_window = (ALERT_START <= now.time() <= ALERT_END) and _is_trading_day(
+            now, holidays
+        )
+        if since_file is None:
+            since_file = os.path.join(
+                os.path.dirname(stamp_file),
+                ".docker_down_since",
+            )
+        down_since = _get_or_set_down_since(now, since_file)
         last = _read_last_alert(stamp_file)
-        if not should_alert(now, holidays, last):
+        if not should_alert(now, holidays, last, down_since_epoch=down_since):
             return 0
-        msg = _message(now)
+        msg = _message(
+            now, down_since_epoch=down_since, is_trading_window=is_trading_window
+        )
         # In ly do ra stdout TRUOC khi gui — neu send_telegram nem exception
         # thi van con ban ghi o log (khuon heartbeat_check).
         _print_safe(msg)

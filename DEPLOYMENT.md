@@ -665,7 +665,10 @@ log — tiếng ồn che mất cái báo thật. Wrapper kiểm container postgr
 trên VPS hoặc `ai_auto_trading_system-postgres-1` trên máy dev) đang chạy hay không:
 
 - Không chạy ⇒ ghi **một dòng** `SKIP: docker chua chay` vào đúng file log đó
-  rồi thoát 0. Bỏ qua thì bỏ qua, nhưng **không bao giờ im lặng**.
+  rồi thoát 0. Bỏ qua thì bỏ qua, nhưng **không bao giờ im lặng**. Nhánh này gọi
+  `scripts/docker_down_alert.py`: trong giờ giao dịch (08:00–15:00) chống spam 30 phút/tin;
+  ngoài giờ giao dịch (24/7 kể cả cuối tuần/lễ, từ đợt 205) kêu khi Docker đã tắt liên tục
+  >= 2 giờ và lặp lại >= 6 giờ/tin (ghi mốc vào `logs/.docker_down_since`, xoá khi Docker sống lại).
 - Đang chạy ⇒ nạp `.env`, thay `localhost` → `127.0.0.1` trong `DB_DSN`, chạy
   lệnh, ghi `EXIT=<code>`.
 

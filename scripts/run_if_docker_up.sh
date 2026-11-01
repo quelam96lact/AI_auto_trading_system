@@ -128,6 +128,9 @@ if ! docker ps -q \
   exit 0
 fi
 
+# Docker da song lai -> xoa moc Docker tat de lan tat sau tinh lai tu dau (dot 205)
+rm -f "$REPO/logs/.docker_down_since"
+
 date "+%Y-%m-%d %H:%M:%S $LABEL start" >> "$LOG"
 
 "$@" >> "$LOG" 2>&1
