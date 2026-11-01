@@ -27,6 +27,33 @@ from trading.storage.db import Storage
 OUT = Path(__file__).parent / ".spike_all_symbols_classified.json"
 
 
+def _tolerate_unknown_board() -> None:
+    """Do 01/11/2026: SSI tra phan tu board='DERIVATIVES' trong danh sach HNX ma
+    enum Board cua ssi_sdk chi co HOSE/HNX/UPCOM -> SecuritiesInfo.from_list nem
+    ValueError va lam chet ca san. Board la thi ghi None (dong do khong co
+    listed_shares nen backfill_universe.load_symbols van loai)."""
+    from ssi_sdk.enums import Board
+    from ssi_sdk.models.market_data import SecuritiesInfo
+
+    valid = {b.value for b in Board}
+    orig = SecuritiesInfo.from_list.__func__
+
+    def from_list(cls, data):
+        return orig(
+            cls,
+            [
+                (
+                    d
+                    if str(d.get("board") or "").upper() in valid or not d.get("board")
+                    else {**d, "board": None}
+                )
+                for d in data
+            ],
+        )
+
+    SecuritiesInfo.from_list = classmethod(from_list)
+
+
 async def main() -> None:
     cfg = load_config("config/config.yaml")
     storage = Storage(cfg.db_dsn)
@@ -36,6 +63,7 @@ async def main() -> None:
     from ssi_sdk import AsyncData
     from ssi_sdk.enums import Board
 
+    _tolerate_unknown_board()
     data = AsyncData(auth)
 
     try:
@@ -64,25 +92,41 @@ async def main() -> None:
         for label, rows in all_rows.items():
             cw = [r for r in rows if r.get("cw_underlying_symbol")]
             idx = [r for r in rows if r.get("index") is not None]
-            idx_none = [r for r in rows if r.get("index") is None and not r.get("cw_underlying_symbol")]
+            idx_none = [
+                r
+                for r in rows
+                if r.get("index") is None and not r.get("cw_underlying_symbol")
+            ]
             has_shares = [r for r in idx_none if (r.get("listed_shares") or 0) > 0]
             no_shares = [r for r in idx_none if not (r.get("listed_shares") or 0) > 0]
             print(f"[{label}] tong={len(rows)}")
             print(f"  CW (cw_underlying_symbol != null): {len(cw)}")
-            print(f"  index != null: {len(idx)} | vi du: {[r['symbol'] for r in idx[:5]]}")
+            print(
+                f"  index != null: {len(idx)} | vi du: {[r['symbol'] for r in idx[:5]]}"
+            )
             print(f"  con lai (index=null, khong CW): {len(idx_none)}")
             print(f"    - co listed_shares > 0: {len(has_shares)}")
-            print(f"    - khong co shares (index None?): {len(no_shares)} | vi du: {[r['symbol'] for r in no_shares[:8]]}")
+            print(
+                f"    - khong co shares (index None?): {len(no_shares)} | vi du: {[r['symbol'] for r in no_shares[:8]]}"
+            )
             # index field cua index that co gia tri gi?
             if idx:
-                print(f"    gia tri index field cua {idx[0]['symbol']}: {idx[0]['index']!r}")
+                print(
+                    f"    gia tri index field cua {idx[0]['symbol']}: {idx[0]['index']!r}"
+                )
             # dieu tra cac ma no-shares co phai CW qua maturity_date / pattern
             if no_shares:
                 with_maturity = [r for r in no_shares if r.get("maturity_date")]
-                print(f"    no-shares co maturity_date != '': {len(with_maturity)} | vi du: {[r['symbol'] for r in with_maturity[:6]]}")
+                print(
+                    f"    no-shares co maturity_date != '': {len(with_maturity)} | vi du: {[r['symbol'] for r in with_maturity[:6]]}"
+                )
                 # in day du 1 phan tu la (vi du HNX: DSE125004)
                 probe = next(
-                    (r for r in no_shares if r["symbol"].startswith(("DSE", "F88", "HDB"))),
+                    (
+                        r
+                        for r in no_shares
+                        if r["symbol"].startswith(("DSE", "F88", "HDB"))
+                    ),
                     no_shares[0],
                 )
                 print(f"    FULL FIELD cua {probe['symbol']} (board {label}):")
@@ -94,7 +138,10 @@ async def main() -> None:
             "timestamp": datetime.now(TZ).isoformat(),
             "boards": all_rows,
         }
-        OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        OUT.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
         print(f"\nDa luu {OUT} (kem toan bo field)")
     finally:
         await auth.close()
