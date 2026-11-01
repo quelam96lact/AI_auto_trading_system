@@ -75,12 +75,24 @@ def test_deployment_md_contains_alert_outbox_documentation():
     assert "3.900 ký tự" in text or "3900" in text, "DEPLOYMENT.md thiếu giới hạn cắt ngắn tin!"
 
 
-def test_deployment_md_contains_catchup_cron_entries():
-    """Brief 200: DEPLOYMENT.md phải có cả 2 crontab entries của catchup và 20 cron job."""
-    text = DEPLOYMENT_MD.read_text(encoding="utf-8")
-    # Phải có dòng thực thi thật (không bị comment) trong khối crontab §9
-    assert "\n40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup\n" in text
-    assert "\n@reboot cd /opt/trading && scripts/sched.sh catchup\n" in text
-    assert "# 40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup" in text
-    assert "20 cron job" in text
+def test_deployment_md_data_jobs_moved_to_scheduler():
+    """Brief 200 -> đợt 201: các job NẠP DỮ LIỆU chạy trong service Docker `scheduler`.
+
+    Khối crontab §9 KHÔNG được còn dòng thực thi nào cho chúng (cài theo tài liệu
+    mà còn dòng sống thì cron host và scheduler cùng gọi SSI), nhưng vẫn giữ dòng
+    đã comment để người đọc biết job đi đâu.
+    """
+    text = DEPLOYMENT_MD.read_text(encoding="utf-8").replace("\r\n", "\n")
+    jobs = [
+        "30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill",
+        "45 20 * * 1-5 cd /opt/trading && scripts/sched.sh foreign-flow",
+        "0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check",
+        "15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m",
+        "40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup",
+        "@reboot cd /opt/trading && scripts/sched.sh catchup",
+    ]
+    for job in jobs:
+        assert f"\n{job}\n" not in text, f"Dòng cron còn sống: {job}"
+        assert f"# [dot 201: da chuyen vao service scheduler] {job}" in text
+    assert "Service `scheduler` trong Docker" in text
 

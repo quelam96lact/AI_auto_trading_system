@@ -116,6 +116,27 @@ services:
     cpus: 1.0
     volumes:
       - ./logs:/app/logs
+  scheduler:
+    build: .
+    command: python -m trading.scheduler.main
+    environment:
+      DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
+      NATS_URL: nats://nats:4222
+      SSI_CONSUMER_ID: ${SSI_CONSUMER_ID}
+      SSI_CONSUMER_SECRET: ${SSI_CONSUMER_SECRET}
+      SSI_API_KEY: ${SSI_API_KEY}
+      SSI_API_SECRET: ${SSI_API_SECRET}
+      SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    cpus: 0.5
+    volumes:
+      - ./logs:/app/logs
   grafana:
     image: grafana/grafana:11.2.0
     # 127.0.0.1: Grafana KHONG duoc mo thang ra internet. Dat sau nginx+TLS

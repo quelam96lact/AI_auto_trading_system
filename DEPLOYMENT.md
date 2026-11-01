@@ -549,21 +549,31 @@ CRON_TZ=Asia/Ho_Chi_Minh
 30 15 * * 1-5 cd /opt/trading && scripts/sched.sh orderbook-daily-check
 
 # 8. Backfill nến ngày lịch sử toàn vũ trụ mã ban đêm (20:30, T2–T6)
-30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
+# [dot 201: da chuyen vao service scheduler] 30 20 * * 1-5 cd /opt/trading && scripts/sched.sh backfill
 
 # 8b. Nạp dữ liệu giao dịch khối ngoại ban đêm (20:45, T2–T6 — đợt 190b)
-45 20 * * 1-5 cd /opt/trading && scripts/sched.sh foreign-flow
+# [dot 201: da chuyen vao service scheduler] 45 20 * * 1-5 cd /opt/trading && scripts/sched.sh foreign-flow
 
 # 9. Kiểm tra tính toàn vẹn dữ liệu ngày sau khi backfill xong (21:00, T2–T6 — KHÔNG chạy 15:30)
 # BẮT BUỘC 21:00: backfill đêm nạp nến lúc 20:30; kiểm trước giờ đó thì bảng nến ngày luôn rỗng!
-0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check
+# [dot 201: da chuyen vao service scheduler] 0 21 * * 1-5 cd /opt/trading && scripts/sched.sh daily-check
 
 # 9b. Nạp nến 5 phút cho các mã thanh khoản ban đêm (21:15, T2–T6 — đợt 198)
-15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
+# [dot 201: da chuyen vao service scheduler] 15 21 * * 1-5 cd /opt/trading && scripts/sched.sh backfill-5m
 
 # 9c. Tự kiểm + nạp bù: 06:40 T2–T6 và khi khởi động máy (@reboot) — đợt 200. Chờ postgres tối đa 15 phút.
-40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup
-@reboot cd /opt/trading && scripts/sched.sh catchup
+# [dot 201: da chuyen vao service scheduler] 40 6 * * 1-5 cd /opt/trading && scripts/sched.sh catchup
+# [dot 201: da chuyen vao service scheduler] @reboot cd /opt/trading && scripts/sched.sh catchup
+
+# [Từ đợt 201] Service `scheduler` trong Docker (`docker compose up -d`) thay cho
+# các dòng nạp dữ liệu ở trên (8, 9, 9b, 9c và foreign-flow): khi container khởi động
+# nó chạy `scripts.startup_catchup` ngay (1d + 5m + khối ngoại, vá tối đa 90 ngày),
+# rồi 06:40 mỗi ngày giao dịch (catchup) và 21:45 mỗi ngày giao dịch (catchup rồi
+# daily_data_check). Log ghi vào logs/catchup.log và logs/daily-data-check.log cùng
+# định dạng run_if_docker_up.sh nên heartbeat vẫn canh mã thoát. Có scheduler thì
+# KHÔNG cài các dòng cron 8/9/9b/9c — chạy hai nơi sẽ gọi SSI trùng.
+# Các job giám sát và sao lưu (heartbeat, deploy-drift, container-health, backup...)
+# vẫn chạy trên host, vì chúng phải sống được cả khi Docker chết.
 
 # 10. Sao lưu cơ sở dữ liệu TimescaleDB ban đêm (02:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
@@ -604,10 +614,13 @@ CRON_TZ=Asia/Ho_Chi_Minh
 
 ### Windows (máy dev / máy chạy thật nếu dùng Windows)
 
-Máy Windows dùng Task Scheduler, không phải cron. Mười chín task tương ứng với các dòng
-cron ở trên (tên task `trading-*`):
+Máy Windows dùng Task Scheduler, không phải cron. Các task dưới đây tương ứng với các dòng
+cron ở trên (tên task `trading-*`). Từ 01/11/2026 (đợt 201) năm job NẠP DỮ LIỆU
+(gạch ngang trong bảng) chuyển vào service Docker `scheduler`; task Windows của chúng
+để Disabled, không xoá — bật lại bằng `Enable-ScheduledTask` nếu cần chạy tay. Máy dev
+thực tế có 18 task (thiếu `trading-foreign-flow`, đo 01/11).
 
-Cả mười chín gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
+Mọi task gọi **cùng một bảng job** với cron Ubuntu — `scripts/sched.sh` — nên
 không bên nào chép lại chuỗi lệnh (bài học `4ea4c8d`: một công thức hai bản thì
 sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa sổ:
 
@@ -621,11 +634,11 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-stream-health` | 15:10 T2–T6 | cùng vbs, tham số `stream-health` |
 | `trading-engine-cam` | 15:15 T2–T6 | cùng vbs, tham số `engine-cam` |
 | `trading-orderbook-daily-check` | 15:30 T2–T6 | cùng vbs, tham số `orderbook-daily-check` |
-| `trading-backfill-universe` | 20:30 T2–T6 | cùng vbs, tham số `backfill` |
-| `trading-foreign-flow` | 20:45 T2–T6 | cùng vbs, tham số `foreign-flow` |
-| `trading-daily-data-check` | **21:00 T2–T6** (sau backfill) | cùng vbs, tham số `daily-check` |
-| `trading-backfill-5m` | 21:15 T2–T6 | cùng vbs, tham số `backfill-5m` |
-| `trading-catchup` | khi đăng nhập Windows + 06:40 T2–T6 | cùng vbs, tham số `catchup` |
+| ~~`trading-backfill-universe`~~ | **Disabled 01/11/2026** — thay bằng service `scheduler` (đợt 201) | cùng vbs, tham số `backfill` |
+| ~~`trading-foreign-flow`~~ | chưa từng được tạo trên máy dev; nay `scheduler` nạp khối ngoại | cùng vbs, tham số `foreign-flow` |
+| ~~`trading-daily-data-check`~~ | **Disabled 01/11/2026** — `scheduler` chạy 21:45 sau catchup | cùng vbs, tham số `daily-check` |
+| ~~`trading-backfill-5m`~~ | **Disabled 01/11/2026** — thay bằng `scheduler` | cùng vbs, tham số `backfill-5m` |
+| ~~`trading-catchup`~~ | **Disabled 01/11/2026** — `scheduler` chạy khi container khởi động + 06:40 + 21:45 | cùng vbs, tham số `catchup` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
@@ -1115,7 +1128,7 @@ docker compose up -d --build
 
 # Kiểm tra trạng thái các container:
 docker compose ps
-
+# Cài đặt các cron job giám sát vào crontab theo §9 (từ đợt 201: 6 dòng nạp dữ liệu đã chuyển vào service scheduler, KHÔNG cài):
 # Cài đặt 20 cron job vào crontab theo hướng dẫn tại §9:
 sudo crontab -e
 ```

@@ -18,6 +18,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Gio moi den code. Layer tren van hit cache khi chi co code doi.
 COPY trading ./trading
 COPY config ./config
+COPY scripts ./scripts
 RUN uv sync --frozen --no-dev
 
 # ---- Stage runtime: khong co uv, khong co pip metadata cua uv. ----
@@ -36,6 +37,7 @@ RUN chown appuser:appuser /app
 COPY --from=builder --chown=appuser:appuser /app/.venv ./.venv
 COPY --from=builder --chown=appuser:appuser /app/trading ./trading
 COPY --from=builder --chown=appuser:appuser /app/config ./config
+COPY --from=builder --chown=appuser:appuser /app/scripts ./scripts
 
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
