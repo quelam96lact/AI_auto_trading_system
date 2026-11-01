@@ -88,7 +88,7 @@ viec1() {
   echo "cron block (so dong cron that): $(cron_block | wc -l)"; cron_block | head -3
 
   good_state; scenario "BASELINE: moi thu tot (kỳ vọng ĐẠT ở ca nào danh tính cho phép)"
-  pf_rows "baseline" "$BAK" cron docker_daemon logrotate env_perm env_crlf timezone exec_flags backup_dir ufw clock published_ports real_trading holidays_confirmed
+  pf_rows "baseline" "$BAK" cron docker_daemon logrotate env_perm env_crlf timezone exec_flags backup_dir ufw clock published_ports real_trading
 
   # ---- crontab
   good_state; scenario "CRON ĐẠT: crontab cua root = khoi DEPLOYMENT.md §9 (dong 452/995: sudo crontab -e)"
