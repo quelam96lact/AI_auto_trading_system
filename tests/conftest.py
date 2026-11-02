@@ -126,7 +126,9 @@ def _real_state_file_name(path) -> str | None:
         folder, name = os.path.split(real)
         if os.path.normcase(folder) != os.path.normcase(_REPO_LOGS):
             return None
-        if name.startswith(".") and ("state" in name or "last" in name):
+        if (name.startswith(".") and ("state" in name or "last" in name)) or (
+            name.startswith("alert_outbox_")
+        ):
             return name
     except Exception:  # hook KHONG duoc nem: nem o day se pha open() cua nguoi khac
         pass

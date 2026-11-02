@@ -16,6 +16,7 @@ CLI:
 
 import argparse
 import sys
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -89,6 +90,59 @@ def check_backfill_completed(log_path: Path | str, target_date: date) -> bool:
     for block in reversed(blocks[1:]):
         if target_str in block:
             return bool("DONE:" in block and "EXIT=0" in block)
+
+    return False
+
+
+def check_catchup_completed(log_path: Path | str, target_date: date) -> bool:
+    """Kiểm tra xem tác vụ startup_catchup đã hoàn thành nạp bù cho target_date chưa (đợt 209c).
+
+    Tách file log theo dòng 'catchup start'. Một khối đạt khi:
+    - Có dòng '[catchup] ngay cuoi = D' với D >= target_date
+    - Có dòng 'EXIT=' (đã chạy xong)
+    - KHÔNG có dòng bắt đầu bằng '[catchup] LOI 1d'
+    """
+    p = Path(log_path)
+    if not p.is_file():
+        return False
+
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+
+    blocks = content.split("catchup start")
+    if len(blocks) <= 1:
+        return False
+
+    for block in reversed(blocks[1:]):
+        lines = [line.strip() for line in block.splitlines()]
+
+        # 1. Có dòng 'EXIT='
+        has_exit = any("EXIT=" in line for line in lines)
+        if not has_exit:
+            continue
+
+        # 2. KHÔNG có dòng bắt đầu bằng CATCHUP_ERROR_1D_PREFIX
+        has_error_1d = any(line.startswith(CATCHUP_ERROR_1D_PREFIX) for line in lines)
+        if has_error_1d:
+            continue
+
+        # 3. Có dòng CATCHUP_END_DATE_PREFIX với D >= target_date
+        has_valid_end = False
+        for line in lines:
+            if line.startswith(CATCHUP_END_DATE_PREFIX):
+                raw_d = line[len(CATCHUP_END_DATE_PREFIX) :].strip()
+                try:
+                    d_parsed = datetime.strptime(raw_d, "%Y-%m-%d").date()
+                    if d_parsed >= target_date:
+                        has_valid_end = True
+                        break
+                except ValueError:
+                    pass
+
+        if has_valid_end:
+            return True
 
     return False
 
@@ -235,11 +289,46 @@ def evaluate_daily_completeness(
     return 1, missing, msg
 
 
+NON_TRADING_DAY_PATTERN = "không có giao dịch theo SSI"
+# Dong startup_catchup in ra khi xac nhan ngay khong giao dich; heartbeat doc lai.
+# O day (khong o startup_catchup) de heartbeat khong phai nap SSI client.
+NON_TRADING_DAYS_PREFIX = "[kiem] ngay khong giao dich theo SSI (bo qua):"
+NON_TRADING_DAY_MSG = (
+    "Ngày {target_date} không có giao dịch theo SSI (không có trong danh sách ngày nghỉ)"
+)
+# Mẫu chuỗi log của startup_catchup (đợt 209c) để daily_data_check đọc trạng thái hoàn tất
+CATCHUP_END_DATE_PREFIX = "[catchup] ngay cuoi ="
+CATCHUP_ERROR_1D_PREFIX = "[catchup] LOI 1d"
+
+
+def _default_retry_fn(symbols: list[str], target_date: date) -> int | None:
+    if not symbols:
+        return 1
+    from scripts import backfill_universe
+
+    return backfill_universe.main(
+        [
+            "--timeframe",
+            "1d",
+            "--from",
+            target_date.isoformat(),
+            "--to",
+            target_date.isoformat(),
+            "--symbols",
+            ",".join(symbols),
+            "--force",
+            "--sleep-ms",
+            "200",
+        ]
+    )
+
+
 def assess_date(
     storage: Storage,
     cfg: Config,
     target_date: date,
     backfill_log: Path,
+    retry_fn: Callable[[list[str], date], int | None] | None = None,
 ) -> tuple[int, set[str], str]:
     """Đánh giá độ đủ nến NGÀY của MỘT ngày — tách ra để heartbeat dùng lại (đợt 160).
 
@@ -276,11 +365,16 @@ def assess_date(
     excluded = friday_only_symbols(bar_dates_by_symbol, target_date, holidays)
 
     trading_day = is_trading_day(target_date, holidays)
-    backfill_done = check_backfill_completed(backfill_log, target_date)
+    catchup_log = backfill_log.parent / "catchup.log"
+    backfill_done = check_backfill_completed(
+        backfill_log, target_date
+    ) or check_catchup_completed(catchup_log, target_date)
     prev_date = previous_trading_day(target_date, holidays)
-    prev_backfill_done = check_backfill_completed(backfill_log, prev_date)
+    prev_backfill_done = check_backfill_completed(
+        backfill_log, prev_date
+    ) or check_catchup_completed(catchup_log, prev_date)
 
-    return evaluate_daily_completeness(
+    code, missing, msg = evaluate_daily_completeness(
         active_symbols,
         present_symbols,
         is_trading_day=trading_day,
@@ -288,6 +382,52 @@ def assess_date(
         excluded_symbols=excluded,
         prev_backfill_done=prev_backfill_done,
     )
+
+    if (
+        code == 2
+        and not present_symbols
+        and trading_day
+        and backfill_done
+        and cfg.symbols
+        and retry_fn is not None
+    ):
+        retry_err = False
+        try:
+            ret = retry_fn(cfg.symbols, target_date)
+            if ret is not None and ret != 0:
+                retry_err = True
+        except Exception:
+            retry_err = True
+
+        if not retry_err:
+            for s in cfg.symbols:
+                prog = storage.get_backfill_progress(s, "1d")
+                status = prog.get("status") if isinstance(prog, dict) else None
+                if status != "ok":
+                    retry_err = True
+                    break
+
+        if retry_err:
+            return code, missing, msg
+
+        present_symbols = storage.read_symbols_with_bar_on_date(target_date)
+        if not present_symbols:
+            return (
+                0,
+                set(),
+                NON_TRADING_DAY_MSG.format(target_date=target_date),
+            )
+
+        return evaluate_daily_completeness(
+            active_symbols,
+            present_symbols,
+            is_trading_day=trading_day,
+            backfill_done=backfill_done,
+            excluded_symbols=excluded,
+            prev_backfill_done=prev_backfill_done,
+        )
+
+    return code, missing, msg
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -316,7 +456,11 @@ def main(argv: list[str] | None = None) -> None:
         # không đổi: trước đây lỗi đọc config cũng thoát ra "LỖI TRUY VẤN DB" + exit 2.
         cfg = load_config("config/config.yaml")
         code, _missing, msg = assess_date(
-            storage, cfg, target_date, Path("logs/backfill.log")
+            storage,
+            cfg,
+            target_date,
+            Path("logs/backfill.log"),
+            retry_fn=_default_retry_fn,
         )
     except Exception as e:
         _print_safe(f"LỖI TRUY VẤN DB: {e}")

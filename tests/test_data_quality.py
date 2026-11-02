@@ -305,7 +305,7 @@ def test_daily_data_check_no_active_symbols():
     assert missing == set()
 
 
-def test_daily_data_check_union_includes_must_price(monkeypatch):
+def test_daily_data_check_union_includes_must_price(monkeypatch, tmp_path):
     """Brief 2026-09-01 (dot 2): daily_data_check kiem tren HOP active +
     must_price (cfg.symbols + ma dang nam giu). Ma nang giu CAP thieu bar ->
     phai bao THIEU (truoc khi sua thi khong — chi soi active)."""
@@ -340,7 +340,10 @@ def test_daily_data_check_union_includes_must_price(monkeypatch):
     monkeypatch.setattr(
         ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x"
     )
-    monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "2026-09-01"])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["daily_data_check.py", "--date", "2026-09-01", "--logs-dir", str(tmp_path)],
+    )
 
     with pytest.raises(SystemExit) as exc:
         ddc.main()
@@ -349,10 +352,13 @@ def test_daily_data_check_union_includes_must_price(monkeypatch):
     assert "CAP" in sent[0], f"tin nhan phai nhac CAP, thuc te: {sent[0]}"
 
 
-def test_daily_data_check_main_config_error(monkeypatch):
+def test_daily_data_check_main_config_error(monkeypatch, tmp_path):
     from scripts.daily_data_check import main
 
-    monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "invalid-date"])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["daily_data_check.py", "--date", "invalid-date", "--logs-dir", str(tmp_path)],
+    )
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
@@ -534,7 +540,9 @@ def test_get_status_str_cause_tags():
     )
 
 
-def test_daily_data_check_khong_noi_doi_khi_gui_telegram_that_bai(monkeypatch, capsys):
+def test_daily_data_check_khong_noi_doi_khi_gui_telegram_that_bai(
+    monkeypatch, capsys, tmp_path
+):
     """Brief 56: doan gui Telegram truoc day in "Da gui" VO DIEU KIEN.
 
     Tuc la khi thieu bien moi truong hoac mang hong, script van khang dinh da gui -
@@ -564,7 +572,10 @@ def test_daily_data_check_khong_noi_doi_khi_gui_telegram_that_bai(monkeypatch, c
     monkeypatch.setattr(ddc, "load_config", lambda path: FakeCfg())
     monkeypatch.setattr(ddc, "Storage", lambda dsn: FakeStorage())
     monkeypatch.setattr(ddc, "resolve_dsn", lambda dsn: "postgresql://x:x@127.0.0.1:1/x")
-    monkeypatch.setattr("sys.argv", ["daily_data_check.py", "--date", "2026-09-01"])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["daily_data_check.py", "--date", "2026-09-01", "--logs-dir", str(tmp_path)],
+    )
 
     # (a) gui THAT BAI -> khong duoc khang dinh da gui
     monkeypatch.setattr(ddc, "send_telegram", lambda msg: False)

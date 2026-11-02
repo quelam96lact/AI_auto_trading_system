@@ -16,6 +16,7 @@ Khuôn theo `tests/test_heartbeat_check.py`: DB giả, mọi file trạng thái 
 import json
 from datetime import date, datetime, timedelta
 
+from scripts.daily_data_check import NON_TRADING_DAY_MSG, NON_TRADING_DAYS_PREFIX
 from trading.calendar_vn import TZ
 
 # Thứ Hai 05/10/2026 09:00 (trong phiên sáng) — ngày giao dịch liền trước là thứ Sáu 02/10.
@@ -279,3 +280,79 @@ def test_ngoai_gio_giao_dich_thi_khong_goi_assess_date(monkeypatch, tmp_path):
     )
     assert calls == [], f"ngoài giờ giao dịch không được kiểm, thực tế {calls}"
     assert rc == 0
+
+
+# ============ Ca 8: Xác nhận ngày nghỉ qua log scheduler (Brief dot 209b) ============
+
+
+def test_code_2_co_xac_nhan_daily_data_check_khong_bao(monkeypatch, tmp_path):
+    """(q) code 2 + log daily-data-check có xác nhận P -> không báo."""
+    ddc_log = tmp_path / "daily-data-check.log"
+    msg = NON_TRADING_DAY_MSG.format(target_date=FRIDAY)
+    ddc_log.write_text(f"[{FRIDAY}] {msg}\n", encoding="utf-8")
+
+    rc, sent, calls = _run_heartbeat(
+        monkeypatch,
+        tmp_path,
+        assess_result=(2, set(), "🚨 [AI Trading] SỰ CỐ DỮ LIỆU: 0/174 mã có bar."),
+    )
+    assert calls == [FRIDAY]
+    assert rc == 0
+    assert sent == [], f"Đã có xác nhận trong daily-data-check.log thì không báo: {sent}"
+
+
+def test_code_2_co_xac_nhan_catchup_log_khong_bao(monkeypatch, tmp_path):
+    """(r) code 2 + catchup.log có P -> không báo."""
+    catchup_log = tmp_path / "catchup.log"
+    catchup_log.write_text(
+        f"{NON_TRADING_DAYS_PREFIX} ['{FRIDAY.isoformat()}']\n",
+        encoding="utf-8",
+    )
+
+    rc, sent, calls = _run_heartbeat(
+        monkeypatch,
+        tmp_path,
+        assess_result=(2, set(), "🚨 [AI Trading] SỰ CỐ DỮ LIỆU: 0/174 mã có bar."),
+    )
+    assert calls == [FRIDAY]
+    assert rc == 0
+    assert sent == [], f"Đã có xác nhận trong catchup.log thì không báo: {sent}"
+
+
+def test_code_2_log_xac_nhan_ngay_khac_van_bao_critical(monkeypatch, tmp_path):
+    """(s) code 2 + log xác nhận NGÀY KHÁC -> vẫn báo CRITICAL."""
+    other_date = date(2026, 10, 1)  # Khác FRIDAY (2026-10-02)
+    ddc_log = tmp_path / "daily-data-check.log"
+    msg = NON_TRADING_DAY_MSG.format(target_date=other_date)
+    ddc_log.write_text(f"[{other_date}] {msg}\n", encoding="utf-8")
+
+    catchup_log = tmp_path / "catchup.log"
+    catchup_log.write_text(
+        f"{NON_TRADING_DAYS_PREFIX} ['{other_date.isoformat()}']\n",
+        encoding="utf-8",
+    )
+
+    rc, sent, calls = _run_heartbeat(
+        monkeypatch,
+        tmp_path,
+        assess_result=(2, set(), "🚨 [AI Trading] SỰ CỐ DỮ LIỆU: 0/174 mã có bar."),
+    )
+    assert calls == [FRIDAY]
+    assert rc == 1
+    assert len(sent) == 1
+    assert "[CRITICAL]" in sent[0], sent[0]
+    assert "2026-10-02" in sent[0], sent[0]
+
+
+def test_code_2_khong_co_log_van_bao_critical(monkeypatch, tmp_path):
+    """(t) code 2 + không có log -> vẫn báo CRITICAL."""
+    rc, sent, calls = _run_heartbeat(
+        monkeypatch,
+        tmp_path,
+        assess_result=(2, set(), "🚨 [AI Trading] SỰ CỐ DỮ LIỆU: 0/174 mã có bar."),
+    )
+    assert calls == [FRIDAY]
+    assert rc == 1
+    assert len(sent) == 1
+    assert "[CRITICAL]" in sent[0], sent[0]
+    assert "2026-10-02" in sent[0], sent[0]

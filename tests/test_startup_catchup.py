@@ -23,6 +23,7 @@ from scripts.startup_catchup import (
     main,
     plan_foreign_flow_start,
     plan_universe_start,
+    weekday_candidates,
 )
 from trading.calendar_vn import TZ
 
@@ -369,6 +370,12 @@ def setup_base_env(
 
     def fake_bu_main(argv):
         bu_calls.append(list(argv))
+        if "--symbols" in argv:
+            syms_idx = argv.index("--symbols")
+            if syms_idx + 1 < len(argv):
+                for s in argv[syms_idx + 1].split(","):
+                    if (s, "1d") not in storage.progress:
+                        storage.progress[(s, "1d")] = {"status": "ok"}
         return 0
 
     def fake_bff_main(argv):
@@ -640,7 +647,10 @@ def test_main_foreign_flow_non_zero_exit_alone_fails(monkeypatch, capsys):
         m5_counts=clean,
     )
     setup_base_env(
-        monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ)
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
     )
 
     def bff_fill_then_fail(argv):
@@ -674,7 +684,10 @@ def test_main_short_day_only_in_foreign_flow_returns_1(monkeypatch):
         m5_counts=clean,
     )
     setup_base_env(
-        monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ)
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
     )
 
     assert main([]) == 1
@@ -699,7 +712,10 @@ def test_main_week_long_outage_flagged_against_30_day_baseline(monkeypatch, caps
         m5_counts=clean,
     )
     setup_base_env(
-        monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ)
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
     )
 
     rc = main([])
@@ -759,7 +775,10 @@ def test_main_missing_days_in_check_returns_1(monkeypatch):
         m5_counts=make_clean_counts(end),
     )
     setup_base_env(
-        monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ)
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
     )
 
     rc = main([])
@@ -785,7 +804,10 @@ def test_main_clamped_plan_prints_warning_and_returns_1(monkeypatch, capsys):
         m5_counts=clean,
     )
     setup_base_env(
-        monkeypatch, storage=storage, now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ)
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
     )
 
     rc = main(["--max-days", "90"])
@@ -955,3 +977,486 @@ def test_main_db_retry_success_and_failure(monkeypatch, capsys):
     assert rc_fail == 1
     assert "[catchup] DB chua san sang sau 300s" in out
     assert len(env_fail["sleeps"]) == 29
+
+
+# ============================================================================
+# Brief 209: Test nạp bù không phụ thuộc danh sách ngày nghỉ (d) - (l)
+# ============================================================================
+
+
+def test_weekday_candidates():
+    """Hàm thuần weekday_candidates trả về các ngày T2-T6 trừ holidays."""
+    frm = date(2026, 11, 2)  # Thu Hai
+    to = date(2026, 11, 8)  # Chu Nhat (7 ngay: T2-CN)
+    holidays = {date(2026, 11, 4)}  # Thu Tu nghi le
+    res = weekday_candidates(frm, to, holidays)
+    # T2 (2), T3 (3), T5 (5), T6 (6)
+    assert res == [
+        date(2026, 11, 2),
+        date(2026, 11, 3),
+        date(2026, 11, 5),
+        date(2026, 11, 6),
+    ]
+
+
+def test_zero_bar_day_confirmed_non_trading_by_ssi(monkeypatch, capsys):
+    """(d) Một ngày thường không có trong holidays, 0 nến, và lần hỏi lại vẫn 0.
+    Kết quả: không có trong thieu, có dòng 'ngay khong giao dich theo SSI', rc 0,
+    và lần hỏi lại được gọi đúng tham số --symbols HPG,IJC,AAA --force --from d --to d."""
+    end = date(2026, 10, 26)  # Thu Hai
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    holiday_candidate = date(2026, 10, 22)  # Thu Nam
+    daily[holiday_candidate] = 0  # 0 nến
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert (
+        "[kiem] ngay khong giao dich theo SSI (bo qua): ['2026-10-22']" in out
+    )
+    # Kiểm tra lệnh hỏi lại
+    verify_call = [
+        c
+        for c in env["bu_calls"]
+        if "--symbols" in c and "HPG,IJC,AAA" in c
+    ]
+    assert len(verify_call) == 1
+    call = verify_call[0]
+    assert call == [
+        "--timeframe",
+        "1d",
+        "--from",
+        "2026-10-22",
+        "--to",
+        "2026-10-22",
+        "--symbols",
+        "HPG,IJC,AAA",
+        "--force",
+        "--sleep-ms",
+        "200",
+    ]
+
+
+def test_zero_bar_day_has_bars_on_retry_is_trading_day(monkeypatch, capsys):
+    """(e) Lần hỏi lại có nến (SSI mới chốt dữ liệu).
+    Kết quả: ngày đó là ngày giao dịch, được kiểm như thường."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    target_d = date(2026, 10, 22)
+    daily[target_d] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    orig_bu_main = env["bu_calls"]
+
+    def fake_bu_with_fill(argv):
+        orig_bu_main.append(list(argv))
+        if "--symbols" in argv:
+            # Mô phỏng SSI chốt nến -> có dữ liệu nến ngày
+            storage.daily_counts[target_d] = clean[target_d]
+            syms_idx = argv.index("--symbols")
+            if syms_idx + 1 < len(argv):
+                for s in argv[syms_idx + 1].split(","):
+                    if (s, "1d") not in storage.progress:
+                        storage.progress[(s, "1d")] = {"status": "ok"}
+        return 0
+
+    monkeypatch.setattr(
+        "scripts.startup_catchup.backfill_universe.main", fake_bu_with_fill
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ngay khong giao dich theo SSI" not in out
+    assert "[kiem] 1d: 11 ngay, thieu: []" in out
+
+
+def test_zero_bar_day_retry_fails_remains_short_returns_1(monkeypatch, capsys):
+    """(f) Lần hỏi lại ném lỗi. Kết quả: ngày đó trong thieu, rc 1."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    target_d = date(2026, 10, 22)
+    daily[target_d] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    setup_base_env(
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    def fake_bu_raise(argv):
+        if "--symbols" in argv:
+            raise RuntimeError("SSI error during zero bar check")
+        return 0
+
+    monkeypatch.setattr(
+        "scripts.startup_catchup.backfill_universe.main", fake_bu_raise
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "2026-10-22" in out
+    assert "[catchup] LOI kiem tra ngay 0 nen:" in out
+
+
+def test_zero_bar_day_dry_run_skips_retry(monkeypatch, capsys):
+    """(g) Dry-run: không gọi backfill_universe.main để hỏi lại."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    daily[date(2026, 10, 22)] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main(["--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert (
+        "[kiem] ngay 0 nen chua xac minh (dry-run): ['2026-10-22']" in out
+    )
+    assert not any("--symbols" in c for c in env["bu_calls"])
+
+
+def test_no_zero_bar_days_does_not_call_retry(monkeypatch):
+    """(h) Không có ngày 0 nến: không gọi hỏi lại."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=clean,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    assert rc == 0
+    assert not any("--symbols" in c for c in env["bu_calls"])
+
+
+def test_partial_short_day_rebackfill_succeeds_returns_0(monkeypatch, capsys):
+    """(i) Thiếu một phần, nạp lại xong thì đủ. Kết quả: rc 0, lần nạp lại có --force."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    target_d = date(2026, 10, 22)
+    daily[target_d] = 10  # Thiếu một phần (< 80% median)
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    orig_bu_calls = env["bu_calls"]
+
+    def fake_bu_rebackfill(argv):
+        orig_bu_calls.append(list(argv))
+        if "--force" in argv and "--use-universe" in argv:
+            # Nạp lại bổ sung nến thành công
+            storage.daily_counts[target_d] = clean[target_d]
+        return 0
+
+    monkeypatch.setattr(
+        "scripts.startup_catchup.backfill_universe.main", fake_bu_rebackfill
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert (
+        "[nap lai] 1d: 2026-10-22 -> 2026-10-22 | 5m: khong | foreign-flow: khong"
+        in out
+    )
+    rebackfill_calls = [
+        c for c in orig_bu_calls if "--force" in c and "--use-universe" in c
+    ]
+    assert len(rebackfill_calls) == 1
+    assert "--force" in rebackfill_calls[0]
+
+
+def test_partial_short_day_rebackfill_still_short_returns_1(monkeypatch, capsys):
+    """(j) Nạp lại xong vẫn thiếu. Kết quả: rc 1, ngày đó trong thieu."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    target_d = date(2026, 10, 22)
+    daily[target_d] = 10
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    setup_base_env(
+        monkeypatch,
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "2026-10-22" in out
+    assert "[nap lai] 1d: 2026-10-22 -> 2026-10-22" in out
+
+
+def test_no_short_days_does_not_call_rebackfill(monkeypatch, capsys):
+    """(k) Không thiếu: không gọi nạp lại."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=clean,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[nap lai]" not in out
+    assert not any("--force" in c for c in env["bu_calls"])
+
+
+def test_partial_short_day_dry_run_does_not_rebackfill(monkeypatch, capsys):
+    """(l) Dry-run: không nạp lại."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    daily[date(2026, 10, 22)] = 10
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main(["--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "[nap lai]" not in out
+    assert not any("--force" in c for c in env["bu_calls"])
+
+
+def test_zero_bar_retry_returns_none_but_progress_has_error(monkeypatch, capsys):
+    """(aa) Hỏi lại trả None nhưng progress có status error:
+    - Không ngày nào bị xếp ngày nghỉ
+    - Ngày 0 nến nằm trong thiếu
+    - rc = 1
+    """
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    candidate = date(2026, 10, 22)
+    daily[candidate] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA", "HPG", "IJC"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+            ("HPG", "1d"): {"status": "ok", "attempted_until": end},
+            ("IJC", "1d"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    def fake_bu_error(argv):
+        env["bu_calls"].append(list(argv))
+        if "--symbols" in argv:
+            # Mô phỏng backfill nuốt lỗi và trả None nhưng ghi progress error
+            storage.progress[("HPG", "1d")] = {
+                "status": "error",
+                "error": "Authentication failed",
+            }
+
+    monkeypatch.setattr(
+        "scripts.startup_catchup.backfill_universe.main", fake_bu_error
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "[catchup] LOI kiem tra ngay 0 nen: HPG status=error" in out
+    assert "ngay khong giao dich theo SSI" not in out
+    assert "[kiem] 1d:" in out
+    assert "2026-10-22" in out
+
+
+def test_zero_bar_retry_all_symbols_ok_and_zero_bars_classified_holiday(
+    monkeypatch, capsys
+):
+    """(bb) Mọi mã status=ok và vẫn 0 nến -> xếp ngày nghỉ, rc 0."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    candidate = date(2026, 10, 22)
+    daily[candidate] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["AAA", "HPG", "IJC"],
+        progress={
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+            ("HPG", "1d"): {"status": "ok", "attempted_until": end},
+            ("IJC", "1d"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=["HPG", "IJC", "AAA"]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    def fake_bu_ok(argv):
+        env["bu_calls"].append(list(argv))
+        if "--symbols" in argv:
+            for s in ["HPG", "IJC", "AAA"]:
+                storage.progress[(s, "1d")] = {
+                    "status": "ok",
+                    "attempted_until": end,
+                }
+
+    monkeypatch.setattr(
+        "scripts.startup_catchup.backfill_universe.main", fake_bu_ok
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[kiem] ngay khong giao dich theo SSI (bo qua): ['2026-10-22']" in out
+    assert "[kiem] 1d: 10 ngay, thieu: []" in out

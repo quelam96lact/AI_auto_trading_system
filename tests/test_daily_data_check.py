@@ -13,7 +13,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 from scripts.daily_data_check import (
+    assess_date,
     check_backfill_completed,
+    check_catchup_completed,
     evaluate_daily_completeness,
     friday_only_symbols,
 )
@@ -400,5 +402,318 @@ def test_task3_hom_nay_xong_kiem_binh_thuong():
     assert code == 0
     assert missing == set()
     assert "Đầy đủ" in msg
+
+
+# ============================================================================
+# Brief 209: Test assess_date hỏi lại SSI khi ngày thường 0 có nến (m) - (p)
+# ============================================================================
+
+
+class FakeDailyStorage:
+
+    def __init__(self, active=None, present=None, progress=None):
+        self._active = active or ["HPG", "AAA"]
+        self._present = set(present or [])
+        self._progress = progress or {}
+
+    def read_active_universe(self):
+        return list(self._active)
+
+    def read_must_price_symbols(self, *args, **kwargs):
+        return []
+
+    def read_symbols_with_bar_on_date(self, d):
+        return set(self._present)
+
+    def read_daily_bar_dates(self, *args, **kwargs):
+        return {}
+
+    def get_backfill_progress(self, symbol, timeframe):
+        return self._progress.get((symbol, timeframe), {"status": "ok"})
+
+
+class FakeDailyConfig:
+
+    def __init__(self, holidays=None):
+        self.symbols = ["HPG", "AAA"]
+        self.ssi_equity_accounts = []
+        self.holidays = frozenset(holidays or [])
+
+
+def test_assess_date_retry_remains_empty_returns_0_holiday_message(tmp_path: Path):
+    """(m) Hỏi lại vẫn rỗng: mã 0, thông điệp đúng ngày không có giao dịch."""
+    target_date = date(2026, 11, 2)  # Thứ Hai
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig()
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    retry_called = []
+
+    def fake_retry(symbols, d):
+        retry_called.append((symbols, d))
+        return 0
+
+    code, missing, msg = assess_date(
+        storage, cfg, target_date, log_file, retry_fn=fake_retry
+    )
+
+    assert code == 0
+    assert missing == set()
+    assert (
+        msg
+        == f"Ngày {target_date} không có giao dịch theo SSI (không có trong danh sách ngày nghỉ)"
+    )
+    assert len(retry_called) == 1
+    assert retry_called[0] == (["HPG", "AAA"], target_date)
+
+
+def test_assess_date_retry_has_bars_re_evaluates_normally(tmp_path: Path):
+    """(n) Lần hỏi lại có nến: đánh giá lại như thường."""
+    target_date = date(2026, 11, 2)
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig()
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    def fake_retry_with_bars(symbols, d):
+        storage._present = {"HPG", "AAA"}
+        return 0
+
+    code, missing, msg = assess_date(
+        storage, cfg, target_date, log_file, retry_fn=fake_retry_with_bars
+    )
+
+    assert code == 0
+    assert missing == set()
+    assert "Đầy đủ: toàn bộ 2 mã active đều đã có bar daily" in msg
+
+
+def test_assess_date_retry_error_keeps_code_2(tmp_path: Path):
+    """(o) Lần hỏi lại lỗi: giữ mã 2."""
+    target_date = date(2026, 11, 2)
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig()
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    def fake_retry_fails(symbols, d):
+        raise RuntimeError("API timeout")
+
+    code, _missing, msg = assess_date(
+        storage, cfg, target_date, log_file, retry_fn=fake_retry_fails
+    )
+
+    assert code == 2
+    assert "SỰ CỐ DỮ LIỆU" in msg
+
+
+def test_assess_date_holiday_does_not_retry_keeps_old_behavior(tmp_path: Path):
+    """(p) Ngày có trong holidays: không hỏi lại, hành vi như cũ."""
+    target_date = date(2026, 11, 2)
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig(holidays=[target_date])
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    retry_called = []
+
+    def fake_retry(symbols, d):
+        retry_called.append((symbols, d))
+        return 0
+
+    code, _missing, msg = assess_date(
+        storage, cfg, target_date, log_file, retry_fn=fake_retry
+    )
+
+    assert code == 0
+    assert "Không có mã nào có bar trong ngày" in msg
+    assert len(retry_called) == 0  # Không được hỏi lại!
+
+
+def test_assess_date_default_retry_fn_none_does_not_call_backfill(
+    monkeypatch, tmp_path: Path
+):
+    """(1 - đợt 209b) assess_date không truyền retry_fn (mặc định None) thì không gọi SSI/backfill_universe."""
+    target_date = date(2026, 11, 2)
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig()
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    called = []
+    import scripts.backfill_universe as bu
+
+    monkeypatch.setattr(bu, "main", lambda *a, **k: called.append(True) or 0)
+
+    # Gọi assess_date mà KHÔNG truyền retry_fn
+    code, _missing, msg = assess_date(storage, cfg, target_date, log_file)
+
+    assert code == 2
+    assert "SỰ CỐ DỮ LIỆU" in msg
+    assert len(called) == 0, (
+        "mặc định retry_fn=None không được gọi backfill_universe.main"
+    )
+
+
+# ============ Brief dot 209c: check_catchup_completed (u) -> (z) ============
+
+
+def test_check_catchup_completed_success(tmp_path: Path):
+    """(u) Khối ngày cuối >= d + EXIT=0 -> True."""
+    log_file = tmp_path / "catchup.log"
+    log_file.write_text(
+        "2026-11-02 06:40:00 catchup start\n"
+        "[catchup] ngay cuoi = 2026-10-30\n"
+        "[ke hoach] 1d: khong can nap\n"
+        "[ke hoach] 5m: khong can nap\n"
+        "[ke hoach] foreign-flow: khong can nap\n"
+        "[kiem] 1d: 11 ngay, thieu: []\n"
+        "[kiem] 5m: 11 ngay, thieu: []\n"
+        "[kiem] foreign-flow: 11 ngay, thieu: []\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+    assert check_catchup_completed(log_file, date(2026, 10, 30)) is True
+    assert check_catchup_completed(log_file, date(2026, 10, 29)) is True
+
+
+def test_check_catchup_completed_date_before_target(tmp_path: Path):
+    """(v) Ngày cuối < d -> False."""
+    log_file = tmp_path / "catchup.log"
+    log_file.write_text(
+        "2026-11-02 06:40:00 catchup start\n"
+        "[catchup] ngay cuoi = 2026-10-25\n"
+        "[ke hoach] 1d: khong can nap\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+    assert check_catchup_completed(log_file, date(2026, 10, 30)) is False
+
+
+def test_check_catchup_completed_has_1d_error(tmp_path: Path):
+    """(w) Có LOI 1d -> False."""
+    log_file = tmp_path / "catchup.log"
+    log_file.write_text(
+        "2026-11-02 06:40:00 catchup start\n"
+        "[catchup] ngay cuoi = 2026-10-30\n"
+        "[ke hoach] 1d: 2026-10-20 -> 2026-10-30\n"
+        "[catchup] LOI 1d: ExitCodeError: backfill_universe returned 1\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+    assert check_catchup_completed(log_file, date(2026, 10, 30)) is False
+
+
+def test_check_catchup_completed_no_exit_code(tmp_path: Path):
+    """(x) Không có EXIT (đang chạy / bị kill) -> False."""
+    log_file = tmp_path / "catchup.log"
+    log_file.write_text(
+        "2026-11-02 06:40:00 catchup start\n"
+        "[catchup] ngay cuoi = 2026-10-30\n"
+        "[ke hoach] 1d: khong can nap\n",
+        encoding="utf-8",
+    )
+    assert check_catchup_completed(log_file, date(2026, 10, 30)) is False
+
+
+def test_check_catchup_completed_file_not_exist(tmp_path: Path):
+    """(y) File không tồn tại -> False."""
+    non_existent = tmp_path / "catchup.log"
+    assert check_catchup_completed(non_existent, date(2026, 10, 30)) is False
+
+
+def test_assess_date_backfill_missing_catchup_completed_retry_empty(tmp_path: Path):
+    """(z) assess_date: backfill.log không có, catchup.log xác nhận + 0 nến + retry_fn trả rỗng
+    -> mã 0 thông điệp ngày không giao dịch."""
+    target_date = date(2026, 11, 2)  # Thứ Hai (ngày giao dịch)
+    storage = FakeDailyStorage(active=["HPG", "AAA"], present=[])
+    cfg = FakeDailyConfig()
+
+    backfill_log = tmp_path / "backfill.log"
+    # backfill.log không tồn tại
+    assert not backfill_log.exists()
+
+    # catchup.log xác nhận đã hoàn tất cho target_date
+    catchup_log = tmp_path / "catchup.log"
+    catchup_log.write_text(
+        "2026-11-02 06:40:00 catchup start\n"
+        f"[catchup] ngay cuoi = {target_date.isoformat()}\n"
+        "[ke hoach] 1d: khong can nap\n"
+        "[kiem] 1d: 11 ngay, thieu: []\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    retry_called = []
+
+    def fake_retry(symbols, d):
+        retry_called.append((symbols, d))
+        return 0
+
+    code, missing, msg = assess_date(
+        storage, cfg, target_date, backfill_log, retry_fn=fake_retry
+    )
+
+    assert code == 0
+    assert missing == set()
+    assert (
+        msg
+        == f"Ngày {target_date} không có giao dịch theo SSI (không có trong danh sách ngày nghỉ)"
+    )
+    assert len(retry_called) == 1
+    assert retry_called[0] == (["HPG", "AAA"], target_date)
+
+
+def test_assess_date_retry_progress_has_error_returns_code_2(tmp_path: Path):
+    """(cc) daily_data_check: hỏi lại xong có mã status error -> mã 2, không có thông điệp ngày không giao dịch."""
+    target_date = date(2026, 11, 2)  # Thứ Hai
+    storage = FakeDailyStorage(
+        active=["HPG", "AAA"],
+        present=[],
+        progress={
+            ("HPG", "1d"): {"status": "error", "error": "Auth failed"},
+            ("AAA", "1d"): {"status": "ok"},
+        },
+    )
+    cfg = FakeDailyConfig()
+
+    log_file = tmp_path / "backfill.log"
+    log_file.write_text(
+        f"2026-11-02 21:00:00 backfill start\nBackfill 1d: -> {target_date}\nDONE: ok=2\nEXIT=0\n",
+        encoding="utf-8",
+    )
+
+    def fake_retry(symbols, d):
+        # backfill_universe.main trả None khi nuốt lỗi
+        return None
+
+    code, missing, msg = assess_date(
+        storage, cfg, target_date, log_file, retry_fn=fake_retry
+    )
+    assert code == 2
+    assert "SỰ CỐ DỮ LIỆU" in msg
+    assert "không có giao dịch theo SSI" not in msg
+    assert missing == {"HPG", "AAA"}
 
 

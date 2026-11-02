@@ -42,7 +42,12 @@ try:
         send_with_outbox,
     )
     from scripts._db_common import REPO_LOGS_DIR
-    from scripts.daily_data_check import assess_date
+    from scripts.daily_data_check import (
+        NON_TRADING_DAY_MSG,
+        NON_TRADING_DAY_PATTERN,
+        NON_TRADING_DAYS_PREFIX,
+        assess_date,
+    )
 except ImportError:
     from _alert_common import (
         load_json_state,
@@ -51,7 +56,12 @@ except ImportError:
         send_with_outbox,
     )
     from _db_common import REPO_LOGS_DIR
-    from daily_data_check import assess_date
+    from daily_data_check import (
+        NON_TRADING_DAY_MSG,
+        NON_TRADING_DAY_PATTERN,
+        NON_TRADING_DAYS_PREFIX,
+        assess_date,
+    )
 
 from trading.alerts import _print_safe
 from trading.calendar_vn import (
@@ -817,12 +827,45 @@ def app_cfg_for_daily_check(raw_cfg: dict[str, Any], dsn: str) -> Config:
     )
 
 
+def _is_confirmed_non_trading_day(p: date, logs_dir: Path) -> bool:
+    """Kiểm tra xem ngày P đã được xác nhận là ngày không giao dịch trong log
+    của scheduler (daily-data-check.log hoặc catchup.log) hay chưa (đợt 209b).
+    """
+    p_iso = p.isoformat()
+    # 1. Kiểm tra daily-data-check.log
+    ddc_log = logs_dir / "daily-data-check.log"
+    if ddc_log.is_file():
+        try:
+            content = ddc_log.read_text(encoding="utf-8", errors="ignore")
+            for line in content.splitlines():
+                if NON_TRADING_DAY_MSG.format(target_date=p) in line or (
+                    p_iso in line and NON_TRADING_DAY_PATTERN in line
+                ):
+                    return True
+        except Exception:
+            pass
+
+    # 2. Kiểm tra catchup.log
+    catchup_log = logs_dir / "catchup.log"
+    if catchup_log.is_file():
+        try:
+            content = catchup_log.read_text(encoding="utf-8", errors="ignore")
+            for line in content.splitlines():
+                if NON_TRADING_DAYS_PREFIX in line and p_iso in line:
+                    return True
+        except Exception:
+            pass
+
+    return False
+
+
 def prev_day_bars_alert(
     storage: Storage,
     app_cfg: Config,
     now: datetime,
     backfill_log: Path,
     alerted_for: str | None,
+    logs_dir: Path | None = None,
 ) -> tuple[str | None, str]:
     """Tin cảnh báo độ đủ nến NGÀY của ngày giao dịch liền trước (đợt 160).
 
@@ -848,6 +891,13 @@ def prev_day_bars_alert(
     code, _missing, msg = assess_date(storage, app_cfg, p, backfill_log)
     if code not in (1, 2):
         return None, p_iso
+
+    if code == 2:
+        effective_logs_dir = (
+            Path(logs_dir) if logs_dir is not None else backfill_log.parent
+        )
+        if _is_confirmed_non_trading_day(p, effective_logs_dir):
+            return None, p_iso
 
     level = "WARN" if code == 1 else "CRITICAL"
     tin = (
@@ -1155,6 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
                 now,
                 Path(logs_dir) / "backfill.log",
                 prev_state.get("alerted_for"),
+                logs_dir=Path(logs_dir),
             )
             if tin:
                 messages.append(tin)

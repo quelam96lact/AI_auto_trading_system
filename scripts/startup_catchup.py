@@ -14,6 +14,11 @@ from typing import Any
 
 from scripts import backfill_foreign_flow, backfill_universe
 from scripts.backfill_universe import resolve_use_universe_symbols
+from scripts.daily_data_check import (
+    CATCHUP_END_DATE_PREFIX,
+    CATCHUP_ERROR_1D_PREFIX,
+    NON_TRADING_DAYS_PREFIX,
+)
 from trading.calendar_vn import TZ, is_trading_day, previous_trading_day
 from trading.config import load_config
 from trading.storage.db import Storage
@@ -42,6 +47,18 @@ def catchup_end(now: datetime, holidays: Any = frozenset()) -> date:
     if is_trading_day(d, holidays) and now.time() >= dt_time(21, 30):
         return d
     return previous_trading_day(d, holidays)
+
+
+def weekday_candidates(frm: date, to: date, holidays: Any = frozenset()) -> list[date]:
+    """Tra ve cac ngay thu Hai-thu Sau trong [frm, to] ma khong nam trong holidays (Brief 209)."""
+    h_set = set(holidays) if holidays else set()
+    res: list[date] = []
+    cur = frm
+    while cur <= to:
+        if cur.weekday() < 5 and cur not in h_set:
+            res.append(cur)
+        cur += timedelta(days=1)
+    return res
 
 
 def _thresholds(
@@ -199,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. Ngay cuoi
     end = catchup_end(_now(), cfg.holidays)
-    print(f"[catchup] ngay cuoi = {end}")
+    print(f"{CATCHUP_END_DATE_PREFIX} {end}")
 
     has_error = False
 
@@ -231,12 +248,12 @@ def main(argv: list[str] | None = None) -> int:
             if ret is not None and ret != 0:
                 has_error = True
                 print(
-                    f"[catchup] LOI 1d: ExitCodeError: backfill_universe returned {ret}"
+                    f"{CATCHUP_ERROR_1D_PREFIX}: ExitCodeError: backfill_universe returned {ret}"
                 )
     except Exception as e:
         has_error = True
         msg = f"{type(e).__name__}: {e}"[:300]
-        print(f"[catchup] LOI 1d: {msg}")
+        print(f"{CATCHUP_ERROR_1D_PREFIX}: {msg}")
 
     # 5. Nen 5 phut (5m)
     start_5m: date | None = None
@@ -305,35 +322,177 @@ def main(argv: list[str] | None = None) -> int:
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"[catchup] LOI foreign-flow: {msg}")
 
-    # 8. Buoc kiem
+    # 8. Buoc kiem (Brief 209: xac dinh ngay khong giao dich bang du lieu & nap lai ngay thieu)
     planned_starts = [s for s in [start_1d, start_5m, start_ff] if s is not None]
     if planned_starts:
         check_from = min(min(planned_starts), end - timedelta(days=14))
     else:
         check_from = end - timedelta(days=14)
 
-    cur = check_from
-    check_days: list[date] = []
-    while cur <= end:
-        if is_trading_day(cur, cfg.holidays):
-            check_days.append(cur)
-        cur += timedelta(days=1)
+    check_candidates = weekday_candidates(check_from, end, cfg.holidays)
+    baseline_from = end - timedelta(days=30)
+    baseline_candidates = weekday_candidates(baseline_from, end, cfg.holidays)
 
-    cur = end - timedelta(days=30)
-    baseline_days: list[date] = []
-    while cur <= end:
-        if is_trading_day(cur, cfg.holidays):
-            baseline_days.append(cur)
-        cur += timedelta(days=1)
-
-    counts_from = min(check_from, end - timedelta(days=30))
+    counts_from = min(check_from, baseline_from)
     counts_1d = storage.read_daily_active_symbol_day_counts(counts_from, end)
     counts_5m = storage.read_5m_active_symbol_day_counts(counts_from, end)
     counts_ff = storage.read_foreign_flow_day_counts(counts_from, end)
 
+    zero_days = sorted(
+        d
+        for d in set(check_candidates) | set(baseline_candidates)
+        if counts_1d.get(d, 0) == 0
+    )
+
+    non_trading_days: list[date] = []
+    if zero_days:
+        if args.dry_run:
+            print(
+                f"[kiem] ngay 0 nen chua xac minh (dry-run): {[d.isoformat() for d in zero_days]}"
+            )
+        else:
+            try:
+                ret = backfill_universe.main(
+                    [
+                        "--timeframe",
+                        "1d",
+                        "--from",
+                        min(zero_days).isoformat(),
+                        "--to",
+                        max(zero_days).isoformat(),
+                        "--symbols",
+                        ",".join(cfg.symbols),
+                        "--force",
+                        "--sleep-ms",
+                        "200",
+                    ]
+                )
+                if ret is not None and ret != 0:
+                    has_error = True
+                    print(
+                        f"[catchup] LOI kiem tra ngay 0 nen: ExitCodeError: backfill_universe returned {ret}"
+                    )
+                else:
+                    check_err = False
+                    for s in cfg.symbols:
+                        prog = storage.get_backfill_progress(s, "1d")
+                        status = prog.get("status") if isinstance(prog, dict) else None
+                        if status != "ok":
+                            has_error = True
+                            check_err = True
+                            print(
+                                f"[catchup] LOI kiem tra ngay 0 nen: {s} status={status}"
+                            )
+                    if not check_err:
+                        counts_1d = storage.read_daily_active_symbol_day_counts(
+                            counts_from, end
+                        )
+                        non_trading_days = [
+                            d for d in zero_days if counts_1d.get(d, 0) == 0
+                        ]
+                        if non_trading_days:
+                            print(
+                                f"{NON_TRADING_DAYS_PREFIX} {[d.isoformat() for d in non_trading_days]}"
+                            )
+            except Exception as e:
+                has_error = True
+                msg = f"{type(e).__name__}: {e}"[:300]
+                print(f"[catchup] LOI kiem tra ngay 0 nen: {msg}")
+
+    check_days = [d for d in check_candidates if d not in non_trading_days]
+    baseline_days = [d for d in baseline_candidates if d not in non_trading_days]
+
     short_1d = find_short_days(counts_1d, check_days, baseline_days)
     short_5m = find_short_days(counts_5m, check_days, baseline_days)
     short_ff = find_short_days(counts_ff, check_days, baseline_days)
+
+    # 8b. Nap lai ngay thieu mot phan (Brief 209 §3)
+    if not args.dry_run and (short_1d or short_5m or short_ff):
+        txt_1d = f"{min(short_1d)} -> {max(short_1d)}" if short_1d else "khong"
+        txt_5m = f"{min(short_5m)} -> {max(short_5m)}" if short_5m else "khong"
+        txt_ff = f"{min(short_ff)} -> {max(short_ff)}" if short_ff else "khong"
+        print(f"[nap lai] 1d: {txt_1d} | 5m: {txt_5m} | foreign-flow: {txt_ff}")
+
+        if short_1d:
+            try:
+                ret = backfill_universe.main(
+                    [
+                        "--timeframe",
+                        "1d",
+                        "--from",
+                        min(short_1d).isoformat(),
+                        "--to",
+                        max(short_1d).isoformat(),
+                        "--use-universe",
+                        "--force",
+                        "--sleep-ms",
+                        "200",
+                    ]
+                )
+                if ret is not None and ret != 0:
+                    has_error = True
+                    print(
+                        f"[catchup] LOI nap lai 1d: ExitCodeError: backfill_universe returned {ret}"
+                    )
+            except Exception as e:
+                has_error = True
+                msg = f"{type(e).__name__}: {e}"[:300]
+                print(f"[catchup] LOI nap lai 1d: {msg}")
+
+        if short_5m:
+            try:
+                ret = backfill_universe.main(
+                    [
+                        "--timeframe",
+                        "5m",
+                        "--from",
+                        min(short_5m).isoformat(),
+                        "--to",
+                        max(short_5m).isoformat(),
+                        "--use-universe",
+                        "--skip-config-symbols",
+                        "--force",
+                        "--sleep-ms",
+                        "200",
+                    ]
+                )
+                if ret is not None and ret != 0:
+                    has_error = True
+                    print(
+                        f"[catchup] LOI nap lai 5m: ExitCodeError: backfill_universe returned {ret}"
+                    )
+            except Exception as e:
+                has_error = True
+                msg = f"{type(e).__name__}: {e}"[:300]
+                print(f"[catchup] LOI nap lai 5m: {msg}")
+
+        if short_ff:
+            try:
+                ret = backfill_foreign_flow.main(
+                    [
+                        "--from",
+                        min(short_ff).isoformat(),
+                        "--to",
+                        max(short_ff).isoformat(),
+                    ]
+                )
+                if ret != 0:
+                    has_error = True
+                    print(
+                        f"[catchup] LOI nap lai foreign-flow: ExitCodeError: backfill_foreign_flow returned {ret}"
+                    )
+            except Exception as e:
+                has_error = True
+                msg = f"{type(e).__name__}: {e}"[:300]
+                print(f"[catchup] LOI nap lai foreign-flow: {msg}")
+
+        counts_1d = storage.read_daily_active_symbol_day_counts(counts_from, end)
+        counts_5m = storage.read_5m_active_symbol_day_counts(counts_from, end)
+        counts_ff = storage.read_foreign_flow_day_counts(counts_from, end)
+
+        short_1d = find_short_days(counts_1d, check_days, baseline_days)
+        short_5m = find_short_days(counts_5m, check_days, baseline_days)
+        short_ff = find_short_days(counts_ff, check_days, baseline_days)
 
     print(
         f"[kiem] 1d: {len(check_days)} ngay, thieu: {[d.isoformat() for d in short_1d]}"

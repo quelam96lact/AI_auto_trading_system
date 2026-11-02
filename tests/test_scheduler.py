@@ -307,6 +307,12 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
     def spy_run_job(*args, **kwargs):
         label = kwargs.get("label", args[0] if args else None)
         executed_labels.append(label)
+        # Chuyển tiếp logs_dir vào command của daily_data_check để không ghi outbox vào logs/ thật
+        if "command" in kwargs and "logs_dir" in kwargs:
+            cmd = list(kwargs["command"])
+            if any("daily_data_check.py" in str(arg) for arg in cmd):
+                cmd.extend(["--logs-dir", str(kwargs["logs_dir"])])
+                kwargs["command"] = cmd
         return orig_run_job(*args, **kwargs)
 
     monkeypatch.setattr(sm, "run_job", spy_run_job)
@@ -348,6 +354,10 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
     assert (evening_logs_dir / "daily-data-check.log").exists()
     assert (evening_logs_dir / "universe-refresh.log").exists()
     assert executed_labels == ["catchup", "daily-data-check", "universe-refresh"]
+    evening_catchup_log = (evening_logs_dir / "catchup.log").read_text(
+        encoding="utf-8"
+    )
+    assert "ngay khong giao dich theo SSI" not in evening_catchup_log
 
 
 def test_scheduler_loop_once(tmp_path: Path, monkeypatch):

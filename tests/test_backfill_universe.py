@@ -406,7 +406,7 @@ def test_skip_config_symbols_removes_stream_symbols(monkeypatch, capsys):
 
     run_calls = []
 
-    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms, *args, **kwargs):
         run_calls.append(list(symbols))
 
     monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
@@ -437,7 +437,7 @@ def test_without_skip_flag_list_unchanged(monkeypatch):
 
     run_calls = []
 
-    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms, *args, **kwargs):
         run_calls.append(list(symbols))
 
     monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
@@ -477,7 +477,7 @@ def test_all_universe_flag_reads_symbol_universe_without_upsert(monkeypatch, cap
 
     run_calls = []
 
-    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms):
+    async def fake_run(cfg, storage, timeframe, frm, to, symbols, sleep_ms, *args, **kwargs):
         run_calls.append(list(symbols))
 
     monkeypatch.setattr("scripts.backfill_universe.run", fake_run)
@@ -488,4 +488,86 @@ def test_all_universe_flag_reads_symbol_universe_without_upsert(monkeypatch, cap
     assert not upsert_called, "upsert_symbol_universe khong duoc goi"
     out = capsys.readouterr().out
     assert "toan bo universe: 4 ma" in out
+
+
+# ============ Brief dot 209: co --force (a), (b), (c) ============
+
+
+async def test_force_flag_calls_client_and_does_not_rewind_attempted_until():
+    """(a) có --force, attempted_until cũ = 30/10, nạp --from 20/10 --to 20/10:
+    client được gọi, và attempted_until vẫn là 30/10 (không bị kéo lùi)."""
+    storage = FakeStorage()
+    storage.set_backfill_progress(
+        "SDC", "1d", date(2026, 10, 30), "ok", attempted_until=date(2026, 10, 30)
+    )
+    client = FakeClient({"SDC": [_bar("SDC", date(2026, 10, 20))]})
+
+    result = await backfill_one(
+        client,
+        storage,
+        "SDC",
+        "1d",
+        date(2026, 10, 20),
+        date(2026, 10, 20),
+        0,
+        force=True,
+    )
+    status, _ = result[1], result[2]
+    assert status == "ok"
+    assert len(client.calls) == 1
+    prog = storage.get_backfill_progress("SDC", "1d")
+    assert prog["attempted_until"] == date(2026, 10, 30)
+    assert prog["last_done_date"] == date(2026, 10, 30)
+
+
+async def test_without_force_skips_when_attempted_until_covers_to():
+    """(b) không có --force, attempted_until cũ = 30/10, nạp 20/10 -> 20/10:
+    mã bị bỏ qua, client không được gọi."""
+    storage = FakeStorage()
+    storage.set_backfill_progress(
+        "SDC", "1d", date(2026, 10, 30), "ok", attempted_until=date(2026, 10, 30)
+    )
+    client = FakeClient({"SDC": [_bar("SDC", date(2026, 10, 20))]})
+
+    result = await backfill_one(
+        client,
+        storage,
+        "SDC",
+        "1d",
+        date(2026, 10, 20),
+        date(2026, 10, 20),
+        0,
+        force=False,
+    )
+    status, _ = result[1], result[2]
+    assert status == "skip"
+    assert len(client.calls) == 0
+
+
+async def test_force_flag_error_sets_status_error():
+    """(c) có --force mà client ném lỗi: status 'error' như hiện nay."""
+    storage = FakeStorage()
+    storage.set_backfill_progress(
+        "SDC", "1d", date(2026, 10, 30), "ok", attempted_until=date(2026, 10, 30)
+    )
+
+    class FailingClient:
+        async def daily_ohlc(self, *args, **kwargs):
+            raise RuntimeError("API SSI connection failed")
+
+    result = await backfill_one(
+        FailingClient(),
+        storage,
+        "SDC",
+        "1d",
+        date(2026, 10, 20),
+        date(2026, 10, 20),
+        0,
+        force=True,
+    )
+    status, _ = result[1], result[2]
+    assert status == "error"
+    prog = storage.get_backfill_progress("SDC", "1d")
+    assert prog["status"] == "error"
+    assert "API SSI connection failed" in prog["error"]
 

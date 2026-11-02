@@ -89,6 +89,7 @@ async def backfill_one(
     frm: date,
     to: date,
     sleep_ms: int,
+    force: bool = False,
 ) -> tuple[str, str, str]:
     """Trả về (symbol, status, error_or_empty). Không bao giờ ném ra ngoài.
 
@@ -100,7 +101,8 @@ async def backfill_one(
         prog = storage.get_backfill_progress(symbol, timeframe)
         attempted = prog["attempted_until"] if prog else None
         if (
-            prog is not None
+            not force
+            and prog is not None
             and prog["status"] == "ok"
             and attempted is not None
             and attempted >= to
@@ -127,14 +129,29 @@ async def backfill_one(
                     )
                 # last_done_date = ngày bar cuối THẬT (không tiến khi rỗng);
                 # attempted_until = to (đã hỏi tới đó, kể cả rỗng).
-                last_done = (
-                    max(b.ts.date() for b in bars)
-                    if bars
-                    else (prog["last_done_date"] if prog else None)
-                )
-                storage.set_backfill_progress(
-                    symbol, timeframe, last_done, "ok", attempted_until=to
-                )
+                if force:
+                    old_attempted = prog["attempted_until"] if prog else None
+                    new_attempted = (
+                        max(old_attempted, to) if old_attempted is not None else to
+                    )
+                    bar_last = max(b.ts.date() for b in bars) if bars else None
+                    old_last = prog["last_done_date"] if prog else None
+                    if bar_last is not None and old_last is not None:
+                        new_last = max(old_last, bar_last)
+                    else:
+                        new_last = bar_last if bar_last is not None else old_last
+                    storage.set_backfill_progress(
+                        symbol, timeframe, new_last, "ok", attempted_until=new_attempted
+                    )
+                else:
+                    last_done = (
+                        max(b.ts.date() for b in bars)
+                        if bars
+                        else (prog["last_done_date"] if prog else None)
+                    )
+                    storage.set_backfill_progress(
+                        symbol, timeframe, last_done, "ok", attempted_until=to
+                    )
                 return symbol, "ok", detail
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"[:200]
@@ -164,6 +181,7 @@ async def run(
     to: date,
     symbols: list[str],
     sleep_ms: int,
+    force: bool = False,
 ) -> None:
     # SSIRestClient tự re-auth khi access token hết hạn (401, 1 lần) — dùng
     # một client duy nhất cho cả job dài (fix gốc trong backfill.py, 2026-08-10).
@@ -173,7 +191,7 @@ async def run(
     try:
         for i, sym in enumerate(symbols, 1):
             _, status, detail = await backfill_one(
-                client, storage, sym, timeframe, frm, to, sleep_ms
+                client, storage, sym, timeframe, frm, to, sleep_ms, force=force
             )
             if status == "ok":
                 n_ok += 1
@@ -237,6 +255,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="bo qua symbols trong cfg.symbols (tranh ghi de nen collector stream)",
     )
     ap.add_argument("--sleep-ms", type=int, default=200)
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="khong bo qua theo attempted_until (nap lai ngay da qua)",
+    )
     return ap
 
 
@@ -284,7 +307,18 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[load] bo {len(skipped)} ma collector dang stream: {skipped}")
     print(f"Backfill {args.timeframe}: {len(kept)} ma, {frm} -> {to}")
 
-    asyncio.run(run(cfg, storage, args.timeframe, frm, to, kept, args.sleep_ms))
+    asyncio.run(
+        run(
+            cfg,
+            storage,
+            args.timeframe,
+            frm,
+            to,
+            kept,
+            args.sleep_ms,
+            force=args.force,
+        )
+    )
 
 
 if __name__ == "__main__":
