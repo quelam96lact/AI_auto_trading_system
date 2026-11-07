@@ -33,5 +33,4 @@ cùng bậc độ lớn với chính con số "lợi nhuận" chúng báo khi ch
 Đó là lý do hằng số này tồn tại thay vì để mỗi script tự gõ lại.
 """
 
-BINGX_PERP_MAKER = 0.0002
 BINGX_PERP_TAKER = 0.0005

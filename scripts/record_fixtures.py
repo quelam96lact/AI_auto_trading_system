@@ -12,13 +12,15 @@ import os
 import sys
 import time
 
+from trading.config import SSI_FC_DATA_URL, SSI_FC_STREAM_URL
+
 
 class _Cfg:  # đúng attrs SDK yêu cầu (xác minh từ fc_md_client.py/fc_md_stream.py)
     auth_type = "Bearer"
     consumerID = os.environ["SSI_CONSUMER_ID"]
     consumerSecret = os.environ["SSI_CONSUMER_SECRET"]
-    url = "https://fc-data.ssi.com.vn/"
-    stream_url = "https://fc-datahub.ssi.com.vn/"
+    url = SSI_FC_DATA_URL
+    stream_url = SSI_FC_STREAM_URL
 
 
 def record_stream(seconds: int = 180, channel: str = "B:VCB-TCB-HPG") -> None:

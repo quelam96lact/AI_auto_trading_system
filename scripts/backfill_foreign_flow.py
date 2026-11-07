@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 
 from trading.calendar_vn import TZ
 from trading.collector.foreign_flow import fetch_day, parse_daily_stock_price
-from trading.config import Config, load_config
+from trading.config import SSI_FC_DATA_URL, SSI_FC_STREAM_URL, Config, load_config
 from trading.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ def build_legacy_client(cfg: Config):
         auth_type = "Bearer"
         consumerID = cfg.ssi_consumer_id
         consumerSecret = cfg.ssi_consumer_secret
-        url = "https://fc-data.ssi.com.vn/"
-        stream_url = "https://fc-datahub.ssi.com.vn/"
+        url = SSI_FC_DATA_URL
+        stream_url = SSI_FC_STREAM_URL
 
     return MarketDataClient(_SdkCfg())
 

@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 
 from trading.collector.ssi_auth import ensure_authenticated
-from trading.config import Config
+from trading.config import SSI_FC_DATA_URL, SSI_FC_STREAM_URL, Config
 from trading.storage.db import Storage
 
 logger = logging.getLogger("trading.collector.feed")
@@ -24,8 +24,8 @@ class SSIFeedLegacy:
             auth_type = "Bearer"
             consumerID = cfg.ssi_consumer_id
             consumerSecret = cfg.ssi_consumer_secret
-            url = "https://fc-data.ssi.com.vn/"
-            stream_url = "https://fc-datahub.ssi.com.vn/"
+            url = SSI_FC_DATA_URL
+            stream_url = SSI_FC_STREAM_URL
 
         self._sdk_cfg = _SdkCfg()
         self._client_cls = MarketDataClient

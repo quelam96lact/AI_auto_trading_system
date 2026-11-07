@@ -45,7 +45,6 @@ hoặc DB hệ thống là thoát mã 2 ngay, trước mọi lệnh.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shutil
 import subprocess
@@ -59,10 +58,10 @@ from trading.telegram import send_telegram
 
 try:
     from scripts._alert_common import outbox_name, send_with_outbox
-    from scripts._db_common import REPO_LOGS_DIR
+    from scripts._db_common import REPO_LOGS_DIR, default_backup_dir
 except ImportError:
     from _alert_common import outbox_name, send_with_outbox
-    from _db_common import REPO_LOGS_DIR
+    from _db_common import REPO_LOGS_DIR, default_backup_dir
 
 DEFAULT_LOGS_DIR = REPO_LOGS_DIR
 OUTBOX_NAME = outbox_name("restore-drill")
@@ -72,7 +71,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_BACKUP_DIR = os.environ.get("TRADING_BACKUP_DIR") or "/var/backups/trading-db"
+DEFAULT_BACKUP_DIR = default_backup_dir()
 DEFAULT_TARGET_DB = "trading_restore_drill"
 SOURCE_DB = "trading"
 PROTECTED_DBS = frozenset({"", SOURCE_DB, "postgres", "template0", "template1"})

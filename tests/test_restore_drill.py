@@ -425,3 +425,18 @@ def test_run_drill_bang_lon_thieu_dung_1_dong_bao(tmp_path):
     _dump(tmp_path, counts="bars\t936217\norders\t20\n")
     a = _run(tmp_path, FakeRunner(res_counts={"bars": 936_216, "orders": 20}))
     assert any("bars" in x and "936,216" in x and "936,217" in x for x in a)
+
+
+def test_default_backup_dir_env_override(monkeypatch):
+    """Kiem tra DEFAULT_BACKUP_DIR uu tien bien moi truong TRADING_BACKUP_DIR."""
+    import importlib
+
+    import scripts.restore_drill as m
+
+    monkeypatch.setenv("TRADING_BACKUP_DIR", "/tmp/bk-cua-toi")
+    importlib.reload(m)
+    assert m.DEFAULT_BACKUP_DIR == "/tmp/bk-cua-toi"
+
+    monkeypatch.delenv("TRADING_BACKUP_DIR", raising=False)
+    importlib.reload(m)
+    assert m.DEFAULT_BACKUP_DIR == "/var/backups/trading-db"

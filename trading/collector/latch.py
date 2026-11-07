@@ -28,10 +28,6 @@ class BarLatch:
         self.last_snapshot_mono: float | None = None
         self.last_snapshot_ts: datetime | None = None
 
-    def get_snapshot_count(self, symbol: str) -> int:
-        """Lấy số snapshot hiện tại của khung đang mở cho symbol."""
-        return self._snapshot_counts.get(symbol, 0)
-
     def offer(self, bar: Bar) -> Bar | None:
         """Nhận một snapshot bar.
         - Nếu snapshot thuộc khung đã CHỐT (bar.ts <= last_closed_ts): bỏ qua, trả None.

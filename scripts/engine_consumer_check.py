@@ -127,7 +127,7 @@ def run_check(
         holidays = frozenset(
             date.fromisoformat(str(h)) for h in (cfg_data.get("holidays") or [])
         )
-        nats_url = os.environ.get("NATS_URL") or cfg_data.get("nats_url", "nats://localhost:4222")
+        nats_url = os.environ.get("NATS_URL") or cfg_data.get("nats_url", "nats://127.0.0.1:4222")
         nats_stream = os.environ.get("NATS_STREAM") or cfg_data.get("nats_stream", "BARS")
     except Exception as e:
         send_telegram(

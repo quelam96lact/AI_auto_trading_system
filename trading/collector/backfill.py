@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import logging
-import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -12,9 +11,6 @@ from trading.models import Bar
 from trading.storage.db import Storage
 
 logger = logging.getLogger("trading.collector.backfill")
-
-_PAGE_SIZE = 100  # xác minh findings Task 6: page trả đúng pageSize record
-_MAX_RANGE_DAYS = 30  # xác minh findings Task 6: API giới hạn range 30 ngày/call
 
 
 def parse_intraday_response(raw: dict) -> list[Bar]:
@@ -77,85 +73,6 @@ def _row_ts(row: dict) -> datetime:
     return datetime(
         day.year, day.month, day.day, tt.hour, tt.minute, tt.second, tzinfo=TZ
     )
-
-
-class SSIRestClientLegacy:
-    """Client SDK cũ (ssi_fc_data) — giữ làm rollback reference (PLAN mục 7).
-
-    Không còn ai gọi sau Phase 2 (main.py đã chuyển sang SSIRestClient mới).
-    KHÔNG xoá tới khi Phase 4 E2E ổn định ≥2 phiên."""
-
-    def __init__(self, cfg: Config):
-        from ssi_fc_data.fc_md_client import MarketDataClient  # findings Task 6
-        from ssi_fc_data.model import model
-
-        class _SdkCfg:
-            auth_type = "Bearer"
-            consumerID = cfg.ssi_consumer_id
-            consumerSecret = cfg.ssi_consumer_secret
-            url = "https://fc-data.ssi.com.vn/"
-            stream_url = "https://fc-datahub.ssi.com.vn/"
-
-        self._model = model
-        self._client = MarketDataClient(_SdkCfg())
-
-    @staticmethod
-    def _fmt(d: date) -> str:
-        return d.strftime("%d/%m/%Y")  # findings Task 6: dd/MM/yyyy
-
-    def _paged_rows(self, call, make_req, frm: date, to: date) -> list[dict]:
-        """Gọi API theo chunk ≤30 ngày, loop pageIndex tới đủ totalRecord; throttle 0.25s/call."""
-        rows: list[dict] = []
-        chunk_start = frm
-        while chunk_start <= to:
-            chunk_end = min(chunk_start + timedelta(days=_MAX_RANGE_DAYS - 1), to)
-            got, page = 0, 1
-            while True:
-                time.sleep(0.25)  # throttle giữa các call
-                resp = call(None, make_req(chunk_start, chunk_end, page)) or {}
-                data = resp.get("data") or []
-                rows.extend(data)
-                got += len(data)
-                total = int(resp.get("totalRecord") or 0)
-                if not data or got >= total:
-                    break
-                page += 1
-            chunk_start = chunk_end + timedelta(days=1)
-        return rows
-
-    def daily_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
-        rows = self._paged_rows(
-            self._client.daily_ohlc,
-            lambda s, e, p: self._model.daily_ohlc(
-                symbol=symbol,
-                fromDate=self._fmt(s),
-                toDate=self._fmt(e),
-                pageIndex=p,
-                pageSize=_PAGE_SIZE,
-                ascending=True,
-            ),
-            frm,
-            to,
-        )
-        return parse_daily_response({"data": rows})
-
-    def intraday_ohlc(self, symbol: str, frm: date, to: date) -> list[Bar]:
-        # Gom raw rows của MỌI page/chunk rồi mới bucket 5m một lần — tránh bar lửng ở biên page.
-        rows = self._paged_rows(
-            self._client.intraday_ohlc,
-            lambda s, e, p: self._model.intraday_ohlc(
-                symbol=symbol,
-                fromDate=self._fmt(s),
-                toDate=self._fmt(e),
-                pageIndex=p,
-                pageSize=_PAGE_SIZE,
-                ascending=True,
-                resolution=1,
-            ),
-            frm,
-            to,
-        )
-        return parse_intraday_response({"data": rows})
 
 
 def _parse_trading_date(s: str) -> datetime:

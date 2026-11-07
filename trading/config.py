@@ -4,6 +4,9 @@ from datetime import date
 
 import yaml
 
+SSI_FC_DATA_URL = "https://fc-data.ssi.com.vn/"
+SSI_FC_STREAM_URL = "https://fc-datahub.ssi.com.vn/"
+
 
 @dataclass(frozen=True)
 class Config:

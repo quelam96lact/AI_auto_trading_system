@@ -44,3 +44,11 @@ def resolve_dsn(override: str | None = None) -> str:
         raise SystemExit("DB_DSN chưa set — cần .env hoặc --dsn")
     # Windows máy này: DSN dùng localhost bị IPv6 làm mỗi kết nối chậm ~130s.
     return dsn.replace("localhost", "127.0.0.1")
+
+
+def default_backup_dir() -> str:
+    """Thư mục sao lưu mặc định (nguồn duy nhất cho backup_check, disk_check, restore_drill).
+
+    Ưu tiên TRADING_BACKUP_DIR từ môi trường; mặc định /var/backups/trading-db.
+    """
+    return os.environ.get("TRADING_BACKUP_DIR") or "/var/backups/trading-db"

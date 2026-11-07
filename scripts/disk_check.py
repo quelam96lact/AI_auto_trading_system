@@ -37,10 +37,10 @@ from trading.telegram import send_telegram
 
 try:
     from scripts._alert_common import outbox_name, send_with_outbox
-    from scripts._db_common import REPO_LOGS_DIR
+    from scripts._db_common import REPO_LOGS_DIR, default_backup_dir
 except ImportError:
     from _alert_common import outbox_name, send_with_outbox
-    from _db_common import REPO_LOGS_DIR
+    from _db_common import REPO_LOGS_DIR, default_backup_dir
 
 DEFAULT_LOGS_DIR = REPO_LOGS_DIR
 OUTBOX_NAME = outbox_name("disk-check")
@@ -55,7 +55,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # (do 29/09: backup-check gui CANH BAO GIA moi ngay, disk-check thoat 2 va khong
 # he kiem dia). Dat TRADING_BACKUP_DIR trong .env de cai dat nao cung dung duong
 # dan cua chinh no; run_if_docker_up.sh nap .env TRUOC khi chay job nen job thay.
-DEFAULT_BACKUP_DIR = os.environ.get("TRADING_BACKUP_DIR") or "/var/backups/trading-db"
+DEFAULT_BACKUP_DIR = default_backup_dir()
 DEFAULT_MIN_FREE_GB = 10.0
 DEFAULT_MIN_FREE_PCT = 10.0
 
