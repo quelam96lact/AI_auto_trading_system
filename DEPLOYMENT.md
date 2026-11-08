@@ -580,6 +580,7 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
 0 2 * * * cd /opt/trading && scripts/sched.sh backup
 0 * * * * cd /opt/trading && scripts/sched.sh backup-makeup
+7 * * * * cd /opt/trading && scripts/sched.sh schedule-watch
 
 # 11. Kiểm tra tính toàn vẹn và độ tươi của bản sao lưu DB (03:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC chạy sau job backup (02:00) ít nhất 30-60 phút để đảm bảo dump đã hoàn tất.
@@ -643,6 +644,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | ~~`trading-catchup`~~ | **Disabled 01/11/2026** — `scheduler` chạy khi container khởi động + 06:40 + 21:45 | cùng vbs, tham số `catchup` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-makeup` | mỗi giờ (24/7) | cùng vbs, tham số `backup-makeup` |
+| `trading-schedule-watch` | mỗi giờ, 24/7 | cùng vbs, tham số `schedule-watch` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
 | `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |
@@ -805,6 +807,7 @@ Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ng
 | `orderbook-daily-check` | **Có** (chỉ với cờ) | `scripts/sched.sh orderbook-daily-check --date <ngày_lỡ>` | Kiểm tra tính toàn vẹn file `.jsonl.gz` của ngày bị lỡ. |
 | `orderbook-recorder` | **KHÔNG** | *Không thể chạy bù* | Luồng WebSocket L2 thời gian thực đã trôi qua thì không thể lấy lại từ API. |
 | `heartbeat` | **Không cần** | `scripts/sched.sh heartbeat --dry-run` | Dead-man's switch giám sát thời gian thực (ngoài phiên tự thoát 0). Chạy tay với `--dry-run` để chẩn đoán hệ thống an toàn mà không gửi Telegram và không cập nhật trạng thái. |
+| `schedule-watch` | **Không cần** | `scripts/sched.sh schedule-watch --dry-run` | Canh tuổi các job theo lịch 24/7 ngoài giờ giao dịch. Chạy tay với `--dry-run` để kiểm tra sức khoẻ lịch chạy an toàn. |
 | `deploy-drift` | **Không cần** | `scripts/sched.sh deploy-drift` | So sánh commit git và container đang chạy. Chạy tay bất cứ lúc nào. |
 | `container-health` | **Không cần** | `scripts/sched.sh container-health` | Giám sát trạng thái sống và OOM của container tại thời điểm hiện tại, đồng thời canh heartbeat chéo trong khung giờ giao dịch 08:15–15:00 (ngưỡng 15 phút). |
 | `engine-cam` | **Không cần** | `scripts/sched.sh engine-cam` | Kiểm tra chốt chặn engine trên toàn bộ dữ liệu bar 5m trong DB. |

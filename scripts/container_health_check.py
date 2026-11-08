@@ -20,6 +20,7 @@ import argparse
 import os
 import subprocess
 import sys
+import traceback
 from datetime import date, datetime, time
 from typing import Any, NamedTuple
 
@@ -589,4 +590,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
     except Exception:
-        sys.exit(2)
+        traceback.print_exc()
+        sys.exit(3)

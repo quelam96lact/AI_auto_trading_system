@@ -400,4 +400,4 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception:
         traceback.print_exc()
-        sys.exit(2)
+        sys.exit(3)

@@ -22,6 +22,7 @@ import argparse
 import os
 import subprocess
 import sys
+import traceback
 from datetime import datetime
 
 # Hai loi goi: `uv run python scripts/x.py` (scripts/ o sys.path[0]) va
@@ -268,4 +269,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    try:
+        raise SystemExit(main(sys.argv[1:]))
+    except Exception:
+        traceback.print_exc()
+        sys.exit(3)

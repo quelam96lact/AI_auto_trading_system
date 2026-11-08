@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from trading.alerts import alert, start_outbox
 from trading.calendar_vn import TZ, is_trading_day
 
 logger = logging.getLogger("trading.scheduler")
@@ -230,10 +231,12 @@ def run_job_with_retry(
     retry_delay_sec: float | None = None,
     sleep_fn: Callable[[float], Any] = time_module.sleep,
     runner_fn: Callable[..., int | None] | None = None,
-) -> int | None:
+    return_attempts: bool = False,
+) -> int | None | tuple[int | None, int]:
     """Boc run_job de tu thu lai toi da max_attempts lan khi rc la 1 hoac 2.
 
     Khong thu lai khi rc la 0, None (SKIP) hoac 124 (timeout).
+    Neu return_attempts=True, tra ve (last_rc, actual_attempts).
     """
     fn = runner_fn if runner_fn is not None else run_job
     eff_max = max_attempts if max_attempts is not None else CATCHUP_MAX_ATTEMPTS
@@ -241,7 +244,9 @@ def run_job_with_retry(
         retry_delay_sec if retry_delay_sec is not None else CATCHUP_RETRY_DELAY_SEC
     )
     last_rc: int | None = None
+    actual_attempts = 0
     for attempt in range(1, eff_max + 1):
+        actual_attempts = attempt
         last_rc = fn(
             label=label,
             log_file=log_file,
@@ -255,7 +260,7 @@ def run_job_with_retry(
             now_fn=now_fn,
         )
         if last_rc not in (1, 2):
-            return last_rc
+            break
         if attempt < eff_max:
             logger.warning(
                 "%s that bai (rc=%s), thu lai lan %d/%d sau %.0fs...",
@@ -266,7 +271,34 @@ def run_job_with_retry(
                 eff_delay,
             )
             sleep_fn(eff_delay)
+    if return_attempts:
+        return last_rc, actual_attempts
     return last_rc
+
+
+def notify_job_failure(
+    label: str,
+    rc: int,
+    attempts: int,
+    log_file: str,
+    alert_fn: Callable[[str], Any] | None = None,
+) -> None:
+    """Gui canh bao khi scheduler job that bai.
+
+    Khong bao gio nem exception lam chet scheduler loop.
+    """
+    time_str = datetime.now(TZ).strftime("%H:%M:%S %d/%m/%Y")
+    msg = (
+        f"Scheduler job thất bại: {label} (rc={rc}, số lần thử: {attempts}). "
+        f"Xem log: logs/{log_file} ({time_str} VN)"
+    )
+    try:
+        if alert_fn is not None:
+            alert_fn(msg)
+        else:
+            alert("CRITICAL", msg)
+    except Exception as e:
+        logger.warning("Khong the gui canh bao scheduler cho job %s: %s", label, e)
 
 
 def calculate_next_event(
@@ -313,11 +345,12 @@ def run_startup(
     python_exe: str = sys.executable,
     sleep_fn: Callable[[float], Any] = time_module.sleep,
     runner_fn: Callable[..., int | None] | None = None,
+    alert_fn: Callable[[str], Any] | None = None,
 ) -> int | None:
     """Chay catchup ngay khi khoi dong (co tu thu lai toi da 3 lan)."""
     logger.info("Chay startup catchup...")
     command = [python_exe, "-m", "scripts.startup_catchup"]
-    return run_job_with_retry(
+    res = run_job_with_retry(
         label="catchup",
         log_file="catchup.log",
         command=command,
@@ -329,7 +362,18 @@ def run_startup(
         lock_manager=lock_manager,
         sleep_fn=sleep_fn,
         runner_fn=runner_fn,
+        return_attempts=True,
     )
+    rc, attempts = res  # type: ignore[misc]
+    if rc is not None and rc != 0:
+        notify_job_failure(
+            label="catchup",
+            rc=rc,
+            attempts=attempts,
+            log_file="catchup.log",
+            alert_fn=alert_fn,
+        )
+    return rc
 
 
 def run_event(
@@ -341,12 +385,13 @@ def run_event(
     python_exe: str = sys.executable,
     sleep_fn: Callable[[float], Any] = time_module.sleep,
     runner_fn: Callable[..., int | None] | None = None,
+    alert_fn: Callable[[str], Any] | None = None,
 ) -> None:
     """Thuc thi su kien theo lich."""
     if event_type == "morning_catchup":
         logger.info("Chay lich 06:40 (catchup)...")
         command = [python_exe, "-m", "scripts.startup_catchup"]
-        run_job_with_retry(
+        res = run_job_with_retry(
             label="catchup",
             log_file="catchup.log",
             command=command,
@@ -358,11 +403,21 @@ def run_event(
             lock_manager=lock_manager,
             sleep_fn=sleep_fn,
             runner_fn=runner_fn,
+            return_attempts=True,
         )
+        rc, attempts = res  # type: ignore[misc]
+        if rc is not None and rc != 0:
+            notify_job_failure(
+                label="catchup",
+                rc=rc,
+                attempts=attempts,
+                log_file="catchup.log",
+                alert_fn=alert_fn,
+            )
     elif event_type == "evening_jobs":
         logger.info("Chay lich 21:45 (catchup + daily-check)...")
         cmd_catchup = [python_exe, "-m", "scripts.startup_catchup"]
-        run_job_with_retry(
+        res = run_job_with_retry(
             label="catchup",
             log_file="catchup.log",
             command=cmd_catchup,
@@ -374,11 +429,21 @@ def run_event(
             lock_manager=lock_manager,
             sleep_fn=sleep_fn,
             runner_fn=runner_fn,
+            return_attempts=True,
         )
+        rc_catchup, attempts = res  # type: ignore[misc]
+        if rc_catchup is not None and rc_catchup != 0:
+            notify_job_failure(
+                label="catchup",
+                rc=rc_catchup,
+                attempts=attempts,
+                log_file="catchup.log",
+                alert_fn=alert_fn,
+            )
 
         fn_job = runner_fn if runner_fn is not None else run_job
         cmd_daily_check = [python_exe, "scripts/daily_data_check.py"]
-        fn_job(
+        rc_daily = fn_job(
             label="daily-data-check",
             log_file="daily-data-check.log",
             command=cmd_daily_check,
@@ -389,9 +454,17 @@ def run_event(
             dsn=dsn,
             lock_manager=lock_manager,
         )
+        if rc_daily is not None and rc_daily != 0:
+            notify_job_failure(
+                label="daily-data-check",
+                rc=rc_daily,
+                attempts=1,
+                log_file="daily-data-check.log",
+                alert_fn=alert_fn,
+            )
 
         cmd_universe_refresh = [python_exe, "-m", "scripts.refresh_universe"]
-        fn_job(
+        rc_univ = fn_job(
             label="universe-refresh",
             log_file="universe-refresh.log",
             command=cmd_universe_refresh,
@@ -402,6 +475,14 @@ def run_event(
             dsn=dsn,
             lock_manager=lock_manager,
         )
+        if rc_univ is not None and rc_univ != 0:
+            notify_job_failure(
+                label="universe-refresh",
+                rc=rc_univ,
+                attempts=1,
+                log_file="universe-refresh.log",
+                alert_fn=alert_fn,
+            )
 
 
 def scheduler_loop(
@@ -415,6 +496,7 @@ def scheduler_loop(
     skip_startup: bool = False,
     once: bool = False,
     now_fn: Callable[[], datetime] | None = None,
+    alert_fn: Callable[[str], Any] | None = None,
 ) -> None:
     """Vong lap chinh cua scheduler daemon."""
     if stop_event is None:
@@ -438,6 +520,7 @@ def scheduler_loop(
             dsn=dsn,
             lock_manager=lock_manager,
             python_exe=python_exe,
+            alert_fn=alert_fn,
         )
 
     while not stop_event.is_set():
@@ -463,6 +546,7 @@ def scheduler_loop(
             dsn=dsn,
             lock_manager=lock_manager,
             python_exe=python_exe,
+            alert_fn=alert_fn,
         )
 
         if once:
@@ -508,6 +592,8 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    start_outbox("scheduler")
 
     dsn = args.dsn or os.environ.get("DB_DSN")
     if not dsn:

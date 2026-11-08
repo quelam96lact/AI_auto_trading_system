@@ -63,7 +63,7 @@ def extract_sched_branches(sched_sh_path: Path) -> set[str]:
 def test_sched_branches_covered_in_watch_or_khong_canh():
     """Mọi nhánh trong sched.sh phải nằm trong SCHEDULE_WATCH_JOBS hoặc KHONG_CANH (không sót, không trùng)."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 20, f"Kỳ vọng 20 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
+    assert len(sched_branches) == 21, f"Kỳ vọng 21 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
 
     watch_branches = set(SCHEDULE_WATCH_JOBS.keys())
     skip_branches = set(KHONG_CANH.keys())
@@ -284,7 +284,7 @@ def test_heartbeat_check_build_parser_has_dry_run():
 def test_sched_branches_covered_in_exit_policies():
     """Việc 2 (Brief 156): Mọi nhánh trong sched.sh phải có chính sách mã thoát rõ ràng."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 20
+    assert len(sched_branches) == 21
 
     # universe-refresh chay qua scheduler daemon trong container, khong qua sched.sh
     policy_branches = set(SCHEDULE_EXIT_POLICIES.keys()) - {"universe-refresh"}
@@ -538,4 +538,186 @@ def test_chong_nhan_doi_container_health_exit_2_docker_down_im_lang(tmp_path: Pa
     )
     assert alerts == [], "container-health thoát 2 do Docker chết không được sinh thêm cảnh báo"
     assert new_state["container-health"]["exit_status"] == "ok"
+
+
+# ==============================================================================
+# Tests cho Đợt 217 (F1, F4): skip_counts_as_run & --schedule-watch-only
+# ==============================================================================
+
+
+def test_skip_counts_as_run_false_backup_stale_when_skips_only_after_old_start(tmp_path: Path):
+    """Task 1 (F1): backup co start cach 60h va 3 dong SKIP -> bi tinh la stale va bao so lan SKIP."""
+    raw_log = (
+        "2026-10-01 02:00:00 backup start\n"
+        "EXIT=0\n"
+        "2026-10-02 02:00:00 backup SKIP: docker chua chay\n"
+        "2026-10-03 02:00:00 backup SKIP: docker chua chay\n"
+        "2026-10-03 10:00:00 backup SKIP: docker chua chay\n"
+    )
+    log_file = tmp_path / "backup.log"
+    log_file.write_text(raw_log, encoding="utf-8")
+
+    # 1. get_last_called_timestamp voi skip_counts_as_run=False
+    res = get_last_called_timestamp(str(log_file), "backup", skip_counts_as_run=False)
+    assert res[1] is None
+    assert res[0] == datetime(2026, 10, 1, 2, 0, 0, tzinfo=TZ)
+    assert res.skip_count == 3
+
+    # 2. evaluate_schedule_health voi cfg backup (skip_counts_as_run=False)
+    now = datetime(2026, 10, 3, 14, 0, 0, tzinfo=TZ)
+    alerts, new_state, _ = evaluate_schedule_health(
+        {"backup": res},
+        now,
+        {},
+        watch_jobs={"backup": SCHEDULE_WATCH_JOBS["backup"]},
+    )
+    assert len(alerts) == 1
+    assert "[CRITICAL] job theo lịch 'backup' NGỪNG CHẠY" in alerts[0]
+    assert "lần chạy thật cuối cùng lúc 2026-10-01 02:00:00" in alerts[0]
+    assert "đã có 3 lần SKIP kể từ đó" in alerts[0]
+    assert new_state["backup"]["status"] == "stale"
+    assert new_state["backup"]["skip_count"] == 3
+
+    # 3. So sanh: neu job co skip_counts_as_run=True thi lay dong SKIP gan nhat (10:00) -> ok
+    dt_any, err_any = get_last_called_timestamp(str(log_file), "backup", skip_counts_as_run=True)
+    assert dt_any == datetime(2026, 10, 3, 10, 0, 0, tzinfo=TZ)
+    dummy_cfg = SCHEDULE_WATCH_JOBS["backup"]._replace(skip_counts_as_run=True)
+    alerts_true, new_state_true, _ = evaluate_schedule_health(
+        {"backup": (dt_any, err_any)},
+        now,
+        {},
+        watch_jobs={"backup": dummy_cfg},
+    )
+    assert alerts_true == []
+    assert new_state_true["backup"]["status"] == "ok"
+
+
+def _create_fresh_job_logs(logs_dir: Path, now_dt: datetime) -> None:
+    """Tao cac file log gia 'vua chay' trong thu muc logs_dir de khong bi stale."""
+    ts = (now_dt - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    for cfg in SCHEDULE_WATCH_JOBS.values():
+        p = logs_dir / cfg.log_file
+        if not p.exists():
+            p.write_text(f"{ts} {cfg.label} start\nEXIT=0\n", encoding="utf-8")
+    for policy in SCHEDULE_EXIT_POLICIES.values():
+        p = logs_dir / policy.log_file
+        if not p.exists():
+            p.write_text(f"{ts} {policy.label} start\nEXIT=0\n", encoding="utf-8")
+
+
+def test_schedule_watch_only_saturday_night_alerts_once(tmp_path: Path, monkeypatch):
+    """Task 2 (F4): --schedule-watch-only chay 22:00 thu Bay, co job qua han -> bao dung 1 lan, lan 2 im."""
+    import scripts.heartbeat_check as hc
+
+    sat_night = datetime(2026, 10, 3, 22, 0, 0, tzinfo=TZ)  # Thu Bay
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return sat_night
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    sent_alerts = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_alerts.append(msg) or True)
+
+    # Tao log tuoi cho moi job tru backup
+    _create_fresh_job_logs(tmp_path, sat_night)
+    # backup log co start 60h truoc
+    old_ts = (sat_night - timedelta(hours=60)).strftime("%Y-%m-%d %H:%M:%S")
+    (tmp_path / "backup.log").write_text(
+        f"{old_ts} backup start\nEXIT=0\n", encoding="utf-8"
+    )
+
+    # Lan 1: co job stale -> thoat 1 va gui Telegram
+    rc1 = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+    assert len(sent_alerts) == 1
+    assert "backup" in sent_alerts[0]
+
+    # Lan 2: van gio do, log khong doi -> trang thai stale da luu truoc do -> im lang, thoat 0
+    rc2 = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    assert rc2 == 0
+    assert len(sent_alerts) == 1, "Lan 2 khong duoc gui trung canh bao"
+
+
+def test_schedule_watch_and_heartbeat_share_state_anti_duplication(tmp_path: Path, monkeypatch):
+    """Lead adjustment 3: heartbeat trong phien bao X stale -> schedule-watch sau do KHONG bao lai X."""
+    import scripts.heartbeat_check as hc
+
+    # 10:00 thu Sau trong phien
+    fri_10am = datetime(2026, 10, 2, 10, 0, 0, tzinfo=TZ)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return fri_10am
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    sent_alerts = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_alerts.append(msg) or True)
+
+    # Tao log tuoi cho moi job tru backup
+    _create_fresh_job_logs(tmp_path, fri_10am)
+    old_ts = (fri_10am - timedelta(hours=60)).strftime("%Y-%m-%d %H:%M:%S")
+    (tmp_path / "backup.log").write_text(
+        f"{old_ts} backup start\nEXIT=0\n", encoding="utf-8"
+    )
+
+    # Heartbeat thuong trong phien (gia lap bang evaluate va save state giong heartbeat)
+    prev_state = hc.load_schedule_state(str(tmp_path / hc.SCHEDULE_STATE_NAME))
+    job_last_seen = {}
+    for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
+        log_path = str(tmp_path / job_cfg.log_file)
+        job_last_seen[branch] = get_last_called_timestamp(
+            log_path, job_cfg.label, skip_counts_as_run=job_cfg.skip_counts_as_run
+        )
+    sched_alerts, new_state, _ = evaluate_schedule_health(
+        job_last_seen, fri_10am, prev_state, watch_jobs=SCHEDULE_WATCH_JOBS
+    )
+    assert len(sched_alerts) == 1
+    assert "backup" in sched_alerts[0]
+    hc.save_schedule_state(str(tmp_path / hc.SCHEDULE_STATE_NAME), new_state)
+
+    # 10:07: schedule-watch chay bang cờ --schedule-watch-only dung CHUNG file state
+    fri_1007 = datetime(2026, 10, 2, 10, 7, 0, tzinfo=TZ)
+    FakeDatetime.now = staticmethod(lambda tz: fri_1007)
+
+    rc = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    # backup da duoc heartbeat bao truoc do -> schedule-watch KHONG bao lai -> thoat 0
+    assert rc == 0
+    assert sent_alerts == [], "schedule-watch khong duoc gui trung canh bao ma heartbeat da bao"
+
+
+def test_heartbeat_without_flag_saturday_night_exits_0(tmp_path: Path, monkeypatch):
+    """Khong co co --schedule-watch-only thi 22:00 thu Bay return 0 ngay vi ngoai gio giao dich."""
+    import scripts.heartbeat_check as hc
+
+    sat_night = datetime(2026, 10, 3, 22, 0, 0, tzinfo=TZ)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return sat_night
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    sent_alerts = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_alerts.append(msg) or True)
+
+    _create_fresh_job_logs(tmp_path, sat_night)
+    (tmp_path / "backup.log").write_text("old", encoding="utf-8")
+
+    # Chay heartbeat khong co co --schedule-watch-only
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc == 0
+    assert sent_alerts == []
+
 

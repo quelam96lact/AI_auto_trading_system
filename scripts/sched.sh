@@ -198,8 +198,13 @@ case "${1:-}" in
     exec "$RUN" "$log_file" "$label" \
       uv run python -m scripts.startup_catchup "$@"
     ;;
+  schedule-watch)
+    shift || true
+    exec "$RUN" schedule-watch.log schedule-watch \
+      uv run python scripts/heartbeat_check.py --schedule-watch-only "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-makeup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-makeup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup|schedule-watch}" >&2
     exit 2
     ;;
 esac

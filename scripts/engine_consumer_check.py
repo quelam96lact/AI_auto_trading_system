@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import os
 import sys
+import traceback
 from datetime import date, datetime
 from pathlib import Path
 
@@ -220,5 +221,9 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        sys.exit(3)
 

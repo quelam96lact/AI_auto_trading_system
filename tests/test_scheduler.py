@@ -596,3 +596,154 @@ def test_evening_jobs_continues_when_catchup_fails():
         "universe-refresh",
     ]
 
+
+# ==============================================================================
+# 8. Test Scheduler Alerting on Job Failure (Task 3 Brief 217)
+# ==============================================================================
+
+
+def test_catchup_alert_on_all_retries_failed():
+    """catchup [1, 1, 1]: gui 1 tin canh bao voi catchup va so lan thu 3."""
+    alerts = []
+    rc_iter = iter([1, 1, 1])
+
+    def fake_runner(**kwargs):
+        return next(rc_iter)
+
+    rc = run_startup(
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert rc == 1
+    assert len(alerts) == 1
+    assert "catchup" in alerts[0]
+    assert "số lần thử: 3" in alerts[0]
+    assert "logs/catchup.log" in alerts[0]
+    assert "VN" in alerts[0]
+
+
+def test_catchup_no_alert_when_retry_succeeds():
+    """catchup [1, 0]: thanh cong o lan thu 2, khong gui canh bao."""
+    alerts = []
+    rc_iter = iter([1, 0])
+
+    def fake_runner(**kwargs):
+        return next(rc_iter)
+
+    rc = run_startup(
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert rc == 0
+    assert alerts == []
+
+
+def test_catchup_no_alert_on_lock_skip():
+    """catchup [None] (SKIP vi tien trinh khac dang giu lock): khong gui canh bao."""
+    alerts = []
+
+    def fake_runner(**kwargs):
+        return None
+
+    rc = run_startup(
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert rc is None
+    assert alerts == []
+
+
+def test_evening_jobs_alerts_on_daily_check_failure():
+    """evening_jobs: catchup ok, daily-data-check loi rc=1 -> gui 1 tin cho daily-data-check."""
+    alerts = []
+
+    def fake_runner(**kwargs):
+        label = kwargs.get("label")
+        if label == "daily-data-check":
+            return 1
+        return 0
+
+    run_event(
+        event_type="evening_jobs",
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert len(alerts) == 1
+    assert "daily-data-check" in alerts[0]
+    assert "logs/daily-data-check.log" in alerts[0]
+    assert "số lần thử: 1" in alerts[0]
+
+
+def test_evening_jobs_alerts_on_universe_refresh_failure():
+    """evening_jobs: catchup ok, daily-check ok, universe-refresh rc=2 -> gui 1 tin."""
+    alerts = []
+
+    def fake_runner(**kwargs):
+        label = kwargs.get("label")
+        if label == "universe-refresh":
+            return 2
+        return 0
+
+    run_event(
+        event_type="evening_jobs",
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert len(alerts) == 1
+    assert "universe-refresh" in alerts[0]
+    assert "logs/universe-refresh.log" in alerts[0]
+    assert "rc=2" in alerts[0]
+
+
+def test_alert_exception_does_not_crash_scheduler():
+    """Loi nem ra trong alert_fn khong duoc lam sap scheduler."""
+
+    def exploding_alert(msg: str):
+        raise RuntimeError("Telegram network down")
+
+    def fake_runner(**kwargs):
+        return 1
+
+    # Khong nem exception
+    run_event(
+        event_type="evening_jobs",
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=exploding_alert,
+    )
+
+
+def test_run_job_with_retry_actual_attempts_counted():
+    """run_job_with_retry tra ve dung so lan attempts thuc su chay."""
+    rc_iter = iter([1, 2])
+
+    def fake_runner(**kwargs):
+        return next(rc_iter)
+
+    rc, attempts = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        max_attempts=2,
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        return_attempts=True,
+    )
+    assert rc == 2
+    assert attempts == 2
+
+

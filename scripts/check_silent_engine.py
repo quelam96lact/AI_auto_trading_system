@@ -13,6 +13,7 @@ CLI:
 
 import argparse
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -241,4 +242,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        traceback.print_exc()
+        sys.exit(3)
