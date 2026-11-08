@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
@@ -30,6 +31,34 @@ class Config:
     ssi_derivative_account: str = ""
 
 
+def normalize_loopback(url: str) -> str:
+    """Chuẩn hoá hostname localhost thành 127.0.0.1.
+
+    Windows: localhost ra IPv6 trước, mỗi kết nối DB treo ~130s.
+    """
+    if not url:
+        return url
+    try:
+        parts = urlsplit(url)
+        if not parts.scheme or not parts.netloc:
+            return url
+        hostname = parts.hostname
+        if not hostname or hostname.lower() != "localhost":
+            return url
+        userinfo, sep, host_port = parts.netloc.rpartition("@")
+        if ":" in host_port:
+            _, colon, port = host_port.partition(":")
+            new_host_port = f"127.0.0.1{colon}{port}"
+        else:
+            new_host_port = "127.0.0.1"
+        new_netloc = f"{userinfo}{sep}{new_host_port}"
+        return urlunsplit(
+            (parts.scheme, new_netloc, parts.path, parts.query, parts.fragment)
+        )
+    except ValueError:
+        return url
+
+
 def load_config(path: str) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
@@ -39,8 +68,10 @@ def load_config(path: str) -> Config:
         bar_interval_minutes=int(raw.get("bar_interval_minutes", 5)),
         ssi_equity_accounts=list(raw["ssi_equity_accounts"]),
         holidays={date.fromisoformat(str(h)) for h in raw.get("holidays", [])},
-        db_dsn=os.environ["DB_DSN"],
-        nats_url=os.environ.get("NATS_URL") or raw["nats"]["url"],
+        db_dsn=normalize_loopback(os.environ["DB_DSN"]),
+        nats_url=normalize_loopback(
+            os.environ.get("NATS_URL") or raw["nats"]["url"]
+        ),
         nats_stream=raw["nats"]["stream"],
         watchdog_stale_seconds=int(raw["watchdog"]["stale_seconds"]),
         watchdog_max_failures=int(raw["watchdog"]["max_failures"]),
