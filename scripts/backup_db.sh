@@ -26,6 +26,31 @@ fi
 # "/var/backups/trading-db" khong ton tai va se chet o mkdir (do that 29/09).
 BACKUP_DIR="${1:-${TRADING_BACKUP_DIR:-/var/backups/trading-db}}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+
+if [ -n "${BACKUP_SKIP_IF_NEWER_HOURS:-}" ] && [ -d "$BACKUP_DIR" ]; then
+  NEWEST_DUMP=""
+  NEWEST_MTIME=0
+  for f in "$BACKUP_DIR"/trading_*.dump; do
+    [ -e "$f" ] || continue
+    M=$(date -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+    if [ "$M" -gt "$NEWEST_MTIME" ]; then
+      NEWEST_MTIME="$M"
+      NEWEST_DUMP="$f"
+    fi
+  done
+  if [ -n "$NEWEST_DUMP" ] && [ "$NEWEST_MTIME" -gt 0 ]; then
+    NOW=$(date +%s)
+    AGE_SEC=$((NOW - NEWEST_MTIME))
+    if [ "$AGE_SEC" -lt 0 ]; then AGE_SEC=0; fi
+    AGE_HOURS=$((AGE_SEC / 3600))
+    if [ "$AGE_HOURS" -lt "$BACKUP_SKIP_IF_NEWER_HOURS" ]; then
+      BASENAME=$(basename "$NEWEST_DUMP")
+      echo "SKIP: dump moi nhat ${BASENAME} moi ${AGE_HOURS} gio (< ${BACKUP_SKIP_IF_NEWER_HOURS})"
+      exit 0
+    fi
+  fi
+fi
+
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_FILE="${BACKUP_DIR}/trading_${TIMESTAMP}.dump"
 CONTAINER_DUMP="/tmp/trading_${TIMESTAMP}.dump"

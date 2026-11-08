@@ -179,3 +179,46 @@ def test_ban_ke_cu_hon_han_giu_bi_xoa_ban_moi_thi_giu(tmp_path):
     assert r.returncode == 0, r.stderr
     assert not old.exists()
     assert recent.exists()
+
+
+def test_skip_if_newer_hours_skips_when_dump_is_recent(tmp_path):
+    """Co dump mtime cach day 1 gio, nguong 26: in SKIP, exit 0, khong co file moi (Task 3 Brief 215)."""
+    bin_dir, bak, log = _setup(tmp_path)
+    existing_dump = bak / "trading_20261108_010000.dump"
+    existing_dump.write_bytes(b"PGDMP_EXISTING")
+    now = time.time()
+    os.utime(existing_dump, (now - 3600, now - 3600))
+
+    r = _run(tmp_path, bak, bin_dir, log, BACKUP_SKIP_IF_NEWER_HOURS="26")
+    assert r.returncode == 0, r.stderr
+    assert "SKIP: dump moi nhat trading_20261108_010000.dump moi 1 gio (< 26)" in r.stdout
+    assert _files(bak, ".dump") == [existing_dump]
+    assert _files(bak, ".counts") == []
+    # Khong chay psql hay pg_dump nao
+    assert _log_lines(log) == []
+
+
+def test_skip_if_newer_hours_proceeds_when_dump_is_old(tmp_path):
+    """Dump cach day 30 gio, nguong 26: di tiep vao nhanh dump."""
+    bin_dir, bak, log = _setup(tmp_path)
+    old_dump = bak / "trading_20261107_010000.dump"
+    old_dump.write_bytes(b"PGDMP_OLD")
+    now = time.time()
+    os.utime(old_dump, (now - 30 * 3600, now - 30 * 3600))
+
+    r = _run(tmp_path, bak, bin_dir, log, BACKUP_SKIP_IF_NEWER_HOURS="26")
+    assert r.returncode == 0, r.stderr
+    assert "SKIP:" not in r.stdout
+    assert len(_files(bak, ".dump")) == 2
+    assert any("pg_dump" in ln for ln in _log_lines(log))
+
+
+def test_skip_if_newer_hours_proceeds_when_no_dump_exists(tmp_path):
+    """Khong co dump nao trong backup_dir, nguong 26: di tiep vao nhanh dump."""
+    bin_dir, bak, log = _setup(tmp_path)
+    r = _run(tmp_path, bak, bin_dir, log, BACKUP_SKIP_IF_NEWER_HOURS="26")
+    assert r.returncode == 0, r.stderr
+    assert "SKIP:" not in r.stdout
+    assert len(_files(bak, ".dump")) == 1
+    assert any("pg_dump" in ln for ln in _log_lines(log))
+

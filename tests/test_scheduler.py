@@ -9,6 +9,7 @@ Kiem chung:
 5. Xoay log giong log_rotate.sh.
 """
 
+import re
 import sys
 import threading
 from contextlib import contextmanager
@@ -20,10 +21,13 @@ from trading.calendar_vn import TZ
 from trading.scheduler.main import (
     ADVISORY_LOCK_CATCHUP,
     ADVISORY_LOCK_DAILY_CHECK,
+    CATCHUP_MAX_ATTEMPTS,
+    CATCHUP_RETRY_DELAY_SEC,
     calculate_next_event,
     rotate_log_if_needed,
     run_event,
     run_job,
+    run_job_with_retry,
     run_startup,
     scheduler_loop,
 )
@@ -125,6 +129,7 @@ def test_run_job_log_format_and_heartbeat_check_compatibility(tmp_path: Path):
     """Log dung dinh dang run_if_docker_up.sh:
     <YYYY-mm-dd HH:MM:SS> <label> start
     <stdout/stderr>
+    <YYYY-mm-dd HH:MM:SS> <label> finish dur=<dur>s
     EXIT=<rc>
     heartbeat_check doc duoc dung start_dt va exit_code.
     """
@@ -154,15 +159,41 @@ def test_run_job_log_format_and_heartbeat_check_compatibility(tmp_path: Path):
     content = log_path.read_text(encoding="utf-8")
     lines = content.splitlines()
 
+    start_idx = next(i for i, l in enumerate(lines) if l.endswith("catchup start"))
+    finish_idx = next(i for i, l in enumerate(lines) if "catchup finish dur=" in l)
+    exit_idx = next(i for i, l in enumerate(lines) if l == "EXIT=0")
+
+    assert start_idx < finish_idx < exit_idx
     assert lines[0] == "2026-11-02 06:40:00 catchup start"
     assert "Hang 1: dang xu ly" in content
     assert "Hang 2: hoan tat" in content
+    assert re.match(
+        r"^2026-11-02 06:40:00 catchup finish dur=\d+\.\d{2}s$", lines[-2]
+    )
     assert lines[-1] == "EXIT=0"
 
     # Kiem tra heartbeat_check doc duoc
     dt, exit_code, reason = get_last_run_exit_code(str(log_path), "catchup")
     assert reason is None
     assert dt == simulated_dt
+    assert exit_code == 0
+
+
+def test_heartbeat_check_compatibility_with_finish_dur_line(tmp_path: Path):
+    """heartbeat_check doc log mau co dong finish dur= va van ra dung exit code."""
+    sample_log = tmp_path / "universe-refresh.log"
+    sample_log.write_text(
+        "2026-11-02 21:45:10 universe-refresh start\n"
+        "Lam moi danh muc: 1595 ma\n"
+        "2026-11-02 21:55:30 universe-refresh finish dur=620.15s\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+    dt, exit_code, reason = get_last_run_exit_code(
+        str(sample_log), "universe-refresh"
+    )
+    assert reason is None
+    assert dt == datetime(2026, 11, 2, 21, 45, 10, tzinfo=TZ)
     assert exit_code == 0
 
 
@@ -302,6 +333,9 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
     executed_labels = []
     import trading.scheduler.main as sm
 
+    monkeypatch.setattr(sm, "CATCHUP_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(sm, "CATCHUP_RETRY_DELAY_SEC", 0.0)
+
     orig_run_job = sm.run_job
 
     def spy_run_job(*args, **kwargs):
@@ -362,6 +396,11 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
 
 def test_scheduler_loop_once(tmp_path: Path, monkeypatch):
     """scheduler_loop chay startup roi 1 event roi thoat sach se khi once=True."""
+    import trading.scheduler.main as sm
+
+    monkeypatch.setattr(sm, "CATCHUP_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(sm, "CATCHUP_RETRY_DELAY_SEC", 0.0)
+
     logs_dir = tmp_path / "logs"
     # Subprocess that chay `python -m scripts.startup_catchup` voi cwd=tmp_path:
     # khong duoc de PYTHONPATH tro ve repo, neu khong test se chay catchup THAT.
@@ -396,3 +435,164 @@ def test_scheduler_loop_once(tmp_path: Path, monkeypatch):
     assert (logs_dir / "catchup.log").read_text(encoding="utf-8").count(
         " catchup start"
     ) == 2
+
+
+# ==============================================================================
+# 7. Test catchup retry handling (Task 2 Brief 215)
+# ==============================================================================
+
+
+def test_run_job_with_retry_rc_1_then_0():
+    """rc [1, 0]: chay 2 lan, sleep 1 lan voi 300."""
+    sleeps = []
+    runs = []
+    rc_iter = iter([1, 0])
+
+    def fake_runner(**kwargs):
+        runs.append(kwargs.get("label"))
+        return next(rc_iter)
+
+    rc = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda s: sleeps.append(s),
+        runner_fn=fake_runner,
+    )
+    assert rc == 0
+    assert len(runs) == 2
+    assert sleeps == [300.0]
+
+
+def test_run_job_with_retry_rc_2_all():
+    """rc [2, 2, 2]: chay 3 lan, tra ve 2, sleep 2 lan voi 300."""
+    sleeps = []
+    runs = []
+    rc_iter = iter([2, 2, 2])
+
+    def fake_runner(**kwargs):
+        runs.append(kwargs.get("label"))
+        return next(rc_iter)
+
+    rc = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda s: sleeps.append(s),
+        runner_fn=fake_runner,
+    )
+    assert rc == 2
+    assert len(runs) == 3
+    assert sleeps == [300.0, 300.0]
+
+
+def test_run_job_with_retry_rc_0_once():
+    """rc [0]: chay 1 lan, khong sleep."""
+    sleeps = []
+    runs = []
+
+    def fake_runner(**kwargs):
+        runs.append(kwargs.get("label"))
+        return 0
+
+    rc = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda s: sleeps.append(s),
+        runner_fn=fake_runner,
+    )
+    assert rc == 0
+    assert len(runs) == 1
+    assert sleeps == []
+
+
+def test_catchup_constants():
+    """Kiem tra hang so retry cua catchup (Task 2 Brief 215)."""
+    assert CATCHUP_MAX_ATTEMPTS == 3
+    assert CATCHUP_RETRY_DELAY_SEC == 300.0
+
+
+def test_run_job_with_retry_rc_none_once():
+    """rc [None] (SKIP): chay 1 lan, khong sleep."""
+    sleeps = []
+    runs = []
+
+    def fake_runner(**kwargs):
+        runs.append(kwargs.get("label"))
+        val: int | None = None
+        return val
+
+    rc = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda s: sleeps.append(s),
+        runner_fn=fake_runner,
+    )
+    assert rc is None
+    assert len(runs) == 1
+    assert sleeps == []
+
+
+def test_run_job_with_retry_rc_124_once():
+    """rc [124] (timeout 3 gio): chay 1 lan, khong sleep."""
+    sleeps = []
+    runs = []
+
+    def fake_runner(**kwargs):
+        runs.append(kwargs.get("label"))
+        return 124
+
+    rc = run_job_with_retry(
+        label="catchup",
+        log_file="catchup.log",
+        command=["fake"],
+        timeout_seconds=10,
+        lock_id=ADVISORY_LOCK_CATCHUP,
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda s: sleeps.append(s),
+        runner_fn=fake_runner,
+    )
+    assert rc == 124
+    assert len(runs) == 1
+    assert sleeps == []
+
+
+def test_evening_jobs_continues_when_catchup_fails():
+    """evening_jobs voi catchup luon bang 1: daily-check va universe-refresh van duoc goi."""
+    executed = []
+
+    def fake_runner(**kwargs):
+        label = kwargs.get("label")
+        executed.append(label)
+        if label == "catchup":
+            return 1
+        return 0
+
+    run_event(
+        event_type="evening_jobs",
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+    )
+    assert executed == [
+        "catchup",
+        "catchup",
+        "catchup",
+        "daily-data-check",
+        "universe-refresh",
+    ]
+

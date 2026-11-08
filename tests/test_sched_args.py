@@ -389,3 +389,16 @@ def test_sched_sh_catchup_log_selection_simulated(tmp_path):
     assert res3.returncode == 0, f"res3 failed: {res3.stderr}"
     assert "RUN_LOG=catchup.log" in res3.stdout.splitlines()
     assert "RUN_LABEL=catchup" in res3.stdout.splitlines()
+
+
+def test_backup_makeup_branch_flags():
+    """Nhánh backup-makeup trong sched.sh phải có BACKUP_SKIP_IF_NEWER_HOURS=26, backup-makeup.log, backup_db.sh và $@ (Brief 215)."""
+    branches = parse_sched_branches(SCHED_SH)
+    assert "backup-makeup" in branches, "sched.sh thiếu nhánh backup-makeup"
+    code = branches["backup-makeup"]
+    assert "BACKUP_SKIP_IF_NEWER_HOURS=26" in code
+    assert "backup-makeup.log" in code
+    assert "backup-makeup" in code
+    assert "bash scripts/backup_db.sh" in code
+    assert '"$@"' in code
+

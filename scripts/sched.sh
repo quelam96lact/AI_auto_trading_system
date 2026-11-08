@@ -16,6 +16,7 @@
 #   scripts/sched.sh orderbook-recorder
 #   scripts/sched.sh orderbook-daily-check
 #   scripts/sched.sh backup
+#   scripts/sched.sh backup-makeup
 #   scripts/sched.sh backup-check
 #   scripts/sched.sh orderbook-backup
 #   scripts/sched.sh disk-check
@@ -144,6 +145,12 @@ case "${1:-}" in
     exec "$RUN" backup.log backup \
       bash scripts/backup_db.sh "$@"
     ;;
+  backup-makeup)
+    shift || true
+    export BACKUP_SKIP_IF_NEWER_HOURS=26
+    exec "$RUN" backup-makeup.log backup-makeup \
+      bash scripts/backup_db.sh "$@"
+    ;;
   backup-check)
     shift || true
     # Tham so vi tri (khong bat dau bang -) doi thanh --backup-dir cho argparse.
@@ -192,7 +199,7 @@ case "${1:-}" in
       uv run python -m scripts.startup_catchup "$@"
     ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-makeup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup}" >&2
     exit 2
     ;;
 esac

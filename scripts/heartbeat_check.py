@@ -174,7 +174,7 @@ SCHEDULE_WATCH_JOBS: dict[str, WatchJobConfig] = {
     ),
 }
 
-# 14 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do phân loại).
+# 15 nhánh sched.sh không canh 24/7 trong heartbeat (kèm lý do phân loại).
 # LƯU Ý: Giờ chạy thật của từng job nằm ở DEPLOYMENT.md §9, không chép lại ở đây.
 KHONG_CANH: dict[str, str] = {
     "heartbeat": "Chính là heartbeat (tự canh là đệ quy), do container-health canh chéo trong giờ giao dịch.",
@@ -191,6 +191,7 @@ KHONG_CANH: dict[str, str] = {
     "orderbook-daily-check": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "host-preflight": "Chạy theo chu kỳ tuần (buổi sáng trước tuần giao dịch mới), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
     "restore-drill": "Diễn tập phục hồi theo chu kỳ tuần (ban đêm cuối tuần), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "backup-makeup": "Chạy bù mỗi giờ 24/7 khi thiếu dump; tự thoát 0 khi dump còn mới nên không canh theo lịch cố định.",
 }
 
 
@@ -202,7 +203,7 @@ class JobExitPolicy(NamedTuple):
     reason: str  # Căn cứ dòng code và lý do phân loại
 
 
-# Bảng chính sách mã thoát cho cả 19 nhánh sched.sh (Brief đợt 156, cập nhật đợt 199)
+# Bảng chính sách mã thoát cho cả 20 nhánh sched.sh (Brief đợt 156, cập nhật đợt 215)
 SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
     "heartbeat": JobExitPolicy(
         branch="heartbeat",
@@ -294,6 +295,13 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         label="backup",
         normal_exit_codes=frozenset({0}),
         reason="backup_db.sh:18, 22, 85. Shell script không có cơ chế gửi Telegram. Mã 0 là backup xong; mã 1 (lỗi pg_restore verify) và mã 2 (lỗi đối số) chưa ai báo.",
+    ),
+    "backup-makeup": JobExitPolicy(
+        branch="backup-makeup",
+        log_file="backup-makeup.log",
+        label="backup-makeup",
+        normal_exit_codes=frozenset({0}),
+        reason="backup_db.sh. Shell script không có cơ chế gửi Telegram. Mã 0 là backup xong hoặc skip vì dump còn mới; mã 1 và 2 chưa ai báo.",
     ),
     "backup-check": JobExitPolicy(
         branch="backup-check",

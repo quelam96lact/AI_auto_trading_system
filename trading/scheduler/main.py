@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time as time_module
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import date, datetime, time, timedelta
@@ -34,6 +35,10 @@ ADVISORY_LOCK_DAILY_CHECK = 2026110102
 TIMEOUT_CATCHUP_SECONDS = 3 * 3600  # 3 hours (10,800s)
 TIMEOUT_DAILY_CHECK_SECONDS = 30 * 60  # 30 minutes (1,800s)
 TIMEOUT_UNIVERSE_REFRESH_SECONDS = 3600  # 1 hour (3,600s)
+
+# Retry settings for catchup
+CATCHUP_MAX_ATTEMPTS = 3
+CATCHUP_RETRY_DELAY_SEC = 300.0
 
 # Schedule times
 MORNING_CATCHUP_TIME = time(6, 40)
@@ -155,6 +160,7 @@ def run_job(
                 logger.info("%s SKIP: dang co tien trinh khac", label)
                 return None
 
+            t0 = time_module.monotonic()
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"{ts} {label} start\n")
                 f.flush()
@@ -190,9 +196,13 @@ def run_job(
                     f.write(f"\n[scheduler] ERROR khi chay tien trinh: {e}\n")
                     rc = 1
 
+                dur = time_module.monotonic() - t0
+                finish_dt = (now_fn() if now_fn else datetime.now(TZ)).astimezone(TZ)
+                finish_ts = finish_dt.strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"{finish_ts} {label} finish dur={dur:.2f}s\n")
                 f.write(f"EXIT={rc}\n")
                 f.flush()
-                logger.info("%s finish with EXIT=%d", label, rc)
+                logger.info("%s finish with EXIT=%d dur=%.2fs", label, rc, dur)
                 return rc
     except Exception as e:
         logger.error("Loi ngoai le khi chay job %s: %s", label, e)
@@ -203,6 +213,60 @@ def run_job(
         except Exception:
             pass
         return 2
+
+
+def run_job_with_retry(
+    label: str,
+    log_file: str,
+    command: list[str],
+    timeout_seconds: int,
+    lock_id: int,
+    logs_dir: Path,
+    cwd: Path | None = None,
+    dsn: str | None = None,
+    lock_manager: Callable[[int], AbstractContextManager[bool]] | None = None,
+    now_fn: Callable[[], datetime] | None = None,
+    max_attempts: int | None = None,
+    retry_delay_sec: float | None = None,
+    sleep_fn: Callable[[float], Any] = time_module.sleep,
+    runner_fn: Callable[..., int | None] | None = None,
+) -> int | None:
+    """Boc run_job de tu thu lai toi da max_attempts lan khi rc la 1 hoac 2.
+
+    Khong thu lai khi rc la 0, None (SKIP) hoac 124 (timeout).
+    """
+    fn = runner_fn if runner_fn is not None else run_job
+    eff_max = max_attempts if max_attempts is not None else CATCHUP_MAX_ATTEMPTS
+    eff_delay = (
+        retry_delay_sec if retry_delay_sec is not None else CATCHUP_RETRY_DELAY_SEC
+    )
+    last_rc: int | None = None
+    for attempt in range(1, eff_max + 1):
+        last_rc = fn(
+            label=label,
+            log_file=log_file,
+            command=command,
+            timeout_seconds=timeout_seconds,
+            lock_id=lock_id,
+            logs_dir=logs_dir,
+            cwd=cwd,
+            dsn=dsn,
+            lock_manager=lock_manager,
+            now_fn=now_fn,
+        )
+        if last_rc not in (1, 2):
+            return last_rc
+        if attempt < eff_max:
+            logger.warning(
+                "%s that bai (rc=%s), thu lai lan %d/%d sau %.0fs...",
+                label,
+                last_rc,
+                attempt + 1,
+                eff_max,
+                eff_delay,
+            )
+            sleep_fn(eff_delay)
+    return last_rc
 
 
 def calculate_next_event(
@@ -247,11 +311,13 @@ def run_startup(
     dsn: str | None = None,
     lock_manager: Callable[[int], AbstractContextManager[bool]] | None = None,
     python_exe: str = sys.executable,
+    sleep_fn: Callable[[float], Any] = time_module.sleep,
+    runner_fn: Callable[..., int | None] | None = None,
 ) -> int | None:
-    """Chay catchup ngay khi khoi dong."""
+    """Chay catchup ngay khi khoi dong (co tu thu lai toi da 3 lan)."""
     logger.info("Chay startup catchup...")
     command = [python_exe, "-m", "scripts.startup_catchup"]
-    return run_job(
+    return run_job_with_retry(
         label="catchup",
         log_file="catchup.log",
         command=command,
@@ -261,6 +327,8 @@ def run_startup(
         cwd=cwd,
         dsn=dsn,
         lock_manager=lock_manager,
+        sleep_fn=sleep_fn,
+        runner_fn=runner_fn,
     )
 
 
@@ -271,12 +339,14 @@ def run_event(
     dsn: str | None = None,
     lock_manager: Callable[[int], AbstractContextManager[bool]] | None = None,
     python_exe: str = sys.executable,
+    sleep_fn: Callable[[float], Any] = time_module.sleep,
+    runner_fn: Callable[..., int | None] | None = None,
 ) -> None:
     """Thuc thi su kien theo lich."""
     if event_type == "morning_catchup":
         logger.info("Chay lich 06:40 (catchup)...")
         command = [python_exe, "-m", "scripts.startup_catchup"]
-        run_job(
+        run_job_with_retry(
             label="catchup",
             log_file="catchup.log",
             command=command,
@@ -286,11 +356,13 @@ def run_event(
             cwd=cwd,
             dsn=dsn,
             lock_manager=lock_manager,
+            sleep_fn=sleep_fn,
+            runner_fn=runner_fn,
         )
     elif event_type == "evening_jobs":
         logger.info("Chay lich 21:45 (catchup + daily-check)...")
         cmd_catchup = [python_exe, "-m", "scripts.startup_catchup"]
-        run_job(
+        run_job_with_retry(
             label="catchup",
             log_file="catchup.log",
             command=cmd_catchup,
@@ -300,10 +372,13 @@ def run_event(
             cwd=cwd,
             dsn=dsn,
             lock_manager=lock_manager,
+            sleep_fn=sleep_fn,
+            runner_fn=runner_fn,
         )
 
+        fn_job = runner_fn if runner_fn is not None else run_job
         cmd_daily_check = [python_exe, "scripts/daily_data_check.py"]
-        run_job(
+        fn_job(
             label="daily-data-check",
             log_file="daily-data-check.log",
             command=cmd_daily_check,
@@ -316,7 +391,7 @@ def run_event(
         )
 
         cmd_universe_refresh = [python_exe, "-m", "scripts.refresh_universe"]
-        run_job(
+        fn_job(
             label="universe-refresh",
             log_file="universe-refresh.log",
             command=cmd_universe_refresh,

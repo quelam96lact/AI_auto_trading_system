@@ -579,6 +579,7 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 10. Sao lưu cơ sở dữ liệu TimescaleDB ban đêm (02:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC 24/7: Dữ liệu nến ngày thứ Sáu vẫn cần được bảo vệ qua cuối tuần trước khi bảo trì.
 0 2 * * * cd /opt/trading && scripts/sched.sh backup
+0 * * * * cd /opt/trading && scripts/sched.sh backup-makeup
 
 # 11. Kiểm tra tính toàn vẹn và độ tươi của bản sao lưu DB (03:00 hàng ngày, 24/7 kể cả cuối tuần — đợt 131)
 # BẮT BUỘC chạy sau job backup (02:00) ít nhất 30-60 phút để đảm bảo dump đã hoàn tất.
@@ -641,6 +642,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | ~~`trading-backfill-5m`~~ | **Disabled 01/11/2026** — thay bằng `scheduler` | cùng vbs, tham số `backfill-5m` |
 | ~~`trading-catchup`~~ | **Disabled 01/11/2026** — `scheduler` chạy khi container khởi động + 06:40 + 21:45 | cùng vbs, tham số `catchup` |
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
+| `trading-backup-makeup` | mỗi giờ (24/7) | cùng vbs, tham số `backup-makeup` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
 | `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |

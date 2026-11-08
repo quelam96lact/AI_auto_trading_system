@@ -28,6 +28,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import scripts.bingx_drill_place_cancel as drill
 from scripts.bingx_drill_place_cancel import (
     calculate_drill_price,
     round_down_to_tick,
@@ -332,8 +333,9 @@ def test_post_send_filled_triggers_critical_alert_and_exit_2():
     client.cancel_order.assert_not_called()
 
 
-def test_post_send_cancel_success_returns_exit_0():
+def test_post_send_cancel_success_returns_exit_0(tmp_path, monkeypatch):
     """Normal success flow: NEW -> cancel_order -> CANCELED -> returns exit 0."""
+    monkeypatch.setattr(drill, "LOGS_DIR", tmp_path)
     client = create_mock_client()
     client.place_limit_order.return_value = {
         "order_id": 99999,
@@ -361,6 +363,9 @@ def test_post_send_cancel_success_returns_exit_0():
     assert code == 0
     client.cancel_order.assert_called_once_with(symbol="BTC-USDT", order_id=99999, client_order_id="drill_123")
     alert_fn.assert_not_called()
+    written_files = list(tmp_path.glob("bingx_drill_*.json"))
+    assert len(written_files) == 1
+    assert "drill_123" in written_files[0].read_text(encoding="utf-8")
 
 
 def test_post_send_cancel_failure_triggers_critical_alert_and_exit_2():
@@ -464,8 +469,6 @@ def test_real_cancelled_spelling_confirms_cancel(tmp_path, monkeypatch):
 
     Ban dau code chi nhan 'CANCELED' -> bao dong gia 'LENH CON TREO' tren mot lenh da huy.
     """
-    import scripts.bingx_drill_place_cancel as drill
-
     monkeypatch.setattr(drill, "LOGS_DIR", tmp_path)
     client = create_mock_client()
     client.get_position_mode_dual.return_value = True
@@ -481,8 +484,6 @@ def test_real_cancelled_spelling_confirms_cancel(tmp_path, monkeypatch):
 
 def test_cancelled_but_partially_executed_is_critical(tmp_path, monkeypatch):
     """Da huy nhung executedQty > 0 -> da co vi the: CRITICAL, exit 2, khong bao 'huy thanh cong'."""
-    import scripts.bingx_drill_place_cancel as drill
-
     monkeypatch.setattr(drill, "LOGS_DIR", tmp_path)
     client = create_mock_client()
     client.get_position_mode_dual.return_value = True
