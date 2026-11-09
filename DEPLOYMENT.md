@@ -515,6 +515,9 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # 2. Phát hiện image container cũ hơn commit git trước phiên giao dịch (08:00, T2–T6)
 0 8 * * 1-5 cd /opt/trading && scripts/sched.sh deploy-drift
 
+# 2a. Tóm tắt buổi sáng kiểm tra toàn bộ chuỗi cảnh báo còn sống (08:00, T2–T6 — đợt 218 F8a)
+0 8 * * 1-5 cd /opt/trading && scripts/sched.sh morning-summary
+
 # 2b. Container tự khởi động lại / bị kernel kill vì hết bộ nhớ (mỗi 10 phút, 24/7 — đợt 130)
 # 24/7 CÓ CHỦ Ý, không giới hạn giờ phiên: `restart: unless-stopped` làm container chết tự lên
 # lại trong vài giây nên heartbeat (ngưỡng 300 giây) lọt qua, và postgres có thể bị kernel kill
@@ -645,6 +648,7 @@ sớm muộn lệch). Khác biệt duy nhất là lớp bọc để ẩn cửa s
 | `trading-backup` | 02:00 hàng ngày (24/7) | cùng vbs, tham số `backup` |
 | `trading-backup-makeup` | mỗi giờ (24/7) | cùng vbs, tham số `backup-makeup` |
 | `trading-schedule-watch` | mỗi giờ, 24/7 | cùng vbs, tham số `schedule-watch` |
+| `trading-morning-summary` | 08:00 T2–T6 | cùng vbs, tham số `morning-summary` |
 | `trading-backup-check` | 03:00 hàng ngày (24/7) | cùng vbs, tham số `backup-check` |
 | `trading-orderbook-backup` | 02:30 hàng ngày (24/7) | cùng vbs, tham số `orderbook-backup` |
 | `trading-disk-check` | 6 giờ/lần, 24/7 | cùng vbs, tham số `disk-check` |
@@ -808,6 +812,7 @@ Khi máy chủ bị tắt nguồn, khởi động lại, hoặc Docker daemon ng
 | `orderbook-recorder` | **KHÔNG** | *Không thể chạy bù* | Luồng WebSocket L2 thời gian thực đã trôi qua thì không thể lấy lại từ API. |
 | `heartbeat` | **Không cần** | `scripts/sched.sh heartbeat --dry-run` | Dead-man's switch giám sát thời gian thực (ngoài phiên tự thoát 0). Chạy tay với `--dry-run` để chẩn đoán hệ thống an toàn mà không gửi Telegram và không cập nhật trạng thái. |
 | `schedule-watch` | **Không cần** | `scripts/sched.sh schedule-watch --dry-run` | Canh tuổi các job theo lịch 24/7 ngoài giờ giao dịch. Chạy tay với `--dry-run` để kiểm tra sức khoẻ lịch chạy an toàn. |
+| `morning-summary` | **Không cần** | `scripts/sched.sh morning-summary --dry-run` | Tóm tắt buổi sáng 08:00 ngày giao dịch (tuổi job, dump, restore-drill, outbox). Chạy tay với `--dry-run` để kiểm tra an toàn. |
 | `deploy-drift` | **Không cần** | `scripts/sched.sh deploy-drift` | So sánh commit git và container đang chạy. Chạy tay bất cứ lúc nào. |
 | `container-health` | **Không cần** | `scripts/sched.sh container-health` | Giám sát trạng thái sống và OOM của container tại thời điểm hiện tại, đồng thời canh heartbeat chéo trong khung giờ giao dịch 08:15–15:00 (ngưỡng 15 phút). |
 | `engine-cam` | **Không cần** | `scripts/sched.sh engine-cam` | Kiểm tra chốt chặn engine trên toàn bộ dữ liệu bar 5m trong DB. |

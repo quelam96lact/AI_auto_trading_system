@@ -41,10 +41,13 @@ from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from trading.calendar_vn import is_trading_day
+from trading.telegram import send_telegram
 
 try:
+    from scripts._alert_common import outbox_name, send_with_outbox
     from scripts.deploy_drift_check import get_container_name
 except ImportError:
+    from _alert_common import outbox_name, send_with_outbox
     from deploy_drift_check import get_container_name
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -413,11 +416,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Số nến kỳ vọng mẫu số (mock cho test)",
     )
     parser.add_argument("--dsn", default=None, help="Database DSN override")
+    parser.add_argument(
+        "--logs-dir",
+        default="logs",
+        help="Thư mục chứa logs và outbox (mặc định: logs)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    outbox_file = Path(args.logs_dir) / outbox_name("stream-health")
+    outbox_file.parent.mkdir(parents=True, exist_ok=True)
+    sender = send_telegram
+
     now_vn = datetime.now(TZ_VN)
     holidays = load_holidays()
 
@@ -531,18 +543,32 @@ def main(argv: list[str] | None = None) -> None:
 
     if code == 2:
         if count == 0:
-            sys.stderr.write(
+            err_line = (
                 f"dung: {target_name} ngay {check_date.isoformat()} khong co dong 'bars closed' nao tu luong thoi gian thuc (0 nen) [nguon: {source}]\n"
+            )
+            telegram_msg = (
+                f"[CRITICAL] luồng thời gian thực {target_name} ngày {check_date.isoformat()}: "
+                f"không có dòng 'bars closed' nào từ luồng thời gian thực (0 nến) [nguồn: {source}]"
             )
         else:
             cov_str = f"{count / denom:.1%}" if (denom and denom > 0) else "N/A"
             crit_val = (
                 args.min_coverage_crit if args.min_coverage_crit is not None else 0.50
             )
-            sys.stderr.write(
+            err_line = (
                 f"dung: do phu luong {target_name} ngay {check_date.isoformat()} chi dat {cov_str} "
                 f"{detail_suffix}, duoi nguong nghiem trong {crit_val:.0%} [nguon: {source}]\n"
             )
+            telegram_msg = (
+                f"[CRITICAL] độ phủ luồng {target_name} ngày {check_date.isoformat()} "
+                f"chỉ đạt {cov_str} {detail_suffix}, dưới ngưỡng nghiêm trọng {crit_val:.0%} [nguồn: {source}]"
+            )
+        sys.stderr.write(err_line)
+        if has_coverage_check:
+            try:
+                send_with_outbox(telegram_msg, send=sender, outbox_path=outbox_file)
+            except Exception as e:
+                sys.stderr.write(f"Lỗi gửi cảnh báo qua outbox: {e}\n")
         sys.exit(2)
     elif code == 1:
         cov_str = f"{count / denom:.1%}" if (denom and denom > 0) else "N/A"

@@ -212,6 +212,10 @@ def _setup_heartbeat_env(monkeypatch, tmp_path, fixed_now=TUESDAY_27):
         (tmp_path / job.log_file).write_text(
             f"{stamp} {job.label} start\n", encoding="utf-8"
         )
+    (tmp_path / "restore-drill.log").write_text(
+        f"{stamp} restore-drill start\nDiễn tập OK: restore drill fixture\n",
+        encoding="utf-8",
+    )
 
     # Fake DB queries
     class FakeCur:

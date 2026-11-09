@@ -537,3 +537,112 @@ def test_22_fetch_docker_collector_logs_respects_compose_project_name(monkeypatc
     assert len(called_cmds) == 2
     assert called_cmds[1] == ["docker", "logs", "-t", "trading-collector-1"]
 
+
+def test_23_critical_coverage_sends_alert_via_outbox(tmp_path, monkeypatch):
+    """Task 4 (F11): Độ phủ 0.4 (40% < crit 50%) -> gửi tin CRITICAL qua send_with_outbox, exit 2."""
+
+    log_file = tmp_path / "bars_closed.log"
+    # 4 bars closed trong session
+    log_file.write_text(
+        '2026-09-14T02:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 4}\n',
+        encoding="utf-8",
+    )
+
+    sent = []
+
+    def fake_send(text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr("scripts.stream_health_check.send_telegram", fake_send)
+
+    argv = [
+        "--session", "sang",
+        "--date", "2026-09-14",
+        "--log-file", str(log_file),
+        "--expected-bars", "10",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+        "--logs-dir", str(tmp_path),
+    ]
+
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+
+    assert exc.value.code == 2
+    assert len(sent) == 1
+    assert "[CRITICAL]" in sent[0]
+    assert "40.0%" in sent[0]
+    assert "50%" in sent[0]
+
+
+def test_24_warn_coverage_does_not_send_alert(tmp_path, monkeypatch):
+    """Task 4 (F11): Độ phủ 0.8 (80% >= crit 50%, < warn 90%) -> mức WARN, KHÔNG gửi tin, exit 1."""
+    log_file = tmp_path / "bars_closed.log"
+    # 8 bars closed trong session
+    log_file.write_text(
+        '2026-09-14T02:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 8}\n',
+        encoding="utf-8",
+    )
+
+    sent = []
+
+    def fake_send(text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr("scripts.stream_health_check.send_telegram", fake_send)
+
+    argv = [
+        "--session", "sang",
+        "--date", "2026-09-14",
+        "--log-file", str(log_file),
+        "--expected-bars", "10",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+        "--logs-dir", str(tmp_path),
+    ]
+
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+
+    assert exc.value.code == 1
+    assert len(sent) == 0, "Mức WARN không được gửi Telegram"
+
+
+def test_25_critical_coverage_send_failure_queues_in_outbox(tmp_path, monkeypatch):
+    """Task 4 (F11): Gửi lỗi -> tin nằm trong outbox ở tmp_path, vẫn exit 2."""
+    from scripts._alert_common import outbox_name
+    from trading.alerts import AlertOutbox
+
+    log_file = tmp_path / "bars_closed.log"
+    log_file.write_text(
+        '2026-09-14T02:20:00.000000Z {"level": "INFO", "msg": "bars closed", "n": 4}\n',
+        encoding="utf-8",
+    )
+
+    def fail_send(text: str) -> bool:
+        raise RuntimeError("Telegram network down")
+
+    monkeypatch.setattr("scripts.stream_health_check.send_telegram", fail_send)
+
+    argv = [
+        "--session", "sang",
+        "--date", "2026-09-14",
+        "--log-file", str(log_file),
+        "--expected-bars", "10",
+        "--min-coverage-warn", "0.90",
+        "--min-coverage-crit", "0.50",
+        "--logs-dir", str(tmp_path),
+    ]
+
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+
+    assert exc.value.code == 2
+    outbox_file = tmp_path / outbox_name("stream-health")
+    assert outbox_file.exists()
+    outbox = AlertOutbox(outbox_file)
+    assert outbox.pending() == 1
+
+

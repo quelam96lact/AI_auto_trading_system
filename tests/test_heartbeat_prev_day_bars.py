@@ -41,6 +41,10 @@ def _fresh_job_logs(logs_dir, now):
         (logs_dir / job.log_file).write_text(
             f"{stamp} {job.label} start" + chr(10), encoding="utf-8"
         )
+    (logs_dir / "restore-drill.log").write_text(
+        f"{stamp} restore-drill start\nDiễn tập OK: restore drill fixture\n",
+        encoding="utf-8",
+    )
 
 
 def _run_heartbeat(

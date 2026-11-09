@@ -42,7 +42,7 @@ try:
         save_json_state,
         send_with_outbox,
     )
-    from scripts._db_common import REPO_LOGS_DIR
+    from scripts._db_common import REPO_LOGS_DIR, default_backup_dir
     from scripts.daily_data_check import (
         NON_TRADING_DAY_MSG,
         NON_TRADING_DAY_PATTERN,
@@ -56,7 +56,7 @@ except ImportError:
         save_json_state,
         send_with_outbox,
     )
-    from _db_common import REPO_LOGS_DIR
+    from _db_common import REPO_LOGS_DIR, default_backup_dir
     from daily_data_check import (
         NON_TRADING_DAY_MSG,
         NON_TRADING_DAY_PATTERN,
@@ -64,7 +64,7 @@ except ImportError:
         assess_date,
     )
 
-from trading.alerts import _print_safe
+from trading.alerts import AlertOutbox, _print_safe
 from trading.calendar_vn import (
     TZ,
     is_trading_day,
@@ -195,9 +195,10 @@ KHONG_CANH: dict[str, str] = {
     "orderbook-recorder": "Tiến trình thu thập chỉ chạy trong phiên ngày giao dịch, ngoài phiên và cuối tuần ngừng nên không dùng ngưỡng cố định 24/7 được.",
     "orderbook-daily-check": "Chỉ chạy sau phiên ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được.",
     "host-preflight": "Chạy theo chu kỳ tuần (buổi sáng trước tuần giao dịch mới), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
-    "restore-drill": "Diễn tập phục hồi theo chu kỳ tuần (ban đêm cuối tuần), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được.",
+    "restore-drill": "Diễn tập phục hồi theo chu kỳ tuần (ban đêm cuối tuần), khoảng cách một tuần nên không dùng ngưỡng cố định 24/7 được; tuổi lần diễn tập OK được canh riêng qua get_last_successful_restore_timestamp (ngưỡng 9 ngày, đợt 218).",
     "backup-makeup": "Chạy bù mỗi giờ 24/7 khi thiếu dump; tự thoát 0 khi dump còn mới nên không canh theo lịch cố định.",
     "schedule-watch": "Chạy định kỳ mỗi giờ 24/7 để canh tuổi các job theo lịch ngoài giờ giao dịch; tự canh các job khác nên không canh đệ quy.",
+    "morning-summary": "Chỉ chạy buổi sáng trước phiên các ngày giao dịch, tuổi phụ thuộc ngày nghỉ và cuối tuần nên không dùng ngưỡng cố định 24/7 được; kết quả được canh bằng mã thoát.",
 }
 
 
@@ -258,7 +259,7 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         log_file="container-health.log",
         label="container-health",
         normal_exit_codes=frozenset({0, 1, 2}),
-        reason="container_health_check.py:497-499, 575, 585. Mã 0 là container khỏe; mã 1 là cảnh báo đã gửi Telegram; mã 2 là Docker chưa chạy (đã có docker_down_alert lo) hoặc gửi Telegram hỏng; mã 3 là crash/ngoại lệ chưa bắt (đợt 217).",
+        reason="container_health_check.py:497-499, 575, 585. Mã 0 là container khỏe; mã 1 là cảnh báo đã gửi Telegram; mã 2 là Docker chưa chạy (đã có docker_down_alert lo) hoặc gửi Telegram hỏng; mã 3 là crash/ngoại lệ chưa bắt (đợt 217); mã 4 là Docker daemon đang chạy nhưng không phản hồi trong 30s sau khi thử lại (đợt 218 Task 6, không thuộc normal_exit_codes để chuông báo thất bại).",
     ),
     "engine-cam": JobExitPolicy(
         branch="engine-cam",
@@ -279,7 +280,7 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         log_file="stream-health.log",
         label="stream-health",
         normal_exit_codes=frozenset({0}),
-        reason="stream_health_check.py:546, 556, 572. Script không gửi Telegram. Mã 0 là độ phủ đạt; mã 1 (WARN <90%) và mã 2 (CRITICAL <50%/0 nến) hoàn toàn im lặng trong log chưa ai báo.",
+        reason="stream_health_check.py:546, 556, 572. Mã 0 là độ phủ đạt. Trước đợt 218 script không gửi Telegram: mã 1 (WARN <90%) và mã 2 (CRITICAL <50%/0 nến) hoàn toàn im lặng trong log, chưa ai báo. Từ đợt 218: mã 2 (CRITICAL) gửi Telegram qua send_with_outbox (outbox stream-health); mã 1 (WARN) vẫn không gửi Telegram.",
     ),
     "orderbook-recorder": JobExitPolicy(
         branch="orderbook-recorder",
@@ -364,6 +365,13 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         label="schedule-watch",
         normal_exit_codes=frozenset({0, 1}),
         reason="heartbeat_check.py: mã 0 khi mọi job bình thường; mã 1 khi có cảnh báo đã tự gửi Telegram; mã 3 khi crash/ngoại lệ chưa bắt (đợt 217).",
+    ),
+    "morning-summary": JobExitPolicy(
+        branch="morning-summary",
+        log_file="morning-summary.log",
+        label="morning-summary",
+        normal_exit_codes=frozenset({0}),
+        reason="heartbeat_check.py: tóm tắt sáng lúc 08:00 ngày giao dịch. Thoát 0 khi gửi thành công hoặc ngày nghỉ; thoát 1 khi gửi hỏng vào outbox để schedule-watch bắt (Lead điều chỉnh 4 đợt 218).",
     ),
 }
 
@@ -549,6 +557,61 @@ def get_last_run_exit_code(
     return last_start_dt, last_exit_code, None
 
 
+RESTORE_DRILL_MAX_AGE_SECONDS = 9 * 86400  # 9 ngày (chu kỳ tuần 7 ngày + 2 ngày dư)
+
+
+def get_last_successful_restore_timestamp(
+    log_path: str,
+) -> tuple[datetime | None, str | None]:
+    """Đọc mốc thời gian của lần diễn tập phục hồi thành công gần nhất từ log_path.
+
+    Định dạng logs/restore-drill.log:
+      <YYYY-MM-DD HH:MM:SS> restore-drill start
+      ...
+      Diễn tập OK: <dump>, ...
+      EXIT=0
+
+    Dòng 'Diễn tập OK:' không có timestamp. Mốc thời gian lấy từ dòng
+    '<ts> restore-drill start' gần nhất đứng trước dòng OK đó.
+
+    Trả về:
+      (dt, None) nếu tìm thấy lần diễn tập OK.
+      (None, reason) nếu không tìm thấy file hoặc chưa từng có dòng Diễn tập OK.
+    """
+    if not os.path.isfile(log_path):
+        return None, f"file log không tồn tại ({os.path.basename(log_path)})"
+
+    pattern_start = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+restore-drill\s+start(?:\s|$)"
+    )
+
+    last_ok_dt = None
+    current_start_dt = None
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m_start = pattern_start.match(line)
+                if m_start:
+                    try:
+                        current_start_dt = datetime.strptime(
+                            m_start.group(1), "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=TZ)
+                    except ValueError:
+                        current_start_dt = None
+                elif "Diễn tập OK:" in line and current_start_dt is not None:
+                    last_ok_dt = current_start_dt
+    except Exception as e:
+        return None, f"không đọc được file log ({e})"
+
+    if last_ok_dt is None:
+        return (
+            None,
+            "chưa từng diễn tập thành công (không tìm thấy dòng 'Diễn tập OK:' sau mốc start)",
+        )
+    return last_ok_dt, None
+
+
 def evaluate_schedule_health(
     job_last_seen: dict[str, tuple[datetime | None, str | None]],
     now: datetime,
@@ -558,6 +621,8 @@ def evaluate_schedule_health(
         dict[str, tuple[datetime | None, int | None, str | None]] | None
     ) = None,
     exit_policies: dict[str, JobExitPolicy] = SCHEDULE_EXIT_POLICIES,
+    restore_drill_last_ok: tuple[datetime | None, str | None] | None = None,
+    restore_drill_max_age_seconds: int = RESTORE_DRILL_MAX_AGE_SECONDS,
 ) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
     """Đánh giá trạng thái chạy và mã thoát của các job theo lịch (pure function).
 
@@ -718,6 +783,60 @@ def evaluate_schedule_health(
                 alerts.append(
                     f"[INFO] job theo lịch '{branch}' ĐÃ HỒI PHỤC: "
                     f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {exit_code})"
+                )
+
+    # 3. Canh tuổi lần diễn tập phục hồi thành công gần nhất (Task 2 - Brief đợt 218)
+    if restore_drill_last_ok is not None:
+        last_ok_dt, ok_reason = restore_drill_last_ok
+        prev_drill = previous_state.get("restore-drill-ok")
+        prev_drill_status = (
+            prev_drill.get("status") if isinstance(prev_drill, dict) else None
+        )
+
+        if last_ok_dt is None:
+            current_drill_status = "stale"
+            drill_stale_reason = ok_reason or "chưa từng diễn tập phục hồi thành công"
+        else:
+            age_seconds = (now_tz - last_ok_dt).total_seconds()
+            if age_seconds > restore_drill_max_age_seconds:
+                current_drill_status = "stale"
+                age_days = age_seconds / 86400
+                drill_stale_reason = (
+                    f"lần diễn tập thành công cuối cùng lúc {last_ok_dt:%Y-%m-%d %H:%M:%S} "
+                    f"({age_days:.1f} ngày trước > ngưỡng 9 ngày, lịch: chủ nhật hàng tuần)"
+                )
+            else:
+                current_drill_status = "ok"
+                drill_stale_reason = None
+
+        new_drill_record = dict(prev_drill) if isinstance(prev_drill, dict) else {}
+        new_drill_record.update(
+            {
+                "status": current_drill_status,
+                "last_called": (
+                    last_ok_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    if last_ok_dt
+                    else None
+                ),
+                "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        new_state["restore-drill-ok"] = new_drill_record
+
+        if current_drill_status == "stale":
+            if prev_drill_status != "stale":
+                alerts.append(
+                    f"[CRITICAL] diễn tập phục hồi 'restore-drill' QUÁ HẠN: {drill_stale_reason}"
+                )
+            else:
+                info_logs.append(
+                    f"[heartbeat-sched] INFO: restore-drill vẫn quá hạn diễn tập phục hồi ({drill_stale_reason}) - đã báo trước đó"
+                )
+        else:  # current_drill_status == "ok"
+            if prev_drill_status == "stale":
+                alerts.append(
+                    f"[INFO] diễn tập phục hồi 'restore-drill' ĐÃ THÀNH CÔNG: "
+                    f"lần diễn tập gần nhất lúc {last_ok_dt:%Y-%m-%d %H:%M:%S}"
                 )
 
     return alerts, new_state, info_logs
@@ -900,6 +1019,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--schedule-watch-only",
         action="store_true",
         help="Chỉ canh tuổi và mã thoát các job theo lịch 24/7, không kiểm tra thị trường/nến.",
+    )
+    parser.add_argument(
+        "--morning-summary",
+        action="store_true",
+        help="Gửi tin tóm tắt sáng lúc 08:00 ngày giao dịch.",
+    )
+    parser.add_argument(
+        "--backup-dir",
+        default=None,
+        help="Thư mục backup (dùng cho --morning-summary và test).",
     )
     return parser
 
@@ -1095,6 +1224,97 @@ def prev_day_5m_alert(
     return None, p_iso
 
 
+def build_morning_summary(
+    now: datetime,
+    logs_dir: Path | str,
+    backup_dir: Path | str | None = None,
+    holidays: frozenset[date] = frozenset(),
+) -> str:
+    """Xây dựng nội dung tin tóm tắt sáng lúc 08:00 ngày giao dịch (Task 5 - Brief 218).
+
+    Bao gồm 4 mục:
+      1. Tuổi lần chạy thật cuối cùng của từng job trong SCHEDULE_WATCH_JOBS (F1).
+      2. Tuổi bản dump DB mới nhất (theo discovery của backup_check / default_backup_dir).
+      3. Lần diễn tập phục hồi (restore-drill) OK cuối cùng (Task 2).
+      4. Số file alert_outbox_* và tổng số tin chờ, kèm TÊN từng file outbox có tin chờ (Lead Adj 3).
+    """
+    now_tz = now.astimezone(TZ)
+    logs_p = Path(logs_dir)
+    lines = [f"[TÓM TẮT SÁNG] {now_tz:%Y-%m-%d %H:%M:%S}"]
+
+    # 1. Tuổi các job trong SCHEDULE_WATCH_JOBS
+    lines.append("1. Lịch chạy 24/7:")
+    for branch, cfg in SCHEDULE_WATCH_JOBS.items():
+        log_path = logs_p / cfg.log_file
+        val = get_last_called_timestamp(
+            str(log_path), cfg.label, skip_counts_as_run=cfg.skip_counts_as_run
+        )
+        last_dt = val[0]
+        skip_count = getattr(val, "skip_count", 0)
+        if last_dt is not None:
+            age_sec = (now_tz - last_dt).total_seconds()
+            if age_sec < 3600:
+                age_str = f"{age_sec / 60:.0f}p trước"
+            else:
+                age_str = f"{age_sec / 3600:.1f}h trước"
+            skip_str = f" ({skip_count} SKIP)" if not cfg.skip_counts_as_run else ""
+            lines.append(f"  - {branch}: {age_str}{skip_str}")
+        else:
+            skip_str = f" ({skip_count} SKIP)" if skip_count > 0 else ""
+            lines.append(f"  - {branch}: chưa có mốc chạy{skip_str}")
+
+    # 2. Tuổi bản dump DB mới nhất
+    b_dir = Path(backup_dir) if backup_dir else Path(default_backup_dir())
+    dump_str = "không tìm thấy bản dump"
+    if b_dir.exists() and b_dir.is_dir():
+        dumps = [
+            f
+            for f in b_dir.iterdir()
+            if f.is_file()
+            and f.name.startswith("trading_")
+            and (f.name.endswith(".dump") or f.name.endswith(".sql.gz"))
+        ]
+        if dumps:
+            latest_dump = max(dumps, key=lambda f: f.stat().st_mtime)
+            mtime = datetime.fromtimestamp(latest_dump.stat().st_mtime, TZ)
+            age_hours = (now_tz - mtime).total_seconds() / 3600
+            dump_str = f"{latest_dump.name} ({age_hours:.1f}h trước)"
+    lines.append(f"2. Dump DB mới nhất: {dump_str}")
+
+    # 3. Lần diễn tập phục hồi OK cuối cùng
+    restore_log = logs_p / "restore-drill.log"
+    restore_dt, _ = get_last_successful_restore_timestamp(str(restore_log))
+    if restore_dt is not None:
+        age_days = (now_tz - restore_dt).total_seconds() / 86400
+        restore_str = f"OK lúc {restore_dt:%Y-%m-%d %H:%M} ({age_days:.1f} ngày trước)"
+    else:
+        restore_str = "chưa từng diễn tập OK"
+    lines.append(f"3. Diễn tập phục hồi: {restore_str}")
+
+    # 4. Outbox và tin đang chờ (Lead Adjustment 3: liệt kê tên từng file có tin chờ)
+    outbox_files = sorted(logs_p.glob("alert_outbox_*.jsonl"))
+    total_outbox = len(outbox_files)
+    pending_files = {}
+    total_pending = 0
+    for of in outbox_files:
+        try:
+            cnt = AlertOutbox(of).pending()
+            if cnt > 0:
+                pending_files[of.name] = cnt
+                total_pending += cnt
+        except Exception:
+            pass
+
+    if pending_files:
+        details = ", ".join(f"{k}: {v}" for k, v in pending_files.items())
+        outbox_str = f"{total_pending} tin chờ trong {len(pending_files)}/{total_outbox} file ({details})"
+    else:
+        outbox_str = f"0 tin chờ (0/{total_outbox} file)"
+    lines.append(f"4. Hàng đợi cảnh báo: {outbox_str}")
+
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
     # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
@@ -1108,6 +1328,52 @@ def main(argv: list[str] | None = None) -> int:
     logs_dir = args.logs_dir
     outbox_path = Path(logs_dir) / HEARTBEAT_OUTBOX_NAME
     sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
+
+    if args.morning_summary:
+        now = datetime.now(TZ)
+        now_tz = now.astimezone(TZ)
+        holidays = frozenset()
+        try:
+            cfg_path = os.path.join(
+                os.path.dirname(__file__), "..", "config", "config.yaml"
+            )
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            holidays = frozenset(
+                date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
+            )
+        except Exception:
+            pass
+
+        if not is_trading_day(now_tz.date(), holidays):
+            _print_safe(
+                f"[morning-summary] {now_tz.date()} không phải ngày giao dịch -> bỏ qua"
+            )
+            return 0
+
+        summary_text = build_morning_summary(
+            now=now,
+            logs_dir=logs_dir,
+            backup_dir=args.backup_dir,
+            holidays=holidays,
+        )
+        _print_safe(summary_text)
+
+        if args.dry_run:
+            _print_safe("[DRY-RUN] Không gửi Telegram thật.")
+            return 0
+
+        outbox_file = Path(logs_dir) / outbox_name("morning-summary")
+        ok = send_with_outbox(
+            summary_text, send=send_telegram, outbox_path=outbox_file
+        )
+        if ok:
+            return 0
+        else:
+            _print_safe(
+                "[morning-summary] GUI TELEGRAM HONG: tin đã được xếp vào outbox"
+            )
+            return 1
 
     if args.schedule_watch_only:
         now = datetime.now(TZ)
@@ -1123,6 +1389,9 @@ def main(argv: list[str] | None = None) -> int:
             log_path = os.path.join(logs_dir, policy.log_file)
             job_exit_codes[branch] = get_last_run_exit_code(log_path, policy.label)
 
+        restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
+        restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
+
         prev_sched_state = load_schedule_state(sched_state_file)
         sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
             job_last_seen,
@@ -1131,6 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
             watch_jobs=SCHEDULE_WATCH_JOBS,
             job_exit_codes=job_exit_codes,
             exit_policies=SCHEDULE_EXIT_POLICIES,
+            restore_drill_last_ok=restore_drill_last_ok,
         )
 
         if args.dry_run:
@@ -1218,6 +1488,9 @@ def main(argv: list[str] | None = None) -> int:
         log_path = os.path.join(logs_dir, policy.log_file)
         job_exit_codes[branch] = get_last_run_exit_code(log_path, policy.label)
 
+    restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
+    restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
+
     sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
     prev_sched_state = load_schedule_state(sched_state_file)
     sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
@@ -1227,6 +1500,7 @@ def main(argv: list[str] | None = None) -> int:
         watch_jobs=SCHEDULE_WATCH_JOBS,
         job_exit_codes=job_exit_codes,
         exit_policies=SCHEDULE_EXIT_POLICIES,
+        restore_drill_last_ok=restore_drill_last_ok,
     )
 
     # Chỉ cảnh báo trong giờ giao dịch (trừ khi chạy --dry-run để chẩn đoán/test)

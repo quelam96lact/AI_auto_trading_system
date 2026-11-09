@@ -15,8 +15,11 @@ import argparse
 import asyncio
 import dataclasses
 import io
+import json
+import logging
 import sys
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -36,11 +39,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts._alert_common import outbox_name, send_with_outbox
 from scripts.record_vn30f_orderbook import resolve_front_month_symbol
 from scripts.verify_orderbook_file import VerificationResult, verify_orderbook_file
-from trading.alerts import alert
 from trading.calendar_vn import TZ, is_trading_day
 from trading.config import load_config
+from trading.telegram import send_telegram
+
+_log = logging.getLogger("trading.check_orderbook_daily")
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,8 @@ async def check_orderbook_daily(
     symbol: str | None = None,
     data_dir: Path | str = "data/orderbook",
     config_path: str = "config/config.yaml",
+    logs_dir: Path | str = "logs",
+    send_fn: Callable[[str], object] | None = None,
 ) -> int:
     """Quy trình kiểm tra file sổ lệnh hằng ngày sau phiên (chạy lúc 15:30)."""
     _load_dotenv()
@@ -206,13 +214,20 @@ async def check_orderbook_daily(
             f"[{now_vn.strftime('%H:%M:%S')}] [CRITICAL] {decision.message}",
             file=sys.stderr,
         )
-        alert(
-            "CRITICAL",
-            decision.message,
-            target_date=d.isoformat(),
-            symbol=sym,
-            expected_file=str(expected_file),
+        fields = {
+            "target_date": d.isoformat(),
+            "symbol": sym,
+            "expected_file": str(expected_file),
+        }
+        _log.critical(
+            json.dumps({"level": "CRITICAL", "msg": decision.message, **fields}, ensure_ascii=False)
         )
+        msg_text = f"[CRITICAL] {decision.message} {fields}"
+        outbox_dir = Path(logs_dir)
+        outbox_dir.mkdir(parents=True, exist_ok=True)
+        outbox_file = outbox_dir / outbox_name("orderbook-daily-check")
+        sender = send_fn if send_fn is not None else send_telegram
+        send_with_outbox(msg_text, send=sender, outbox_path=outbox_file)
         return decision.exit_code
 
     # 4. File tồn tại -> Gọi verify_orderbook_file kiểm tra chất lượng
@@ -235,16 +250,25 @@ async def check_orderbook_daily(
             f"[{now_vn.strftime('%H:%M:%S')}] [{decision.alert_level}] {decision.message}",
             file=sys.stderr,
         )
-        alert(
-            decision.alert_level,
-            decision.message,
-            target_date=d.isoformat(),
-            symbol=sym,
-            file=str(expected_file),
-            reasons=decision.reasons,
-            coverage_ratio=metrics.coverage_ratio,
-            empty_slots=metrics.empty_slots,
+        fields = {
+            "target_date": d.isoformat(),
+            "symbol": sym,
+            "file": str(expected_file),
+            "reasons": decision.reasons,
+            "coverage_ratio": metrics.coverage_ratio,
+            "empty_slots": metrics.empty_slots,
+        }
+        level_num = logging.WARNING if decision.alert_level == "WARN" else logging.CRITICAL
+        _log.log(
+            level_num,
+            json.dumps({"level": decision.alert_level, "msg": decision.message, **fields}, ensure_ascii=False),
         )
+        msg_text = f"[{decision.alert_level}] {decision.message} {fields}"
+        outbox_dir = Path(logs_dir)
+        outbox_dir.mkdir(parents=True, exist_ok=True)
+        outbox_file = outbox_dir / outbox_name("orderbook-daily-check")
+        sender = send_fn if send_fn is not None else send_telegram
+        send_with_outbox(msg_text, send=sender, outbox_path=outbox_file)
     else:
         print(f"[{now_vn.strftime('%H:%M:%S')}] [OK] {decision.message}")
 
@@ -275,6 +299,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="config/config.yaml",
         help="Đường dẫn file config (mặc định: config/config.yaml)",
     )
+    parser.add_argument(
+        "--logs-dir",
+        default="logs",
+        help="Thư mục logs (mặc định: logs)",
+    )
     return parser
 
 
@@ -289,6 +318,7 @@ def main(argv: list[str] | None = None) -> None:
             symbol=args.symbol,
             data_dir=args.data_dir,
             config_path=args.config,
+            logs_dir=args.logs_dir,
         )
     )
     sys.exit(exit_code)

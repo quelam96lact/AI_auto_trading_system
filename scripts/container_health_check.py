@@ -12,6 +12,7 @@ Mã thoát:
   0: Mọi thứ ổn, hoặc ghi nhận mốc mới thành công.
   1: Có cảnh báo và đã gửi thành công (hoặc in ra khi --dry-run).
   2: Sai cấu hình, lỗi Docker daemon, hoặc cảnh báo cần gửi mà gửi hỏng.
+  4: Docker daemon đang chạy nhưng không phản hồi trong 30s (chậm - đợt 218).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import os
 import subprocess
 import sys
 import traceback
+from collections.abc import Callable
 from datetime import date, datetime, time
 from typing import Any, NamedTuple
 
@@ -165,6 +167,7 @@ class ContainerStats(NamedTuple):
     oom_kill: int | None
     mem_max: int | None
     read_error: str | None = None
+    health_status: str = "none"
 
 
 def parse_memory_events(raw_text: str) -> tuple[int | None, int | None]:
@@ -193,7 +196,7 @@ def inspect_container(name: str) -> ContainerStats:
                 "docker",
                 "inspect",
                 "-f",
-                "{{.Id}} {{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}} {{.State.StartedAt}}",
+                "{{.Id}} {{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
                 name,
             ],
             capture_output=True,
@@ -218,6 +221,7 @@ def inspect_container(name: str) -> ContainerStats:
             oom_kill=None,
             mem_max=None,
             read_error=err,
+            health_status="none",
         )
 
     parts = res.stdout.strip().split()
@@ -232,6 +236,7 @@ def inspect_container(name: str) -> ContainerStats:
             oom_kill=None,
             mem_max=None,
             read_error=f"Không parse được output inspect: {res.stdout.strip()}",
+            health_status="none",
         )
 
     cid, rc_str, status, oom_str, started_at = (
@@ -241,6 +246,7 @@ def inspect_container(name: str) -> ContainerStats:
         parts[3],
         parts[4],
     )
+    health_status = parts[5].lower() if len(parts) >= 6 else "none"
     rc = int(rc_str) if rc_str.isdigit() else 0
     oom_killed = oom_str.lower() == "true"
 
@@ -274,6 +280,7 @@ def inspect_container(name: str) -> ContainerStats:
         oom_kill=oom_kill,
         mem_max=mem_max,
         read_error=None,
+        health_status=health_status,
     )
 
 
@@ -312,6 +319,7 @@ def evaluate_container_health(
                 "oom_killed": prev.get("oom_killed", False) if prev else False,
                 "started_at": prev.get("started_at", "") if prev else "",
                 "read_error": stat.read_error,
+                "health_status": prev.get("health_status", "none") if prev else "none",
             }
             continue
 
@@ -343,6 +351,7 @@ def evaluate_container_health(
             "oom_killed": stat.oom_killed,
             "started_at": stat.started_at,
             "read_error": None,
+            "health_status": stat.health_status,
         }
 
         # 1. Lần chạy đầu (chưa có trạng thái)
@@ -431,6 +440,26 @@ def evaluate_container_health(
                 f"[container-health] INFO: {name} memory.events max tăng từ {prev_max} lên {stat.mem_max}"
             )
 
+        # 8. Trạng thái State.Health (F9 - Brief đợt 218)
+        # Chỉ cảnh báo khi unhealthy:
+        # - unhealthy: CRITICAL, báo 1 lần khi chuyển sang unhealthy; kéo dài thì ghi log.
+        # - unhealthy -> healthy: báo INFO hồi phục 1 lần.
+        # - starting, healthy, none: không báo.
+        prev_health = prev.get("health_status")
+        if stat.health_status == "unhealthy":
+            if prev_health != "unhealthy":
+                alerts.append(
+                    f"[CRITICAL] {name}: container UNHEALTHY (healthcheck thất bại)"
+                )
+            else:
+                info_logs.append(
+                    f"[container-health] INFO: {name} vẫn ở trạng thái unhealthy (đã báo trước đó)"
+                )
+        elif stat.health_status == "healthy" and prev_health == "unhealthy":
+            alerts.append(
+                f"[INFO] {name}: container ĐÃ HỒI PHỤC (healthcheck chuyển sang healthy)"
+            )
+
         new_state[name] = current_record
 
     return alerts, new_state, info_logs
@@ -446,18 +475,61 @@ def save_state(filepath: str, state: dict[str, dict[str, Any]]) -> None:
     save_json_state(filepath, state)
 
 
-def check_docker_daemon() -> bool:
-    """Kiểm tra Docker daemon có phản hồi hay không trong 10s."""
+RUN_CMD: Callable[..., Any] = subprocess.run
+TIMEOUT_FIRST: float = 10.0
+TIMEOUT_RETRY: float = 30.0
+
+
+def check_docker_daemon(
+    run_cmd: Callable[..., Any] | None = None,
+    timeout_first: float | None = None,
+    timeout_retry: float | None = None,
+) -> int:
+    """Kiểm tra Docker daemon có phản hồi hay không.
+
+    Phân biệt hai ca (Task 6 - Brief đợt 218):
+      (a) docker info trả returncode != 0 (daemon tắt) -> trả 2.
+      (b) subprocess.TimeoutExpired (daemon chậm) -> thử lại 1 lần với timeout 30s:
+          + nếu lần 2 thành công (returncode == 0) -> trả 0.
+          + nếu lần 2 kết thúc returncode != 0 -> trả 2.
+          + nếu lần 2 vẫn TimeoutExpired -> in thông báo lỗi và trả 4.
+    Trả về:
+      0: daemon hoạt động bình thường.
+      2: daemon tắt hoặc returncode != 0.
+      4: daemon đang chạy nhưng không phản hồi trong 30s (chậm).
+    """
+    cmd_fn = run_cmd if run_cmd is not None else RUN_CMD
+    t1 = timeout_first if timeout_first is not None else TIMEOUT_FIRST
+    t2 = timeout_retry if timeout_retry is not None else TIMEOUT_RETRY
     try:
-        r = subprocess.run(
+        r = cmd_fn(
             ["docker", "info"],
             capture_output=True,
-            timeout=10,
+            timeout=t1,
             check=False,
         )
-        return r.returncode == 0
+        if r.returncode == 0:
+            return 0
+        return 2
+    except subprocess.TimeoutExpired:
+        # Daemon chậm: thử lại một lần với timeout 30s
+        try:
+            r = cmd_fn(
+                ["docker", "info"],
+                capture_output=True,
+                timeout=t2,
+                check=False,
+            )
+            if r.returncode == 0:
+                return 0
+            return 2
+        except subprocess.TimeoutExpired:
+            _print_safe(
+                "LỖI: Docker daemon đang chạy nhưng không phản hồi trong 30s (chậm)"
+            )
+            return 4
     except Exception:
-        return False
+        return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -494,10 +566,13 @@ def main(argv: list[str] | None = None) -> int:
 
     state_file = args.state_file if args.state_file else DEFAULT_STATE_FILE
 
-    # Brief §1b: docker không chạy hoặc hết timeout: không cảnh báo ở đây, thoát 2
-    if not check_docker_daemon():
+    # Task 6 (đợt 218): Phân biệt daemon tắt (exit 2) và daemon chậm (exit 4)
+    daemon_status = check_docker_daemon()
+    if daemon_status is False or daemon_status == 2:
         _print_safe("LỖI: Docker daemon không chạy hoặc không phản hồi trong 10s.")
         return 2
+    if daemon_status == 4:
+        return 4
 
     # Xác định danh sách tên container cần kiểm tra
     if args.containers:

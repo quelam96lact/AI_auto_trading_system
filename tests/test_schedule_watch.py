@@ -63,7 +63,7 @@ def extract_sched_branches(sched_sh_path: Path) -> set[str]:
 def test_sched_branches_covered_in_watch_or_khong_canh():
     """Mọi nhánh trong sched.sh phải nằm trong SCHEDULE_WATCH_JOBS hoặc KHONG_CANH (không sót, không trùng)."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 21, f"Kỳ vọng 21 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
+    assert len(sched_branches) == 22, f"Kỳ vọng 22 nhánh trong sched.sh, thực tế có {len(sched_branches)}: {sched_branches}"
 
     watch_branches = set(SCHEDULE_WATCH_JOBS.keys())
     skip_branches = set(KHONG_CANH.keys())
@@ -284,7 +284,7 @@ def test_heartbeat_check_build_parser_has_dry_run():
 def test_sched_branches_covered_in_exit_policies():
     """Việc 2 (Brief 156): Mọi nhánh trong sched.sh phải có chính sách mã thoát rõ ràng."""
     sched_branches = extract_sched_branches(SCHED_SH)
-    assert len(sched_branches) == 21
+    assert len(sched_branches) == 22
 
     # universe-refresh chay qua scheduler daemon trong container, khong qua sched.sh
     policy_branches = set(SCHEDULE_EXIT_POLICIES.keys()) - {"universe-refresh"}
@@ -602,7 +602,11 @@ def _create_fresh_job_logs(logs_dir: Path, now_dt: datetime) -> None:
     for policy in SCHEDULE_EXIT_POLICIES.values():
         p = logs_dir / policy.log_file
         if not p.exists():
-            p.write_text(f"{ts} {policy.label} start\nEXIT=0\n", encoding="utf-8")
+            content = f"{ts} {policy.label} start\n"
+            if policy.branch == "restore-drill":
+                content += "Diễn tập OK: trading_fresh.dump, 32 bảng >= bản kê lúc dump\n"
+            content += "EXIT=0\n"
+            p.write_text(content, encoding="utf-8")
 
 
 def test_schedule_watch_only_saturday_night_alerts_once(tmp_path: Path, monkeypatch):
@@ -678,7 +682,13 @@ def test_schedule_watch_and_heartbeat_share_state_anti_duplication(tmp_path: Pat
             log_path, job_cfg.label, skip_counts_as_run=job_cfg.skip_counts_as_run
         )
     sched_alerts, new_state, _ = evaluate_schedule_health(
-        job_last_seen, fri_10am, prev_state, watch_jobs=SCHEDULE_WATCH_JOBS
+        job_last_seen,
+        fri_10am,
+        prev_state,
+        watch_jobs=SCHEDULE_WATCH_JOBS,
+        restore_drill_last_ok=hc.get_last_successful_restore_timestamp(
+            str(tmp_path / "restore-drill.log")
+        ),
     )
     assert len(sched_alerts) == 1
     assert "backup" in sched_alerts[0]
@@ -719,5 +729,190 @@ def test_heartbeat_without_flag_saturday_night_exits_0(tmp_path: Path, monkeypat
     rc = hc.main(["--logs-dir", str(tmp_path)])
     assert rc == 0
     assert sent_alerts == []
+
+
+def test_get_last_successful_restore_timestamp(tmp_path: Path):
+    """Test trich xuat moc thoi gian dien tap phuc hoi thanh cong gan nhat."""
+    from scripts.heartbeat_check import get_last_successful_restore_timestamp
+
+    log_file = tmp_path / "restore-drill.log"
+
+    # 1. File khong ton tai
+    dt, reason = get_last_successful_restore_timestamp(str(log_file))
+    assert dt is None
+    assert "không tồn tại" in reason
+
+    # 2. File chua tung co dong OK
+    log_file.write_text(
+        "2026-10-01 04:00:00 restore-drill start\n"
+        "[CRITICAL] Bang thieu dong\n"
+        "EXIT=1\n",
+        encoding="utf-8",
+    )
+    dt, reason = get_last_successful_restore_timestamp(str(log_file))
+    assert dt is None
+    assert "chưa từng diễn tập thành công" in reason
+
+    # 3. File co dong OK sau start
+    log_file.write_text(
+        "2026-10-01 04:00:00 restore-drill start\n"
+        "Diễn tập OK: trading_20261001.dump, 32 bảng >= bản kê lúc dump\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+    dt, reason = get_last_successful_restore_timestamp(str(log_file))
+    assert dt == datetime(2026, 10, 1, 4, 0, 0, tzinfo=TZ)
+    assert reason is None
+
+    # 4. File co dong OK roi co SKIP
+    log_file.write_text(
+        "2026-10-01 04:00:00 restore-drill start\n"
+        "Diễn tập OK: trading_20261001.dump, 32 bảng >= bản kê lúc dump\n"
+        "EXIT=0\n"
+        "2026-10-08 04:00:00 restore-drill SKIP: docker chua chay\n",
+        encoding="utf-8",
+    )
+    dt, reason = get_last_successful_restore_timestamp(str(log_file))
+    assert dt == datetime(2026, 10, 1, 4, 0, 0, tzinfo=TZ)
+    assert reason is None
+
+    # 5. File co dong OK cu, sau do co start loi (khong co OK)
+    log_file.write_text(
+        "2026-10-01 04:00:00 restore-drill start\n"
+        "Diễn tập OK: trading_20261001.dump, 32 bảng >= bản kê lúc dump\n"
+        "EXIT=0\n"
+        "2026-10-08 04:00:00 restore-drill start\n"
+        "[CRITICAL] Loi ket noi DB\n"
+        "EXIT=1\n",
+        encoding="utf-8",
+    )
+    dt, reason = get_last_successful_restore_timestamp(str(log_file))
+    # Van tra ve moc OK cu (2026-10-01) vi lan start 2026-10-08 khong co dong OK
+    assert dt == datetime(2026, 10, 1, 4, 0, 0, tzinfo=TZ)
+    assert reason is None
+
+
+def test_restore_drill_last_ok_8_days_no_alert():
+    """Lần OK cuối cách đây 8 ngày (<= ngưỡng 9 ngày) -> không báo."""
+    now = datetime(2026, 10, 10, 8, 0, 0, tzinfo=TZ)
+    last_ok_dt = now - timedelta(days=8)
+
+    alerts, new_state, _ = evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state={},
+        watch_jobs={},
+        exit_policies={},
+        restore_drill_last_ok=(last_ok_dt, None),
+    )
+    assert alerts == []
+    assert new_state["restore-drill-ok"]["status"] == "ok"
+    assert new_state["restore-drill-ok"]["last_called"] == last_ok_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_restore_drill_last_ok_10_days_with_skip_alerts_once_then_silent(tmp_path: Path):
+    """Lần OK cuối cách đây 10 ngày, sau đó có 1 dòng SKIP: báo đúng 1 lần, lần hai im."""
+    from scripts.heartbeat_check import get_last_successful_restore_timestamp
+
+    now = datetime(2026, 10, 15, 8, 0, 0, tzinfo=TZ)
+    ok_dt = now - timedelta(days=10)
+
+    log_file = tmp_path / "restore-drill.log"
+    log_file.write_text(
+        f"{ok_dt:%Y-%m-%d %H:%M:%S} restore-drill start\n"
+        "Diễn tập OK: trading_dump.dump, 32 bảng >= bản kê lúc dump\n"
+        "EXIT=0\n"
+        f"{(ok_dt + timedelta(days=7)):%Y-%m-%d %H:%M:%S} restore-drill SKIP: docker chua chay\n",
+        encoding="utf-8",
+    )
+
+    drill_ok = get_last_successful_restore_timestamp(str(log_file))
+    assert drill_ok[0] == ok_dt
+
+    # Lần 1: chưa có state -> báo CRITICAL
+    alerts1, state1, _ = evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state={},
+        watch_jobs={},
+        exit_policies={},
+        restore_drill_last_ok=drill_ok,
+    )
+    assert len(alerts1) == 1
+    assert "[CRITICAL] diễn tập phục hồi 'restore-drill' QUÁ HẠN:" in alerts1[0]
+    assert state1["restore-drill-ok"]["status"] == "stale"
+
+    # Lần 2: chạy lại với state1 -> im lặng (chỉ ghi log info)
+    alerts2, state2, info_logs2 = evaluate_schedule_health(
+        job_last_seen={},
+        now=now + timedelta(hours=1),
+        previous_state=state1,
+        watch_jobs={},
+        exit_policies={},
+        restore_drill_last_ok=drill_ok,
+    )
+    assert alerts2 == []
+    assert state2["restore-drill-ok"]["status"] == "stale"
+    assert any("restore-drill vẫn quá hạn diễn tập phục hồi" in i for i in info_logs2)
+
+
+def test_restore_drill_failed_run_with_old_ok_10_days_alerts(tmp_path: Path):
+    """Lần chạy cuối có start nhưng không có OK (lỗi), lần OK trước đó 10 ngày -> báo."""
+    from scripts.heartbeat_check import get_last_successful_restore_timestamp
+
+    now = datetime(2026, 10, 18, 8, 0, 0, tzinfo=TZ)
+    ok_dt = now - timedelta(days=10)
+
+    log_file = tmp_path / "restore-drill.log"
+    log_file.write_text(
+        f"{ok_dt:%Y-%m-%d %H:%M:%S} restore-drill start\n"
+        "Diễn tập OK: trading_dump.dump, 32 bảng >= bản kê lúc dump\n"
+        "EXIT=0\n"
+        f"{(now - timedelta(days=2)):%Y-%m-%d %H:%M:%S} restore-drill start\n"
+        "[CRITICAL] Phục hồi thiếu bảng\n"
+        "EXIT=1\n",
+        encoding="utf-8",
+    )
+
+    drill_ok = get_last_successful_restore_timestamp(str(log_file))
+    assert drill_ok[0] == ok_dt
+
+    alerts, new_state, _ = evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state={},
+        watch_jobs={},
+        exit_policies={},
+        restore_drill_last_ok=drill_ok,
+    )
+    assert len(alerts) == 1
+    assert "[CRITICAL] diễn tập phục hồi 'restore-drill' QUÁ HẠN:" in alerts[0]
+    assert new_state["restore-drill-ok"]["status"] == "stale"
+
+
+def test_restore_drill_recovery_alert():
+    """Từ stale chuyển sang ok -> phát cảnh báo hồi phục [INFO]."""
+    now = datetime(2026, 10, 18, 8, 0, 0, tzinfo=TZ)
+    last_ok_dt = now - timedelta(hours=2)  # mới diễn tập 2 giờ trước
+
+    prev_state = {
+        "restore-drill-ok": {
+            "status": "stale",
+            "last_called": (now - timedelta(days=12)).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    }
+
+    alerts, new_state, _ = evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        exit_policies={},
+        restore_drill_last_ok=(last_ok_dt, None),
+    )
+    assert len(alerts) == 1
+    assert "[INFO] diễn tập phục hồi 'restore-drill' ĐÃ THÀNH CÔNG:" in alerts[0]
+    assert new_state["restore-drill-ok"]["status"] == "ok"
+
 
 

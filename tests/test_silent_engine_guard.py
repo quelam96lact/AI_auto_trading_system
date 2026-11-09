@@ -192,3 +192,34 @@ def test_check_engine_symbols_with_sma_cross_is_active():
     assert res["bull_signals"] > 0
     assert res["bear_signals"] > 0
     assert res["status"] == "OK"
+
+
+def test_check_silent_engine_outbox_queue_and_flush(tmp_path: Path):
+    """F6: engine-cam gửi cảnh báo qua outbox; gửi hỏng thì vào outbox, lần sau xả."""
+    from check_silent_engine import _alert
+
+    from scripts._alert_common import send_with_outbox
+
+    logs_dir = tmp_path / "logs"
+    outbox_file = logs_dir / "alert_outbox_engine-cam.jsonl"
+
+    # Lần 1: gửi lỗi -> vào outbox
+    rc = _alert(
+        ["[engine-cam] CRITICAL: simulated failure"],
+        send_fn=lambda _: False,
+        outbox_path=outbox_file,
+    )
+    assert rc == 1
+    assert outbox_file.exists()
+    content = outbox_file.read_text(encoding="utf-8")
+    assert "CRITICAL" in content
+
+    # Lần 2: gửi thành công -> xả outbox
+    sent_msgs = []
+    send_with_outbox(
+        "next run",
+        send=lambda m: sent_msgs.append(m) or True,
+        outbox_path=outbox_file,
+    )
+    assert any("CRITICAL" in m for m in sent_msgs)
+    assert not outbox_file.exists() or outbox_file.read_text(encoding="utf-8").strip() == ""

@@ -203,8 +203,13 @@ case "${1:-}" in
     exec "$RUN" schedule-watch.log schedule-watch \
       uv run python scripts/heartbeat_check.py --schedule-watch-only "$@"
     ;;
+  morning-summary)
+    shift || true
+    exec "$RUN" morning-summary.log morning-summary \
+      uv run python scripts/heartbeat_check.py --morning-summary "$@"
+    ;;
   *)
-    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-makeup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup|schedule-watch}" >&2
+    echo "dung: $0 {heartbeat|daily-check|backfill|backfill-5m|foreign-flow|deploy-drift|container-health|engine-cam|engine-consumer|stream-health|orderbook-recorder|orderbook-daily-check|backup|backup-makeup|backup-check|orderbook-backup|disk-check|host-preflight|restore-drill|catchup|schedule-watch|morning-summary}" >&2
     exit 2
     ;;
 esac

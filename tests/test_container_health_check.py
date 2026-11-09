@@ -17,6 +17,7 @@ Kiểm tra mọi tình huống theo bảng §1b và §2a:
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from unittest.mock import patch
 
 from scripts.container_health_check import (
@@ -27,6 +28,7 @@ from scripts.container_health_check import (
     parse_memory_events,
     save_state,
 )
+from trading.calendar_vn import TZ
 
 
 def _make_stat(
@@ -39,6 +41,7 @@ def _make_stat(
     oom_kill: int | None = 0,
     mem_max: int | None = 0,
     read_error: str | None = None,
+    health_status: str = "none",
 ) -> ContainerStats:
     return ContainerStats(
         name=name,
@@ -50,6 +53,7 @@ def _make_stat(
         oom_kill=oom_kill,
         mem_max=mem_max,
         read_error=read_error,
+        health_status=health_status,
     )
 
 
@@ -497,6 +501,224 @@ def test_scheduler_in_default_services():
     from scripts.container_health_check import DEFAULT_SERVICES
 
     assert "scheduler" in DEFAULT_SERVICES
+
+
+def test_inspect_container_parses_health_status():
+    """Kiểm tra inspect_container đọc đúng State.Health: healthy, unhealthy, starting, none."""
+    from unittest.mock import MagicMock
+
+    from scripts.container_health_check import inspect_container
+
+    cases = [
+        ("cid1 0 running false 2026-11-09T00:00:00Z healthy", "healthy"),
+        ("cid2 0 running false 2026-11-09T00:00:00Z unhealthy", "unhealthy"),
+        ("cid3 0 running false 2026-11-09T00:00:00Z starting", "starting"),
+        ("cid4 0 running false 2026-11-09T00:00:00Z none", "none"),
+        ("cid5 0 running false 2026-11-09T00:00:00Z", "none"),  # Định dạng cũ 5 trường
+    ]
+
+    for stdout_text, expected_health in cases:
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = stdout_text
+        mock_proc.stderr = ""
+
+        # Khi gọi inspect_container: lần 1 gọi inspect, lần 2 gọi cgroup memory.events
+        mock_cgroup = MagicMock()
+        mock_cgroup.returncode = 0
+        mock_cgroup.stdout = "oom_kill 0\nmax 100\n"
+
+        with patch("subprocess.run", side_effect=[mock_proc, mock_cgroup]):
+            stat = inspect_container("test-service")
+            assert stat.health_status == expected_health, f"Thất bại với {stdout_text}"
+
+
+def test_container_unhealthy_critical_alert_and_deduplication():
+    """unhealthy: báo CRITICAL; lần sau vẫn unhealthy -> không báo lại (chỉ log info)."""
+    prev = {
+        "postgres": {
+            "id": "cid_pg_1",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "health_status": "healthy",
+        }
+    }
+    stat_unhealthy = _make_stat(
+        name="postgres",
+        container_id="cid_pg_1",
+        status="running",
+        health_status="unhealthy",
+    )
+
+    # Lần 1: chuyển từ healthy -> unhealthy: phải báo CRITICAL
+    alerts1, state1, _ = evaluate_container_health(
+        {"postgres": stat_unhealthy}, previous_state=prev
+    )
+    assert len(alerts1) == 1
+    assert "[CRITICAL] postgres: container UNHEALTHY (healthcheck thất bại)" in alerts1[0]
+    assert state1["postgres"]["health_status"] == "unhealthy"
+
+    # Lần 2: tiếp tục unhealthy: không báo lại
+    alerts2, state2, info2 = evaluate_container_health(
+        {"postgres": stat_unhealthy}, previous_state=state1
+    )
+    assert alerts2 == []
+    assert state2["postgres"]["health_status"] == "unhealthy"
+    assert any("vẫn ở trạng thái unhealthy" in i for i in info2)
+
+
+def test_container_unhealthy_to_healthy_recovery_alert():
+    """unhealthy chuyển sang healthy -> báo INFO hồi phục một lần (Lead Adjustment 5)."""
+    prev = {
+        "postgres": {
+            "id": "cid_pg_1",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "health_status": "unhealthy",
+        }
+    }
+    stat_healthy = _make_stat(
+        name="postgres",
+        container_id="cid_pg_1",
+        status="running",
+        health_status="healthy",
+    )
+
+    # Chuyển từ unhealthy -> healthy: báo INFO hồi phục
+    alerts, state, _ = evaluate_container_health(
+        {"postgres": stat_healthy}, previous_state=prev
+    )
+    assert len(alerts) == 1
+    assert "[INFO] postgres: container ĐÃ HỒI PHỤC (healthcheck chuyển sang healthy)" in alerts[0]
+    assert state["postgres"]["health_status"] == "healthy"
+
+    # Lần sau vẫn healthy -> không báo gì
+    alerts_next, _, _ = evaluate_container_health(
+        {"postgres": stat_healthy}, previous_state=state
+    )
+    assert alerts_next == []
+
+
+def test_container_starting_healthy_none_no_alert():
+    """starting, healthy và none không bao giờ tạo cảnh báo."""
+    prev = {
+        "app": {
+            "id": "cid_app_1",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "health_status": "none",
+        }
+    }
+    for h in ["none", "starting", "healthy"]:
+        stat = _make_stat(
+            name="app",
+            container_id="cid_app_1",
+            status="running",
+            health_status=h,
+        )
+        alerts, state, _ = evaluate_container_health(
+            {"app": stat}, previous_state=prev
+        )
+        assert alerts == [], f"Không được báo cảnh báo cho {h}"
+        assert state["app"]["health_status"] == h
+
+
+# =============================================================================
+# Task 6 (Brief 218): Phân biệt Docker daemon tắt (exit 2) và chậm (exit 4)
+# =============================================================================
+
+
+def test_docker_daemon_returncode_nonzero_returns_2(tmp_path, monkeypatch):
+    """docker info trả returncode != 0 (daemon tắt): thoát mã 2."""
+    import subprocess
+
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout=b"", stderr=b"daemon down"
+        )
+
+    monkeypatch.setattr("scripts.container_health_check.RUN_CMD", mock_run)
+    state_file = tmp_path / "state.json"
+    ret = main(["--state-file", str(state_file)])
+    assert ret == 2
+
+
+def test_docker_daemon_timeout_then_retry_ok(tmp_path, monkeypatch):
+    """Lần 1 timeout, thử lại lần 2 OK (returncode 0): chạy tiếp bình thường."""
+    import subprocess
+
+    calls = []
+
+    def mock_run(*args, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(
+                cmd=args[0], timeout=kwargs.get("timeout", 10.0)
+            )
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout=b"", stderr=b""
+        )
+
+    monkeypatch.setattr("scripts.container_health_check.RUN_CMD", mock_run)
+    monkeypatch.setattr("scripts.container_health_check.TIMEOUT_FIRST", 1.0)
+    monkeypatch.setattr("scripts.container_health_check.TIMEOUT_RETRY", 2.0)
+    monkeypatch.setattr(
+        "scripts.container_health_check.inspect_container",
+        lambda name: _make_stat(name=name),
+    )
+    monkeypatch.setattr(
+        "scripts.container_health_check.get_last_called_timestamp",
+        lambda *a, **k: (datetime.now(TZ), None),
+    )
+    state_file = tmp_path / "state.json"
+    ret = main(["--state-file", str(state_file)])
+    assert len(calls) == 2
+    assert calls == [1.0, 2.0]
+    assert ret == 0
+
+
+def test_docker_daemon_timeout_both_times_returns_4(tmp_path, capsys, monkeypatch):
+    """Timeout cả 2 lần (daemon chậm): in thông báo và thoát mã 4."""
+    import subprocess
+
+    calls = []
+
+    def mock_run(*args, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        raise subprocess.TimeoutExpired(
+            cmd=args[0], timeout=kwargs.get("timeout", 10.0)
+        )
+
+    monkeypatch.setattr("scripts.container_health_check.RUN_CMD", mock_run)
+    monkeypatch.setattr("scripts.container_health_check.TIMEOUT_FIRST", 1.0)
+    monkeypatch.setattr("scripts.container_health_check.TIMEOUT_RETRY", 2.0)
+    state_file = tmp_path / "state.json"
+    ret = main(["--state-file", str(state_file)])
+    assert len(calls) == 2
+    assert calls == [1.0, 2.0]
+    assert ret == 4
+    captured = capsys.readouterr()
+    assert (
+        "LỖI: Docker daemon đang chạy nhưng không phản hồi trong 30s (chậm)"
+        in captured.out
+    )
+
+
+def test_container_health_policy_does_not_contain_4():
+    """Policy container-health không coi mã 4 là bình thường để chuông cảnh báo."""
+    from scripts.heartbeat_check import SCHEDULE_EXIT_POLICIES
+
+    policy = SCHEDULE_EXIT_POLICIES["container-health"]
+    assert 4 not in policy.normal_exit_codes
+    assert "4" in policy.reason
+
+
 
 
 

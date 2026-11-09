@@ -108,11 +108,11 @@ async def test_check_orderbook_daily_workflow_non_trading_day():
     """Workflow: Ngày không giao dịch -> thoát 0 im lặng, không phát alert."""
     with (
         patch("scripts.check_orderbook_daily.is_trading_day", return_value=False),
-        patch("scripts.check_orderbook_daily.alert") as mock_alert,
+        patch("scripts.check_orderbook_daily.send_telegram") as mock_send,
     ):
         code = await check_orderbook_daily(target_date=date(2026, 9, 26))
         assert code == 0
-        mock_alert.assert_not_called()
+        mock_send.assert_not_called()
 
 
 async def test_check_orderbook_daily_workflow_missing_file(tmp_path: Path):
@@ -123,20 +123,20 @@ async def test_check_orderbook_daily_workflow_missing_file(tmp_path: Path):
     with (
         patch("scripts.check_orderbook_daily.is_trading_day", return_value=True),
         patch("scripts.check_orderbook_daily.resolve_front_month_symbol", AsyncMock(return_value=symbol)),
-        patch("scripts.check_orderbook_daily.alert") as mock_alert,
+        patch("scripts.check_orderbook_daily.send_telegram", return_value=True) as mock_send,
     ):
         code = await check_orderbook_daily(
             target_date=target_d,
             symbol=symbol,
             data_dir=tmp_path,
+            logs_dir=tmp_path / "logs",
         )
         assert code == 2
-        mock_alert.assert_called_once()
-        call_args, call_kwargs = mock_alert.call_args
-        assert call_args[0] == "CRITICAL"
-        assert symbol in call_args[1]
-        assert "không tìm thấy file" in call_args[1]
-        assert call_kwargs.get("symbol") == symbol
+        mock_send.assert_called_once()
+        (sent_msg,), _ = mock_send.call_args
+        assert "CRITICAL" in sent_msg
+        assert symbol in sent_msg
+        assert "không tìm thấy file" in sent_msg
 
 
 async def test_check_orderbook_daily_workflow_verification_failed(tmp_path: Path):
@@ -173,19 +173,19 @@ async def test_check_orderbook_daily_workflow_verification_failed(tmp_path: Path
     with (
         patch("scripts.check_orderbook_daily.is_trading_day", return_value=True),
         patch("scripts.check_orderbook_daily.verify_orderbook_file", AsyncMock(return_value=(mock_metrics, mock_result))),
-        patch("scripts.check_orderbook_daily.alert") as mock_alert,
+        patch("scripts.check_orderbook_daily.send_telegram", return_value=True) as mock_send,
     ):
         code = await check_orderbook_daily(
             target_date=target_d,
             symbol=symbol,
             data_dir=tmp_path,
+            logs_dir=tmp_path / "logs",
         )
         assert code == 1
-        mock_alert.assert_called_once()
-        call_args, call_kwargs = mock_alert.call_args
-        assert call_args[0] == "WARN"
-        assert "không đạt tiêu chuẩn" in call_args[1]
-        assert call_kwargs.get("symbol") == symbol
+        mock_send.assert_called_once()
+        (sent_msg,), _ = mock_send.call_args
+        assert "WARN" in sent_msg
+        assert "không đạt tiêu chuẩn" in sent_msg
 
 
 async def test_check_orderbook_daily_workflow_verification_passed(tmp_path: Path):
@@ -222,12 +222,53 @@ async def test_check_orderbook_daily_workflow_verification_passed(tmp_path: Path
     with (
         patch("scripts.check_orderbook_daily.is_trading_day", return_value=True),
         patch("scripts.check_orderbook_daily.verify_orderbook_file", AsyncMock(return_value=(mock_metrics, mock_result))),
-        patch("scripts.check_orderbook_daily.alert") as mock_alert,
+        patch("scripts.check_orderbook_daily.send_telegram") as mock_send,
     ):
         code = await check_orderbook_daily(
             target_date=target_d,
             symbol=symbol,
             data_dir=tmp_path,
+            logs_dir=tmp_path / "logs",
         )
         assert code == 0
-        mock_alert.assert_not_called()
+        mock_send.assert_not_called()
+
+
+async def test_check_orderbook_daily_outbox_queue_and_flush(tmp_path: Path):
+    """F6: Khi gửi thất bại, tin vào outbox; lần chạy sau gửi được sẽ xả outbox."""
+    symbol = "41I1GA000"
+    target_d = date(2026, 9, 28)
+    logs_dir = tmp_path / "logs"
+
+    # Lần 1: gửi thất bại
+    with (
+        patch("scripts.check_orderbook_daily.is_trading_day", return_value=True),
+        patch("scripts.check_orderbook_daily.resolve_front_month_symbol", AsyncMock(return_value=symbol)),
+        patch("scripts.check_orderbook_daily.send_telegram", return_value=False),
+    ):
+        code = await check_orderbook_daily(
+            target_date=target_d,
+            symbol=symbol,
+            data_dir=tmp_path,
+            logs_dir=logs_dir,
+        )
+        assert code == 2
+
+    outbox_file = logs_dir / "alert_outbox_orderbook-daily-check.jsonl"
+    assert outbox_file.exists()
+    content = outbox_file.read_text(encoding="utf-8")
+    assert "CRITICAL" in content
+    assert symbol in content
+
+    # Lần 2: gửi thành công -> xả outbox
+    sent_messages = []
+    with (
+        patch("scripts.check_orderbook_daily.is_trading_day", return_value=False),
+        patch("scripts.check_orderbook_daily.send_telegram", side_effect=lambda msg: sent_messages.append(msg) or True),
+    ):
+        # Chạy kiểm tra tiếp theo (hoặc cùng outbox)
+        from scripts._alert_common import send_with_outbox
+        send_with_outbox("test", send=lambda m: sent_messages.append(m) or True, outbox_path=outbox_file)
+
+    assert any("CRITICAL" in m for m in sent_messages)
+    assert not outbox_file.exists() or outbox_file.read_text(encoding="utf-8").strip() == ""

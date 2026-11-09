@@ -14,6 +14,7 @@ CLI:
 import argparse
 import sys
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +22,7 @@ import yaml
 
 # Thêm scripts/ vào sys.path để import _db_common
 sys.path.insert(0, str(Path(__file__).parent))
-from _alert_common import alert_and_fail
+from _alert_common import _print_safe, outbox_name, send_with_outbox
 from _db_common import resolve_dsn
 
 from trading.engine.main import _default_strategy
@@ -131,15 +132,21 @@ def check_engine_symbols(
     return results
 
 
-def _alert(messages: list[str]) -> int:
-    """Cong thuc o `_alert_common` (khuon deploy_drift_check). `send_telegram`
-    truyen vao de no van la bien toan cuc cua MODULE NAY — test monkeypatch
-    theo day.
-
-    Khong co ham nay thi goi X chi la mot script phai nho chay bang tay, ma
-    chinh loi no phat hien da song bon thang vi khong ai nho nhin.
-    """
-    return alert_and_fail("[engine-cam]", messages, send_telegram)
+def _alert(
+    messages: list[str],
+    send_fn: Callable[[str], object] | None = None,
+    outbox_path: str | Path | None = None,
+) -> int:
+    """Gửi cảnh báo engine-cam qua hàng đợi outbox (F6 đợt 218)."""
+    body = "\n".join(messages)
+    _print_safe(f"\n[engine-cam] CẢNH BÁO:\n{body}")
+    if outbox_path is None:
+        outbox_path = Path(__file__).parent.parent / "logs" / outbox_name("engine-cam")
+    outbox_p = Path(outbox_path)
+    outbox_p.parent.mkdir(parents=True, exist_ok=True)
+    sender = send_fn if send_fn is not None else send_telegram
+    send_with_outbox(body, send=sender, outbox_path=outbox_p)
+    return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         help="Danh sách mã cần kiểm (mặc định lấy từ config)",
+    )
+    parser.add_argument(
+        "--logs-dir",
+        default=str(Path(__file__).parent.parent / "logs"),
+        help="Thư mục logs (mặc định: logs/)",
     )
     return parser
 
@@ -214,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if any_silent:
         cam = [r for r in results if r["is_silent"]]
+        outbox_file = Path(args.logs_dir) / outbox_name("engine-cam")
         return _alert(
             [
                 (
@@ -232,7 +245,8 @@ def main(argv: list[str] | None = None) -> int:
                     "Engine dang chay nhung khong dat duoc lenh nao. Xem docs/"
                     "superpowers/plans/2026-09-05-danh-gia-go-live-va-plan-ton-dong.md"
                 ),
-            ]
+            ],
+            outbox_path=outbox_file,
         )
     else:
         print(
