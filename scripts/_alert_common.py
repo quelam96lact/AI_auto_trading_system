@@ -126,7 +126,9 @@ def send_with_outbox(
         return res
 
     outbox = AlertOutbox(Path(outbox_path), send_fn=tracked_send)
-    outbox.flush()
+    flushed = outbox.flush()
+    if flushed > 0:
+        _print_safe(f"[HANG DOI] Đã gửi lại {flushed} cảnh báo tồn trong {outbox.path.name}")
 
     in_send_or_queue = True
     outbox.send_or_queue(text)

@@ -283,10 +283,21 @@ class AlertOutbox:
                 notice = f"[WARN] bỏ 1 cảnh báo không gửi được, phát lúc {stamp}, xem log"
                 self.send_or_queue(notice)
 
+    def _step(self) -> int:
+        """Thực hiện một bước flush và ghi log nếu có tin được gửi lại (đợt 220)."""
+        flushed = self.flush()
+        if flushed > 0:
+            _log.info(
+                "alert outbox: đã gửi lại %d cảnh báo tồn trong %s",
+                flushed,
+                self.path.name,
+            )
+        return flushed
+
     def _loop(self, interval: float) -> None:
         while not self.stop_event.is_set():
             try:
-                self.flush()
+                self._step()
             except Exception as e:
                 _log.warning("alert outbox flush loi: %s", type(e).__name__)
             self.first_flush_done.set()

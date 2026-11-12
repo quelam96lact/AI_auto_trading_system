@@ -136,18 +136,36 @@ def test_token_30min_warn():
 
 
 def test_token_expired_critical():
-    assert token_expiry_status(_now_ts() - 60, NOW) == "CRITICAL"
+    assert token_expiry_status(_now_ts() - 660, NOW) == "CRITICAL"
 
 
 def test_no_token_row_critical():
     assert token_expiry_status(None, NOW) == "CRITICAL"
 
 
+def test_token_grace_period_warn():
+    """Đợt 220: token quá hạn < 10 phút trả WARN (ân hạn cho collector tự xác thực)."""
+    assert token_expiry_status(_now_ts() - 5 * 60, NOW) == "WARN"
+    assert token_expiry_status(_now_ts() - 599, NOW) == "WARN"
+
+
+def test_token_overdue_10m_critical():
+    """Đợt 220: token quá hạn >= 10 phút trả CRITICAL."""
+    assert token_expiry_status(_now_ts() - 600, NOW) == "CRITICAL"
+    assert token_expiry_status(_now_ts() - 11 * 60, NOW) == "CRITICAL"
+
+
+def test_token_outside_trading_hours_silent():
+    """Token hết hạn ngoài giờ giao dịch và ngoài pre-market -> None (im lặng)."""
+    now_night = datetime(2026, 7, 15, 20, 0, tzinfo=TZ)
+    assert token_expiry_status(_now_ts(hour=18, minute=0), now_night) is None
+
+
 def test_premarket_830_expired_alarms():
     """8:30 sáng (ngoài is_trading_time) mà token đã hết hạn -> CÓ báo —
     khung 8:00-9:00 để kịp hành động trước giờ mở cửa (điểm khác biệt 2B)."""
     now_830 = datetime(2026, 7, 15, 8, 30, tzinfo=TZ)
-    assert token_expiry_status(_now_ts(hour=8, minute=0) - 60, now_830) == "CRITICAL"
+    assert token_expiry_status(_now_ts(hour=8, minute=0) - 660, now_830) == "CRITICAL"
 
 
 def _fresh_job_logs(logs_dir, now):
@@ -838,6 +856,170 @@ def test_send_with_outbox_send_raises_enqueues(tmp_path):
     ok = send_with_outbox("Tin ném lỗi", send=broken_send, outbox_path=outbox_file)
     assert ok is False
     assert outbox_file.exists()
+
+
+def test_send_with_outbox_flush_prints_when_recovered(tmp_path, capsys):
+    """Đợt 220 (Task 2 / A3): In [HANG DOI] Đã gửi lại X cảnh báo tồn khi flush > 0."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    # Lần 1: gửi hỏng 2 tin
+    send_with_outbox("Tin cũ 1", send=lambda msg: False, outbox_path=outbox_file)
+    send_with_outbox("Tin cũ 2", send=lambda msg: False, outbox_path=outbox_file)
+    capsys.readouterr()  # clear buffer
+
+    # Lần 2: gửi thành công -> flush gửi lại 2 tin cũ
+    ok = send_with_outbox("Tin mới", send=lambda msg: True, outbox_path=outbox_file)
+    assert ok is True
+    captured = capsys.readouterr()
+    assert (
+        f"[HANG DOI] Đã gửi lại 2 cảnh báo tồn trong {outbox_file.name}" in captured.out
+    )
+
+
+def test_send_with_outbox_no_flush_log_when_empty(tmp_path, capsys):
+    """Đợt 220: Hàng đợi rỗng thì flush = 0 -> không in dòng Đã gửi lại."""
+    outbox_file = tmp_path / "alert_outbox_test.jsonl"
+    ok = send_with_outbox("Tin mới", send=lambda msg: True, outbox_path=outbox_file)
+    assert ok is True
+    captured = capsys.readouterr()
+    assert "[HANG DOI] Đã gửi lại" not in captured.out
+
+
+def _run_main_with_token(monkeypatch, tmp_path, refresh_token_expires_at, fixed_now=None):
+    """Dựng môi trường chạy hc.main() kiểm tra nhánh token SSI (đợt 220)."""
+    import scripts.heartbeat_check as hc
+
+    if fixed_now is None:
+        fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DB_DSN", "postgresql://fake:5432/trading")
+    sent = []
+    monkeypatch.setattr(hc, "send_telegram", lambda text: sent.append(text) or True)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return fixed_now
+
+        strptime = staticmethod(datetime.strptime)
+        fromtimestamp = staticmethod(datetime.fromtimestamp)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    class FakeCur:
+        def __init__(self, result):
+            self._result = result
+
+        def fetchall(self):
+            if isinstance(self._result, list):
+                return self._result
+            return []
+
+        def fetchone(self):
+            return self._result
+
+    class FakeConn:
+        def execute(self, query, *a, **k):
+            if "FROM heartbeat" in query:
+                return FakeCur(
+                    [
+                        ("collector", fixed_now - timedelta(seconds=30)),
+                        ("engine", fixed_now - timedelta(seconds=45)),
+                    ]
+                )
+            if "max(ts) FROM bars" in query:
+                return FakeCur((fixed_now - timedelta(minutes=2),))  # bar mới -> 2A im
+            if "FROM engine_state" in query:
+                return FakeCur(None)
+            if "FROM positions" in query:
+                return FakeCur([])
+            return FakeCur(None)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(
+        hc,
+        "Storage",
+        lambda dsn: type(
+            "S",
+            (),
+            {
+                "load_ssi_token": lambda self: (
+                    {"refresh_token_expires_at": refresh_token_expires_at}
+                    if refresh_token_expires_at is not None
+                    else None
+                ),
+                "read_position_sync_ts": lambda self, account_no: fixed_now
+                - timedelta(minutes=2),
+            },
+        )(),
+    )
+    _fresh_job_logs(logs_dir, fixed_now)
+    rc = hc.main(["--logs-dir", str(logs_dir)])
+    return rc, sent
+
+
+def test_main_token_warn_30m_exits_0_no_telegram(monkeypatch, capsys, tmp_path):
+    """Đợt 220 (Task 1 / A4): Còn 30 phút -> thoát 0, không gọi gửi Telegram, in INFO trước hạn."""
+    fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+    expiry = fixed_now.timestamp() + 30 * 60
+    rc, sent = _run_main_with_token(monkeypatch, tmp_path, expiry, fixed_now=fixed_now)
+    captured = capsys.readouterr()
+    assert rc == 0, f"chỉ có token WARN phải thoát 0, thực tế rc={rc}"
+    assert sent == [], f"không được gửi Telegram, thực tế: {sent}"
+    exp_str = (fixed_now + timedelta(minutes=30)).strftime("%H:%M %d/%m")
+    assert f"[INFO] token SSI hết hạn lúc {exp_str} — collector sẽ tự xác thực lại" in captured.out
+    assert "[CRITICAL]" not in captured.out
+
+
+def test_main_token_warn_grace_period_exits_0_no_telegram(monkeypatch, capsys, tmp_path):
+    """Đợt 220 (Task 1 / A4): Quá hạn 5 phút (< 10 phút ân hạn) -> thoát 0, không gửi Telegram, in INFO ân hạn."""
+    fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+    expiry = fixed_now.timestamp() - 5 * 60
+    rc, sent = _run_main_with_token(monkeypatch, tmp_path, expiry, fixed_now=fixed_now)
+    captured = capsys.readouterr()
+    assert rc == 0, f"trong ân hạn phải thoát 0, thực tế rc={rc}"
+    assert sent == [], f"không được gửi Telegram, thực tế: {sent}"
+    exp_str = (fixed_now - timedelta(minutes=5)).strftime("%H:%M %d/%m")
+    assert (
+        f"[INFO] token SSI đã hết hạn lúc {exp_str} — đang chờ collector tự xác thực lại (ân hạn 10 phút)"
+        in captured.out
+    )
+    assert "[CRITICAL]" not in captured.out
+
+
+def test_main_token_critical_overdue_11m_exits_1_sends_telegram(monkeypatch, capsys, tmp_path):
+    """Đợt 220 (Task 1 / A4): Quá hạn 11 phút (>= 10 phút) -> thoát 1, gửi Telegram có câu collector không tự xác thực lại được."""
+    fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+    expiry = fixed_now.timestamp() - 11 * 60
+    rc, sent = _run_main_with_token(monkeypatch, tmp_path, expiry, fixed_now=fixed_now)
+    captured = capsys.readouterr()
+    assert rc == 1, f"quá hạn >= 10 phút phải thoát 1, thực tế rc={rc}"
+    assert len(sent) == 1, f"phải gửi 1 tin Telegram, thực tế: {sent}"
+    assert (
+        "[CRITICAL] token SSI đã hết hạn hoặc không có trong DB (collector không tự xác thực lại được)"
+        in sent[0]
+    )
+    assert "(collector không tự xác thực lại được)" in captured.out
+
+
+def test_main_token_critical_none_token_exits_1_sends_telegram(monkeypatch, capsys, tmp_path):
+    """Đợt 220 (Task 1 / A4): DB không có token -> thoát 1, gửi Telegram có câu collector không tự xác thực lại được."""
+    fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
+    rc, sent = _run_main_with_token(monkeypatch, tmp_path, None, fixed_now=fixed_now)
+    captured = capsys.readouterr()
+    assert rc == 1, f"thiếu token phải thoát 1, thực tế rc={rc}"
+    assert len(sent) == 1, f"phải gửi 1 tin Telegram, thực tế: {sent}"
+    assert (
+        "[CRITICAL] token SSI đã hết hạn hoặc không có trong DB (collector không tự xác thực lại được)"
+        in sent[0]
+    )
+    assert "(collector không tự xác thực lại được)" in captured.out
 
 
 def _setup_heartbeat_stale_env(monkeypatch, logs_dir, fixed_now=None, stale_job="container-health"):

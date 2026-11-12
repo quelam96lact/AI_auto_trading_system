@@ -4,6 +4,7 @@ Moi test dung ham gui gia duoc tiem vao — khong goi mang, khong gui Telegram t
 """
 
 import json
+import logging
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -388,4 +389,55 @@ def test_thu_muc_khong_ghi_duoc_khong_bat_va_alert_khong_nem(tmp_path, monkeypat
     t = alert("WARN", "sau_khi_outbox_tat")
     assert t is not None
     t.join()
+
+
+def test_outbox_step_logs_info_when_flushed(tmp_path, caplog):
+    """Đợt 220 (Task 2 / A3): AlertOutbox._step ghi log INFO khi gửi lại thành công > 0 tin."""
+    net = FakeNet()
+    net.up = False
+    box = _box(tmp_path, net)
+    alert("CRITICAL", "tin1").join()
+    alert("CRITICAL", "tin2").join()
+
+    net.up = True
+    with caplog.at_level(logging.INFO):
+        flushed = box._step()
+    assert flushed == 2
+    assert "alert outbox: đã gửi lại 2 cảnh báo tồn trong" in caplog.text
+
+
+def test_outbox_step_does_not_log_when_flushed_zero(tmp_path, caplog):
+    """Đợt 220 (Task 2 / A3): AlertOutbox._step không ghi log khi không có tin nào được gửi lại."""
+    net = FakeNet()
+    box = _box(tmp_path, net)
+    with caplog.at_level(logging.INFO):
+        flushed = box._step()
+    assert flushed == 0
+    assert "alert outbox: đã gửi lại" not in caplog.text
+
+
+def test_outbox_loop_survives_flush_exception(tmp_path, caplog, monkeypatch):
+    """Đợt 220 (Task 2 / Lead ĐK 1): flush ném lỗi -> _loop không làm chết thread, warning vẫn ghi."""
+    net = FakeNet()
+    box = _box(tmp_path, net)
+
+    called = threading.Event()
+
+    def buggy_step():
+        called.set()
+        raise RuntimeError("simulated disk read failure")
+
+    monkeypatch.setattr(box, "_step", buggy_step)
+
+    t = threading.Thread(target=box._loop, args=(0.01,), daemon=True)
+    with caplog.at_level(logging.WARNING):
+        t.start()
+        assert called.wait(timeout=1.0)
+        assert box.first_flush_done.is_set()
+        assert t.is_alive(), "thread phải còn sống sau khi _step ném lỗi"
+        box.stop_event.set()
+        t.join(timeout=1.0)
+
+    assert "alert outbox flush loi: RuntimeError" in caplog.text
+    assert not t.is_alive()
 

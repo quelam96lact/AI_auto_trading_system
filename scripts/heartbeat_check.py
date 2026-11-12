@@ -922,14 +922,22 @@ def position_sync_stale(
     return now - sync_ts > timedelta(minutes=stale_minutes)
 
 
+# 10 phút (600 giây). Số đo ngày 09/11 cho thấy collector tự xác thực lại chỉ mất 11 giây sau khi hết hạn (M15).
+SSI_TOKEN_GRACE_PERIOD_SECONDS: int = 10 * 60
+
+
 def token_expiry_status(
     refresh_expires_at, now, holidays: frozenset = frozenset()
 ) -> str | None:
     """2B: token SSI sắp/đã hết hạn. refresh_expires_at = epoch seconds
     (từ Storage.load_ssi_token) hoặc None (ssi_auth_state rỗng).
 
-    Trả về: None (ổn) | "WARN" (còn < 60 phút) | "CRITICAL" (đã hết hạn hoặc
-    không có dòng nào).
+    Trước đợt 220: quá hạn (< 0) trả CRITICAL ngay lập tức.
+    Từ đợt 220: thêm ân hạn 10 phút (SSI_TOKEN_GRACE_PERIOD_SECONDS) trước khi báo CRITICAL
+    vì collector tự xác thực lại sau khi hết hạn; trong ân hạn trả WARN.
+
+    Trả về: None (ổn) | "WARN" (còn < 60 phút hoặc đã quá hạn < 10 phút) | "CRITICAL"
+    (đã quá hạn >= 10 phút hoặc không có dòng nào).
 
     Chỉ báo trong giờ giao dịch (is_trading_time dùng nguyên vẹn — 2B không
     liên quan khung ATC), CỘNG THÊM khung 8:00-9:00 sáng ngày giao dịch để
@@ -949,7 +957,7 @@ def token_expiry_status(
     if refresh_expires_at is None:
         return "CRITICAL"
     remaining = refresh_expires_at - now.timestamp()
-    if remaining < 0:
+    if remaining <= -SSI_TOKEN_GRACE_PERIOD_SECONDS:
         return "CRITICAL"
     if remaining < 3600:
         return "WARN"
@@ -1593,14 +1601,19 @@ def main(argv: list[str] | None = None) -> int:
     expiry = saved.get("refresh_token_expires_at") if saved else None
     status = token_expiry_status(expiry, now, holidays)
     if status == "WARN":
-        messages.append(
-            f"[WARN] token SSI sắp hết hạn ({datetime.fromtimestamp(expiry, TZ):%H:%M %d/%m}) — "
-            f"chạy scripts/spike_ssi_sdk_auth.py RỒI scripts/load_token_to_db.py "
-            f"(bước thứ hai là cầu nối sang DB — chính nó hay bị bỏ quên)"
-        )
+        exp_dt = datetime.fromtimestamp(expiry, TZ) if expiry else None
+        exp_str = exp_dt.strftime("%H:%M %d/%m") if exp_dt else "?"
+        if expiry is not None and now.timestamp() >= expiry:
+            _print_safe(
+                f"[INFO] token SSI đã hết hạn lúc {exp_str} — đang chờ collector tự xác thực lại (ân hạn 10 phút)"
+            )
+        else:
+            _print_safe(
+                f"[INFO] token SSI hết hạn lúc {exp_str} — collector sẽ tự xác thực lại"
+            )
     elif status == "CRITICAL":
         messages.append(
-            "[CRITICAL] token SSI đã hết hạn hoặc không có trong DB — "
+            "[CRITICAL] token SSI đã hết hạn hoặc không có trong DB (collector không tự xác thực lại được) — "
             "chạy scripts/spike_ssi_sdk_auth.py RỒI scripts/load_token_to_db.py "
             "(bước thứ hai là cầu nối sang DB — chính nó hay bị bỏ quên)"
         )
