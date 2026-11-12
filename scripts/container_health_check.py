@@ -12,7 +12,8 @@ Mã thoát:
   0: Mọi thứ ổn, hoặc ghi nhận mốc mới thành công.
   1: Có cảnh báo và đã gửi thành công (hoặc in ra khi --dry-run).
   2: Sai cấu hình, lỗi Docker daemon, hoặc cảnh báo cần gửi mà gửi hỏng.
-  4: Docker daemon đang chạy nhưng không phản hồi trong 30s (chậm - đợt 218).
+  4: Docker daemon đang chạy nhưng không phản hồi trong 30s (chậm - đợt 218),
+     hoặc có container bị lỗi đọc kéo dài (đợt 223).
 """
 
 from __future__ import annotations
@@ -196,7 +197,7 @@ def inspect_container(name: str) -> ContainerStats:
                 "docker",
                 "inspect",
                 "-f",
-                "{{.Id}} {{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                "{{.ID}} {{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
                 name,
             ],
             capture_output=True,
@@ -656,8 +657,10 @@ def main(argv: list[str] | None = None) -> int:
                 # Không cập nhật trạng thái để lần sau báo lại
                 return 2
 
-    # Không có cảnh báo: lưu trạng thái mốc mới và thoát 0
+    # Không có cảnh báo: lưu trạng thái mốc mới và thoát 0 (hoặc 4 nếu có container lỗi đọc kéo dài)
     save_state(state_file, new_state)
+    if any(stat.read_error for stat in stats_map.values()):
+        return 4
     return 0
 
 

@@ -20,6 +20,8 @@ import json
 from datetime import datetime
 from unittest.mock import patch
 
+import pytest
+
 from scripts.container_health_check import (
     ContainerStats,
     evaluate_container_health,
@@ -717,6 +719,168 @@ def test_container_health_policy_does_not_contain_4():
     policy = SCHEDULE_EXIT_POLICIES["container-health"]
     assert 4 not in policy.normal_exit_codes
     assert "4" in policy.reason
+
+
+# ==============================================================================
+# Tests cho Đợt 223 (Sửa template docker inspect .Id -> .ID, lỗi đọc kéo dài)
+# ==============================================================================
+
+
+def test_inspect_template_uses_uppercase_id():
+    """Việc 1(a): Khẳng định template docker inspect không chứa {{.Id}} và có {{.ID}}."""
+    import inspect
+
+    from scripts import container_health_check
+
+    src = inspect.getsource(container_health_check.inspect_container)
+    assert "{{.Id}}" not in src, "Template không được chứa {{.Id}} vì gây lỗi trên Docker 29"
+    assert "{{.ID}}" in src, "Template phải dùng {{.ID}}"
+
+
+@pytest.mark.integration
+def test_inspect_container_integration_nats_test():
+    """Việc 1(b): Gọi thật inspect_container trên ai_auto_trading_system-nats-test-1."""
+    import subprocess
+
+    from scripts.container_health_check import inspect_container
+
+    container_name = "ai_auto_trading_system-nats-test-1"
+    try:
+        res = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "--filter",
+                f"name={container_name}",
+                "--filter",
+                "status=running",
+                "-q",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if res.returncode != 0 or not res.stdout.strip():
+            pytest.skip(f"Container {container_name} không chạy hoặc không có docker")
+    except Exception as e:
+        pytest.skip(f"Không thể kiểm tra docker: {e}")
+
+    stat = inspect_container(container_name)
+    assert stat.read_error is None, f"Lỗi đọc container: {stat.read_error}"
+    assert stat.status == "running"
+    assert stat.health_status == "none"
+    assert len(stat.container_id) == 64
+
+
+@patch("scripts.container_health_check.check_docker_daemon", return_value=0)
+@patch("scripts.container_health_check.inspect_container")
+@patch("scripts.container_health_check.send_telegram", return_value=True)
+def test_persistent_read_error_exits_4_and_does_not_spam(
+    mock_send, mock_inspect, mock_daemon, tmp_path
+):
+    """Việc 2: Lỗi đọc lần 1 thoát khác 0 (1) và có cảnh báo; lần 2 giống hệt thoát khác 0 (4) và không cảnh báo; hết lỗi thoát 0."""
+    state_file = tmp_path / "state.json"
+
+    # Lần 1: lỗi đọc mới
+    mock_inspect.return_value = _make_stat(
+        name="test-app",
+        status="missing",
+        read_error="template parsing error: map has no entry for key Health",
+    )
+    ret1 = main(["--containers", "test-app", "--state-file", str(state_file)])
+    assert ret1 != 0
+    assert ret1 == 1
+    assert mock_send.call_count == 1
+    assert "[CRITICAL] test-app: lỗi đọc container" in mock_send.call_args[0][0]
+
+    # Lần 2: lỗi đọc kéo dài giống hệt
+    mock_send.reset_mock()
+    ret2 = main(["--containers", "test-app", "--state-file", str(state_file)])
+    assert ret2 != 0
+    assert ret2 == 4
+    assert mock_send.call_count == 0  # Không cảnh báo lại (chống lặp)
+
+    # Lần 3: hết lỗi (đọc được bình thường)
+    mock_send.reset_mock()
+    mock_inspect.return_value = _make_stat(
+        name="test-app",
+        container_id="cid_new_1234567890",
+        status="running",
+        read_error=None,
+    )
+    ret3 = main(["--containers", "test-app", "--state-file", str(state_file)])
+    assert ret3 == 0
+    assert mock_send.call_count == 0
+
+
+def test_transition_from_blind_to_readable_id_changed_info_only():
+    """Việc 3(a): Chuyển từ mù (read_error, status='missing') sang đọc được với Id đổi -> chỉ ghi INFO, không có CRITICAL."""
+    prev_blind_state = {
+        "collector": {
+            "id": "old_id_1111111111111111111111111111111111111111111111111111111111111111",
+            "restart_count": 0,
+            "oom_kill": None,
+            "mem_max": None,
+            "status": "missing",
+            "oom_killed": False,
+            "started_at": "",
+            "read_error": "template parsing error: template: :1:97: executing \"\" at <.State.Health>: map has no entry for key \"Health\"",
+            "health_status": "none",
+        }
+    }
+    stat_new_id = _make_stat(
+        name="collector",
+        container_id="new_id_2222222222222222222222222222222222222222222222222222222222222222",
+        restart_count=0,
+        status="running",
+        read_error=None,
+        health_status="none",
+    )
+    alerts, new_state, info_logs = evaluate_container_health(
+        {"collector": stat_new_id}, previous_state=prev_blind_state
+    )
+    assert alerts == [], f"Id đổi không được sinh cảnh báo CRITICAL: {alerts}"
+    assert any("đã được tạo lại" in msg for msg in info_logs)
+    assert new_state["collector"]["id"] == stat_new_id.container_id
+    assert new_state["collector"]["read_error"] is None
+
+
+def test_transition_from_blind_to_readable_id_same_restart_count_increased():
+    """Việc 3(b): Chuyển từ mù sang đọc được với Id giữ nguyên và RestartCount tăng -> PHẢI có cảnh báo CRITICAL restart."""
+    cid = "same_id_3333333333333333333333333333333333333333333333333333333333333333"
+    prev_blind_state = {
+        "nats": {
+            "id": cid,
+            "restart_count": 1,
+            "oom_kill": None,
+            "mem_max": None,
+            "status": "missing",
+            "oom_killed": False,
+            "started_at": "",
+            "read_error": "template parsing error: template: :1:97: executing \"\" at <.State.Health>: map has no entry for key \"Health\"",
+            "health_status": "none",
+        }
+    }
+    stat_restarted = _make_stat(
+        name="nats",
+        container_id=cid,
+        restart_count=3,
+        status="running",
+        read_error=None,
+        health_status="none",
+    )
+    alerts, new_state, _ = evaluate_container_health(
+        {"nats": stat_restarted}, previous_state=prev_blind_state
+    )
+    assert len(alerts) == 1
+    assert (
+        "[CRITICAL] nats: container tự khởi động lại 2 lần (RestartCount tăng từ 1 lên 3)"
+        in alerts[0]
+    )
+    assert new_state["nats"]["restart_count"] == 3
+    assert new_state["nats"]["read_error"] is None
+
 
 
 
