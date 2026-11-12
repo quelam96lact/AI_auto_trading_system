@@ -71,6 +71,8 @@ services:
   engine:
     build: .
     command: python -m trading.engine.main --config config/config.yaml
+    # Chạy docker-init (tini) làm PID 1 để chuyển tiếp tín hiệu và dọn tiến trình con (đợt 221, lỗi zombie khi deploy 09/11).
+    init: true
     environment:
       DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
       # BAT BUOC: config.yaml mac dinh nats://localhost:4222 (dung cho dev chay
@@ -97,6 +99,7 @@ services:
   collector:
     build: .
     command: python -m trading.collector.main --config config/config.yaml
+    init: true
     environment:
       DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
       NATS_URL: nats://nats:4222
@@ -119,6 +122,7 @@ services:
   scheduler:
     build: .
     command: python -m trading.scheduler.main
+    init: true
     environment:
       DB_DSN: postgresql://trading:${POSTGRES_PASSWORD:-trading}@postgres:5432/trading
       NATS_URL: nats://nats:4222
