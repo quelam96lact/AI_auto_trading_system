@@ -324,11 +324,23 @@ def evaluate_container_health(
             }
             continue
 
-        # Giữ lại mốc cũ nếu memory.events lần này không đọc được (tránh mù OOM lần sau)
+        # Giữ lại mốc cũ nếu memory.events lần này không đọc được (tránh mù OOM lần sau).
+        # Chỉ giữ lại mốc cũ nếu container CHƯA khởi động lại (cùng Id và cùng StartedAt).
         effective_oom_kill = stat.oom_kill
         effective_mem_max = stat.mem_max
 
-        if prev and prev.get("id") == stat.container_id:
+        prev_started = prev.get("started_at", "") if prev else ""
+        container_restarted = (
+            prev is not None
+            and bool(prev_started)
+            and bool(stat.started_at)
+            and stat.started_at != prev_started
+        ) or (
+            prev is not None
+            and stat.restart_count > prev.get("restart_count", 0)
+        )
+
+        if prev and prev.get("id") == stat.container_id and not container_restarted:
             if stat.oom_kill is None and prev.get("oom_kill") is not None:
                 effective_oom_kill = prev.get("oom_kill")
                 info_logs.append(
@@ -408,13 +420,19 @@ def evaluate_container_health(
                     f"[container-health] INFO: {name} vẫn mang cờ OOMKilled từ lần chết trước (đã báo)"
                 )
 
-        # 5. RestartCount tăng
+        # 5. Khởi động lại: RestartCount tăng hoặc StartedAt đổi
         prev_rc = prev.get("restart_count", 0)
+        prev_started = prev.get("started_at", "") or ""
         if stat.restart_count > prev_rc:
             diff_rc = stat.restart_count - prev_rc
             alerts.append(
                 f"[CRITICAL] {name}: container tự khởi động lại {diff_rc} lần "
                 f"(RestartCount tăng từ {prev_rc} lên {stat.restart_count})"
+            )
+        elif prev_started and stat.started_at and stat.started_at != prev_started:
+            alerts.append(
+                f"[CRITICAL] {name}: container đã khởi động lại "
+                f"(StartedAt đổi: {prev_started} -> {stat.started_at})"
             )
 
         # 6. oom_kill tăng (tiến trình con bị kernel kill)

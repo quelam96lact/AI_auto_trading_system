@@ -882,6 +882,229 @@ def test_transition_from_blind_to_readable_id_same_restart_count_increased():
     assert new_state["nats"]["read_error"] is None
 
 
+# ==============================================================================
+# Tests cho Đợt 224 (Bắt restart cùng Id qua StartedAt và reset mốc memory.events)
+# ==============================================================================
+
+
+def test_same_id_started_at_changed_critical():
+    """Cùng Id, StartedAt đổi, RestartCount không tăng -> sinh 1 CRITICAL nêu rõ StartedAt cũ và mới."""
+    prev_state = {
+        "postgres": {
+            "id": "cid_postgres_1234567890",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "oom_killed": False,
+            "started_at": "2026-11-12T14:53:15Z",
+            "read_error": None,
+            "health_status": "healthy",
+        }
+    }
+    stat = _make_stat(
+        name="postgres",
+        container_id="cid_postgres_1234567890",
+        restart_count=0,
+        status="running",
+        started_at="2026-11-13T00:46:18Z",
+        health_status="healthy",
+    )
+    alerts, new_state, _ = evaluate_container_health({"postgres": stat}, prev_state)
+    assert len(alerts) == 1
+    assert "[CRITICAL] postgres: container đã khởi động lại" in alerts[0]
+    assert "2026-11-12T14:53:15Z" in alerts[0]
+    assert "2026-11-13T00:46:18Z" in alerts[0]
+    assert new_state["postgres"]["started_at"] == "2026-11-13T00:46:18Z"
+
+
+def test_same_id_started_at_unchanged_no_alert():
+    """Cùng Id, StartedAt không đổi -> không sinh cảnh báo."""
+    ts = "2026-11-13T00:46:18Z"
+    prev_state = {
+        "postgres": {
+            "id": "cid_postgres_1234567890",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "oom_killed": False,
+            "started_at": ts,
+            "read_error": None,
+            "health_status": "healthy",
+        }
+    }
+    stat = _make_stat(
+        name="postgres",
+        container_id="cid_postgres_1234567890",
+        restart_count=0,
+        status="running",
+        started_at=ts,
+        health_status="healthy",
+    )
+    alerts, new_state, _ = evaluate_container_health({"postgres": stat}, prev_state)
+    assert alerts == []
+    assert new_state["postgres"]["started_at"] == ts
+
+
+def test_prev_started_at_empty_records_baseline_no_alert():
+    """Trạng thái cũ có started_at = '' (từ thời còn mù) -> ghi mốc, không báo."""
+    prev_state = {
+        "postgres": {
+            "id": "cid_postgres_1234567890",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "missing",
+            "oom_killed": False,
+            "started_at": "",
+            "read_error": "template parsing error",
+            "health_status": "none",
+        }
+    }
+    stat = _make_stat(
+        name="postgres",
+        container_id="cid_postgres_1234567890",
+        restart_count=0,
+        status="running",
+        started_at="2026-11-13T00:46:18Z",
+        health_status="healthy",
+    )
+    alerts, new_state, _ = evaluate_container_health({"postgres": stat}, prev_state)
+    assert alerts == [], f"started_at rỗng không được báo động: {alerts}"
+    assert new_state["postgres"]["started_at"] == "2026-11-13T00:46:18Z"
+
+
+def test_same_id_started_at_changed_and_restart_count_increased_single_alert():
+    """Cùng Id, StartedAt đổi VÀ RestartCount tăng -> đúng 1 cảnh báo cho container đó (không báo trùng)."""
+    prev_state = {
+        "nats": {
+            "id": "cid_nats_1234567890",
+            "restart_count": 1,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "oom_killed": False,
+            "started_at": "2026-11-12T14:53:15Z",
+            "read_error": None,
+            "health_status": "none",
+        }
+    }
+    stat = _make_stat(
+        name="nats",
+        container_id="cid_nats_1234567890",
+        restart_count=2,
+        status="running",
+        started_at="2026-11-13T00:46:18Z",
+        health_status="none",
+    )
+    alerts, new_state, _ = evaluate_container_health({"nats": stat}, prev_state)
+    assert len(alerts) == 1, f"Chỉ được có đúng 1 cảnh báo, thực tế: {alerts}"
+    assert "[CRITICAL] nats: container tự khởi động lại 1 lần" in alerts[0]
+    assert new_state["nats"]["restart_count"] == 2
+    assert new_state["nats"]["started_at"] == "2026-11-13T00:46:18Z"
+
+
+@patch("scripts.container_health_check.evaluate_heartbeat_watch", return_value=([], None, []))
+@patch("scripts.container_health_check.check_docker_daemon", return_value=0)
+@patch("scripts.container_health_check.inspect_container")
+@patch("scripts.container_health_check.send_telegram", return_value=True)
+def test_six_containers_started_at_changed_single_telegram_message(
+    mock_send, mock_inspect, mock_daemon, mock_hb, tmp_path
+):
+    """6 container cùng đổi StartedAt (daemon restart) -> main() gom vào đúng 1 tin Telegram."""
+    state_file = tmp_path / "state.json"
+    old_ts = "2026-11-12T14:53:15Z"
+    new_ts = "2026-11-13T00:46:18Z"
+    cnames = [f"svc-{i}" for i in range(1, 7)]
+
+    initial_state = {}
+    for name in cnames:
+        initial_state[name] = {
+            "id": f"cid_{name}",
+            "restart_count": 0,
+            "oom_kill": 0,
+            "mem_max": 0,
+            "status": "running",
+            "oom_killed": False,
+            "started_at": old_ts,
+            "read_error": None,
+            "health_status": "none",
+        }
+    state_file.write_text(json.dumps(initial_state), encoding="utf-8")
+
+    def fake_inspect(name):
+        return _make_stat(
+            name=name,
+            container_id=f"cid_{name}",
+            restart_count=0,
+            status="running",
+            started_at=new_ts,
+            health_status="none",
+        )
+
+    mock_inspect.side_effect = fake_inspect
+
+    ret = main(["--containers", ",".join(cnames), "--state-file", str(state_file)])
+    assert ret == 1
+    assert mock_send.call_count == 1, f"Chỉ được gửi đúng 1 tin Telegram, thực tế gọi {mock_send.call_count} lần"
+
+    sent_msg = mock_send.call_args[0][0]
+    for name in cnames:
+        assert name in sent_msg, f"Tin nhắn phải chứa thông tin của {name}"
+
+
+def test_oom_kill_baseline_reset_on_restart_chain():
+    """Chuỗi OOM ở mục 2: mốc oom_kill = 2 -> restart oom_kill về 0 -> lần sau oom_kill = 1 -> kỳ vọng có CRITICAL OOM."""
+    prev_state = {
+        "engine": {
+            "id": "cid_engine_1234567890",
+            "restart_count": 0,
+            "oom_kill": 2,
+            "mem_max": 500,
+            "status": "running",
+            "oom_killed": False,
+            "started_at": "2026-11-12T14:53:15Z",
+            "read_error": None,
+            "health_status": "none",
+        }
+    }
+
+    # Lần 1: Restart, oom_kill về 0 (cgroup mới)
+    stat_restart = _make_stat(
+        name="engine",
+        container_id="cid_engine_1234567890",
+        restart_count=0,
+        status="running",
+        started_at="2026-11-13T00:46:18Z",
+        oom_kill=0,
+        mem_max=100,
+        health_status="none",
+    )
+    alerts1, state1, _ = evaluate_container_health({"engine": stat_restart}, prev_state)
+    assert len(alerts1) == 1
+    assert "[CRITICAL] engine: container đã khởi động lại" in alerts1[0]
+    # state1 phải cập nhật mốc oom_kill mới = 0
+    assert state1["engine"]["oom_kill"] == 0
+
+    # Lần 2: Chạy tiếp theo, oom_kill tăng từ 0 lên 1
+    stat_oom = _make_stat(
+        name="engine",
+        container_id="cid_engine_1234567890",
+        restart_count=0,
+        status="running",
+        started_at="2026-11-13T00:46:18Z",
+        oom_kill=1,
+        mem_max=150,
+        health_status="none",
+    )
+    alerts2, _, _ = evaluate_container_health({"engine": stat_oom}, state1)
+    assert len(alerts2) == 1
+    assert "[CRITICAL] engine: kernel kill tiến trình con trong container vì hết bộ nhớ" in alerts2[0]
+    assert "từ 0 lên 1" in alerts2[0]
+
+
+
 
 
 
