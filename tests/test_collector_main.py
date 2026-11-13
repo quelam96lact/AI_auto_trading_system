@@ -1016,4 +1016,99 @@ async def test_stream_handler_snapshot_after_frame_close_logs_late_snapshot(monk
     assert kw.get("late_ms") == 3500.0
 
 
+async def test_housekeeping_tick_empty_symbols_skips_silent_stream_warning(cfg, monkeypatch):
+    """Đợt 231: cfg.symbols=[] -> không cảnh báo 'khong nhan snapshot nao' khi ở phiên liên tục."""
+    from dataclasses import replace
+
+    import trading.collector.main as collector_main
+    from trading.collector.latch import BarLatch
+
+    cfg_empty = replace(cfg, symbols=[])
+    t_now = datetime(2026, 9, 14, 10, 0, tzinfo=TZ)
+    monkeypatch.setattr(collector_main, "datetime", _FrozenDatetime(t_now))
+    monkeypatch.setattr(collector_main.time, "monotonic", lambda: 500.0)
+
+    alerts = []
+    monkeypatch.setattr(
+        collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw))
+    )
+
+    state = HousekeepingState(
+        last_monotonic=480.0,
+        last_wall=t_now - timedelta(seconds=20),
+        session_start_mono=100.0,
+    )
+    latch = BarLatch(interval_seconds=300, grace_seconds=60)
+    storage = MagicMock()
+    wd = MagicMock()
+
+    await housekeeping_tick(cfg_empty, storage, wd, state, latch=latch)
+
+    assert not any("khong nhan snapshot nao" in m for _, m, _ in alerts)
+    storage.beat.assert_called_once()
+
+
+async def test_run_empty_symbols_skips_feed_start_and_watchdog_trading(cfg, monkeypatch):
+    """Đợt 231: run() với cfg.symbols=[] không gọi feed.start() và watchdog luôn coi ngoài giờ khớp."""
+    import asyncio
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    import trading.collector.main as collector_main
+
+    cfg_empty = replace(cfg, symbols=[])
+    alerts = []
+    monkeypatch.setattr(
+        collector_main, "alert", lambda level, msg, **kw: alerts.append((level, msg, kw))
+    )
+
+    fake_storage = MagicMock()
+    monkeypatch.setattr(collector_main, "Storage", lambda dsn: fake_storage)
+
+    fake_pub = MagicMock()
+    fake_pub.connect = AsyncMock()
+    fake_pub.close = AsyncMock()
+    monkeypatch.setattr(collector_main, "BarPublisher", lambda url, stream: fake_pub)
+
+    created_wd = {}
+
+    class SpyWatchdog:
+        def __init__(self, *args, **kwargs):
+            created_wd["is_trading_fn"] = kwargs["is_trading_fn"]
+
+    monkeypatch.setattr(collector_main, "Watchdog", SpyWatchdog)
+
+    feed_calls = {"start": 0, "stop": 0}
+
+    class SpyFeed:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            feed_calls["start"] += 1
+
+        async def stop(self):
+            feed_calls["stop"] += 1
+
+    monkeypatch.setattr(collector_main, "SSIFeed", SpyFeed)
+
+    async def fake_loop(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(collector_main, "housekeeping_loop", fake_loop)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+    await collector_main.run(cfg_empty, stop_event=stop_event)
+
+    assert feed_calls["start"] == 0
+    assert feed_calls["stop"] == 1
+    assert any(
+        lvl == "INFO" and "collector chay khong stream: cfg.symbols rong" in m
+        for lvl, m, _ in alerts
+    )
+    # 10:00 thu Hai thuong la phien lien tuc, nhung cfg.symbols=[] -> False
+    assert created_wd["is_trading_fn"](datetime(2026, 9, 14, 10, 0, tzinfo=TZ)) is False
+
+
 

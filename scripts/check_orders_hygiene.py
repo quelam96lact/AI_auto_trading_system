@@ -34,9 +34,8 @@ try:
 except ImportError:
     from scripts._db_common import load_dotenv, resolve_dsn
 
+from trading.calendar_vn import TZ as TZ_VN
 from trading.config import load_config
-
-TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def parse_args() -> argparse.Namespace:

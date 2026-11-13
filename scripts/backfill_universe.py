@@ -273,8 +273,14 @@ def main(argv: list[str] | None = None) -> None:
     frm = datetime.strptime(args.frm, "%Y-%m-%d").date()
     to = datetime.strptime(args.to, "%Y-%m-%d").date()
 
-    if args.symbols:
-        symbols = [s.strip() for s in args.symbols.split(",")]
+    if args.symbols is not None:
+        symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+        if not symbols:
+            print(
+                "LỖI: --symbols được truyền nhưng danh sách mã rỗng.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     elif args.all_universe:
         symbols = sorted(storage.read_symbol_universe())
         print(f"[load] toan bo universe: {len(symbols)} ma (khong ghi de cờ active)")

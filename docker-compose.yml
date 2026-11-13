@@ -87,6 +87,8 @@ services:
       SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      # Đợt 229 (13/11/2026): Tắt chiến lược paper trên 3 mã cũ mà vẫn giữ engine chạy (ack NATS + ghi heartbeat).
+      ENGINE_STRATEGY_DISABLED: "1"
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_started}

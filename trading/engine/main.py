@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 from datetime import date, datetime, time, timedelta
 
@@ -24,6 +25,7 @@ from trading.logging_setup import attach_durable_alert_handler
 from trading.paper_broker import PaperBroker
 from trading.risk import RiskManager
 from trading.storage.db import Storage
+from trading.strategies.null_strategy import NullStrategy
 from trading.strategies.octopus_pullback import OctopusPullbackStrategy
 from trading.strategy import RestoresTakeProfit, Strategy
 from trading.trailing_stop import TrailingStopManager
@@ -173,74 +175,61 @@ def last_session_date_needed(
     return previous_trading_day(current_date, holidays)
 
 
-async def run(
-    cfg: Config,
-    max_messages: int | None = None,
-    stop_event: asyncio.Event | None = None,
-    strategy: Strategy | None = None,
-    warmup_wait_timeout_sec: float = 600.0,
-    warmup_wait_sleep=asyncio.sleep,
-    warmup_wait_interval_sec: float = 5.0,
-    now: datetime | None = None,
-) -> None:
-    """`strategy=None` (mac dinh) = chien luoc chay THAT, xem _default_strategy().
-
-    Khe nay co tu 04/09 khi doi sang octopus: cac test duong ong engine
-    (test_engine_main.py) kiem warm-up / khoi phuc trang thai / noi lenh that,
-    khong kiem chien luoc — nhung chung ngam phu thuoc warmup_bars = 21 cua
-    sma_cross, nen doi chien luoc lam sau test do voi ly do khong lien quan gi
-    den thu chung kiem. Chung ghim sma_cross qua tham so nay; con lua chon chay
-    that duoc ghim rieng boi test_default_strategy_la_octopus.
-    """
-    if stop_event is None:
-        stop_event = asyncio.Event()
-        _install_stop_handlers(stop_event)
-
-    storage = Storage(cfg.db_dsn)
-    storage.init_schema()
-
+def _restore_or_init_paper_broker(
+    cfg: Config, storage: Storage, positions: dict
+) -> PaperBroker:
+    """Khôi phục PaperBroker từ DB hoặc khởi tạo mới với CAPITAL."""
     state = storage.read_engine_state()
-    positions = storage.read_positions()
     if state is None:
         broker = PaperBroker(CAPITAL)
         alert("INFO", "engine starting fresh", capital=CAPITAL)
-    else:
-        cash, realized_pnl = state
-        buy_dates: dict[str, date] = {}
-        for sym, pos in positions.items():
-            if pos.qty > 0:
-                buy_date = storage.read_last_buy_date(sym)
-                if buy_date is not None:
-                    buy_dates[sym] = buy_date
-                else:
-                    alert(
-                        "WARN",
-                        f"khong tim thay ngay mua cho {sym}: vi the se bi khoa "
-                        f"3 ngay giao dich theo cach bao thu (day_index=0)",
-                    )
-        broker = PaperBroker.restore(
-            CAPITAL,
-            cash,
-            realized_pnl,
-            positions,
-            buy_dates=buy_dates,
-            holidays=frozenset(cfg.holidays),
-        )
-        alert(
-            "INFO",
-            "engine restored state",
-            cash=cash,
-            realized_pnl=realized_pnl,
-            positions={s: p.qty for s, p in positions.items()},
-        )
+        return broker
 
-    strategy = _default_strategy() if strategy is None else strategy
+    cash, realized_pnl = state
+    buy_dates: dict[str, date] = {}
+    for sym, pos in positions.items():
+        if pos.qty > 0:
+            buy_date = storage.read_last_buy_date(sym)
+            if buy_date is not None:
+                buy_dates[sym] = buy_date
+            else:
+                alert(
+                    "WARN",
+                    f"khong tim thay ngay mua cho {sym}: vi the se bi khoa "
+                    f"3 ngay giao dich theo cach bao thu (day_index=0)",
+                )
+    broker = PaperBroker.restore(
+        CAPITAL,
+        cash,
+        realized_pnl,
+        positions,
+        buy_dates=buy_dates,
+        holidays=frozenset(cfg.holidays),
+    )
+    alert(
+        "INFO",
+        "engine restored state",
+        cash=cash,
+        realized_pnl=realized_pnl,
+        positions={s: p.qty for s, p in positions.items()},
+    )
+    return broker
+
+
+async def _wait_for_recent_bars(
+    cfg: Config,
+    storage: Storage,
+    current_now: datetime,
+    warmup_wait_timeout_sec: float,
+    warmup_wait_sleep,
+    warmup_wait_interval_sec: float,
+) -> None:
+    """Chờ cho tới khi mọi mã trong cfg.symbols có dữ liệu bars của phiên gần nhất."""
     # CHỜ ĐỦ DỮ LIỆU PHIÊN GẦN NHẤT TRƯỚC KHI WARM-UP (Brief 81 Task 2):
     # Tránh sự cố warm-up trước khi collector backfill xong (tối 23/09).
     # Chờ cho tới khi mọi mã trong cfg.symbols đều có nến của needed_date trong DB.
     # So sánh ở mức NGÀY (date >= needed_date), không so ở mức nến để tránh báo động giả
     # khi mã thiếu nến lẻ do không có giao dịch trong phiên.
-    current_now = now if now is not None else datetime.now(TZ)
     needed_date = last_session_date_needed(current_now, cfg.holidays)
     waited_sec = 0.0
     while True:
@@ -270,6 +259,11 @@ async def run(
         await warmup_wait_sleep(warmup_wait_interval_sec)
         waited_sec += warmup_wait_interval_sec
 
+
+def _warmup_strategy_from_history(
+    cfg: Config, storage: Storage, strategy: Strategy
+) -> dict[str, datetime]:
+    """Nạp lịch sử bars sạch từ DB để warm-up các chỉ báo của chiến lược trước vòng lặp live."""
     # WARM-UP (rui ro 5 GO_LIVE_AUDIT, WARM-1): nap lich su SMA/ATR tu bang
     # bars luc khoi dong. Consumer engine la DURABLE: sau lan chay dau no tiep
     # tuc tu vi tri cu chu khong phat lai tu dau — khong nap thi engine mu
@@ -310,8 +304,16 @@ async def run(
             bars=len(clean_hist),
             until=str(clean_hist[-1].ts),
         )
-    risk = RiskManager(capital=CAPITAL)
-    trailing_stop = TrailingStopManager()
+    return warmed_until
+
+
+def _restore_paper_stops_and_tp(
+    storage: Storage,
+    positions: dict,
+    strategy: Strategy,
+    trailing_stop: TrailingStopManager,
+) -> None:
+    """Tái dựng trailing stop và take-profit cho các vị thế paper đang mở sau khi restart."""
     # Tai dung _highest cho vi the dang mo sau restart (bug RESTORE-1 Task A):
     # _highest la dict in-memory, mat sau restart -> trailing stop vo hieu hoa
     # vinh vien im lang. Khong tai dung duoc -> alert WARN, khong duoc im lang.
@@ -407,6 +409,12 @@ async def run(
                 anchor_open=anchor.open,
                 tp=tp,
             )
+
+
+def _init_real_trading_context(
+    cfg: Config, storage: Storage
+) -> tuple[RiskManager, TrailingStopManager, bool, float]:
+    """Khởi tạo ngữ cảnh lệnh thật (NAV, RiskManager, trailing stop thật và kiểm tra GUARD-1/GUARD-3)."""
     # NAV-CI: vốn lệnh thật đọc NAV từ account_nav_snapshot (chủ dự án BỎ
     # real_order_capital khỏi config — quyết định 13/08; và 14/08 chốt vốn rủi
     # ro = NAV = tiền mặt + Σ(qty×giá) − nợ, KHÔNG phải withdrawable: 1% rủi
@@ -471,7 +479,7 @@ async def run(
     real_risk = RiskManager(capital=real_capital)
     real_risk.halted_date = storage.read_real_risk_halt()
     real_trailing_stop = TrailingStopManager()
-    last_nav_valid: bool = (nav_issue is None)
+    last_nav_valid: bool = nav_issue is None
     last_nav_capital: float = real_capital
     # Tai dung _highest cho vi the THAT sau restart (RTS-1), giong luong paper
     # o tren: doc tu real_order_fills (loc account_no). Vi the that co the do
@@ -554,6 +562,125 @@ async def run(
                 f"BAN so co phieu nay",
                 account=cfg.real_order_account,
             )
+    return real_risk, real_trailing_stop, last_nav_valid, last_nav_capital
+
+
+def _refresh_real_nav_before_crossover(
+    cfg: Config,
+    storage: Storage,
+    real_risk: RiskManager,
+    last_nav_valid: bool,
+    last_nav_capital: float,
+) -> tuple[bool, float]:
+    """Đọc lại NAV từ DB trước mỗi crossover thật (Đợt 151) và cập nhật `real_risk.capital`."""
+    # Dot 151: doc lai NAV truoc moi crossover that
+    try:
+        curr_nav_row = storage.read_nav(cfg.real_order_account)
+        curr_capital, curr_issue = real_capital_from_nav(curr_nav_row)
+        curr_valid = curr_issue is None
+        if last_nav_valid and not curr_valid:
+            alert(
+                "CRITICAL",
+                f"NAV chuyen sang khong hop le: {curr_issue} — real capital = 0, "
+                f"MOI lenh that bi tu choi (fail-safe)",
+                account=cfg.real_order_account,
+            )
+            real_risk.capital = 0.0
+            last_nav_valid = False
+            last_nav_capital = 0.0
+        elif not last_nav_valid and curr_valid:
+            alert(
+                "WARN",
+                f"NAV hop le tro lai — real capital = {curr_capital:,.0f}",
+                account=cfg.real_order_account,
+                capital=curr_capital,
+            )
+            real_risk.capital = curr_capital
+            last_nav_valid = True
+            last_nav_capital = curr_capital
+        elif not last_nav_valid and not curr_valid:
+            # hong -> van hong: im lang
+            real_risk.capital = 0.0
+        else:
+            # hop le, so doi: INFO cu -> moi
+            if curr_capital != last_nav_capital:
+                alert(
+                    "INFO",
+                    f"NAV cap nhat real capital: {last_nav_capital:,.0f} -> {curr_capital:,.0f}",
+                    account=cfg.real_order_account,
+                    old_capital=last_nav_capital,
+                    new_capital=curr_capital,
+                )
+                last_nav_capital = curr_capital
+            real_risk.capital = curr_capital
+    except Exception as e:
+        alert(
+            "WARN",
+            "khong doc lai duoc NAV cho crossover lenh that, giu nguyen von hien tai",
+            account=cfg.real_order_account,
+            error=f"{type(e).__name__}: {e}"[:200],
+        )
+    return last_nav_valid, last_nav_capital
+
+
+async def run(
+    cfg: Config,
+    max_messages: int | None = None,
+    stop_event: asyncio.Event | None = None,
+    strategy: Strategy | None = None,
+    warmup_wait_timeout_sec: float = 600.0,
+    warmup_wait_sleep=asyncio.sleep,
+    warmup_wait_interval_sec: float = 5.0,
+    now: datetime | None = None,
+) -> None:
+    """`strategy=None` (mac dinh) = chien luoc chay THAT, xem _default_strategy().
+
+    Khe nay co tu 04/09 khi doi sang octopus: cac test duong ong engine
+    (test_engine_main.py) kiem warm-up / khoi phuc trang thai / noi lenh that,
+    khong kiem chien luoc — nhung chung ngam phu thuoc warmup_bars = 21 cua
+    sma_cross, nen doi chien luoc lam sau test do voi ly do khong lien quan gi
+    den thu chung kiem. Chung ghim sma_cross qua tham so nay; con lua chon chay
+    that duoc ghim rieng boi test_default_strategy_la_octopus.
+    """
+    if stop_event is None:
+        stop_event = asyncio.Event()
+        _install_stop_handlers(stop_event)
+
+    storage = Storage(cfg.db_dsn)
+    storage.init_schema()
+
+    positions = storage.read_positions()
+    broker = _restore_or_init_paper_broker(cfg, storage, positions)
+
+    if strategy is None:
+        if os.environ.get("ENGINE_STRATEGY_DISABLED") == "1":
+            strategy = NullStrategy()
+            alert(
+                "INFO",
+                "engine strategy disabled via ENGINE_STRATEGY_DISABLED",
+                strategy="NullStrategy",
+            )
+        else:
+            strategy = _default_strategy()
+
+    current_now = now if now is not None else datetime.now(TZ)
+    await _wait_for_recent_bars(
+        cfg,
+        storage,
+        current_now,
+        warmup_wait_timeout_sec,
+        warmup_wait_sleep,
+        warmup_wait_interval_sec,
+    )
+
+    warmed_until = _warmup_strategy_from_history(cfg, storage, strategy)
+    risk = RiskManager(capital=CAPITAL)
+    trailing_stop = TrailingStopManager()
+    _restore_paper_stops_and_tp(storage, positions, strategy, trailing_stop)
+
+    real_risk, real_trailing_stop, last_nav_valid, last_nav_capital = (
+        _init_real_trading_context(cfg, storage)
+    )
     marks: dict[str, float] = {}
     day_state: dict = {}
     last_processed_ts: dict[str, datetime] = dict(warmed_until)
@@ -599,54 +726,9 @@ async def run(
 
     def on_real_crossover(crossover, bar) -> None:
         nonlocal last_nav_valid, last_nav_capital
-        # Dot 151: doc lai NAV truoc moi crossover that
-        try:
-            curr_nav_row = storage.read_nav(cfg.real_order_account)
-            curr_capital, curr_issue = real_capital_from_nav(curr_nav_row)
-            curr_valid = (curr_issue is None)
-            if last_nav_valid and not curr_valid:
-                alert(
-                    "CRITICAL",
-                    f"NAV chuyen sang khong hop le: {curr_issue} — real capital = 0, "
-                    f"MOI lenh that bi tu choi (fail-safe)",
-                    account=cfg.real_order_account,
-                )
-                real_risk.capital = 0.0
-                last_nav_valid = False
-                last_nav_capital = 0.0
-            elif not last_nav_valid and curr_valid:
-                alert(
-                    "WARN",
-                    f"NAV hop le tro lai — real capital = {curr_capital:,.0f}",
-                    account=cfg.real_order_account,
-                    capital=curr_capital,
-                )
-                real_risk.capital = curr_capital
-                last_nav_valid = True
-                last_nav_capital = curr_capital
-            elif not last_nav_valid and not curr_valid:
-                # hong -> van hong: im lang
-                real_risk.capital = 0.0
-            else:
-                # hop le, so doi: INFO cu -> moi
-                if curr_capital != last_nav_capital:
-                    alert(
-                        "INFO",
-                        f"NAV cap nhat real capital: {last_nav_capital:,.0f} -> {curr_capital:,.0f}",
-                        account=cfg.real_order_account,
-                        old_capital=last_nav_capital,
-                        new_capital=curr_capital,
-                    )
-                    last_nav_capital = curr_capital
-                real_risk.capital = curr_capital
-        except Exception as e:
-            alert(
-                "WARN",
-                "khong doc lai duoc NAV cho crossover lenh that, giu nguyen von hien tai",
-                account=cfg.real_order_account,
-                error=f"{type(e).__name__}: {e}"[:200],
-            )
-
+        last_nav_valid, last_nav_capital = _refresh_real_nav_before_crossover(
+            cfg, storage, real_risk, last_nav_valid, last_nav_capital
+        )
         # Plan 2026-09-01 T1: truyen atr (float | None) cho dinh co BUY that —
         # khong keo object strategy vao real_orders.py
         real_orders.handle_crossover(

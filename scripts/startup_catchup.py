@@ -193,45 +193,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-
-    cfg = load_config(args.config)
-    storage = Storage(cfg.db_dsn)
-
-    # 2. Cho DB san sang
-    db_ready = False
+def _wait_for_db_ready(storage: Storage) -> bool:
+    """Chờ DB sẵn sàng tối đa 30 lần (mỗi lần cách 10 giây)."""
     for attempt in range(30):
         try:
             storage.read_active_universe()
-            db_ready = True
-            break
+            return True
         except Exception:
             if attempt < 29:
                 _sleep(10)
+    return False
 
-    if not db_ready:
-        print("[catchup] DB chua san sang sau 300s")
-        return 1
 
-    # 3. Ngay cuoi
-    end = catchup_end(_now(), cfg.holidays)
-    print(f"{CATCHUP_END_DATE_PREFIX} {end}")
-
-    has_error = False
-
-    # 4. Nen ngay (1d)
+def _catchup_1d_bars(
+    storage: Storage,
+    cfg: Any,
+    end: date,
+    max_days: int,
+    dry_run: bool,
+) -> tuple[date | None, bool, dict[str, dict[str, Any] | None], bool]:
+    """Lập kế hoạch và nạp bù nến ngày (1d)."""
     start_1d: date | None = None
     clamped_1d = False
     progress_1d: dict[str, dict[str, Any] | None] = {}
+    has_error = False
     try:
         symbols, *_ = resolve_use_universe_symbols(storage, cfg)
         progress_1d = {s: storage.get_backfill_progress(s, "1d") for s in symbols}
         start_1d, clamped_1d = plan_universe_start(
-            progress_1d, end, max_days=args.max_days
+            progress_1d, end, max_days=max_days
         )
         print(f"[ke hoach] 1d: {_plan_text(start_1d, end)}")
-        if start_1d is not None and not args.dry_run:
+        if start_1d is not None and not dry_run:
             ret = backfill_universe.main(
                 [
                     "--timeframe",
@@ -254,20 +247,30 @@ def main(argv: list[str] | None = None) -> int:
         has_error = True
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"{CATCHUP_ERROR_1D_PREFIX}: {msg}")
+    return start_1d, clamped_1d, progress_1d, has_error
 
-    # 5. Nen 5 phut (5m)
+
+def _catchup_5m_bars(
+    storage: Storage,
+    cfg: Any,
+    end: date,
+    max_days: int,
+    dry_run: bool,
+) -> tuple[date | None, bool, dict[str, dict[str, Any] | None], bool]:
+    """Lập kế hoạch và nạp bù nến 5 phút (5m)."""
     start_5m: date | None = None
     clamped_5m = False
     progress_5m: dict[str, dict[str, Any] | None] = {}
+    has_error = False
     try:
         symbols, *_ = resolve_use_universe_symbols(storage, cfg)
         symbols_5m = [s for s in symbols if s not in set(cfg.symbols)]
         progress_5m = {s: storage.get_backfill_progress(s, "5m") for s in symbols_5m}
         start_5m, clamped_5m = plan_universe_start(
-            progress_5m, end, max_days=args.max_days
+            progress_5m, end, max_days=max_days
         )
         print(f"[ke hoach] 5m: {_plan_text(start_5m, end)}")
-        if start_5m is not None and not args.dry_run:
+        if start_5m is not None and not dry_run:
             ret = backfill_universe.main(
                 [
                     "--timeframe",
@@ -291,19 +294,28 @@ def main(argv: list[str] | None = None) -> int:
         has_error = True
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"[catchup] LOI 5m: {msg}")
+    return start_5m, clamped_5m, progress_5m, has_error
 
-    # 6. Khoi ngoai (foreign-flow)
+
+def _catchup_foreign_flow(
+    storage: Storage,
+    end: date,
+    max_days: int,
+    dry_run: bool,
+) -> tuple[date | None, bool, bool]:
+    """Lập kế hoạch và nạp bù dữ liệu khối ngoại."""
     start_ff: date | None = None
     clamped_ff = False
+    has_error = False
     try:
         day_counts = storage.read_foreign_flow_day_counts(
-            end - timedelta(days=args.max_days), end
+            end - timedelta(days=max_days), end
         )
         start_ff, clamped_ff = plan_foreign_flow_start(
-            day_counts, end, max_days=args.max_days
+            day_counts, end, max_days=max_days
         )
         print(f"[ke hoach] foreign-flow: {_plan_text(start_ff, end)}")
-        if start_ff is not None and not args.dry_run:
+        if start_ff is not None and not dry_run:
             ret = backfill_foreign_flow.main(
                 [
                     "--from",
@@ -321,6 +333,215 @@ def main(argv: list[str] | None = None) -> int:
         has_error = True
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"[catchup] LOI foreign-flow: {msg}")
+    return start_ff, clamped_ff, has_error
+
+
+def _verify_zero_bar_days(
+    storage: Storage,
+    cfg: Any,
+    zero_days: list[date],
+    counts_from: date,
+    end: date,
+    counts_1d: dict[date, int],
+    dry_run: bool,
+) -> tuple[list[date], dict[date, int], bool]:
+    """Thăm dò các ngày 0 nến để xác nhận ngày không giao dịch (Brief 209)."""
+    non_trading_days: list[date] = []
+    has_error = False
+    if not zero_days:
+        return non_trading_days, counts_1d, has_error
+    if dry_run:
+        print(
+            f"[kiem] ngay 0 nen chua xac minh (dry-run): {[d.isoformat() for d in zero_days]}"
+        )
+        return non_trading_days, counts_1d, has_error
+
+    probe_symbols = (
+        list(cfg.symbols)
+        if cfg.symbols
+        else (
+            storage.read_top_active_universe(3)
+            if hasattr(storage, "read_top_active_universe")
+            else storage.read_active_universe()[:3]
+        )
+    )
+    if not probe_symbols:
+        print(
+            "[kiem] bo qua kiem tra ngay 0 nen: khong co ma do (cfg.symbols va active universe deu rong)"
+        )
+        return non_trading_days, counts_1d, has_error
+
+    try:
+        ret = backfill_universe.main(
+            [
+                "--timeframe",
+                "1d",
+                "--from",
+                min(zero_days).isoformat(),
+                "--to",
+                max(zero_days).isoformat(),
+                "--symbols",
+                ",".join(probe_symbols),
+                "--force",
+                "--sleep-ms",
+                "200",
+            ]
+        )
+        if ret is not None and ret != 0:
+            has_error = True
+            print(
+                f"[catchup] LOI kiem tra ngay 0 nen: ExitCodeError: backfill_universe returned {ret}"
+            )
+            return non_trading_days, counts_1d, has_error
+
+        check_err = False
+        for s in probe_symbols:
+            prog = storage.get_backfill_progress(s, "1d")
+            status = prog.get("status") if isinstance(prog, dict) else None
+            if status != "ok":
+                has_error = True
+                check_err = True
+                print(f"[catchup] LOI kiem tra ngay 0 nen: {s} status={status}")
+        if not check_err:
+            counts_1d = storage.read_daily_active_symbol_day_counts(counts_from, end)
+            non_trading_days = [d for d in zero_days if counts_1d.get(d, 0) == 0]
+            if non_trading_days:
+                print(
+                    f"{NON_TRADING_DAYS_PREFIX} {[d.isoformat() for d in non_trading_days]}"
+                )
+    except Exception as e:
+        has_error = True
+        msg = f"{type(e).__name__}: {e}"[:300]
+        print(f"[catchup] LOI kiem tra ngay 0 nen: {msg}")
+    return non_trading_days, counts_1d, has_error
+
+
+def _rebackfill_short_days(
+    storage: Storage,
+    short_1d: list[date],
+    short_5m: list[date],
+    short_ff: list[date],
+    counts_from: date,
+    end: date,
+    check_days: list[date],
+    baseline_days: list[date],
+) -> tuple[list[date], list[date], list[date], bool]:
+    """Nạp lại các ngày thiếu một phần (Brief 209 §3) và tính lại danh sách ngày thiếu."""
+    has_error = False
+    txt_1d = f"{min(short_1d)} -> {max(short_1d)}" if short_1d else "khong"
+    txt_5m = f"{min(short_5m)} -> {max(short_5m)}" if short_5m else "khong"
+    txt_ff = f"{min(short_ff)} -> {max(short_ff)}" if short_ff else "khong"
+    print(f"[nap lai] 1d: {txt_1d} | 5m: {txt_5m} | foreign-flow: {txt_ff}")
+
+    if short_1d:
+        try:
+            ret = backfill_universe.main(
+                [
+                    "--timeframe",
+                    "1d",
+                    "--from",
+                    min(short_1d).isoformat(),
+                    "--to",
+                    max(short_1d).isoformat(),
+                    "--use-universe",
+                    "--force",
+                    "--sleep-ms",
+                    "200",
+                ]
+            )
+            if ret is not None and ret != 0:
+                has_error = True
+                print(
+                    f"[catchup] LOI nap lai 1d: ExitCodeError: backfill_universe returned {ret}"
+                )
+        except Exception as e:
+            has_error = True
+            msg = f"{type(e).__name__}: {e}"[:300]
+            print(f"[catchup] LOI nap lai 1d: {msg}")
+
+    if short_5m:
+        try:
+            ret = backfill_universe.main(
+                [
+                    "--timeframe",
+                    "5m",
+                    "--from",
+                    min(short_5m).isoformat(),
+                    "--to",
+                    max(short_5m).isoformat(),
+                    "--use-universe",
+                    "--skip-config-symbols",
+                    "--force",
+                    "--sleep-ms",
+                    "200",
+                ]
+            )
+            if ret is not None and ret != 0:
+                has_error = True
+                print(
+                    f"[catchup] LOI nap lai 5m: ExitCodeError: backfill_universe returned {ret}"
+                )
+        except Exception as e:
+            has_error = True
+            msg = f"{type(e).__name__}: {e}"[:300]
+            print(f"[catchup] LOI nap lai 5m: {msg}")
+
+    if short_ff:
+        try:
+            ret = backfill_foreign_flow.main(
+                [
+                    "--from",
+                    min(short_ff).isoformat(),
+                    "--to",
+                    max(short_ff).isoformat(),
+                ]
+            )
+            if ret != 0:
+                has_error = True
+                print(
+                    f"[catchup] LOI nap lai foreign-flow: ExitCodeError: backfill_foreign_flow returned {ret}"
+                )
+        except Exception as e:
+            has_error = True
+            msg = f"{type(e).__name__}: {e}"[:300]
+            print(f"[catchup] LOI nap lai foreign-flow: {msg}")
+
+    counts_1d = storage.read_daily_active_symbol_day_counts(counts_from, end)
+    counts_5m = storage.read_5m_active_symbol_day_counts(counts_from, end)
+    counts_ff = storage.read_foreign_flow_day_counts(counts_from, end)
+
+    short_1d = find_short_days(counts_1d, check_days, baseline_days)
+    short_5m = find_short_days(counts_5m, check_days, baseline_days)
+    short_ff = find_short_days(counts_ff, check_days, baseline_days)
+    return short_1d, short_5m, short_ff, has_error
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    cfg = load_config(args.config)
+    storage = Storage(cfg.db_dsn)
+
+    # 2. Cho DB san sang
+    if not _wait_for_db_ready(storage):
+        print("[catchup] DB chua san sang sau 300s")
+        return 1
+
+    # 3. Ngay cuoi
+    end = catchup_end(_now(), cfg.holidays)
+    print(f"{CATCHUP_END_DATE_PREFIX} {end}")
+
+    # 4-6. Nap bu 1d, 5m va khoi ngoai
+    start_1d, clamped_1d, progress_1d, err_1d = _catchup_1d_bars(
+        storage, cfg, end, args.max_days, args.dry_run
+    )
+    start_5m, clamped_5m, progress_5m, err_5m = _catchup_5m_bars(
+        storage, cfg, end, args.max_days, args.dry_run
+    )
+    start_ff, clamped_ff, err_ff = _catchup_foreign_flow(
+        storage, end, args.max_days, args.dry_run
+    )
+    has_error = err_1d or err_5m or err_ff
 
     # 8. Buoc kiem (Brief 209: xac dinh ngay khong giao dich bang du lieu & nap lai ngay thieu)
     planned_starts = [s for s in [start_1d, start_5m, start_ff] if s is not None]
@@ -344,60 +565,11 @@ def main(argv: list[str] | None = None) -> int:
         if counts_1d.get(d, 0) == 0
     )
 
-    non_trading_days: list[date] = []
-    if zero_days:
-        if args.dry_run:
-            print(
-                f"[kiem] ngay 0 nen chua xac minh (dry-run): {[d.isoformat() for d in zero_days]}"
-            )
-        else:
-            try:
-                ret = backfill_universe.main(
-                    [
-                        "--timeframe",
-                        "1d",
-                        "--from",
-                        min(zero_days).isoformat(),
-                        "--to",
-                        max(zero_days).isoformat(),
-                        "--symbols",
-                        ",".join(cfg.symbols),
-                        "--force",
-                        "--sleep-ms",
-                        "200",
-                    ]
-                )
-                if ret is not None and ret != 0:
-                    has_error = True
-                    print(
-                        f"[catchup] LOI kiem tra ngay 0 nen: ExitCodeError: backfill_universe returned {ret}"
-                    )
-                else:
-                    check_err = False
-                    for s in cfg.symbols:
-                        prog = storage.get_backfill_progress(s, "1d")
-                        status = prog.get("status") if isinstance(prog, dict) else None
-                        if status != "ok":
-                            has_error = True
-                            check_err = True
-                            print(
-                                f"[catchup] LOI kiem tra ngay 0 nen: {s} status={status}"
-                            )
-                    if not check_err:
-                        counts_1d = storage.read_daily_active_symbol_day_counts(
-                            counts_from, end
-                        )
-                        non_trading_days = [
-                            d for d in zero_days if counts_1d.get(d, 0) == 0
-                        ]
-                        if non_trading_days:
-                            print(
-                                f"{NON_TRADING_DAYS_PREFIX} {[d.isoformat() for d in non_trading_days]}"
-                            )
-            except Exception as e:
-                has_error = True
-                msg = f"{type(e).__name__}: {e}"[:300]
-                print(f"[catchup] LOI kiem tra ngay 0 nen: {msg}")
+    non_trading_days, counts_1d, err_zero = _verify_zero_bar_days(
+        storage, cfg, zero_days, counts_from, end, counts_1d, args.dry_run
+    )
+    if err_zero:
+        has_error = True
 
     check_days = [d for d in check_candidates if d not in non_trading_days]
     baseline_days = [d for d in baseline_candidates if d not in non_trading_days]
@@ -408,91 +580,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # 8b. Nap lai ngay thieu mot phan (Brief 209 §3)
     if not args.dry_run and (short_1d or short_5m or short_ff):
-        txt_1d = f"{min(short_1d)} -> {max(short_1d)}" if short_1d else "khong"
-        txt_5m = f"{min(short_5m)} -> {max(short_5m)}" if short_5m else "khong"
-        txt_ff = f"{min(short_ff)} -> {max(short_ff)}" if short_ff else "khong"
-        print(f"[nap lai] 1d: {txt_1d} | 5m: {txt_5m} | foreign-flow: {txt_ff}")
-
-        if short_1d:
-            try:
-                ret = backfill_universe.main(
-                    [
-                        "--timeframe",
-                        "1d",
-                        "--from",
-                        min(short_1d).isoformat(),
-                        "--to",
-                        max(short_1d).isoformat(),
-                        "--use-universe",
-                        "--force",
-                        "--sleep-ms",
-                        "200",
-                    ]
-                )
-                if ret is not None and ret != 0:
-                    has_error = True
-                    print(
-                        f"[catchup] LOI nap lai 1d: ExitCodeError: backfill_universe returned {ret}"
-                    )
-            except Exception as e:
-                has_error = True
-                msg = f"{type(e).__name__}: {e}"[:300]
-                print(f"[catchup] LOI nap lai 1d: {msg}")
-
-        if short_5m:
-            try:
-                ret = backfill_universe.main(
-                    [
-                        "--timeframe",
-                        "5m",
-                        "--from",
-                        min(short_5m).isoformat(),
-                        "--to",
-                        max(short_5m).isoformat(),
-                        "--use-universe",
-                        "--skip-config-symbols",
-                        "--force",
-                        "--sleep-ms",
-                        "200",
-                    ]
-                )
-                if ret is not None and ret != 0:
-                    has_error = True
-                    print(
-                        f"[catchup] LOI nap lai 5m: ExitCodeError: backfill_universe returned {ret}"
-                    )
-            except Exception as e:
-                has_error = True
-                msg = f"{type(e).__name__}: {e}"[:300]
-                print(f"[catchup] LOI nap lai 5m: {msg}")
-
-        if short_ff:
-            try:
-                ret = backfill_foreign_flow.main(
-                    [
-                        "--from",
-                        min(short_ff).isoformat(),
-                        "--to",
-                        max(short_ff).isoformat(),
-                    ]
-                )
-                if ret != 0:
-                    has_error = True
-                    print(
-                        f"[catchup] LOI nap lai foreign-flow: ExitCodeError: backfill_foreign_flow returned {ret}"
-                    )
-            except Exception as e:
-                has_error = True
-                msg = f"{type(e).__name__}: {e}"[:300]
-                print(f"[catchup] LOI nap lai foreign-flow: {msg}")
-
-        counts_1d = storage.read_daily_active_symbol_day_counts(counts_from, end)
-        counts_5m = storage.read_5m_active_symbol_day_counts(counts_from, end)
-        counts_ff = storage.read_foreign_flow_day_counts(counts_from, end)
-
-        short_1d = find_short_days(counts_1d, check_days, baseline_days)
-        short_5m = find_short_days(counts_5m, check_days, baseline_days)
-        short_ff = find_short_days(counts_ff, check_days, baseline_days)
+        short_1d, short_5m, short_ff, err_rebackfill = _rebackfill_short_days(
+            storage, short_1d, short_5m, short_ff, counts_from, end, check_days, baseline_days
+        )
+        if err_rebackfill:
+            has_error = True
 
     print(
         f"[kiem] 1d: {len(check_days)} ngay, thieu: {[d.isoformat() for d in short_1d]}"

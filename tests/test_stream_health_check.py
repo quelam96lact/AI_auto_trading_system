@@ -13,9 +13,22 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from scripts.stream_health_check import count_stream_bars_closed, main
+from scripts.stream_health_check import (
+    count_stream_bars_closed,
+    load_stream_symbols,
+    main,
+)
 
 TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+@pytest.fixture(autouse=True)
+def _default_stream_symbols(monkeypatch):
+    """Mặc định giả lập 3 mã stream cho các test CLI đếm nến/độ phủ khi config.yaml thật để symbols: []."""
+    monkeypatch.setattr(
+        "scripts.stream_health_check.load_stream_symbols",
+        lambda config_path="config/config.yaml": ("HPG", "IJC", "AAA"),
+    )
 
 
 def test_1_stream_bars_closed_inside_session():
@@ -644,5 +657,26 @@ def test_25_critical_coverage_send_failure_queues_in_outbox(tmp_path, monkeypatc
     assert outbox_file.exists()
     outbox = AlertOutbox(outbox_file)
     assert outbox.pending() == 1
+
+
+def test_26_empty_symbols_config_skips_without_telegram(monkeypatch, capsys, tmp_path):
+    """Đợt 231: config.yaml có symbols: [] -> thoát 0, không gửi Telegram."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("symbols: []\n", encoding="utf-8")
+    assert load_stream_symbols(str(cfg_file)) == ()
+
+    sent = []
+    monkeypatch.setattr("scripts.stream_health_check.send_telegram", lambda t: sent.append(t) or True)
+    monkeypatch.setattr(
+        "scripts.stream_health_check.load_stream_symbols",
+        lambda config_path="config/config.yaml": load_stream_symbols(str(cfg_file)),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--session", "sang", "--date", "2026-09-14", "--logs-dir", str(tmp_path)])
+
+    assert exc.value.code == 0
+    assert "symbols rỗng: bỏ qua" in capsys.readouterr().out
+    assert sent == []
 
 

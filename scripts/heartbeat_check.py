@@ -688,43 +688,16 @@ def get_last_successful_restore_timestamp(
     return last_ok_dt, None
 
 
-def evaluate_schedule_health(
+def _eval_watch_jobs_staleness(
     job_last_seen: dict[str, tuple[datetime | None, str | None]],
-    now: datetime,
+    now_tz: datetime,
     previous_state: dict[str, dict[str, Any]],
-    watch_jobs: dict[str, WatchJobConfig] = SCHEDULE_WATCH_JOBS,
-    job_exit_codes: (
-        dict[str, tuple[datetime | None, int | None, str | None]] | None
-    ) = None,
-    exit_policies: dict[str, JobExitPolicy] = SCHEDULE_EXIT_POLICIES,
-    restore_drill_last_ok: tuple[datetime | None, str | None] | None = None,
-    restore_drill_max_age_seconds: int = RESTORE_DRILL_MAX_AGE_SECONDS,
-    job_runs: dict[str, list[tuple[datetime, int | None]]] | None = None,
-) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
-    """Đánh giá trạng thái chạy và mã thoát của các job theo lịch (pure function).
-
-    Chỉ báo khi chuyển trạng thái:
-      - Canh lịch 24/7 (watch_jobs):
-        + từ 'ok' (hoặc lần đầu / thiếu state) sang 'stale' -> báo CRITICAL một lần.
-        + từ 'stale' sang 'ok' -> báo INFO hồi phục một lần.
-        + kéo dài trạng thái cũ -> im lặng (chỉ ghi log info).
-      - Canh mã thoát (exit_policies, nếu job_exit_codes được cung cấp):
-        + lần chạy cuối có mã thoát không thuộc normal_exit_codes:
-          * nếu trước đó chưa báo hoặc mã khác -> báo CRITICAL một lần.
-          * nếu trước đó đã báo cùng mã -> im lặng (ghi log info).
-        + lần chạy cuối thành công (thuộc normal_exit_codes):
-          * nếu trước đó thất bại -> báo INFO hồi phục một lần.
-          * nếu trước đó ok -> im lặng.
-        + không có dòng EXIT= (đang chạy hoặc file rỗng) -> im lặng.
-
-    Trả về: (alerts, new_state, info_logs)
-    """
-    alerts = []
-    info_logs = []
-    new_state = dict(previous_state)
-    now_tz = now.astimezone(TZ)
-
-    # 1. Canh tuổi (staleness) các job 24/7
+    watch_jobs: dict[str, WatchJobConfig],
+    new_state: dict[str, dict[str, Any]],
+    alerts: list[str],
+    info_logs: list[str],
+) -> None:
+    """Canh tuổi (staleness) các job 24/7 và cập nhật `new_state`, `alerts`, `info_logs`."""
     for branch, cfg in watch_jobs.items():
         val = job_last_seen.get(branch, (None, "không có dữ liệu"))
         if len(val) >= 3:
@@ -800,182 +773,266 @@ def evaluate_schedule_health(
                 alerts.append(
                     f"[INFO] job theo lịch '{branch}' ĐÃ CHẠY LẠI: lần gọi gần nhất lúc {last_dt:%Y-%m-%d %H:%M:%S}"
                 )
-            else:
-                pass
 
-    # 2. Canh mã thoát (exit codes)
-    if job_exit_codes is not None or job_runs is not None:
-        for branch, policy in exit_policies.items():
-            branch_runs: list[tuple[datetime, int | None]] = []
-            if job_runs is not None and branch in job_runs:
-                branch_runs = list(job_runs[branch])
-            elif job_exit_codes is not None and branch in job_exit_codes:
-                val = job_exit_codes[branch]
-                if len(val) >= 4 and isinstance(val[3], list):
-                    branch_runs = list(val[3])
-                elif val[0] is not None:
-                    branch_runs = [(val[0], val[1])]
 
-            if branch_runs:
-                last_run_dt, last_exit_code = branch_runs[-1]
-            elif job_exit_codes is not None and branch in job_exit_codes:
-                last_run_dt, last_exit_code = (
-                    job_exit_codes[branch][0],
-                    job_exit_codes[branch][1],
-                )
-            else:
-                last_run_dt, last_exit_code = None, None
+def _eval_job_exit_codes(
+    job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] | None,
+    job_runs: dict[str, list[tuple[datetime, int | None]]] | None,
+    now_tz: datetime,
+    previous_state: dict[str, dict[str, Any]],
+    exit_policies: dict[str, JobExitPolicy],
+    new_state: dict[str, dict[str, Any]],
+    alerts: list[str],
+    info_logs: list[str],
+) -> None:
+    """Canh mã thoát của các job theo lịch và cập nhật `new_state`, `alerts`, `info_logs`."""
+    for branch, policy in exit_policies.items():
+        branch_runs: list[tuple[datetime, int | None]] = []
+        if job_runs is not None and branch in job_runs:
+            branch_runs = list(job_runs[branch])
+        elif job_exit_codes is not None and branch in job_exit_codes:
+            val = job_exit_codes[branch]
+            if len(val) >= 4 and isinstance(val[3], list):
+                branch_runs = list(val[3])
+            elif val[0] is not None:
+                branch_runs = [(val[0], val[1])]
 
-            prev = previous_state.get(branch)
-            prev_exit_status = (
-                prev.get("exit_status") if isinstance(prev, dict) else None
+        if branch_runs:
+            last_run_dt, last_exit_code = branch_runs[-1]
+        elif job_exit_codes is not None and branch in job_exit_codes:
+            last_run_dt, last_exit_code = (
+                job_exit_codes[branch][0],
+                job_exit_codes[branch][1],
             )
-            prev_exit_code = (
-                prev.get("exit_code") if isinstance(prev, dict) else None
-            )
-            prev_cursor_str = (
-                prev.get("exit_seen_until") if isinstance(prev, dict) else None
-            )
-            prev_cursor_dt: datetime | None = None
-            if prev_cursor_str:
-                try:
-                    prev_cursor_dt = datetime.strptime(
-                        prev_cursor_str, "%Y-%m-%d %H:%M:%S"
-                    ).replace(tzinfo=TZ)
-                except ValueError:
-                    prev_cursor_dt = None
+        else:
+            last_run_dt, last_exit_code = None, None
 
-            if last_exit_code is not None:
-                if last_exit_code not in policy.normal_exit_codes:
-                    current_exit_status = "failed"
-                else:
-                    current_exit_status = "ok"
+        prev = previous_state.get(branch)
+        prev_exit_status = (
+            prev.get("exit_status") if isinstance(prev, dict) else None
+        )
+        prev_exit_code = (
+            prev.get("exit_code") if isinstance(prev, dict) else None
+        )
+        prev_cursor_str = (
+            prev.get("exit_seen_until") if isinstance(prev, dict) else None
+        )
+        prev_cursor_dt: datetime | None = None
+        if prev_cursor_str:
+            try:
+                prev_cursor_dt = datetime.strptime(
+                    prev_cursor_str, "%Y-%m-%d %H:%M:%S"
+                ).replace(tzinfo=TZ)
+            except ValueError:
+                prev_cursor_dt = None
+
+        if last_exit_code is not None:
+            if last_exit_code not in policy.normal_exit_codes:
+                current_exit_status = "failed"
             else:
-                current_exit_status = None
+                current_exit_status = "ok"
+        else:
+            current_exit_status = None
 
-            # Cập nhật vào new_state (bảo toàn các trường status/last_called nếu có)
-            rec = new_state.get(branch)
-            if not isinstance(rec, dict):
-                rec = dict(prev) if isinstance(prev, dict) else {}
-            if last_exit_code is not None:
-                rec["exit_code"] = last_exit_code
-                rec["exit_status"] = current_exit_status
-                if "checked_at" not in rec:
-                    rec["checked_at"] = now_tz.strftime("%Y-%m-%d %H:%M:%S")
+        # Cập nhật vào new_state (bảo toàn các trường status/last_called nếu có)
+        rec = new_state.get(branch)
+        if not isinstance(rec, dict):
+            rec = dict(prev) if isinstance(prev, dict) else {}
+        if last_exit_code is not None:
+            rec["exit_code"] = last_exit_code
+            rec["exit_status"] = current_exit_status
+            if "checked_at" not in rec:
+                rec["checked_at"] = now_tz.strftime("%Y-%m-%d %H:%M:%S")
 
-            # Cập nhật con trỏ: mốc start của lần chạy mới nhất đã đánh giá (đã có EXIT=)
-            completed_runs = [r for r in branch_runs if r[1] is not None]
-            if completed_runs:
-                newest_eval_dt = completed_runs[-1][0]
-                rec["exit_seen_until"] = newest_eval_dt.strftime("%Y-%m-%d %H:%M:%S")
-            elif prev_cursor_str:
-                rec["exit_seen_until"] = prev_cursor_str
-            elif last_run_dt is not None:
-                rec["exit_seen_until"] = last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Cập nhật con trỏ: mốc start của lần chạy mới nhất đã đánh giá (đã có EXIT=)
+        completed_runs = [r for r in branch_runs if r[1] is not None]
+        if completed_runs:
+            newest_eval_dt = completed_runs[-1][0]
+            rec["exit_seen_until"] = newest_eval_dt.strftime("%Y-%m-%d %H:%M:%S")
+        elif prev_cursor_str:
+            rec["exit_seen_until"] = prev_cursor_str
+        elif last_run_dt is not None:
+            rec["exit_seen_until"] = last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-            new_state[branch] = rec
+        new_state[branch] = rec
 
-            if current_exit_status == "failed":
-                if prev_exit_status != "failed" or prev_exit_code != last_exit_code:
-                    dt_str = (
-                        last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
-                        if last_run_dt
-                        else "không rõ"
-                    )
-                    alerts.append(
-                        f"[CRITICAL] job theo lịch '{branch}' THẤT BẠI: "
-                        f"lần chạy gần nhất lúc {dt_str} kết thúc với mã thoát {last_exit_code}"
-                    )
-                else:
-                    info_logs.append(
-                        f"[heartbeat-sched] INFO: {branch} vẫn thất bại (mã thoát {last_exit_code}) - đã báo trước đó"
-                    )
-            elif current_exit_status == "ok" and prev_exit_status == "failed":
+        if current_exit_status == "failed":
+            if prev_exit_status != "failed" or prev_exit_code != last_exit_code:
                 dt_str = (
                     last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
                     if last_run_dt
                     else "không rõ"
                 )
                 alerts.append(
-                    f"[INFO] job theo lịch '{branch}' ĐÃ HỒI PHỤC: "
-                    f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {last_exit_code})"
-                )
-            elif prev_cursor_dt is not None:
-                new_failed_runs = [
-                    r
-                    for r in completed_runs
-                    if r[0] > prev_cursor_dt
-                    and r[1] not in policy.normal_exit_codes
-                ]
-                if new_failed_runs:
-                    count = len(new_failed_runs)
-                    unique_codes = sorted({r[1] for r in new_failed_runs})
-                    codes_str = ", ".join(str(c) for c in unique_codes)
-                    first_ts = new_failed_runs[0][0].strftime("%Y-%m-%d %H:%M:%S")
-                    last_ts = new_failed_runs[-1][0].strftime("%Y-%m-%d %H:%M:%S")
-                    time_str = (
-                        f"lúc {first_ts}"
-                        if first_ts == last_ts
-                        else f"từ {first_ts} đến {last_ts}"
-                    )
-                    alerts.append(
-                        f"[WARN] job theo lịch '{branch}' THẤT BẠI rồi tự hồi phục: "
-                        f"{count} lần (mã {codes_str}) {time_str}"
-                    )
-
-    # 3. Canh tuổi lần diễn tập phục hồi thành công gần nhất (Task 2 - Brief đợt 218)
-    if restore_drill_last_ok is not None:
-        last_ok_dt, ok_reason = restore_drill_last_ok
-        prev_drill = previous_state.get("restore-drill-ok")
-        prev_drill_status = (
-            prev_drill.get("status") if isinstance(prev_drill, dict) else None
-        )
-
-        if last_ok_dt is None:
-            current_drill_status = "stale"
-            drill_stale_reason = ok_reason or "chưa từng diễn tập phục hồi thành công"
-        else:
-            age_seconds = (now_tz - last_ok_dt).total_seconds()
-            if age_seconds > restore_drill_max_age_seconds:
-                current_drill_status = "stale"
-                age_days = age_seconds / 86400
-                drill_stale_reason = (
-                    f"lần diễn tập thành công cuối cùng lúc {last_ok_dt:%Y-%m-%d %H:%M:%S} "
-                    f"({age_days:.1f} ngày trước > ngưỡng 9 ngày, lịch: chủ nhật hàng tuần)"
-                )
-            else:
-                current_drill_status = "ok"
-                drill_stale_reason = None
-
-        new_drill_record = dict(prev_drill) if isinstance(prev_drill, dict) else {}
-        new_drill_record.update(
-            {
-                "status": current_drill_status,
-                "last_called": (
-                    last_ok_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    if last_ok_dt
-                    else None
-                ),
-                "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        )
-        new_state["restore-drill-ok"] = new_drill_record
-
-        if current_drill_status == "stale":
-            if prev_drill_status != "stale":
-                alerts.append(
-                    f"[CRITICAL] diễn tập phục hồi 'restore-drill' QUÁ HẠN: {drill_stale_reason}"
+                    f"[CRITICAL] job theo lịch '{branch}' THẤT BẠI: "
+                    f"lần chạy gần nhất lúc {dt_str} kết thúc với mã thoát {last_exit_code}"
                 )
             else:
                 info_logs.append(
-                    f"[heartbeat-sched] INFO: restore-drill vẫn quá hạn diễn tập phục hồi ({drill_stale_reason}) - đã báo trước đó"
+                    f"[heartbeat-sched] INFO: {branch} vẫn thất bại (mã thoát {last_exit_code}) - đã báo trước đó"
                 )
-        else:  # current_drill_status == "ok"
-            if prev_drill_status == "stale":
+        elif current_exit_status == "ok" and prev_exit_status == "failed":
+            dt_str = (
+                last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
+                if last_run_dt
+                else "không rõ"
+            )
+            alerts.append(
+                f"[INFO] job theo lịch '{branch}' ĐÃ HỒI PHỤC: "
+                f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {last_exit_code})"
+            )
+        elif prev_cursor_dt is not None:
+            new_failed_runs = [
+                r
+                for r in completed_runs
+                if r[0] > prev_cursor_dt
+                and r[1] not in policy.normal_exit_codes
+            ]
+            if new_failed_runs:
+                count = len(new_failed_runs)
+                unique_codes = sorted({r[1] for r in new_failed_runs})
+                codes_str = ", ".join(str(c) for c in unique_codes)
+                first_ts = new_failed_runs[0][0].strftime("%Y-%m-%d %H:%M:%S")
+                last_ts = new_failed_runs[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                time_str = (
+                    f"lúc {first_ts}"
+                    if first_ts == last_ts
+                    else f"từ {first_ts} đến {last_ts}"
+                )
                 alerts.append(
-                    f"[INFO] diễn tập phục hồi 'restore-drill' ĐÃ THÀNH CÔNG: "
-                    f"lần diễn tập gần nhất lúc {last_ok_dt:%Y-%m-%d %H:%M:%S}"
+                    f"[WARN] job theo lịch '{branch}' THẤT BẠI rồi tự hồi phục: "
+                    f"{count} lần (mã {codes_str}) {time_str}"
                 )
+
+
+def _eval_restore_drill_staleness(
+    restore_drill_last_ok: tuple[datetime | None, str | None],
+    restore_drill_max_age_seconds: int,
+    now_tz: datetime,
+    previous_state: dict[str, dict[str, Any]],
+    new_state: dict[str, dict[str, Any]],
+    alerts: list[str],
+    info_logs: list[str],
+) -> None:
+    """Canh tuổi lần diễn tập phục hồi thành công gần nhất (Task 2 - Brief đợt 218)."""
+    last_ok_dt, ok_reason = restore_drill_last_ok
+    prev_drill = previous_state.get("restore-drill-ok")
+    prev_drill_status = (
+        prev_drill.get("status") if isinstance(prev_drill, dict) else None
+    )
+
+    if last_ok_dt is None:
+        current_drill_status = "stale"
+        drill_stale_reason = ok_reason or "chưa từng diễn tập phục hồi thành công"
+    else:
+        age_seconds = (now_tz - last_ok_dt).total_seconds()
+        if age_seconds > restore_drill_max_age_seconds:
+            current_drill_status = "stale"
+            age_days = age_seconds / 86400
+            drill_stale_reason = (
+                f"lần diễn tập thành công cuối cùng lúc {last_ok_dt:%Y-%m-%d %H:%M:%S} "
+                f"({age_days:.1f} ngày trước > ngưỡng 9 ngày, lịch: chủ nhật hàng tuần)"
+            )
+        else:
+            current_drill_status = "ok"
+            drill_stale_reason = None
+
+    new_drill_record = dict(prev_drill) if isinstance(prev_drill, dict) else {}
+    new_drill_record.update(
+        {
+            "status": current_drill_status,
+            "last_called": (
+                last_ok_dt.strftime("%Y-%m-%d %H:%M:%S")
+                if last_ok_dt
+                else None
+            ),
+            "checked_at": now_tz.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    new_state["restore-drill-ok"] = new_drill_record
+
+    if current_drill_status == "stale":
+        if prev_drill_status != "stale":
+            alerts.append(
+                f"[CRITICAL] diễn tập phục hồi 'restore-drill' QUÁ HẠN: {drill_stale_reason}"
+            )
+        else:
+            info_logs.append(
+                f"[heartbeat-sched] INFO: restore-drill vẫn quá hạn diễn tập phục hồi ({drill_stale_reason}) - đã báo trước đó"
+            )
+    else:  # current_drill_status == "ok"
+        if prev_drill_status == "stale":
+            alerts.append(
+                f"[INFO] diễn tập phục hồi 'restore-drill' ĐÃ THÀNH CÔNG: "
+                f"lần diễn tập gần nhất lúc {last_ok_dt:%Y-%m-%d %H:%M:%S}"
+            )
+
+
+def evaluate_schedule_health(
+    job_last_seen: dict[str, tuple[datetime | None, str | None]],
+    now: datetime,
+    previous_state: dict[str, dict[str, Any]],
+    watch_jobs: dict[str, WatchJobConfig] = SCHEDULE_WATCH_JOBS,
+    job_exit_codes: (
+        dict[str, tuple[datetime | None, int | None, str | None]] | None
+    ) = None,
+    exit_policies: dict[str, JobExitPolicy] = SCHEDULE_EXIT_POLICIES,
+    restore_drill_last_ok: tuple[datetime | None, str | None] | None = None,
+    restore_drill_max_age_seconds: int = RESTORE_DRILL_MAX_AGE_SECONDS,
+    job_runs: dict[str, list[tuple[datetime, int | None]]] | None = None,
+) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
+    """Đánh giá trạng thái chạy và mã thoát của các job theo lịch (pure function).
+
+    Chỉ báo khi chuyển trạng thái:
+      - Canh lịch 24/7 (watch_jobs):
+        + từ 'ok' (hoặc lần đầu / thiếu state) sang 'stale' -> báo CRITICAL một lần.
+        + từ 'stale' sang 'ok' -> báo INFO hồi phục một lần.
+        + kéo dài trạng thái cũ -> im lặng (chỉ ghi log info).
+      - Canh mã thoát (exit_policies, nếu job_exit_codes được cung cấp):
+        + lần chạy cuối có mã thoát không thuộc normal_exit_codes:
+          * nếu trước đó chưa báo hoặc mã khác -> báo CRITICAL một lần.
+          * nếu trước đó đã báo cùng mã -> im lặng (ghi log info).
+        + lần chạy cuối thành công (thuộc normal_exit_codes):
+          * nếu trước đó thất bại -> báo INFO hồi phục một lần.
+          * nếu trước đó ok -> im lặng.
+        + không có dòng EXIT= (đang chạy hoặc file rỗng) -> im lặng.
+
+    Trả về: (alerts, new_state, info_logs)
+    """
+    alerts: list[str] = []
+    info_logs: list[str] = []
+    new_state = dict(previous_state)
+    now_tz = now.astimezone(TZ)
+
+    # 1. Canh tuổi (staleness) các job 24/7
+    _eval_watch_jobs_staleness(
+        job_last_seen, now_tz, previous_state, watch_jobs, new_state, alerts, info_logs
+    )
+
+    # 2. Canh mã thoát (exit codes)
+    if job_exit_codes is not None or job_runs is not None:
+        _eval_job_exit_codes(
+            job_exit_codes,
+            job_runs,
+            now_tz,
+            previous_state,
+            exit_policies,
+            new_state,
+            alerts,
+            info_logs,
+        )
+
+    # 3. Canh tuổi lần diễn tập phục hồi thành công gần nhất (Task 2 - Brief đợt 218)
+    if restore_drill_last_ok is not None:
+        _eval_restore_drill_staleness(
+            restore_drill_last_ok,
+            restore_drill_max_age_seconds,
+            now_tz,
+            previous_state,
+            new_state,
+            alerts,
+            info_logs,
+        )
 
     return alerts, new_state, info_logs
 
@@ -1461,6 +1518,227 @@ def build_morning_summary(
     return "\n".join(lines)
 
 
+def _collect_and_evaluate_schedule(
+    logs_dir: str, sched_state_file: str, now: datetime
+) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
+    """Thu thập log của các job theo lịch và đánh giá trạng thái qua `evaluate_schedule_health`."""
+    job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
+    for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
+        log_path = os.path.join(logs_dir, job_cfg.log_file)
+        job_last_seen[branch] = get_last_called_timestamp(
+            log_path, job_cfg.label, skip_counts_as_run=job_cfg.skip_counts_as_run
+        )
+
+    job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
+    job_runs: dict[str, list[tuple[datetime, int | None]]] = {}
+    for branch, policy in SCHEDULE_EXIT_POLICIES.items():
+        log_path = os.path.join(logs_dir, policy.log_file)
+        runs, err = get_job_runs(log_path, policy.label)
+        job_runs[branch] = runs
+        if runs:
+            last_dt, last_code = runs[-1]
+            job_exit_codes[branch] = (last_dt, last_code, err)
+        else:
+            job_exit_codes[branch] = (None, None, err)
+
+    restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
+    restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
+
+    prev_sched_state = load_schedule_state(sched_state_file)
+    return evaluate_schedule_health(
+        job_last_seen,
+        now,
+        prev_sched_state,
+        watch_jobs=SCHEDULE_WATCH_JOBS,
+        job_exit_codes=job_exit_codes,
+        exit_policies=SCHEDULE_EXIT_POLICIES,
+        restore_drill_last_ok=restore_drill_last_ok,
+        job_runs=job_runs,
+    )
+
+
+def _run_morning_summary_mode(args: Any, logs_dir: str, now: datetime) -> int:
+    """Thực thi chế độ `--morning-summary` lúc 08:00 ngày giao dịch."""
+    now_tz = now.astimezone(TZ)
+    holidays = frozenset()
+    try:
+        cfg_path = os.path.join(
+            os.path.dirname(__file__), "..", "config", "config.yaml"
+        )
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        holidays = frozenset(
+            date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
+        )
+    except Exception:
+        pass
+
+    if not is_trading_day(now_tz.date(), holidays):
+        _print_safe(
+            f"[morning-summary] {now_tz.date()} không phải ngày giao dịch -> bỏ qua"
+        )
+        return 0
+
+    summary_text = build_morning_summary(
+        now=now,
+        logs_dir=logs_dir,
+        backup_dir=args.backup_dir,
+        holidays=holidays,
+    )
+    _print_safe(summary_text)
+
+    if args.dry_run:
+        _print_safe("[DRY-RUN] Không gửi Telegram thật.")
+        return 0
+
+    outbox_file = Path(logs_dir) / outbox_name("morning-summary")
+    ok = send_with_outbox(
+        summary_text, send=send_telegram, outbox_path=outbox_file
+    )
+    if ok:
+        return 0
+    _print_safe(
+        "[morning-summary] GUI TELEGRAM HONG: tin đã được xếp vào outbox"
+    )
+    return 1
+
+
+def _run_schedule_watch_only_mode(
+    args: Any, logs_dir: str, outbox_path: Path, sched_state_file: str, now: datetime
+) -> int:
+    """Thực thi chế độ `--schedule-watch-only` (chỉ canh tuổi và mã thoát 24/7)."""
+    sched_alerts, new_sched_state, sched_info_logs = _collect_and_evaluate_schedule(
+        logs_dir, sched_state_file, now
+    )
+
+    if args.dry_run:
+        for info in sched_info_logs:
+            _print_safe(info)
+
+    if sched_alerts:
+        _print_safe("\n".join(sched_alerts))
+        if args.dry_run:
+            _print_safe(
+                "[DRY-RUN] Không gửi Telegram thật. Không cập nhật file trạng thái."
+            )
+            return 1
+        ok = send_with_outbox(
+            "\n".join(sched_alerts), send=send_telegram, outbox_path=outbox_path
+        )
+        if ok:
+            save_schedule_state(sched_state_file, new_sched_state)
+        else:
+            _print_safe(
+                "[schedule-watch] GUI TELEGRAM HONG: cảnh báo chưa tới được Telegram"
+            )
+        return 1
+
+    if not args.dry_run:
+        save_schedule_state(sched_state_file, new_sched_state)
+    return 0
+
+
+def _check_prev_day_completions(
+    dsn: str,
+    cfg: dict[str, Any],
+    holidays: frozenset[date],
+    now: datetime,
+    logs_dir: str,
+    dry_run: bool,
+    messages: list[str],
+) -> None:
+    """Kiểm tra độ đủ dữ liệu ngày giao dịch liền trước (bars 1d, khối ngoại, nến 5m)."""
+    # Đợt 160: kiểm KẾT QUẢ của chuỗi `backfill` -> `daily-check` (đêm hôm trước) bằng
+    # đúng một câu hỏi: nến NGÀY của ngày giao dịch liền trước có đủ chưa. Chỉ trong
+    # giờ giao dịch, và mỗi ngày P chỉ báo MỘT lần (nếu không thì 5 phút một tin).
+    try:
+        prev_state_file = Path(logs_dir) / PREV_DAY_BARS_STATE_NAME
+        prev_state = load_json_state(prev_state_file, "prev-day-bars")
+        tin, p_iso = prev_day_bars_alert(
+            Storage(dsn),
+            app_cfg_for_daily_check(cfg, dsn),
+            now,
+            Path(logs_dir) / "backfill.log",
+            prev_state.get("alerted_for"),
+            logs_dir=Path(logs_dir),
+        )
+        if tin:
+            messages.append(tin)
+            # Ghi trạng thái NGAY, không chờ gửi xong: send_with_outbox đã xếp tin
+            # vào hàng đợi khi gửi hỏng nên tin không mất, còn nếu không ghi thì mỗi
+            # 5 phút lại báo lại cùng một ngày cho tới hết phiên.
+            if not dry_run:
+                save_json_state(prev_state_file, {"alerted_for": p_iso})
+    except Exception as e:
+        # Brief 147 (đã ghim cho engine-consumer) + brief 160 §Việc 2.5: phép kiểm
+        # mới KHÔNG được làm chết các phép kiểm khác. Hỏng thì in ra rồi đi tiếp —
+        # đây là job canh mọi thứ khác, im lặng mới là sai.
+        #
+        # In ra STDERR, không phải stdout: test cũ
+        # `test_main_prints_message_to_stdout_before_sending` ghim hợp đồng "stdout
+        # phải bằng đúng nội dung gửi Telegram". Không dấu tiếng Việt và bọc try:
+        # stderr không được reconfigure utf-8 như stdout, in dấu ở đây có thể ném
+        # UnicodeEncodeError — bên trong except thì chuông báo chết theo.
+        try:
+            print(
+                "[WARN] heartbeat khong kiem duoc nen ngay cua ngay lien truoc: "
+                f"{type(e).__name__}: {e}"[:300],
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
+    # Đợt 190b: kiểm số dòng khối ngoại của ngày giao dịch liền trước
+    try:
+        prev_flow_state_file = Path(logs_dir) / PREV_DAY_FOREIGN_FLOW_STATE_NAME
+        prev_flow_state = load_json_state(
+            prev_flow_state_file, "prev-day-foreign-flow"
+        )
+        tin, p_iso = prev_day_foreign_flow_alert(
+            Storage(dsn),
+            now,
+            holidays,
+            prev_flow_state.get("alerted_for"),
+        )
+        if tin:
+            messages.append(tin)
+            if not dry_run:
+                save_json_state(prev_flow_state_file, {"alerted_for": p_iso})
+    except Exception as e:
+        try:
+            print(
+                "[WARN] heartbeat khong kiem duoc khoi ngoai: "
+                f"{type(e).__name__}: {e}"[:300],
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
+    # Đợt 198: kiểm số mã thanh khoản có nến 5 phút của ngày giao dịch liền trước
+    try:
+        prev_5m_state_file = Path(logs_dir) / PREV_DAY_5M_STATE_NAME
+        prev_5m_state = load_json_state(prev_5m_state_file, "prev-day-5m")
+        tin, p_iso = prev_day_5m_alert(
+            Storage(dsn),
+            now,
+            holidays,
+            prev_5m_state.get("alerted_for"),
+        )
+        if tin:
+            messages.append(tin)
+            if not dry_run:
+                save_json_state(prev_5m_state_file, {"alerted_for": p_iso})
+    except Exception as e:
+        try:
+            print(
+                "[WARN] heartbeat khong kiem duoc nen 5 phut: "
+                f"{type(e).__name__}: {e}"[:300],
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
     # mọi cờ lạ. argv=None thì argparse tự đọc sys.argv. tests/test_sched_args.py ghim bằng AST.
@@ -1476,112 +1754,12 @@ def main(argv: list[str] | None = None) -> int:
     sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
 
     if args.morning_summary:
-        now = datetime.now(TZ)
-        now_tz = now.astimezone(TZ)
-        holidays = frozenset()
-        try:
-            cfg_path = os.path.join(
-                os.path.dirname(__file__), "..", "config", "config.yaml"
-            )
-            with open(cfg_path, encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            holidays = frozenset(
-                date.fromisoformat(str(h)) for h in (cfg.get("holidays") or [])
-            )
-        except Exception:
-            pass
-
-        if not is_trading_day(now_tz.date(), holidays):
-            _print_safe(
-                f"[morning-summary] {now_tz.date()} không phải ngày giao dịch -> bỏ qua"
-            )
-            return 0
-
-        summary_text = build_morning_summary(
-            now=now,
-            logs_dir=logs_dir,
-            backup_dir=args.backup_dir,
-            holidays=holidays,
-        )
-        _print_safe(summary_text)
-
-        if args.dry_run:
-            _print_safe("[DRY-RUN] Không gửi Telegram thật.")
-            return 0
-
-        outbox_file = Path(logs_dir) / outbox_name("morning-summary")
-        ok = send_with_outbox(
-            summary_text, send=send_telegram, outbox_path=outbox_file
-        )
-        if ok:
-            return 0
-        else:
-            _print_safe(
-                "[morning-summary] GUI TELEGRAM HONG: tin đã được xếp vào outbox"
-            )
-            return 1
+        return _run_morning_summary_mode(args, logs_dir, datetime.now(TZ))
 
     if args.schedule_watch_only:
-        now = datetime.now(TZ)
-        job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
-        for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
-            log_path = os.path.join(logs_dir, job_cfg.log_file)
-            job_last_seen[branch] = get_last_called_timestamp(
-                log_path, job_cfg.label, skip_counts_as_run=job_cfg.skip_counts_as_run
-            )
-
-        job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
-        job_runs: dict[str, list[tuple[datetime, int | None]]] = {}
-        for branch, policy in SCHEDULE_EXIT_POLICIES.items():
-            log_path = os.path.join(logs_dir, policy.log_file)
-            runs, err = get_job_runs(log_path, policy.label)
-            job_runs[branch] = runs
-            if runs:
-                last_dt, last_code = runs[-1]
-                job_exit_codes[branch] = (last_dt, last_code, err)
-            else:
-                job_exit_codes[branch] = (None, None, err)
-
-        restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
-        restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
-
-        prev_sched_state = load_schedule_state(sched_state_file)
-        sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
-            job_last_seen,
-            now,
-            prev_sched_state,
-            watch_jobs=SCHEDULE_WATCH_JOBS,
-            job_exit_codes=job_exit_codes,
-            exit_policies=SCHEDULE_EXIT_POLICIES,
-            restore_drill_last_ok=restore_drill_last_ok,
-            job_runs=job_runs,
+        return _run_schedule_watch_only_mode(
+            args, logs_dir, outbox_path, sched_state_file, datetime.now(TZ)
         )
-
-        if args.dry_run:
-            for info in sched_info_logs:
-                _print_safe(info)
-
-        if sched_alerts:
-            _print_safe("\n".join(sched_alerts))
-            if args.dry_run:
-                _print_safe(
-                    "[DRY-RUN] Không gửi Telegram thật. Không cập nhật file trạng thái."
-                )
-                return 1
-            ok = send_with_outbox(
-                "\n".join(sched_alerts), send=send_telegram, outbox_path=outbox_path
-            )
-            if ok:
-                save_schedule_state(sched_state_file, new_sched_state)
-            else:
-                _print_safe(
-                    "[schedule-watch] GUI TELEGRAM HONG: cảnh báo chưa tới được Telegram"
-                )
-            return 1
-
-        if not args.dry_run:
-            save_schedule_state(sched_state_file, new_sched_state)
-        return 0
 
     dsn = os.environ.get("DB_DSN")
     if not dsn:
@@ -1617,7 +1795,6 @@ def main(argv: list[str] | None = None) -> int:
         err_msg = f"[CRITICAL] heartbeat check không đọc được config/config.yaml: {type(e).__name__}: {e}"[:300]
         _print_safe(err_msg)
         if not args.dry_run:
-            outbox_path = Path(args.logs_dir) / HEARTBEAT_OUTBOX_NAME
             ok = send_with_outbox(
                 err_msg, send=send_telegram, outbox_path=outbox_path
             )
@@ -1628,41 +1805,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Việc 2 (Brief 142 + Brief 156): Canh các job theo lịch (đọc log của run_if_docker_up.sh)
-    logs_dir = args.logs_dir
-    outbox_path = Path(logs_dir) / HEARTBEAT_OUTBOX_NAME
-    job_last_seen: dict[str, tuple[datetime | None, str | None]] = {}
-    for branch, job_cfg in SCHEDULE_WATCH_JOBS.items():
-        log_path = os.path.join(logs_dir, job_cfg.log_file)
-        job_last_seen[branch] = get_last_called_timestamp(
-            log_path, job_cfg.label, skip_counts_as_run=job_cfg.skip_counts_as_run
-        )
-
-    job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
-    job_runs: dict[str, list[tuple[datetime, int | None]]] = {}
-    for branch, policy in SCHEDULE_EXIT_POLICIES.items():
-        log_path = os.path.join(logs_dir, policy.log_file)
-        runs, err = get_job_runs(log_path, policy.label)
-        job_runs[branch] = runs
-        if runs:
-            last_dt, last_code = runs[-1]
-            job_exit_codes[branch] = (last_dt, last_code, err)
-        else:
-            job_exit_codes[branch] = (None, None, err)
-
-    restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
-    restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
-
-    sched_state_file = args.state_file or os.path.join(logs_dir, SCHEDULE_STATE_NAME)
-    prev_sched_state = load_schedule_state(sched_state_file)
-    sched_alerts, new_sched_state, sched_info_logs = evaluate_schedule_health(
-        job_last_seen,
-        now,
-        prev_sched_state,
-        watch_jobs=SCHEDULE_WATCH_JOBS,
-        job_exit_codes=job_exit_codes,
-        exit_policies=SCHEDULE_EXIT_POLICIES,
-        restore_drill_last_ok=restore_drill_last_ok,
-        job_runs=job_runs,
+    sched_alerts, new_sched_state, sched_info_logs = _collect_and_evaluate_schedule(
+        logs_dir, sched_state_file, now
     )
 
     # Chỉ cảnh báo trong giờ giao dịch (trừ khi chạy --dry-run để chẩn đoán/test)
@@ -1688,11 +1832,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with psycopg.connect(dsn, connect_timeout=10) as c:
             rows = c.execute("SELECT service, last_seen FROM heartbeat").fetchall()
-            placeholders = ",".join(["%s"] * len(symbols))
-            max_ts_row = c.execute(
-                f"SELECT max(ts) FROM bars WHERE symbol IN ({placeholders})",
-                list(symbols),
-            ).fetchone()
+            if symbols:
+                placeholders = ",".join(["%s"] * len(symbols))
+                max_ts_row = c.execute(
+                    f"SELECT max(ts) FROM bars WHERE symbol IN ({placeholders})",
+                    list(symbols),
+                ).fetchone()
+            else:
+                max_ts_row = None
             # 2C: doc engine_state + positions de kiem bat bien so sach
             es = c.execute(
                 "SELECT cash, realized_pnl FROM engine_state WHERE id = 1"
@@ -1735,7 +1882,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"= {cash + positions_value - CAPITAL:,.2f}, vế phải (realized_pnl) "
                 f"= {realized:,.2f}, độ lệch {dev:,.2f} VND"
             )
-    if bar_stale(max_ts, now, holidays=holidays):
+    if not symbols:
+        _print_safe("symbols rỗng: bỏ qua kiểm nến stream")
+    elif bar_stale(max_ts, now, holidays=holidays):
         # FEE-ALARM-2 Lỗi 1: max_ts=None (feed chưa từng nối được) mà dựng
         # tin nhắn với `now - max_ts` -> TypeError, chuông báo CHẾT đúng lúc
         # cần nhất. Dead-man's switch tuyệt đối không được ném exception.
@@ -1795,100 +1944,10 @@ def main(argv: list[str] | None = None) -> int:
     if holiday_warn:
         messages.append(holiday_warn)
 
-    # Đợt 160: kiểm KẾT QUẢ của chuỗi `backfill` -> `daily-check` (đêm hôm trước) bằng
-    # đúng một câu hỏi: nến NGÀY của ngày giao dịch liền trước có đủ chưa. Chỉ trong
-    # giờ giao dịch, và mỗi ngày P chỉ báo MỘT lần (nếu không thì 5 phút một tin).
     if in_check_window:
-        try:
-            prev_state_file = Path(logs_dir) / PREV_DAY_BARS_STATE_NAME
-            prev_state = load_json_state(prev_state_file, "prev-day-bars")
-            tin, p_iso = prev_day_bars_alert(
-                Storage(dsn),
-                app_cfg_for_daily_check(cfg, dsn),
-                now,
-                Path(logs_dir) / "backfill.log",
-                prev_state.get("alerted_for"),
-                logs_dir=Path(logs_dir),
-            )
-            if tin:
-                messages.append(tin)
-                # Ghi trạng thái NGAY, không chờ gửi xong: send_with_outbox đã xếp tin
-                # vào hàng đợi khi gửi hỏng nên tin không mất, còn nếu không ghi thì mỗi
-                # 5 phút lại báo lại cùng một ngày cho tới hết phiên.
-                if not args.dry_run:
-                    save_json_state(prev_state_file, {"alerted_for": p_iso})
-        except Exception as e:
-            # Brief 147 (đã ghim cho engine-consumer) + brief 160 §Việc 2.5: phép kiểm
-            # mới KHÔNG được làm chết các phép kiểm khác. Hỏng thì in ra rồi đi tiếp —
-            # đây là job canh mọi thứ khác, im lặng mới là sai.
-            #
-            # In ra STDERR, không phải stdout: test cũ
-            # `test_main_prints_message_to_stdout_before_sending` ghim hợp đồng "stdout
-            # phải bằng đúng nội dung gửi Telegram". Không dấu tiếng Việt và bọc try:
-            # stderr không được reconfigure utf-8 như stdout, in dấu ở đây có thể ném
-            # UnicodeEncodeError — bên trong except thì chuông báo chết theo.
-            try:
-                print(
-                    "[WARN] heartbeat khong kiem duoc nen ngay cua ngay lien truoc: "
-                    f"{type(e).__name__}: {e}"[:300],
-                    file=sys.stderr,
-                )
-            except Exception:
-                pass
-
-        # Đợt 190b: kiểm số dòng khối ngoại của ngày giao dịch liền trước
-        try:
-            prev_flow_state_file = (
-                Path(logs_dir) / PREV_DAY_FOREIGN_FLOW_STATE_NAME
-            )
-            prev_flow_state = load_json_state(
-                prev_flow_state_file, "prev-day-foreign-flow"
-            )
-            tin, p_iso = prev_day_foreign_flow_alert(
-                Storage(dsn),
-                now,
-                holidays,
-                prev_flow_state.get("alerted_for"),
-            )
-            if tin:
-                messages.append(tin)
-                if not args.dry_run:
-                    save_json_state(
-                        prev_flow_state_file, {"alerted_for": p_iso}
-                    )
-        except Exception as e:
-            try:
-                print(
-                    "[WARN] heartbeat khong kiem duoc khoi ngoai: "
-                    f"{type(e).__name__}: {e}"[:300],
-                    file=sys.stderr,
-                )
-            except Exception:
-                pass
-
-        # Đợt 198: kiểm số mã thanh khoản có nến 5 phút của ngày giao dịch liền trước
-        try:
-            prev_5m_state_file = Path(logs_dir) / PREV_DAY_5M_STATE_NAME
-            prev_5m_state = load_json_state(prev_5m_state_file, "prev-day-5m")
-            tin, p_iso = prev_day_5m_alert(
-                Storage(dsn),
-                now,
-                holidays,
-                prev_5m_state.get("alerted_for"),
-            )
-            if tin:
-                messages.append(tin)
-                if not args.dry_run:
-                    save_json_state(prev_5m_state_file, {"alerted_for": p_iso})
-        except Exception as e:
-            try:
-                print(
-                    "[WARN] heartbeat khong kiem duoc nen 5 phut: "
-                    f"{type(e).__name__}: {e}"[:300],
-                    file=sys.stderr,
-                )
-            except Exception:
-                pass
+        _check_prev_day_completions(
+            dsn, cfg, holidays, now, logs_dir, args.dry_run, messages
+        )
 
     if messages:
         # Brief 2026-09-01 (dot 3) Task B: in ly do ra stdout TRUOC khi gui —

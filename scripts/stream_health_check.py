@@ -40,6 +40,9 @@ from pathlib import Path
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+import yaml
+
+from trading.calendar_vn import TZ as TZ_VN
 from trading.calendar_vn import is_trading_day
 from trading.telegram import send_telegram
 
@@ -53,8 +56,6 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 SESSION_HOURS = {
     "sang": (time(9, 0, 0), time(11, 35, 0)),
@@ -260,6 +261,23 @@ def is_session_ended(check_date: date, session: str | None, now_vn: datetime) ->
     return now_vn >= cutoff
 
 
+def load_stream_symbols(config_path: str = "config/config.yaml") -> tuple[str, ...]:
+    """Đọc danh sách mã stream từ config/config.yaml."""
+    p = Path(config_path)
+    if not p.is_file():
+        repo_cfg = Path(__file__).resolve().parents[1] / config_path
+        if repo_cfg.is_file():
+            p = repo_cfg
+        else:
+            return ("HPG", "AAA", "IJC")
+    with open(p, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    raw = data.get("symbols")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(s).strip() for s in raw if str(s).strip())
+
+
 def fetch_expected_bars_from_db(
     check_date: date,
     session: str | None = None,
@@ -270,6 +288,8 @@ def fetch_expected_bars_from_db(
 
     Mẫu số = (số khung nến khác nhau có trong bảng bars) x (số mã trong khoảng đó).
     """
+    if not symbols:
+        return 0
     repo_root = Path(__file__).resolve().parents[1]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -468,6 +488,11 @@ def main(argv: list[str] | None = None) -> None:
         )
         sys.exit(0)
 
+    stream_symbols = load_stream_symbols()
+    if not stream_symbols:
+        print("symbols rỗng: bỏ qua")
+        sys.exit(0)
+
     # Brief 52 Task 1.3: Thứ tự ưu tiên nguồn log:
     # 1. args.log_file (nếu truyền cờ --log-file, dùng cho audit/test riêng).
     # 2. File bền vững (args.persistent_log hoặc logs/bars_closed.log), nguồn 'file'.
@@ -524,7 +549,9 @@ def main(argv: list[str] | None = None) -> None:
             denom = args.expected_bars
         else:
             try:
-                denom = fetch_expected_bars_from_db(check_date, session, args.dsn)
+                denom = fetch_expected_bars_from_db(
+                    check_date, session, args.dsn, symbols=stream_symbols
+                )
             except Exception as e:
                 sys.stderr.write(f"Loi truy van DB tinh mau so do phu: {e}\n")
                 denom = None

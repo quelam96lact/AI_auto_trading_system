@@ -1460,3 +1460,75 @@ def test_zero_bar_retry_all_symbols_ok_and_zero_bars_classified_holiday(
     assert rc == 0
     assert "[kiem] ngay khong giao dich theo SSI (bo qua): ['2026-10-22']" in out
     assert "[kiem] 1d: 10 ngay, thieu: []" in out
+
+
+def test_zero_bar_retry_empty_cfg_symbols_probes_top_active_universe(monkeypatch, capsys):
+    """Đợt 231: cfg.symbols=[] -> dò ngày 0 nến bằng top 3 active universe."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    candidate = date(2026, 10, 22)
+    daily[candidate] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=["FPT", "HPG", "VCB", "AAA"],
+        progress={
+            ("FPT", "1d"): {"status": "ok", "attempted_until": end},
+            ("HPG", "1d"): {"status": "ok", "attempted_until": end},
+            ("VCB", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "1d"): {"status": "ok", "attempted_until": end},
+            ("AAA", "5m"): {"status": "ok", "attempted_until": end},
+        },
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    storage.read_top_active_universe = lambda limit=3: ["FPT", "HPG", "VCB"][:limit]
+
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=[]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    probe_calls = [c for c in env["bu_calls"] if "--symbols" in c]
+    assert len(probe_calls) == 1
+    sym_idx = probe_calls[0].index("--symbols") + 1
+    assert probe_calls[0][sym_idx] == "FPT,HPG,VCB"
+    assert "[kiem] ngay khong giao dich theo SSI (bo qua): ['2026-10-22']" in out
+
+
+def test_zero_bar_retry_empty_cfg_and_empty_universe_skips_probe(monkeypatch, capsys):
+    """Đợt 231: cfg.symbols=[] và active universe rỗng -> bỏ qua gọi backfill_universe."""
+    end = date(2026, 10, 26)
+    clean = make_clean_counts(end)
+    daily = dict(clean)
+    daily[date(2026, 10, 22)] = 0
+
+    storage = FakeCatchupStorage(
+        symbols=[],
+        progress={},
+        ff_counts=clean,
+        daily_counts=daily,
+        m5_counts=clean,
+    )
+    storage.read_top_active_universe = lambda limit=3: []
+
+    env = setup_base_env(
+        monkeypatch,
+        cfg=FakeConfig(symbols=[]),
+        storage=storage,
+        now_dt=datetime(2026, 10, 27, 10, 0, tzinfo=TZ),
+        auto_fill_ff_on_load=False,
+    )
+
+    rc = main([])
+    out = capsys.readouterr().out
+    assert rc in (0, 1)
+    assert not any("--symbols" in c for c in env["bu_calls"])
+    assert "bo qua kiem tra ngay 0 nen: khong co ma do" in out

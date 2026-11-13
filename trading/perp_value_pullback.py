@@ -258,6 +258,250 @@ def _regime_short(s: _Snap) -> bool:
     )
 
 
+@dataclass(slots=True)
+class _VpFilledPosition:
+    side: Literal["LONG", "SHORT"]
+    entry_price: float
+    stop_price: float
+    r_value: float
+    qty_leg: float
+    entry_ts: datetime
+    signal_ts: datetime
+    entry_bar_idx: int
+    clipped: bool
+    would_liquidate: bool
+
+
+def _make_vp_pending(
+    side: Literal["LONG", "SHORT"],
+    trigger: float,
+    stop: float,
+    atr_sig: float,
+    prof: DayProfile,
+    signal_ts: datetime,
+    bar_idx: int,
+) -> dict:
+    """Tao dict lenh cho stop-entry cho chien luoc value pullback."""
+    return {
+        "side": side,
+        "trigger": trigger,
+        "stop": stop,
+        "atr_sig": atr_sig,
+        "ph": prof.ph,
+        "pl": prof.pl,
+        "signal_ts": signal_ts,
+        "created_bar_idx": bar_idx,
+    }
+
+
+def _try_fill_value_pullback_pending(
+    b: Bar,
+    i: int,
+    pending: dict,
+    *,
+    equity: float,
+    fee_rate: float,
+    slippage_bps: float,
+    risk_fraction: float,
+    max_leverage: float,
+    use_cost_filter: bool,
+    use_barrier_filter: bool,
+) -> tuple[dict | None, _VpFilledPosition | None, str]:
+    """Kiem tra khop/het han lenh cho value pullback; tra ve (new_pending, opened_pos, status)."""
+    side: Literal["LONG", "SHORT"] = pending["side"]
+    trigger: float = pending["trigger"]
+    atr_sig: float = pending["atr_sig"]
+    filled = False
+    entry_price = 0.0
+    stop_price = 0.0
+    if side == "LONG":
+        if b.high >= trigger:
+            filled = True
+            raw_entry = max(b.open, trigger)
+            entry_price = raw_entry * (1.0 + slippage_bps / 10000.0)
+            stop_price = pending["stop"]
+        elif i - pending["created_bar_idx"] >= 2:
+            return None, None, "expired"
+    else:
+        if b.low <= trigger:
+            filled = True
+            raw_entry = min(b.open, trigger)
+            entry_price = raw_entry * (1.0 - slippage_bps / 10000.0)
+            stop_price = pending["stop"]
+        elif i - pending["created_bar_idx"] >= 2:
+            return None, None, "expired"
+
+    if not filled:
+        return pending, None, "none"
+
+    r_value = abs(entry_price - stop_price)
+    if r_value < 0.20 * atr_sig or r_value > 1.50 * atr_sig:
+        return None, None, "dropped_r"
+    if (
+        use_cost_filter
+        and entry_price * 2.0 * slippage_bps / 1e4 > 0.15 * r_value
+    ):
+        return None, None, "dropped_cost"
+    if use_barrier_filter:
+        ph = pending["ph"]
+        pl = pending["pl"]
+        if (
+            side == "LONG" and ph > entry_price and (ph - entry_price) < r_value
+            or side == "SHORT" and pl < entry_price and (entry_price - pl) < r_value
+        ):
+            return None, None, "dropped_barrier"
+
+    qty = (equity * risk_fraction) / (r_value + 2.0 * entry_price * fee_rate)
+    clipped = False
+    if qty * entry_price > max_leverage * equity:
+        qty = (max_leverage * equity) / entry_price
+        clipped = True
+    would_liquidate = (
+        b.low < entry_price * (1.0 - 1.0 / max_leverage)
+        if side == "LONG"
+        else b.high > entry_price * (1.0 + 1.0 / max_leverage)
+    )
+    return (
+        None,
+        _VpFilledPosition(
+            side=side,
+            entry_price=entry_price,
+            stop_price=stop_price,
+            r_value=r_value,
+            qty_leg=qty / 2.0,
+            entry_ts=b.ts,
+            signal_ts=pending["signal_ts"],
+            entry_bar_idx=i,
+            clipped=clipped,
+            would_liquidate=would_liquidate,
+        ),
+        "entered",
+    )
+
+
+def _detect_value_pullback_signal(
+    b: Bar,
+    i: int,
+    *,
+    prof: DayProfile | None,
+    vwap_t: float | None,
+    atr_val: float | None,
+    snaps,
+    random_entry: RandomEntryConfig | None,
+    rng: random.Random | None,
+    entry_filter: Callable[[Bar, str], bool] | None,
+) -> tuple[dict | None, int]:
+    """Phat tin hieu tai close bar t; tra ve (pending_or_None, flow_drops)."""
+    warm = atr_val is not None and vwap_t is not None and prof is not None
+    if not warm:
+        return None, 0
+    assert prof is not None  # warm da bao dam
+    assert atr_val is not None
+    assert vwap_t is not None
+
+    if random_entry is not None and rng is not None:
+        if rng.random() >= random_entry.signal_prob:
+            return None, 0
+        is_long = rng.random() < random_entry.long_prob
+        atr_sig = atr_val
+        if is_long:
+            return (
+                _make_vp_pending(
+                    "LONG",
+                    b.high + 0.05 * atr_sig,
+                    b.low - 0.25 * atr_sig,
+                    atr_sig,
+                    prof,
+                    b.ts,
+                    i,
+                ),
+                0,
+            )
+        return (
+            _make_vp_pending(
+                "SHORT",
+                b.low - 0.05 * atr_sig,
+                b.high + 0.25 * atr_sig,
+                atr_sig,
+                prof,
+                b.ts,
+                i,
+            ),
+            0,
+        )
+
+    if len(snaps) < 3:
+        return None, 0
+
+    atr_sig = atr_val
+    prev_snaps = (snaps[-1], snaps[-2], snaps[-3])
+    long_regime = any(_regime_long(s) for s in prev_snaps)
+    short_regime = any(_regime_short(s) for s in prev_snaps)
+    flow_drops = 0
+
+    if long_regime and prof.vah is not None:
+        touched = [
+            lvl for lvl in (vwap_t, prof.vah)
+            if lvl is not None and abs(b.low - lvl) <= 0.25 * atr_sig
+        ]
+        if touched:
+            level = min(touched, key=lambda lvl: abs(lvl - b.close))
+            if (
+                b.close > level
+                and b.close > b.open
+                and b.close > snaps[-1].high
+                and b.close > prof.vah
+            ):
+                if entry_filter is not None and not entry_filter(b, "LONG"):
+                    flow_drops += 1
+                else:
+                    return (
+                        _make_vp_pending(
+                            "LONG",
+                            b.high + 0.05 * atr_sig,
+                            min(b.low, level - 0.25 * atr_sig),
+                            atr_sig,
+                            prof,
+                            b.ts,
+                            i,
+                        ),
+                        flow_drops,
+                    )
+
+    # SHORT xet DOC LAP voi LONG (audit dot 106: `elif` cu bo qua SHORT moi khi
+    # co regime LONG trong 3 nen truoc, ke ca khi LONG khong phat tin hieu).
+    if short_regime and prof.val is not None:
+        touched = [
+            lvl for lvl in (vwap_t, prof.val)
+            if lvl is not None and abs(b.high - lvl) <= 0.25 * atr_sig
+        ]
+        if touched:
+            level = min(touched, key=lambda lvl: abs(lvl - b.close))
+            if (
+                b.close < level
+                and b.close < b.open
+                and b.close < snaps[-1].low
+                and b.close < prof.val
+            ):
+                if entry_filter is not None and not entry_filter(b, "SHORT"):
+                    flow_drops += 1
+                else:
+                    return (
+                        _make_vp_pending(
+                            "SHORT",
+                            b.low - 0.05 * atr_sig,
+                            max(b.high, level + 0.25 * atr_sig),
+                            atr_sig,
+                            prof,
+                            b.ts,
+                            i,
+                        ),
+                        flow_drops,
+                    )
+
+    return None, flow_drops
+
+
 def run_value_pullback_backtest(
     bars_1h: list[Bar],
     profiles: Mapping[date, DayProfile],
@@ -516,178 +760,60 @@ def run_value_pullback_backtest(
 
         # --- 2. Lệnh chờ ---
         if not pos_open and not just_closed_in_bar and pending is not None:
-            side = pending["side"]
-            trigger = pending["trigger"]
-            atr_sig = pending["atr_sig"]
-            filled = False
-            if side == "LONG":
-                if b.high >= trigger:
-                    filled = True
-                    raw_entry = max(b.open, trigger)
-                    entry_price = raw_entry * (1.0 + slippage_bps / 10000.0)
-                    stop_price = pending["stop"]
-                elif i - pending["created_bar_idx"] >= 2:
-                    orders_expired += 1
-                    pending = None
-            else:
-                if b.low <= trigger:
-                    filled = True
-                    raw_entry = min(b.open, trigger)
-                    entry_price = raw_entry * (1.0 - slippage_bps / 10000.0)
-                    stop_price = pending["stop"]
-                elif i - pending["created_bar_idx"] >= 2:
-                    orders_expired += 1
-                    pending = None
-
-            if filled:
-                r_value = abs(entry_price - stop_price)
-                drop = False
-                if r_value < 0.20 * atr_sig or r_value > 1.50 * atr_sig:
-                    dropped_r += 1
-                    drop = True
-                if (
-                    not drop
-                    and use_cost_filter
-                    and entry_price * 2.0 * slippage_bps / 1e4 > 0.15 * r_value
-                ):
-                    dropped_cost += 1
-                    drop = True
-                if not drop and use_barrier_filter:
-                    ph = pending["ph"]
-                    pl = pending["pl"]
-                    if side == "LONG" and ph > entry_price and (ph - entry_price) < r_value or side == "SHORT" and pl < entry_price and (entry_price - pl) < r_value:
-                        dropped_barrier += 1
-                        drop = True
-
-                if drop:
-                    pending = None
-                else:
-                    qty = (equity * risk_fraction) / (r_value + 2.0 * entry_price * fee_rate)
-                    clipped = False
-                    if qty * entry_price > max_leverage * equity:
-                        qty = (max_leverage * equity) / entry_price
-                        clipped = True
-                    pos_open = True
-                    pos_side = side
-                    pos_entry_price = entry_price
-                    pos_stop_price = stop_price
-                    pos_r_value = r_value
-                    pos_qty_leg = qty / 2.0
-                    pos_entry_ts = b.ts
-                    pos_signal_ts = pending["signal_ts"]
-                    pos_entry_bar_idx = i
-                    pos_clipped = clipped
-                    pos_legs_open = 2
-                    pos_tp1_done = False
-                    pos_be_from_idx = -1
-                    if side == "LONG":
-                        pos_would_liquidate = b.low < entry_price * (1.0 - 1.0 / max_leverage)
-                    else:
-                        pos_would_liquidate = b.high > entry_price * (1.0 + 1.0 / max_leverage)
-                    entries += 1
-                    pending = None
+            pending, opened_pos, fill_status = _try_fill_value_pullback_pending(
+                b,
+                i,
+                pending,
+                equity=equity,
+                fee_rate=fee_rate,
+                slippage_bps=slippage_bps,
+                risk_fraction=risk_fraction,
+                max_leverage=max_leverage,
+                use_cost_filter=use_cost_filter,
+                use_barrier_filter=use_barrier_filter,
+            )
+            if fill_status == "expired":
+                orders_expired += 1
+            elif fill_status == "dropped_r":
+                dropped_r += 1
+            elif fill_status == "dropped_cost":
+                dropped_cost += 1
+            elif fill_status == "dropped_barrier":
+                dropped_barrier += 1
+            elif opened_pos is not None:
+                pos_open = True
+                pos_side = opened_pos.side
+                pos_entry_price = opened_pos.entry_price
+                pos_stop_price = opened_pos.stop_price
+                pos_r_value = opened_pos.r_value
+                pos_qty_leg = opened_pos.qty_leg
+                pos_entry_ts = opened_pos.entry_ts
+                pos_signal_ts = opened_pos.signal_ts
+                pos_entry_bar_idx = opened_pos.entry_bar_idx
+                pos_clipped = opened_pos.clipped
+                pos_legs_open = 2
+                pos_tp1_done = False
+                pos_be_from_idx = -1
+                pos_would_liquidate = opened_pos.would_liquidate
+                entries += 1
 
         # --- 3. Tín hiệu tại close bar t ---
         can_signal = not pos_open and pending is None and not just_closed_in_bar
         if can_signal and b.ts.hour != 0:
-            vah_t = prof.vah if prof is not None else None
-            val_t = prof.val if prof is not None else None
-            warm = atr_val is not None and vwap_t is not None and prof is not None
-
-            if random_entry is not None and rng is not None:
-                if warm and rng.random() < random_entry.signal_prob:
-                    assert prof is not None  # warm đã bảo đảm
-                    assert atr_val is not None
-                    signals_generated += 1
-                    is_long = rng.random() < random_entry.long_prob
-                    atr_sig = atr_val
-                    if is_long:
-                        pending = {
-                            "side": "LONG",
-                            "trigger": b.high + 0.05 * atr_sig,
-                            "stop": b.low - 0.25 * atr_sig,
-                            "atr_sig": atr_sig,
-                            "ph": prof.ph,
-                            "pl": prof.pl,
-                            "signal_ts": b.ts,
-                            "created_bar_idx": i,
-                        }
-                    else:
-                        pending = {
-                            "side": "SHORT",
-                            "trigger": b.low - 0.05 * atr_sig,
-                            "stop": b.high + 0.25 * atr_sig,
-                            "atr_sig": atr_sig,
-                            "ph": prof.ph,
-                            "pl": prof.pl,
-                            "signal_ts": b.ts,
-                            "created_bar_idx": i,
-                        }
-
-            elif warm and len(snaps) >= 3 and atr_val is not None:
-                assert prof is not None  # warm đã bảo đảm
-                atr_sig = atr_val
-                prev_snaps = (snaps[-1], snaps[-2], snaps[-3])
-                long_regime = any(_regime_long(s) for s in prev_snaps)
-                short_regime = any(_regime_short(s) for s in prev_snaps)
-
-                if long_regime and vah_t is not None:
-                    touched = [
-                        lvl for lvl in (vwap_t, vah_t)
-                        if lvl is not None and abs(b.low - lvl) <= 0.25 * atr_sig
-                    ]
-                    if touched:
-                        level = min(touched, key=lambda lvl: abs(lvl - b.close))
-                        if (
-                            b.close > level
-                            and b.close > b.open
-                            and b.close > snaps[-1].high
-                            and b.close > vah_t
-                        ):
-                            if entry_filter is not None and not entry_filter(b, "LONG"):
-                                dropped_flow += 1
-                            else:
-                                signals_generated += 1
-                                pending = {
-                                    "side": "LONG",
-                                    "trigger": b.high + 0.05 * atr_sig,
-                                    "stop": min(b.low, level - 0.25 * atr_sig),
-                                    "atr_sig": atr_sig,
-                                    "ph": prof.ph,
-                                    "pl": prof.pl,
-                                    "signal_ts": b.ts,
-                                    "created_bar_idx": i,
-                                }
-
-                # SHORT xet DOC LAP voi LONG (audit dot 106: `elif` cu bo qua SHORT moi khi
-                # co regime LONG trong 3 nen truoc, ke ca khi LONG khong phat tin hieu).
-                if pending is None and short_regime and val_t is not None:
-                    touched = [
-                        lvl for lvl in (vwap_t, val_t)
-                        if lvl is not None and abs(b.high - lvl) <= 0.25 * atr_sig
-                    ]
-                    if touched:
-                        level = min(touched, key=lambda lvl: abs(lvl - b.close))
-                        if (
-                            b.close < level
-                            and b.close < b.open
-                            and b.close < snaps[-1].low
-                            and b.close < val_t
-                        ):
-                            if entry_filter is not None and not entry_filter(b, "SHORT"):
-                                dropped_flow += 1
-                            else:
-                                signals_generated += 1
-                                pending = {
-                                    "side": "SHORT",
-                                    "trigger": b.low - 0.05 * atr_sig,
-                                    "stop": max(b.high, level + 0.25 * atr_sig),
-                                    "atr_sig": atr_sig,
-                                    "ph": prof.ph,
-                                    "pl": prof.pl,
-                                    "signal_ts": b.ts,
-                                    "created_bar_idx": i,
-                                }
+            pending, flow_drops = _detect_value_pullback_signal(
+                b,
+                i,
+                prof=prof,
+                vwap_t=vwap_t,
+                atr_val=atr_val,
+                snaps=snaps,
+                random_entry=random_entry,
+                rng=rng,
+                entry_filter=entry_filter,
+            )
+            dropped_flow += flow_drops
+            if pending is not None:
+                signals_generated += 1
 
         # --- 4. Lịch sử + equity ---
         if ema20_val is not None:

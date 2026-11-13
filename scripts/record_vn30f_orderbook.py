@@ -460,6 +460,103 @@ except ImportError:
     from scripts._db_common import load_dotenv as _load_dotenv
 
 
+def _load_existing_orderbook_counts(
+    out_path: Path, counts: dict[str, int], timestamps: list[datetime]
+) -> None:
+    """Nạp dữ liệu đã ghi trước đó trong ngày để thống kê toàn diện cuối phiên."""
+    if not (out_path.exists() and out_path.stat().st_size > 0):
+        return
+    try:
+        with gzip.open(out_path, mode="rt", encoding="utf-8") as existing_f:
+            for line in existing_f:
+                line_s = line.strip()
+                if not line_s:
+                    continue
+                m = json.loads(line_s)
+                c = classify_message(m)
+                counts[c] = counts.get(c, 0) + 1
+                r_ts = m.get("recv_ts")
+                if r_ts:
+                    timestamps.append(datetime.fromisoformat(r_ts))
+        print(f"  Đã nạp {sum(counts.values()):,} tin đã ghi trước đó trong ngày.")
+    except Exception as e:
+        print(f"  Cảnh báo: không thể nạp dữ liệu cũ: {e}")
+
+
+def _make_orderbook_message_handler(
+    gz_file: Any, counts: dict[str, int], timestamps: list[datetime]
+) -> Callable[[Any], None]:
+    """Tạo callback xử lý tin WebSocket SSI và ghi JSONL nén."""
+
+    def on_message(raw_msg: Any) -> None:
+        recv_dt = datetime.now(TZ)
+        msg_dict = (
+            dataclasses.asdict(raw_msg)
+            if dataclasses.is_dataclass(raw_msg)
+            else raw_msg
+        )
+        if not isinstance(msg_dict, dict):
+            return
+
+        cat = classify_message(msg_dict)
+        counts[cat] = counts.get(cat, 0) + 1
+
+        if cat in ("QUOTE", "TRADE"):
+            msg_dict["recv_ts"] = recv_dt.isoformat()
+            line = json.dumps(msg_dict, ensure_ascii=False, default=str)
+            gz_file.write(line + "\n")
+            gz_file.flush()
+            timestamps.append(recv_dt)
+
+    return on_message
+
+
+def _print_orderbook_summary_report(
+    symbol: str,
+    out_path: Path,
+    file_size_bytes: int,
+    counts: dict[str, int],
+    total_considered: int,
+    total_downtime: float,
+    detailed_intervals: list[tuple[datetime, datetime, float]],
+    max_gap: float,
+    long_gaps: list[tuple[datetime, datetime, float]],
+) -> None:
+    """In báo cáo tổng kết phiên ghi sổ lệnh."""
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    print("\n" + "=" * 65)
+    print("=== BÁO CÁO THỐNG KÊ MÁY GHI SỔ LỆNH VN30F (BRIEF 87/90) ===")
+    print("=" * 65)
+    print(f"- Hợp đồng: {symbol}")
+    print(f"- File dữ liệu: {out_path}")
+    print(f"- Dung lượng file: {file_size_bytes:,} bytes ({file_size_mb:.2f} MB)")
+    print(
+        f"- Tổng số tin nhận: {sum(counts.values()):,} "
+        f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})"
+    )
+    print(f"- Tổng số tin QUOTE/TRADE đã xét khoảng lặng: {total_considered:,}")
+    print(
+        f"- Thời gian máy ghi mất kết nối: {total_downtime:.2f} giây ({len(detailed_intervals)} quãng ngắt)"
+    )
+    if detailed_intervals:
+        print("  + Chi tiết các quãng mất kết nối của máy ghi:")
+        for d1, d2, dur in detailed_intervals:
+            print(
+                f"    * Từ {d1.strftime('%H:%M:%S')} đến {d2.strftime('%H:%M:%S')}: {dur:.2f} giây"
+            )
+    print(f"- Khoảng lặng thị trường dài nhất (trong các quãng kết nối): {max_gap:.2f} giây")
+
+    if long_gaps:
+        print(f"- Danh sách {len(long_gaps)} khoảng lặng thị trường > 10.0s trong giờ phiên:")
+        for t1, t2, sec in long_gaps:
+            t1_s = t1.astimezone(TZ).strftime("%H:%M:%S")
+            t2_s = t2.astimezone(TZ).strftime("%H:%M:%S")
+            print(f"  + Từ {t1_s} đến {t2_s}: {sec:.2f} giây")
+    else:
+        print("- Không phát hiện khoảng lặng thị trường nào > 10.0 giây trong giờ giao dịch.")
+    print("=" * 65 + "\n")
+
+
 async def record_orderbook_stream(
     symbol: str | None = None,
     until_time: dt_time | None = None,
@@ -525,24 +622,7 @@ async def record_orderbook_stream(
         from ssi_sdk import AsyncStream
 
         timestamps: list[datetime] = []
-
-        # Nạp dữ liệu đã ghi trước đó trong ngày (nếu có) để thống kê toàn diện cuối phiên
-        if out_path.exists() and out_path.stat().st_size > 0:
-            try:
-                with gzip.open(out_path, mode="rt", encoding="utf-8") as existing_f:
-                    for line in existing_f:
-                        line_s = line.strip()
-                        if not line_s:
-                            continue
-                        m = json.loads(line_s)
-                        c = classify_message(m)
-                        counts[c] = counts.get(c, 0) + 1
-                        r_ts = m.get("recv_ts")
-                        if r_ts:
-                            timestamps.append(datetime.fromisoformat(r_ts))
-                print(f"  Đã nạp {sum(counts.values()):,} tin đã ghi trước đó trong ngày.")
-            except Exception as e:
-                print(f"  Cảnh báo: không thể nạp dữ liệu cũ: {e}")
+        _load_existing_orderbook_counts(out_path, counts, timestamps)
 
         stop_event = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -567,26 +647,7 @@ async def record_orderbook_stream(
 
         # Mở file gzip chế độ append
         with gzip.open(out_path, mode="at", encoding="utf-8") as gz_file:
-
-            def on_message(raw_msg: Any) -> None:
-                recv_dt = datetime.now(TZ)
-                msg_dict = (
-                    dataclasses.asdict(raw_msg)
-                    if dataclasses.is_dataclass(raw_msg)
-                    else raw_msg
-                )
-                if not isinstance(msg_dict, dict):
-                    return
-
-                cat = classify_message(msg_dict)
-                counts[cat] = counts.get(cat, 0) + 1
-
-                if cat in ("QUOTE", "TRADE"):
-                    msg_dict["recv_ts"] = recv_dt.isoformat()
-                    line = json.dumps(msg_dict, ensure_ascii=False, default=str)
-                    gz_file.write(line + "\n")
-                    gz_file.flush()
-                    timestamps.append(recv_dt)
+            on_message = _make_orderbook_message_handler(gz_file, counts, timestamps)
 
             while not stop_event.is_set():
                 now_dt = datetime.now(TZ)
@@ -708,42 +769,22 @@ async def record_orderbook_stream(
 
         # Thống kê sau phiên ghi (C2: tách bạch downtime máy ghi khỏi market silence)
         file_size_bytes = out_path.stat().st_size if out_path.exists() else 0
-        file_size_mb = file_size_bytes / (1024 * 1024)
 
         total_downtime, detailed_intervals = compute_total_downtime_seconds(disconnect_intervals)
         max_gap, long_gaps, total_considered = detect_silence_gaps(
             timestamps, min_gap_seconds=10.0, disconnect_intervals=disconnect_intervals
         )
-
-        print("\n" + "=" * 65)
-        print("=== BÁO CÁO THỐNG KÊ MÁY GHI SỔ LỆNH VN30F (BRIEF 87/90) ===")
-        print("=" * 65)
-        print(f"- Hợp đồng: {symbol}")
-        print(f"- File dữ liệu: {out_path}")
-        print(f"- Dung lượng file: {file_size_bytes:,} bytes ({file_size_mb:.2f} MB)")
-        print(
-            f"- Tổng số tin nhận: {sum(counts.values()):,} "
-            f"(QUOTE: {counts['QUOTE']:,}, TRADE: {counts['TRADE']:,}, KHÁC: {counts['OTHER']:,})"
+        _print_orderbook_summary_report(
+            symbol=symbol,
+            out_path=out_path,
+            file_size_bytes=file_size_bytes,
+            counts=counts,
+            total_considered=total_considered,
+            total_downtime=total_downtime,
+            detailed_intervals=detailed_intervals,
+            max_gap=max_gap,
+            long_gaps=long_gaps,
         )
-        print(f"- Tổng số tin QUOTE/TRADE đã xét khoảng lặng: {total_considered:,}")
-        print(
-            f"- Thời gian máy ghi mất kết nối: {total_downtime:.2f} giây ({len(detailed_intervals)} quãng ngắt)"
-        )
-        if detailed_intervals:
-            print("  + Chi tiết các quãng mất kết nối của máy ghi:")
-            for d1, d2, dur in detailed_intervals:
-                print(f"    * Từ {d1.strftime('%H:%M:%S')} đến {d2.strftime('%H:%M:%S')}: {dur:.2f} giây")
-        print(f"- Khoảng lặng thị trường dài nhất (trong các quãng kết nối): {max_gap:.2f} giây")
-
-        if long_gaps:
-            print(f"- Danh sách {len(long_gaps)} khoảng lặng thị trường > 10.0s trong giờ phiên:")
-            for t1, t2, sec in long_gaps:
-                t1_s = t1.astimezone(TZ).strftime("%H:%M:%S")
-                t2_s = t2.astimezone(TZ).strftime("%H:%M:%S")
-                print(f"  + Từ {t1_s} đến {t2_s}: {sec:.2f} giây")
-        else:
-            print("- Không phát hiện khoảng lặng thị trường nào > 10.0 giây trong giờ giao dịch.")
-        print("=" * 65 + "\n")
 
         # Kiểm tra dừng sớm ngoài ý muốn trên ngày giao dịch (Brief 94 Task 1)
         now_stop = datetime.now(TZ)

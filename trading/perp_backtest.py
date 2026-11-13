@@ -88,6 +88,424 @@ def _flow_ok(
     return entry_filter is None or entry_filter(bar, side)
 
 
+def _evaluate_perp_exit(
+    b: Bar,
+    i: int,
+    pos_entry_bar_idx: int,
+    module: str,
+    pos_side: Literal["LONG", "SHORT"],
+    pos_stop_price: float,
+    pos_target_price: float,
+) -> tuple[Literal["SL", "TP", "TIME"] | None, float | None, int]:
+    """Xét điều kiện thoát lệnh (SL/TP/TIME) tại bar `i` sau bar vào lệnh."""
+    bars_held = i - pos_entry_bar_idx
+    max_bars = 24 if module == "donchian_breakout" else 12
+
+    if pos_side == "LONG":
+        sl_touch = b.low <= pos_stop_price
+        tp_touch = b.high >= pos_target_price
+        if sl_touch:
+            return "SL", min(b.open, pos_stop_price), bars_held
+        if tp_touch:
+            return "TP", max(b.open, pos_target_price), bars_held
+    else:  # SHORT
+        sl_touch = b.high >= pos_stop_price
+        tp_touch = b.low <= pos_target_price
+        if sl_touch:
+            return "SL", max(b.open, pos_stop_price), bars_held
+        if tp_touch:
+            return "TP", min(b.open, pos_target_price), bars_held
+
+    if bars_held >= max_bars:
+        return "TIME", b.close, bars_held
+    return None, None, bars_held
+
+
+def _build_perp_position(
+    *,
+    b: Bar,
+    i: int,
+    signal_ts: datetime,
+    side: Literal["LONG", "SHORT"],
+    entry_price: float,
+    stop_price: float,
+    target_price: float,
+    r_value: float,
+    would_liquidate: bool,
+    equity: float,
+    fee_rate: float,
+    risk_fraction: float,
+    max_leverage: float,
+) -> dict:
+    """Tính khối lượng khớp lệnh theo rủi ro và trần đòn bẩy, trả dict trạng thái vị thế."""
+    cost_per_unit = 2.0 * entry_price * fee_rate
+    qty = (equity * risk_fraction) / (r_value + cost_per_unit)
+    clipped = False
+    if qty * entry_price > max_leverage * equity:
+        qty = (max_leverage * equity) / entry_price
+        clipped = True
+    return {
+        "side": side,
+        "entry_price": entry_price,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "qty": qty,
+        "r_value": r_value,
+        "entry_ts": b.ts,
+        "signal_ts": signal_ts,
+        "entry_bar_idx": i,
+        "clipped": clipped,
+        "would_liquidate": would_liquidate,
+    }
+
+
+def _try_fill_donchian_pending(
+    b: Bar,
+    i: int,
+    pending_order: dict,
+    equity: float,
+    fee_rate: float,
+    slippage_bps: float,
+    risk_fraction: float,
+    max_leverage: float,
+) -> tuple[Literal["cancelled", "expired", "filled", "none"], dict | None]:
+    """Xử lý lệnh chờ cho Module A (`donchian_breakout`)."""
+    bars_since_signal = i - pending_order["created_bar_idx"]
+    side: Literal["LONG", "SHORT"] = pending_order["side"]
+    trigger = pending_order["trigger"]
+    b_atr = pending_order["breakout_atr"]
+
+    if side == "LONG":
+        if b.open > trigger + 0.50 * b_atr:
+            return "cancelled", None
+        if b.high >= trigger:
+            raw_entry = max(b.open, trigger)
+            entry_price = raw_entry * (1.0 + slippage_bps / 10000.0)
+            stop_price = min(
+                pending_order["breakout_low"] - 0.25 * b_atr,
+                entry_price - 1.5 * b_atr,
+            )
+            r_value = abs(entry_price - stop_price)
+            target_price = entry_price + 2.0 * r_value
+            would_liquidate = b.low < entry_price * (1.0 - 1.0 / max_leverage)
+            return "filled", _build_perp_position(
+                b=b,
+                i=i,
+                signal_ts=pending_order["signal_ts"],
+                side="LONG",
+                entry_price=entry_price,
+                stop_price=stop_price,
+                target_price=target_price,
+                r_value=r_value,
+                would_liquidate=would_liquidate,
+                equity=equity,
+                fee_rate=fee_rate,
+                risk_fraction=risk_fraction,
+                max_leverage=max_leverage,
+            )
+        if bars_since_signal >= 2:
+            return "expired", None
+        return "none", None
+
+    # SHORT
+    if b.open < trigger - 0.50 * b_atr:
+        return "cancelled", None
+    if b.low <= trigger:
+        raw_entry = min(b.open, trigger)
+        entry_price = raw_entry * (1.0 - slippage_bps / 10000.0)
+        stop_price = max(
+            pending_order["breakout_high"] + 0.25 * b_atr,
+            entry_price + 1.5 * b_atr,
+        )
+        r_value = abs(entry_price - stop_price)
+        target_price = entry_price - 2.0 * r_value
+        would_liquidate = b.high > entry_price * (1.0 + 1.0 / max_leverage)
+        return "filled", _build_perp_position(
+            b=b,
+            i=i,
+            signal_ts=pending_order["signal_ts"],
+            side="SHORT",
+            entry_price=entry_price,
+            stop_price=stop_price,
+            target_price=target_price,
+            r_value=r_value,
+            would_liquidate=would_liquidate,
+            equity=equity,
+            fee_rate=fee_rate,
+            risk_fraction=risk_fraction,
+            max_leverage=max_leverage,
+        )
+    if bars_since_signal >= 2:
+        return "expired", None
+    return "none", None
+
+
+def _try_fill_bollinger_pending(
+    b: Bar,
+    i: int,
+    pending_order: dict,
+    equity: float,
+    fee_rate: float,
+    slippage_bps: float,
+    risk_fraction: float,
+    max_leverage: float,
+) -> tuple[Literal["cancelled", "dropped", "filled", "none"], dict | None]:
+    """Xử lý lệnh chờ next-open cho Module B (`bollinger_mr`)."""
+    side: Literal["LONG", "SHORT"] = pending_order["side"]
+    close_t = pending_order["close_t"]
+    atr_t = pending_order["atr_t"]
+    middle_t = pending_order["middle_t"]
+
+    if side == "LONG":
+        # Bỏ lệnh nếu open t+1 lệch bất lợi quá 0.25 * ATR
+        if b.open > close_t + 0.25 * atr_t:
+            return "cancelled", None
+        entry_price = b.open * (1.0 + slippage_bps / 10000.0)
+        stop_price = pending_order["low_t"] - 0.25 * atr_t
+        r_value = abs(entry_price - stop_price)
+        target_price = min(middle_t, entry_price + 1.25 * r_value)
+        would_liquidate = b.low < entry_price * (1.0 - 1.0 / max_leverage)
+    else:  # SHORT
+        if b.open < close_t - 0.25 * atr_t:
+            return "cancelled", None
+        entry_price = b.open * (1.0 - slippage_bps / 10000.0)
+        stop_price = pending_order["high_t"] + 0.25 * atr_t
+        r_value = abs(entry_price - stop_price)
+        target_price = max(middle_t, entry_price - 1.25 * r_value)
+        would_liquidate = b.high > entry_price * (1.0 + 1.0 / max_leverage)
+
+    # Ba phép loại bỏ (§2.4)
+    if (
+        r_value < 0.60 * atr_t
+        or r_value > 2.00 * atr_t
+        or abs(middle_t - entry_price) < 0.80 * r_value
+    ):
+        return "dropped", None
+
+    return "filled", _build_perp_position(
+        b=b,
+        i=i,
+        signal_ts=pending_order["signal_ts"],
+        side=side,
+        entry_price=entry_price,
+        stop_price=stop_price,
+        target_price=target_price,
+        r_value=r_value,
+        would_liquidate=would_liquidate,
+        equity=equity,
+        fee_rate=fee_rate,
+        risk_fraction=risk_fraction,
+        max_leverage=max_leverage,
+    )
+
+
+def _detect_perp_signal(
+    b: Bar,
+    i: int,
+    module: str,
+    random_entry: RandomEntryConfig | None,
+    rng: random.Random | None,
+    use_ema_filter: bool,
+    entry_filter: Callable[[Bar, str], bool] | None,
+    donchian_val,
+    atr_val,
+    bb_val,
+    adx_val,
+    ema50_val,
+    ema200_val,
+    atr_history: list[float],
+    bw_history: list[float],
+    ema50_history: list[float],
+) -> dict | None:
+    """Phát hiện tín hiệu vào lệnh tại close bar `t` (ngẫu nhiên hoặc theo module)."""
+    if random_entry is not None and rng is not None:
+        if module == "donchian_breakout":
+            warmup_ok = (
+                donchian_val is not None
+                and atr_val is not None
+                and len(atr_history) >= 50
+            )
+            if use_ema_filter:
+                warmup_ok = warmup_ok and (ema50_val is not None and ema200_val is not None)
+            if warmup_ok and rng.random() < random_entry.signal_prob:
+                is_long = rng.random() < random_entry.long_prob
+                upper_20, lower_20 = donchian_val
+                atr_14 = atr_val
+                if is_long:
+                    return {
+                        "side": "LONG",
+                        "trigger": upper_20 + 0.05 * atr_14,
+                        "breakout_low": b.low,
+                        "breakout_atr": atr_14,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+                return {
+                    "side": "SHORT",
+                    "trigger": lower_20 - 0.05 * atr_14,
+                    "breakout_high": b.high,
+                    "breakout_atr": atr_14,
+                    "signal_ts": b.ts,
+                    "created_bar_idx": i,
+                }
+        elif module == "bollinger_mr":
+            warmup_ok = (
+                bb_val is not None
+                and adx_val is not None
+                and atr_val is not None
+                and ema50_val is not None
+                and ema200_val is not None
+                and len(ema50_history) >= 3
+                and len(bw_history) >= 240
+            )
+            if warmup_ok and rng.random() < random_entry.signal_prob:
+                is_long = rng.random() < random_entry.long_prob
+                middle_t, _upper_t, _lower_t = bb_val
+                atr_14 = atr_val
+                if is_long:
+                    return {
+                        "side": "LONG",
+                        "close_t": b.close,
+                        "atr_t": atr_14,
+                        "low_t": b.low,
+                        "middle_t": middle_t,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+                return {
+                    "side": "SHORT",
+                    "close_t": b.close,
+                    "atr_t": atr_14,
+                    "high_t": b.high,
+                    "middle_t": middle_t,
+                    "signal_ts": b.ts,
+                    "created_bar_idx": i,
+                }
+        return None
+
+    if module == "donchian_breakout":
+        # Điều kiện Donchian breakout (Price-only)
+        # GHI CHÚ: Điều kiện Order Flow (delta, taker-buy ratio) bị BỎ vì repo không có dữ liệu.
+        if donchian_val is not None and atr_val is not None and len(atr_history) >= 50:
+            upper_20, lower_20 = donchian_val
+            atr_14 = atr_val
+            prev_atr = atr_history[-1]
+            median_atr_50 = statistics.median(atr_history[-50:])
+
+            vol_expansion = (atr_14 / median_atr_50 >= 1.20) and (atr_14 > prev_atr)
+            bar_range = b.high - b.low
+            range_ok = bar_range >= 1.0 * atr_14
+
+            # Bộ lọc loại bỏ (§4.4)
+            shock_filter = (atr_14 / median_atr_50 < 2.50) and (bar_range <= 2.0 * atr_14)
+
+            if vol_expansion and range_ok and shock_filter and bar_range > 0:
+                clv = (b.close - b.low) / bar_range
+
+                # Lọc xu hướng EMA (tuỳ chọn)
+                ema_long_ok = True
+                ema_short_ok = True
+                if use_ema_filter:
+                    if ema50_val is None or ema200_val is None:
+                        ema_long_ok = False
+                        ema_short_ok = False
+                    else:
+                        ema_long_ok = ema50_val > ema200_val
+                        ema_short_ok = ema50_val < ema200_val
+
+                # Tín hiệu Long
+                if b.close > upper_20 and clv >= 0.65 and ema_long_ok and _flow_ok(
+                    entry_filter, b, "LONG"
+                ):
+                    return {
+                        "side": "LONG",
+                        "trigger": upper_20 + 0.05 * atr_14,
+                        "breakout_low": b.low,
+                        "breakout_atr": atr_14,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+                # Tín hiệu Short
+                if b.close < lower_20 and clv <= 0.35 and ema_short_ok and _flow_ok(
+                    entry_filter, b, "SHORT"
+                ):
+                    return {
+                        "side": "SHORT",
+                        "trigger": lower_20 - 0.05 * atr_14,
+                        "breakout_high": b.high,
+                        "breakout_atr": atr_14,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+        return None
+
+    if (
+        module == "bollinger_mr"
+        and bb_val is not None
+        and adx_val is not None
+        and atr_val is not None
+        and ema50_val is not None
+        and ema200_val is not None
+        and len(ema50_history) >= 3
+        and len(bw_history) >= 240
+    ):
+        middle_t, upper_t, lower_t = bb_val
+        atr_14 = atr_val
+        bw_t = (upper_t - lower_t) / middle_t if middle_t > 0 else 0.0
+
+        # 4 điều kiện chế độ thị trường (market regime)
+        cond1 = adx_val < 20.0
+        cond2 = abs(ema50_val - ema50_history[-3]) < 0.50 * atr_14
+        cond3 = abs(ema50_val - ema200_val) <= 0.75 * atr_14
+
+        bw_window = bw_history[-240:]
+        cuts = statistics.quantiles(bw_window, n=5)
+        p20 = cuts[0]
+        p80 = cuts[3]
+        cond4 = p20 <= bw_t <= p80
+
+        regime_ok = cond1 and cond2 and cond3 and cond4
+
+        if regime_ok:
+            pct_b = percent_b(b.close, upper_t, lower_t)
+            if pct_b is not None:
+                # Long: low_t <= lower_t < close_t, nến xanh, %B <= 0.25
+                if (
+                    b.low <= lower_t
+                    and b.close > lower_t
+                    and b.close > b.open
+                    and pct_b <= 0.25
+                    and _flow_ok(entry_filter, b, "LONG")
+                ):
+                    return {
+                        "side": "LONG",
+                        "close_t": b.close,
+                        "atr_t": atr_14,
+                        "low_t": b.low,
+                        "middle_t": middle_t,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+                # Short: close_t < upper_t <= high_t, nến đỏ, %B >= 0.75
+                if (
+                    b.high >= upper_t
+                    and b.close < upper_t
+                    and b.close < b.open
+                    and pct_b >= 0.75
+                    and _flow_ok(entry_filter, b, "SHORT")
+                ):
+                    return {
+                        "side": "SHORT",
+                        "close_t": b.close,
+                        "atr_t": atr_14,
+                        "high_t": b.high,
+                        "middle_t": middle_t,
+                        "signal_ts": b.ts,
+                        "created_bar_idx": i,
+                    }
+    return None
+
+
 def run_perp_backtest(
     bars: list[Bar],
     module: Literal["donchian_breakout", "bollinger_mr"],
@@ -197,50 +615,9 @@ def run_perp_backtest(
 
             # Chỉ xét thoát lệnh trên các bar SAU bar vào lệnh (i > pos_entry_bar_idx)
             if i > pos_entry_bar_idx:
-                bars_held = i - pos_entry_bar_idx
-                max_bars = 24 if module == "donchian_breakout" else 12
-
-                sl_touch = False
-                tp_touch = False
-                raw_exit = None
-                exit_reason: Literal["SL", "TP", "TIME"] | None = None
-
-                if pos_side == "LONG":
-                    sl_touch = b.low <= pos_stop_price
-                    tp_touch = b.high >= pos_target_price
-
-                    if sl_touch and tp_touch:
-                        # Quy ước bi quan: SL trước TP
-                        raw_exit = min(b.open, pos_stop_price)
-                        exit_reason = "SL"
-                    elif sl_touch:
-                        raw_exit = min(b.open, pos_stop_price)
-                        exit_reason = "SL"
-                    elif tp_touch:
-                        raw_exit = max(b.open, pos_target_price)
-                        exit_reason = "TP"
-                    elif bars_held >= max_bars:
-                        raw_exit = b.close
-                        exit_reason = "TIME"
-
-                else:  # SHORT
-                    sl_touch = b.high >= pos_stop_price
-                    tp_touch = b.low <= pos_target_price
-
-                    if sl_touch and tp_touch:
-                        # Quy ước bi quan: SL trước TP
-                        raw_exit = max(b.open, pos_stop_price)
-                        exit_reason = "SL"
-                    elif sl_touch:
-                        raw_exit = max(b.open, pos_stop_price)
-                        exit_reason = "SL"
-                    elif tp_touch:
-                        raw_exit = min(b.open, pos_target_price)
-                        exit_reason = "TP"
-                    elif bars_held >= max_bars:
-                        raw_exit = b.close
-                        exit_reason = "TIME"
-
+                exit_reason, raw_exit, bars_held = _evaluate_perp_exit(
+                    b, i, pos_entry_bar_idx, module, pos_side, pos_stop_price, pos_target_price
+                )
                 if exit_reason is not None and raw_exit is not None:
                     # Áp trượt giá bất lợi khi thoát
                     if pos_side == "LONG":
@@ -290,382 +667,64 @@ def run_perp_backtest(
 
         # --- 3. Xử lý lệnh chờ khớp (Pending Order) ---
         if not pos_open and not just_closed_in_bar and pending_order is not None:
+            fill_status: str = "none"
+            pos_info: dict | None = None
             if module == "donchian_breakout":
-                bars_since_signal = i - pending_order["created_bar_idx"]
-                side = pending_order["side"]
-                trigger = pending_order["trigger"]
-                b_atr = pending_order["breakout_atr"]
-
-                if side == "LONG":
-                    # 1. Huỷ nếu mở cửa nhảy quá xa (không đuổi giá)
-                    if b.open > trigger + 0.50 * b_atr:
-                        orders_cancelled += 1
-                        pending_order = None
-                    # 2. Khớp lệnh stop
-                    elif b.high >= trigger:
-                        raw_entry = max(b.open, trigger)
-                        entry_price = raw_entry * (1.0 + slippage_bps / 10000.0)
-                        stop_price = min(
-                            pending_order["breakout_low"] - 0.25 * b_atr,
-                            entry_price - 1.5 * b_atr,
-                        )
-                        r_value = abs(entry_price - stop_price)
-                        target_price = entry_price + 2.0 * r_value
-
-                        cost_per_unit = 2.0 * entry_price * fee_rate
-                        qty = (equity * risk_fraction) / (r_value + cost_per_unit)
-                        clipped = False
-                        if qty * entry_price > max_leverage * equity:
-                            qty = (max_leverage * equity) / entry_price
-                            clipped = True
-
-                        pos_open = True
-                        pos_side = "LONG"
-                        pos_entry_price = entry_price
-                        pos_stop_price = stop_price
-                        pos_target_price = target_price
-                        pos_qty = qty
-                        pos_r_value = r_value
-                        pos_entry_ts = b.ts
-                        pos_signal_ts = pending_order["signal_ts"]
-                        pos_entry_bar_idx = i
-                        pos_clipped = clipped
-                        pos_would_liquidate = (b.low < entry_price * (1.0 - 1.0 / max_leverage))
-                        pending_order = None
-                    # 3. Hết 2 bar không khớp -> hết hạn
-                    elif bars_since_signal >= 2:
-                        orders_expired += 1
-                        pending_order = None
-
-                else:  # SHORT
-                    if b.open < trigger - 0.50 * b_atr:
-                        orders_cancelled += 1
-                        pending_order = None
-                    elif b.low <= trigger:
-                        raw_entry = min(b.open, trigger)
-                        entry_price = raw_entry * (1.0 - slippage_bps / 10000.0)
-                        stop_price = max(
-                            pending_order["breakout_high"] + 0.25 * b_atr,
-                            entry_price + 1.5 * b_atr,
-                        )
-                        r_value = abs(entry_price - stop_price)
-                        target_price = entry_price - 2.0 * r_value
-
-                        cost_per_unit = 2.0 * entry_price * fee_rate
-                        qty = (equity * risk_fraction) / (r_value + cost_per_unit)
-                        clipped = False
-                        if qty * entry_price > max_leverage * equity:
-                            qty = (max_leverage * equity) / entry_price
-                            clipped = True
-
-                        pos_open = True
-                        pos_side = "SHORT"
-                        pos_entry_price = entry_price
-                        pos_stop_price = stop_price
-                        pos_target_price = target_price
-                        pos_qty = qty
-                        pos_r_value = r_value
-                        pos_entry_ts = b.ts
-                        pos_signal_ts = pending_order["signal_ts"]
-                        pos_entry_bar_idx = i
-                        pos_clipped = clipped
-                        pos_would_liquidate = (b.high > entry_price * (1.0 + 1.0 / max_leverage))
-                        pending_order = None
-                    elif bars_since_signal >= 2:
-                        orders_expired += 1
-                        pending_order = None
-
+                fill_status, pos_info = _try_fill_donchian_pending(
+                    b, i, pending_order, equity, fee_rate, slippage_bps, risk_fraction, max_leverage
+                )
             elif module == "bollinger_mr":
-                # Module B vào lệnh next-open tại bar t+1
-                side = pending_order["side"]
-                close_t = pending_order["close_t"]
-                atr_t = pending_order["atr_t"]
-                middle_t = pending_order["middle_t"]
+                fill_status, pos_info = _try_fill_bollinger_pending(
+                    b, i, pending_order, equity, fee_rate, slippage_bps, risk_fraction, max_leverage
+                )
 
-                if side == "LONG":
-                    # Bỏ lệnh nếu open t+1 lệch bất lợi quá 0.25 * ATR
-                    if b.open > close_t + 0.25 * atr_t:
-                        orders_cancelled += 1
-                        pending_order = None
-                    else:
-                        raw_entry = b.open
-                        entry_price = raw_entry * (1.0 + slippage_bps / 10000.0)
-                        stop_price = pending_order["low_t"] - 0.25 * atr_t
-                        r_value = abs(entry_price - stop_price)
-
-                        # Ba phép loại bỏ (§2.4)
-                        drop_order = False
-                        if r_value < 0.60 * atr_t or r_value > 2.00 * atr_t:
-                            drop_order = True
-                        if abs(middle_t - entry_price) < 0.80 * r_value:
-                            drop_order = True
-
-                        if drop_order:
-                            orders_dropped += 1
-                            pending_order = None
-                        else:
-                            target_price = min(middle_t, entry_price + 1.25 * r_value)
-                            cost_per_unit = 2.0 * entry_price * fee_rate
-                            qty = (equity * risk_fraction) / (r_value + cost_per_unit)
-                            clipped = False
-                            if qty * entry_price > max_leverage * equity:
-                                qty = (max_leverage * equity) / entry_price
-                                clipped = True
-
-                            pos_open = True
-                            pos_side = "LONG"
-                            pos_entry_price = entry_price
-                            pos_stop_price = stop_price
-                            pos_target_price = target_price
-                            pos_qty = qty
-                            pos_r_value = r_value
-                            pos_entry_ts = b.ts
-                            pos_signal_ts = pending_order["signal_ts"]
-                            pos_entry_bar_idx = i
-                            pos_clipped = clipped
-                            pos_would_liquidate = (b.low < entry_price * (1.0 - 1.0 / max_leverage))
-                            pending_order = None
-
-                else:  # SHORT
-                    if b.open < close_t - 0.25 * atr_t:
-                        orders_cancelled += 1
-                        pending_order = None
-                    else:
-                        raw_entry = b.open
-                        entry_price = raw_entry * (1.0 - slippage_bps / 10000.0)
-                        stop_price = pending_order["high_t"] + 0.25 * atr_t
-                        r_value = abs(entry_price - stop_price)
-
-                        drop_order = False
-                        if r_value < 0.60 * atr_t or r_value > 2.00 * atr_t:
-                            drop_order = True
-                        if abs(middle_t - entry_price) < 0.80 * r_value:
-                            drop_order = True
-
-                        if drop_order:
-                            orders_dropped += 1
-                            pending_order = None
-                        else:
-                            target_price = max(middle_t, entry_price - 1.25 * r_value)
-                            cost_per_unit = 2.0 * entry_price * fee_rate
-                            qty = (equity * risk_fraction) / (r_value + cost_per_unit)
-                            clipped = False
-                            if qty * entry_price > max_leverage * equity:
-                                qty = (max_leverage * equity) / entry_price
-                                clipped = True
-
-                            pos_open = True
-                            pos_side = "SHORT"
-                            pos_entry_price = entry_price
-                            pos_stop_price = stop_price
-                            pos_target_price = target_price
-                            pos_qty = qty
-                            pos_r_value = r_value
-                            pos_entry_ts = b.ts
-                            pos_signal_ts = pending_order["signal_ts"]
-                            pos_entry_bar_idx = i
-                            pos_clipped = clipped
-                            pos_would_liquidate = (b.high > entry_price * (1.0 + 1.0 / max_leverage))
-                            pending_order = None
+            if fill_status == "cancelled":
+                orders_cancelled += 1
+                pending_order = None
+            elif fill_status == "expired":
+                orders_expired += 1
+                pending_order = None
+            elif fill_status == "dropped":
+                orders_dropped += 1
+                pending_order = None
+            elif fill_status == "filled" and pos_info is not None:
+                pos_open = True
+                pos_side = pos_info["side"]
+                pos_entry_price = pos_info["entry_price"]
+                pos_stop_price = pos_info["stop_price"]
+                pos_target_price = pos_info["target_price"]
+                pos_qty = pos_info["qty"]
+                pos_r_value = pos_info["r_value"]
+                pos_entry_ts = pos_info["entry_ts"]
+                pos_signal_ts = pos_info["signal_ts"]
+                pos_entry_bar_idx = pos_info["entry_bar_idx"]
+                pos_clipped = pos_info["clipped"]
+                pos_would_liquidate = pos_info["would_liquidate"]
+                pending_order = None
 
         # --- 4. Phát hiện tín hiệu tại CLOSE bar t ---
         # Chỉ xét khi không có vị thế, không có lệnh chờ, và không vừa đóng vị thế trong bar này
         if not pos_open and pending_order is None and not just_closed_in_bar:
-            if random_entry is not None and rng is not None:
-                if module == "donchian_breakout":
-                    warmup_ok = (
-                        donchian_val is not None
-                        and atr_val is not None
-                        and len(atr_history) >= 50
-                    )
-                    if use_ema_filter:
-                        warmup_ok = warmup_ok and (ema50_val is not None and ema200_val is not None)
-
-                    if warmup_ok and rng.random() < random_entry.signal_prob:
-                        signals_generated += 1
-                        is_long = rng.random() < random_entry.long_prob
-                        upper_20, lower_20 = donchian_val
-                        atr_14 = atr_val
-
-                        if is_long:
-                            pending_order = {
-                                "side": "LONG",
-                                "trigger": upper_20 + 0.05 * atr_14,
-                                "breakout_low": b.low,
-                                "breakout_atr": atr_14,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-                        else:
-                            pending_order = {
-                                "side": "SHORT",
-                                "trigger": lower_20 - 0.05 * atr_14,
-                                "breakout_high": b.high,
-                                "breakout_atr": atr_14,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-
-                elif module == "bollinger_mr":
-                    warmup_ok = (
-                        bb_val is not None
-                        and adx_val is not None
-                        and atr_val is not None
-                        and ema50_val is not None
-                        and ema200_val is not None
-                        and len(ema50_history) >= 3
-                        and len(bw_history) >= 240
-                    )
-                    if warmup_ok and rng.random() < random_entry.signal_prob:
-                        signals_generated += 1
-                        is_long = rng.random() < random_entry.long_prob
-                        middle_t, upper_t, lower_t = bb_val
-                        atr_14 = atr_val
-
-                        if is_long:
-                            pending_order = {
-                                "side": "LONG",
-                                "close_t": b.close,
-                                "atr_t": atr_14,
-                                "low_t": b.low,
-                                "middle_t": middle_t,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-                        else:
-                            pending_order = {
-                                "side": "SHORT",
-                                "close_t": b.close,
-                                "atr_t": atr_14,
-                                "high_t": b.high,
-                                "middle_t": middle_t,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-
-            elif module == "donchian_breakout":
-                # Điều kiện Donchian breakout (Price-only)
-                # GHI CHÚ: Điều kiện Order Flow (delta, taker-buy ratio) bị BỎ vì repo không có dữ liệu.
-                if donchian_val is not None and atr_val is not None and len(atr_history) >= 50:
-                    upper_20, lower_20 = donchian_val
-                    atr_14 = atr_val
-                    prev_atr = atr_history[-1]
-                    median_atr_50 = statistics.median(atr_history[-50:])
-
-                    vol_expansion = (atr_14 / median_atr_50 >= 1.20) and (atr_14 > prev_atr)
-                    bar_range = b.high - b.low
-                    range_ok = bar_range >= 1.0 * atr_14
-
-                    # Bộ lọc loại bỏ (§4.4)
-                    shock_filter = (atr_14 / median_atr_50 < 2.50) and (bar_range <= 2.0 * atr_14)
-
-                    if vol_expansion and range_ok and shock_filter and bar_range > 0:
-                        clv = (b.close - b.low) / bar_range
-
-                        # Lọc xu hướng EMA (tuỳ chọn)
-                        ema_long_ok = True
-                        ema_short_ok = True
-                        if use_ema_filter:
-                            if ema50_val is None or ema200_val is None:
-                                ema_long_ok = False
-                                ema_short_ok = False
-                            else:
-                                ema_long_ok = ema50_val > ema200_val
-                                ema_short_ok = ema50_val < ema200_val
-
-                        # Tín hiệu Long
-                        if b.close > upper_20 and clv >= 0.65 and ema_long_ok and _flow_ok(
-                            entry_filter, b, "LONG"
-                        ):
-                            signals_generated += 1
-                            pending_order = {
-                                "side": "LONG",
-                                "trigger": upper_20 + 0.05 * atr_14,
-                                "breakout_low": b.low,
-                                "breakout_atr": atr_14,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-                        # Tín hiệu Short
-                        elif b.close < lower_20 and clv <= 0.35 and ema_short_ok and _flow_ok(
-                            entry_filter, b, "SHORT"
-                        ):
-                            signals_generated += 1
-                            pending_order = {
-                                "side": "SHORT",
-                                "trigger": lower_20 - 0.05 * atr_14,
-                                "breakout_high": b.high,
-                                "breakout_atr": atr_14,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-
-            elif (
-                module == "bollinger_mr"
-                and bb_val is not None
-                and adx_val is not None
-                and atr_val is not None
-                and ema50_val is not None
-                and ema200_val is not None
-                and len(ema50_history) >= 3
-                and len(bw_history) >= 240
-            ):
-                middle_t, upper_t, lower_t = bb_val
-                atr_14 = atr_val
-                bw_t = (upper_t - lower_t) / middle_t if middle_t > 0 else 0.0
-
-                # 4 điều kiện chế độ thị trường (market regime)
-                cond1 = adx_val < 20.0
-                cond2 = abs(ema50_val - ema50_history[-3]) < 0.50 * atr_14
-                cond3 = abs(ema50_val - ema200_val) <= 0.75 * atr_14
-
-                bw_window = bw_history[-240:]
-                cuts = statistics.quantiles(bw_window, n=5)
-                p20 = cuts[0]
-                p80 = cuts[3]
-                cond4 = p20 <= bw_t <= p80
-
-                regime_ok = cond1 and cond2 and cond3 and cond4
-
-                if regime_ok:
-                    pct_b = percent_b(b.close, upper_t, lower_t)
-                    if pct_b is not None:
-                        # Long: low_t <= lower_t < close_t, nến xanh, %B <= 0.25
-                        if (
-                            b.low <= lower_t
-                            and b.close > lower_t
-                            and b.close > b.open
-                            and pct_b <= 0.25
-                            and _flow_ok(entry_filter, b, "LONG")
-                        ):
-                            signals_generated += 1
-                            pending_order = {
-                                "side": "LONG",
-                                "close_t": b.close,
-                                "atr_t": atr_14,
-                                "low_t": b.low,
-                                "middle_t": middle_t,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
-                        # Short: close_t < upper_t <= high_t, nến đỏ, %B >= 0.75
-                        elif (
-                            b.high >= upper_t
-                            and b.close < upper_t
-                            and b.close < b.open
-                            and pct_b >= 0.75
-                            and _flow_ok(entry_filter, b, "SHORT")
-                        ):
-                            signals_generated += 1
-                            pending_order = {
-                                "side": "SHORT",
-                                "close_t": b.close,
-                                "atr_t": atr_14,
-                                "high_t": b.high,
-                                "middle_t": middle_t,
-                                "signal_ts": b.ts,
-                                "created_bar_idx": i,
-                            }
+            pending_order = _detect_perp_signal(
+                b,
+                i,
+                module,
+                random_entry,
+                rng,
+                use_ema_filter,
+                entry_filter,
+                donchian_val,
+                atr_val,
+                bb_val,
+                adx_val,
+                ema50_val,
+                ema200_val,
+                atr_history,
+                bw_history,
+                ema50_history,
+            )
+            if pending_order is not None:
+                signals_generated += 1
 
         # --- 5. Lưu lịch sử chỉ báo và ghi nhận equity curve ---
         if atr_val is not None:

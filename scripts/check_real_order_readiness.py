@@ -18,7 +18,6 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -35,13 +34,12 @@ try:
 except ImportError:
     from scripts._db_common import resolve_dsn
 
+from trading.calendar_vn import TZ as TZ_VN
 from trading.config import load_config
 from trading.real_orders import (
     BUYING_POWER_MAX_AGE_MINUTES,
     POSITION_MAX_AGE_MINUTES,
 )
-
-TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def format_currency(val: float | None) -> str:

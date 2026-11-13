@@ -3,6 +3,7 @@ from datetime import date, datetime
 
 from trading.broker import Fill, Position
 from trading.calendar_vn import trading_days_between_dates
+from trading.config import VN_EQUITY_FEE_RATE
 from trading.models import Bar
 from trading.strategy import Signal
 
@@ -17,8 +18,8 @@ from trading.strategy import Signal
 # phụ thuộc đúng vào hằng số này (0.25%: -510.856 đồng; 0.15%: +190.969 đồng). Phí trả Sở và
 # phí môi giới cùng tính theo giá trị lệnh ở cả hai chiều nên gộp được vào một rate; thuế bán
 # 0.1% tách riêng ở SELL_TAX_RATE. Dùng 1 rate cố định cho mọi bậc giá trị giao dịch
-# (PaperBroker chưa hỗ trợ phí theo bậc); nếu mức phí đổi thì sửa tại đây.
-FEE_RATE = 0.0028
+# (PaperBroker chưa hỗ trợ phí theo bậc); nếu mức phí đổi thì sửa tại trading/config.py (VN_EQUITY_FEE_RATE).
+FEE_RATE = VN_EQUITY_FEE_RATE
 SELL_TAX_RATE = 0.001
 SLIPPAGE_BPS = 5
 

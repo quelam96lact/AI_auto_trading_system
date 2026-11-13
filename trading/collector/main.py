@@ -283,7 +283,7 @@ async def housekeeping_tick(
     state.last_wall = now
 
     in_continuous = is_continuous_matching(now, holidays)
-    if in_continuous and latch is not None:
+    if in_continuous and latch is not None and cfg.symbols:
         if latch.total_snapshots_received > state.last_seen_snapshot_count:
             state.warned_stream_silent = False
             state.last_seen_snapshot_count = latch.total_snapshots_received
@@ -450,7 +450,7 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
         cfg.watchdog_stale_seconds,
         cfg.watchdog_max_failures,
         now_fn=lambda: datetime.now(TZ),
-        is_trading_fn=lambda ts: is_continuous_matching(ts, cfg.holidays),
+        is_trading_fn=lambda ts: bool(cfg.symbols) and is_continuous_matching(ts, cfg.holidays),
         on_stale=_on_stale,
         on_critical=lambda: alert("CRITICAL", "feed stale beyond max failures"),
     )
@@ -462,7 +462,10 @@ async def run(cfg, stop_event: asyncio.Event | None = None) -> None:
             wd, storage, pub, persist_tasks, latch=latch
         ),
     )
-    feed.start()
+    if cfg.symbols:
+        feed.start()
+    else:
+        alert("INFO", "collector chay khong stream: cfg.symbols rong")
 
     try:
         await housekeeping_loop(

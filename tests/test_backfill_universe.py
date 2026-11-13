@@ -571,3 +571,39 @@ async def test_force_flag_error_sets_status_error():
     assert prog["status"] == "error"
     assert "API SSI connection failed" in prog["error"]
 
+
+def test_main_empty_symbols_flag_exits_2_without_universe_overwrite(monkeypatch):
+    """Đợt 231: --symbols "" hoặc " , " phải thoát lỗi ngay, không được rơi xuống load_symbols()."""
+    import pytest
+
+    import scripts.backfill_universe as bu
+
+    fake_cfg = SimpleNamespace(symbols=[], db_dsn="postgresql://fake")
+    monkeypatch.setattr(bu, "load_config", lambda path: fake_cfg)
+    monkeypatch.setattr(
+        bu,
+        "Storage",
+        lambda dsn: SimpleNamespace(init_schema=lambda: None),
+    )
+    load_symbols_called = {"called": False}
+    monkeypatch.setattr(
+        bu,
+        "load_symbols",
+        lambda *a, **kw: load_symbols_called.__setitem__("called", True),
+    )
+
+    for empty_arg in ("", " , "):
+        with pytest.raises(SystemExit) as exc:
+            main(
+                [
+                    "--from",
+                    "2026-10-01",
+                    "--to",
+                    "2026-10-02",
+                    "--symbols",
+                    empty_arg,
+                ]
+            )
+        assert exc.value.code == 2
+        assert load_symbols_called["called"] is False
+

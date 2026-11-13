@@ -182,12 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     with open(cfg_path, "r", encoding="utf-8") as f:
         cfg_data = yaml.safe_load(f) or {}
 
+    if not args.symbols and not cfg_data.get("symbols"):
+        print("symbols rỗng: bỏ qua")
+        return 0
     symbols = args.symbols or cfg_data.get("symbols", [])
-    if not symbols:
-        print(
-            "LỖI: Không có mã nào trong config hoặc tham số --symbols", file=sys.stderr
-        )
-        return 2
 
     dsn = resolve_dsn(args.dsn)
     storage = Storage(dsn)

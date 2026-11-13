@@ -223,3 +223,16 @@ def test_check_silent_engine_outbox_queue_and_flush(tmp_path: Path):
     )
     assert any("CRITICAL" in m for m in sent_msgs)
     assert not outbox_file.exists() or outbox_file.read_text(encoding="utf-8").strip() == ""
+
+
+def test_check_silent_engine_empty_symbols_returns_zero_skips(tmp_path, capsys):
+    """Đợt 231: config.yaml có symbols: [] và không truyền --symbols -> trả 0, in bỏ qua."""
+    import check_silent_engine
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("symbols: []\n", encoding="utf-8")
+
+    rc = check_silent_engine.main(["--config", str(cfg_file), "--logs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "symbols rỗng: bỏ qua" in out

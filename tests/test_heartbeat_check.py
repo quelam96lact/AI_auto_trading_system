@@ -185,12 +185,31 @@ def _fresh_job_logs(logs_dir, now):
     )
 
 
+def _mock_config_with_symbols(monkeypatch, symbols=("HPG", "IJC", "AAA")):
+    """Tiêm symbols mặc định khi đọc config.yaml để các test 2A/stdout độc lập với symbols: [] trong config.yaml thật."""
+    import yaml
+
+    import scripts.heartbeat_check as hc
+
+    real_safe_load = yaml.safe_load
+
+    def _safe_load(stream):
+        data = real_safe_load(stream)
+        if isinstance(data, dict) and not data.get("symbols"):
+            data = dict(data)
+            data["symbols"] = list(symbols)
+        return data
+
+    monkeypatch.setattr(hc.yaml, "safe_load", _safe_load)
+
+
 def test_main_no_crash_when_no_bar_any_day(monkeypatch, tmp_path):
     """FEE-ALARM-2 Lỗi 1: max_ts=None (feed chưa từng nối được) đi QUA đường
     dựng tin nhắn trong main() — trước đây `now - None` -> TypeError, chuông
     báo chết đúng lúc cần nhất. Dead-man's switch không được ném exception."""
     import scripts.heartbeat_check as hc
 
+    _mock_config_with_symbols(monkeypatch)
     sent = []
     monkeypatch.setattr(hc, "send_telegram", lambda msg: sent.append(msg))
 
@@ -319,6 +338,7 @@ def _run_main_with_ledger(
     token ok). Tra ve (rc, messages)."""
     import scripts.heartbeat_check as hc
 
+    _mock_config_with_symbols(monkeypatch)
     sent = []
 
     def _fake_send(msg):
@@ -459,6 +479,7 @@ def _run_main_with_position_sync(monkeypatch, logs_dir, sync_ts, fixed_now=None)
     token ok, ledger khop). Tra ve (rc, messages)."""
     import scripts.heartbeat_check as hc
 
+    _mock_config_with_symbols(monkeypatch)
     sent = []
 
     def _fake_send(msg):
@@ -888,6 +909,7 @@ def _run_main_with_token(monkeypatch, tmp_path, refresh_token_expires_at, fixed_
     """Dựng môi trường chạy hc.main() kiểm tra nhánh token SSI (đợt 220)."""
     import scripts.heartbeat_check as hc
 
+    _mock_config_with_symbols(monkeypatch)
     if fixed_now is None:
         fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
     logs_dir = tmp_path / "logs"
@@ -1026,6 +1048,7 @@ def _setup_heartbeat_stale_env(monkeypatch, logs_dir, fixed_now=None, stale_job=
     """Dàn dựng môi trường heartbeat với một job theo lịch bị stale."""
     import scripts.heartbeat_check as hc
 
+    _mock_config_with_symbols(monkeypatch)
     if fixed_now is None:
         fixed_now = datetime(2026, 8, 14, 10, 0, tzinfo=TZ)
 
@@ -1296,3 +1319,92 @@ def test_heartbeat_db_error_alert_includes_stale_job(monkeypatch, tmp_path):
         "NGỪNG CHẠY" in body
     ), f"phai gui ca canh bao job ngung chay, khong duoc an mat: {body}"
     assert state_file.exists(), "gui duoc thi moi luu trang thai"
+
+
+def test_main_empty_symbols_skips_bar_stale_without_sql_error(
+    monkeypatch, capsys, tmp_path
+):
+    """Đợt 231: symbols: [] trong config.yaml không crash SQL IN (), bỏ qua bar_stale."""
+    import scripts.heartbeat_check as hc
+
+    monkeypatch.setenv("DB_DSN", "postgresql://fake")
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: True)
+
+    fixed_now = datetime(2026, 8, 14, 14, 0, tzinfo=TZ)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz):
+            return fixed_now
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+    monkeypatch.setattr(
+        hc.yaml,
+        "safe_load",
+        lambda f: {"symbols": [], "real_order_account": "0434221", "holidays": []},
+    )
+
+    executed_sqls: list[str] = []
+
+    class FakeCur:
+        def __init__(self, result=None):
+            self._result = result
+
+        def fetchall(self):
+            return self._result if self._result is not None else []
+
+        def fetchone(self):
+            return self._result
+
+    class FakeConn:
+        def execute(self, sql, *a, **k):
+            sql_s = str(sql)
+            executed_sqls.append(sql_s)
+            if "FROM heartbeat" in sql_s:
+                return FakeCur(
+                    [
+                        ("collector", fixed_now - timedelta(seconds=30)),
+                        ("engine", fixed_now - timedelta(seconds=30)),
+                    ]
+                )
+            if "FROM engine_state" in sql_s:
+                return FakeCur((100_000_000.0, 0.0))
+            if "FROM positions" in sql_s:
+                return FakeCur([])
+            return FakeCur()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(
+        hc,
+        "Storage",
+        lambda dsn: type(
+            "S",
+            (),
+            {
+                "load_ssi_token": lambda self: {
+                    "refresh_token_expires_at": fixed_now.timestamp() + 7200
+                },
+                "read_position_sync_ts": lambda self, account_no: fixed_now
+                - timedelta(minutes=2),
+            },
+        )(),
+    )
+    _fresh_job_logs(tmp_path, fixed_now)
+
+    rc = hc.main(["--logs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert not any("FROM bars WHERE symbol IN" in s for s in executed_sqls)
+    assert any("FROM heartbeat" in s for s in executed_sqls)
+    assert any("FROM engine_state" in s for s in executed_sqls)
+    assert any("FROM positions" in s for s in executed_sqls)
+    assert "symbols rỗng: bỏ qua kiểm nến stream" in out
+    assert "dữ liệu ngừng chảy" not in out

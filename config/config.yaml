@@ -3,7 +3,9 @@
 # chi 1.461/3.351 bar dung duoc (mat 57%, IJC mat 19%), ky vong toan hoc ~1,6
 # tin hieu tren toan bo lich su -> thuc te 0 lenh. Xem brief dot 29 Task 3.
 # Thay bang HPG: 100% phien dat nguong, GTGD thap nhat 26,93 ty.
-symbols: [HPG, IJC, AAA]
+# Dot 229 & 231 (13/11/2026): dung stream/paper 3 ma cu (HPG, IJC, AAA) de cho
+# nghien cuu chien luoc moi. Khi can bat lai stream ma cu the, dien vao danh sach nay.
+symbols: []
 indices: [VNINDEX, VN30]
 bar_interval_minutes: 5
 ssi_equity_accounts: ["0434221", "0434226"]

@@ -8,6 +8,10 @@ import yaml
 SSI_FC_DATA_URL = "https://fc-data.ssi.com.vn/"
 SSI_FC_STREAM_URL = "https://fc-datahub.ssi.com.vn/"
 
+# 0.28% mỗi chiều = 0.25% phí môi giới SSI + 0.03% phí trả Sở (nguồn chuẩn chung cho
+# PaperBroker và ước lượng đối soát lệnh thật).
+VN_EQUITY_FEE_RATE = 0.0028
+
 
 @dataclass(frozen=True)
 class Config:

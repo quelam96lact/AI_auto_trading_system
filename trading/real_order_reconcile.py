@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ssi_sdk.enums.trading import OrderStatus
 
-from trading.paper_broker import FEE_RATE as FEE_RATE_ESTIMATE
+from trading.config import VN_EQUITY_FEE_RATE as FEE_RATE_ESTIMATE
 
 if TYPE_CHECKING:
     from trading.storage.db import PlacedRealFill
