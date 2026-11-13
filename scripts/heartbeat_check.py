@@ -259,7 +259,7 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         log_file="container-health.log",
         label="container-health",
         normal_exit_codes=frozenset({0, 1, 2}),
-        reason="container_health_check.py:497-499, 575, 585. Mã 0 là container khỏe; mã 1 là cảnh báo đã gửi Telegram; mã 2 là Docker chưa chạy (đã có docker_down_alert lo) hoặc gửi Telegram hỏng; mã 3 là crash/ngoại lệ chưa bắt (đợt 217); mã 4 là Docker daemon đang chạy nhưng không phản hồi trong 30s sau khi thử lại (đợt 218 Task 6, không thuộc normal_exit_codes để chuông báo thất bại).",
+        reason="container_health_check.py:497-499, 575, 585. Mã 0 là container khỏe; mã 1 là cảnh báo đã gửi Telegram; mã 2 là Docker chưa chạy (đã có docker_down_alert lo) hoặc gửi Telegram hỏng; mã 3 là crash/ngoại lệ chưa bắt (đợt 217); mã 4 là Docker daemon đang chạy nhưng không phản hồi trong 30s sau khi thử lại (đợt 218 Task 6) hoặc lỗi đọc container kéo dài (đợt 223), không thuộc normal_exit_codes để chuông báo thất bại.",
     ),
     "engine-cam": JobExitPolicy(
         branch="engine-cam",
@@ -557,6 +557,82 @@ def get_last_run_exit_code(
     return last_start_dt, last_exit_code, None
 
 
+def get_job_runs(
+    log_path: str, label: str
+) -> tuple[list[tuple[datetime, int | None]], str | None]:
+    r"""Đọc tất cả các lần chạy của nhãn `label` từ file log theo thứ tự thời gian.
+
+    Quy tắc an toàn (tránh bẫy):
+      1. Neo đầu dòng r"^EXIT=(\d+)" để không khớp nhầm "ALERT_EXIT=".
+      2. Gắn EXIT= vào đúng lần chạy: mỗi start ghi nhận một run; khi gặp start
+         tiếp theo hoặc SKIP hoặc EOF thì đóng run đó.
+      3. Nếu job đang chạy (đã có start nhưng chưa có EXIT=) -> exit_code = None.
+      4. Dòng SKIP không tạo run mới và kết thúc run đang mở (nếu có).
+
+    Trả về:
+      (runs, None) với runs = [(start_dt, exit_code), ...].
+      ([], reason) nếu file không tồn tại hoặc lỗi đọc.
+    """
+    if not os.path.isfile(log_path):
+        return [], f"file log không tồn tại ({os.path.basename(log_path)})"
+
+    pattern_start = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        + re.escape(label)
+        + r"\s+start(?:\s|$)"
+    )
+    pattern_skip = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+"
+        + re.escape(label)
+        + r"\s+SKIP:(?:\s|$)"
+    )
+    pattern_exit = re.compile(r"^EXIT=(\d+)")
+
+    runs: list[tuple[datetime, int | None]] = []
+    current_start_dt: datetime | None = None
+    current_exit_code: int | None = None
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m_start = pattern_start.match(line)
+                if m_start:
+                    if current_start_dt is not None:
+                        runs.append((current_start_dt, current_exit_code))
+                    try:
+                        current_start_dt = datetime.strptime(
+                            m_start.group(1), "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=TZ)
+                        current_exit_code = None
+                    except ValueError:
+                        current_start_dt = None
+                        current_exit_code = None
+                    continue
+
+                m_skip = pattern_skip.match(line)
+                if m_skip:
+                    if current_start_dt is not None:
+                        runs.append((current_start_dt, current_exit_code))
+                    current_start_dt = None
+                    current_exit_code = None
+                    continue
+
+                if current_start_dt is not None:
+                    m_exit = pattern_exit.match(line)
+                    if m_exit:
+                        try:
+                            current_exit_code = int(m_exit.group(1))
+                        except ValueError:
+                            pass
+    except Exception as e:
+        return runs, f"không đọc được file log ({e})"
+
+    if current_start_dt is not None:
+        runs.append((current_start_dt, current_exit_code))
+
+    return runs, None
+
+
 RESTORE_DRILL_MAX_AGE_SECONDS = 9 * 86400  # 9 ngày (chu kỳ tuần 7 ngày + 2 ngày dư)
 
 
@@ -623,6 +699,7 @@ def evaluate_schedule_health(
     exit_policies: dict[str, JobExitPolicy] = SCHEDULE_EXIT_POLICIES,
     restore_drill_last_ok: tuple[datetime | None, str | None] | None = None,
     restore_drill_max_age_seconds: int = RESTORE_DRILL_MAX_AGE_SECONDS,
+    job_runs: dict[str, list[tuple[datetime, int | None]]] | None = None,
 ) -> tuple[list[str], dict[str, dict[str, Any]], list[str]]:
     """Đánh giá trạng thái chạy và mã thoát của các job theo lịch (pure function).
 
@@ -727,11 +804,28 @@ def evaluate_schedule_health(
                 pass
 
     # 2. Canh mã thoát (exit codes)
-    if job_exit_codes is not None:
+    if job_exit_codes is not None or job_runs is not None:
         for branch, policy in exit_policies.items():
-            last_run_dt, exit_code, _err = job_exit_codes.get(
-                branch, (None, None, None)
-            )
+            branch_runs: list[tuple[datetime, int | None]] = []
+            if job_runs is not None and branch in job_runs:
+                branch_runs = list(job_runs[branch])
+            elif job_exit_codes is not None and branch in job_exit_codes:
+                val = job_exit_codes[branch]
+                if len(val) >= 4 and isinstance(val[3], list):
+                    branch_runs = list(val[3])
+                elif val[0] is not None:
+                    branch_runs = [(val[0], val[1])]
+
+            if branch_runs:
+                last_run_dt, last_exit_code = branch_runs[-1]
+            elif job_exit_codes is not None and branch in job_exit_codes:
+                last_run_dt, last_exit_code = (
+                    job_exit_codes[branch][0],
+                    job_exit_codes[branch][1],
+                )
+            else:
+                last_run_dt, last_exit_code = None, None
+
             prev = previous_state.get(branch)
             prev_exit_status = (
                 prev.get("exit_status") if isinstance(prev, dict) else None
@@ -739,9 +833,20 @@ def evaluate_schedule_health(
             prev_exit_code = (
                 prev.get("exit_code") if isinstance(prev, dict) else None
             )
+            prev_cursor_str = (
+                prev.get("exit_seen_until") if isinstance(prev, dict) else None
+            )
+            prev_cursor_dt: datetime | None = None
+            if prev_cursor_str:
+                try:
+                    prev_cursor_dt = datetime.strptime(
+                        prev_cursor_str, "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=TZ)
+                except ValueError:
+                    prev_cursor_dt = None
 
-            if exit_code is not None:
-                if exit_code not in policy.normal_exit_codes:
+            if last_exit_code is not None:
+                if last_exit_code not in policy.normal_exit_codes:
                     current_exit_status = "failed"
                 else:
                     current_exit_status = "ok"
@@ -752,15 +857,26 @@ def evaluate_schedule_health(
             rec = new_state.get(branch)
             if not isinstance(rec, dict):
                 rec = dict(prev) if isinstance(prev, dict) else {}
-            if exit_code is not None:
-                rec["exit_code"] = exit_code
+            if last_exit_code is not None:
+                rec["exit_code"] = last_exit_code
                 rec["exit_status"] = current_exit_status
                 if "checked_at" not in rec:
                     rec["checked_at"] = now_tz.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Cập nhật con trỏ: mốc start của lần chạy mới nhất đã đánh giá (đã có EXIT=)
+            completed_runs = [r for r in branch_runs if r[1] is not None]
+            if completed_runs:
+                newest_eval_dt = completed_runs[-1][0]
+                rec["exit_seen_until"] = newest_eval_dt.strftime("%Y-%m-%d %H:%M:%S")
+            elif prev_cursor_str:
+                rec["exit_seen_until"] = prev_cursor_str
+            elif last_run_dt is not None:
+                rec["exit_seen_until"] = last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
+
             new_state[branch] = rec
 
             if current_exit_status == "failed":
-                if prev_exit_status != "failed" or prev_exit_code != exit_code:
+                if prev_exit_status != "failed" or prev_exit_code != last_exit_code:
                     dt_str = (
                         last_run_dt.strftime("%Y-%m-%d %H:%M:%S")
                         if last_run_dt
@@ -768,11 +884,11 @@ def evaluate_schedule_health(
                     )
                     alerts.append(
                         f"[CRITICAL] job theo lịch '{branch}' THẤT BẠI: "
-                        f"lần chạy gần nhất lúc {dt_str} kết thúc với mã thoát {exit_code}"
+                        f"lần chạy gần nhất lúc {dt_str} kết thúc với mã thoát {last_exit_code}"
                     )
                 else:
                     info_logs.append(
-                        f"[heartbeat-sched] INFO: {branch} vẫn thất bại (mã thoát {exit_code}) - đã báo trước đó"
+                        f"[heartbeat-sched] INFO: {branch} vẫn thất bại (mã thoát {last_exit_code}) - đã báo trước đó"
                     )
             elif current_exit_status == "ok" and prev_exit_status == "failed":
                 dt_str = (
@@ -782,8 +898,30 @@ def evaluate_schedule_health(
                 )
                 alerts.append(
                     f"[INFO] job theo lịch '{branch}' ĐÃ HỒI PHỤC: "
-                    f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {exit_code})"
+                    f"lần chạy gần nhất lúc {dt_str} thành công (mã thoát {last_exit_code})"
                 )
+            elif prev_cursor_dt is not None:
+                new_failed_runs = [
+                    r
+                    for r in completed_runs
+                    if r[0] > prev_cursor_dt
+                    and r[1] not in policy.normal_exit_codes
+                ]
+                if new_failed_runs:
+                    count = len(new_failed_runs)
+                    unique_codes = sorted({r[1] for r in new_failed_runs})
+                    codes_str = ", ".join(str(c) for c in unique_codes)
+                    first_ts = new_failed_runs[0][0].strftime("%Y-%m-%d %H:%M:%S")
+                    last_ts = new_failed_runs[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                    time_str = (
+                        f"lúc {first_ts}"
+                        if first_ts == last_ts
+                        else f"từ {first_ts} đến {last_ts}"
+                    )
+                    alerts.append(
+                        f"[WARN] job theo lịch '{branch}' THẤT BẠI rồi tự hồi phục: "
+                        f"{count} lần (mã {codes_str}) {time_str}"
+                    )
 
     # 3. Canh tuổi lần diễn tập phục hồi thành công gần nhất (Task 2 - Brief đợt 218)
     if restore_drill_last_ok is not None:
@@ -1393,9 +1531,16 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
+        job_runs: dict[str, list[tuple[datetime, int | None]]] = {}
         for branch, policy in SCHEDULE_EXIT_POLICIES.items():
             log_path = os.path.join(logs_dir, policy.log_file)
-            job_exit_codes[branch] = get_last_run_exit_code(log_path, policy.label)
+            runs, err = get_job_runs(log_path, policy.label)
+            job_runs[branch] = runs
+            if runs:
+                last_dt, last_code = runs[-1]
+                job_exit_codes[branch] = (last_dt, last_code, err)
+            else:
+                job_exit_codes[branch] = (None, None, err)
 
         restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
         restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
@@ -1409,6 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
             job_exit_codes=job_exit_codes,
             exit_policies=SCHEDULE_EXIT_POLICIES,
             restore_drill_last_ok=restore_drill_last_ok,
+            job_runs=job_runs,
         )
 
         if args.dry_run:
@@ -1492,9 +1638,16 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     job_exit_codes: dict[str, tuple[datetime | None, int | None, str | None]] = {}
+    job_runs: dict[str, list[tuple[datetime, int | None]]] = {}
     for branch, policy in SCHEDULE_EXIT_POLICIES.items():
         log_path = os.path.join(logs_dir, policy.log_file)
-        job_exit_codes[branch] = get_last_run_exit_code(log_path, policy.label)
+        runs, err = get_job_runs(log_path, policy.label)
+        job_runs[branch] = runs
+        if runs:
+            last_dt, last_code = runs[-1]
+            job_exit_codes[branch] = (last_dt, last_code, err)
+        else:
+            job_exit_codes[branch] = (None, None, err)
 
     restore_drill_log = os.path.join(logs_dir, "restore-drill.log")
     restore_drill_last_ok = get_last_successful_restore_timestamp(restore_drill_log)
@@ -1509,6 +1662,7 @@ def main(argv: list[str] | None = None) -> int:
         job_exit_codes=job_exit_codes,
         exit_policies=SCHEDULE_EXIT_POLICIES,
         restore_drill_last_ok=restore_drill_last_ok,
+        job_runs=job_runs,
     )
 
     # Chỉ cảnh báo trong giờ giao dịch (trừ khi chạy --dry-run để chẩn đoán/test)

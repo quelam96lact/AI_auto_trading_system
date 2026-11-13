@@ -915,4 +915,467 @@ def test_restore_drill_recovery_alert():
     assert new_state["restore-drill-ok"]["status"] == "ok"
 
 
+# ==============================================================================
+# Tests cho Brief 225: schedule-watch đọc mọi lần chạy mới và phát hiện tự hồi phục
+# ==============================================================================
+
+
+def test_dot225_self_healed_failure_emits_warn_and_advances_cursor(tmp_path: Path):
+    """Test 1 (Brief đợt 225): Con trỏ ở 13:07. Log có EXIT=4 lúc 13:46 rồi EXIT=0 lúc 13:50 (container-health).
+    Kỳ vọng: 1 [WARN] nêu mã 4 và 13:46:39, đồng thời con trỏ tiến tới 13:50.
+    """
+    import scripts.heartbeat_check as hc
+
+    log_path = tmp_path / "container-health.log"
+    log_path.write_text(
+        "2026-11-13 13:46:39 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:50:57 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    prev_state = {
+        "container-health": {
+            "status": "ok",
+            "exit_status": "ok",
+            "exit_code": 0,
+            "exit_seen_until": "2026-11-13 13:07:00",
+        }
+    }
+
+    now = datetime(2026, 11, 13, 14, 7, 0, tzinfo=TZ)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "container-health")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"container-health": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "container-health")
+        job_runs = None
+
+    job_exit_codes = {"container-health": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"container-health": hc.SCHEDULE_EXIT_POLICIES["container-health"]},
+        **kwargs,
+    )
+
+    assert len(alerts) == 1
+    assert "[WARN]" in alerts[0]
+    assert "container-health" in alerts[0]
+    assert "tự hồi phục" in alerts[0]
+    assert "mã 4" in alerts[0]
+    assert "13:46:39" in alerts[0]
+    assert new_state["container-health"]["exit_seen_until"] == "2026-11-13 13:50:57"
+
+
+def test_dot225_second_check_without_new_runs_is_silent(tmp_path: Path):
+    """Test 2 (Brief đợt 225): Như (1), nhưng chạy kiểm lần hai với state mới và không có lần chạy mới.
+    Kỳ vọng: 0 tin.
+    """
+    import scripts.heartbeat_check as hc
+
+    log_path = tmp_path / "container-health.log"
+    log_path.write_text(
+        "2026-11-13 13:46:39 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:50:57 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    state_after_test1 = {
+        "container-health": {
+            "status": "ok",
+            "exit_status": "ok",
+            "exit_code": 0,
+            "exit_seen_until": "2026-11-13 13:50:57",
+        }
+    }
+
+    now = datetime(2026, 11, 13, 15, 7, 0, tzinfo=TZ)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "container-health")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"container-health": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "container-health")
+        job_runs = None
+
+    job_exit_codes = {"container-health": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=state_after_test1,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"container-health": hc.SCHEDULE_EXIT_POLICIES["container-health"]},
+        **kwargs,
+    )
+
+    assert alerts == []
+    assert new_state["container-health"]["exit_seen_until"] == "2026-11-13 13:50:57"
+
+
+def test_dot225_initial_run_without_cursor_does_not_alert_past_failures(tmp_path: Path):
+    """Test 3 (Brief đợt 225): State không có con trỏ, log có 30 lần EXIT=2 (backfill) rồi EXIT=0.
+    Kỳ vọng: 0 tin, và con trỏ được đặt.
+    """
+    import scripts.heartbeat_check as hc
+
+    lines = []
+    base_time = datetime(2026, 11, 9, 0, 0, 0, tzinfo=TZ)
+    for i in range(30):
+        t = base_time + timedelta(hours=i)
+        lines.append(f"{t:%Y-%m-%d %H:%M:%S} backfill start\nEXIT=2\n")
+    final_time = base_time + timedelta(hours=30)
+    lines.append(f"{final_time:%Y-%m-%d %H:%M:%S} backfill start\nEXIT=0\n")
+
+    log_path = tmp_path / "backfill.log"
+    log_path.write_text("".join(lines), encoding="utf-8")
+
+    prev_state = {}  # chưa từng có con trỏ
+
+    now = final_time + timedelta(minutes=10)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "backfill")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"backfill": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "backfill")
+        job_runs = None
+
+    job_exit_codes = {"backfill": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"backfill": hc.SCHEDULE_EXIT_POLICIES["backfill"]},
+        **kwargs,
+    )
+
+    assert alerts == []
+    assert new_state["backfill"]["exit_status"] == "ok"
+    assert new_state["backfill"].get("exit_seen_until") == final_time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_dot225_repeated_failure_emits_single_critical_no_warn(tmp_path: Path):
+    """Test 4 (Brief đợt 225): Lần chạy mới có EXIT=4, EXIT=4, rồi lần cuối EXIT=4.
+    Kỳ vọng: đúng 1 CRITICAL như logic cũ, không kèm [WARN].
+    """
+    import scripts.heartbeat_check as hc
+
+    log_path = tmp_path / "container-health.log"
+    log_path.write_text(
+        "2026-11-13 13:20:00 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:30:00 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:40:00 container-health start\n"
+        "EXIT=4\n",
+        encoding="utf-8",
+    )
+
+    prev_state = {
+        "container-health": {
+            "status": "ok",
+            "exit_status": "ok",
+            "exit_code": 0,
+            "exit_seen_until": "2026-11-13 13:07:00",
+        }
+    }
+
+    now = datetime(2026, 11, 13, 14, 7, 0, tzinfo=TZ)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "container-health")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"container-health": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "container-health")
+        job_runs = None
+
+    job_exit_codes = {"container-health": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"container-health": hc.SCHEDULE_EXIT_POLICIES["container-health"]},
+        **kwargs,
+    )
+
+    assert len(alerts) == 1
+    assert "[CRITICAL]" in alerts[0]
+    assert "[WARN]" not in alerts[0]
+    assert "mã thoát 4" in alerts[0]
+    assert new_state["container-health"]["exit_status"] == "failed"
+    assert new_state["container-health"].get("exit_seen_until") == "2026-11-13 13:40:00"
+
+
+def test_dot225_two_branches_self_healed_emits_two_warns_single_telegram(tmp_path: Path, monkeypatch):
+    """Test 5 (Brief đợt 225): Hai nhánh cùng có thất bại tự hồi phục.
+    Kỳ vọng: 2 dòng [WARN], và main(--schedule-watch-only) gửi đúng 1 tin Telegram.
+    """
+    import scripts.heartbeat_check as hc
+
+    now = datetime(2026, 11, 13, 14, 7, 0, tzinfo=TZ)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return now
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    _create_fresh_job_logs(tmp_path, now)
+
+    (tmp_path / "container-health.log").write_text(
+        "2026-11-13 13:46:39 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:50:57 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "engine-cam.log").write_text(
+        "2026-11-13 13:30:00 engine-cam start\n"
+        "EXIT=2\n"
+        "2026-11-13 13:45:00 engine-cam start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+    hc.save_schedule_state(
+        str(state_file),
+        {
+            "container-health": {
+                "status": "ok",
+                "exit_status": "ok",
+                "exit_seen_until": "2026-11-13 13:07:00",
+            },
+            "engine-cam": {
+                "status": "ok",
+                "exit_status": "ok",
+                "exit_seen_until": "2026-11-13 13:07:00",
+            },
+        },
+    )
+
+    sent_alerts = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_alerts.append(msg) or True)
+
+    rc = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    assert rc == 1
+    assert len(sent_alerts) == 1, "Kỳ vọng đúng 1 tin Telegram được gửi"
+    assert "container-health" in sent_alerts[0]
+    assert "engine-cam" in sent_alerts[0]
+    assert sent_alerts[0].count("[WARN]") == 2
+
+
+def test_dot225_failed_telegram_does_not_save_state_and_alerts_again(tmp_path: Path, monkeypatch):
+    """Test 6 (Brief đợt 225): Gửi Telegram hỏng trong ca (1).
+    Kỳ vọng: state không được lưu, và lần kiểm sau vẫn báo.
+    """
+    import scripts.heartbeat_check as hc
+
+    now = datetime(2026, 11, 13, 14, 7, 0, tzinfo=TZ)
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return now
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    _create_fresh_job_logs(tmp_path, now)
+
+    (tmp_path / "container-health.log").write_text(
+        "2026-11-13 13:46:39 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:50:57 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    state_file = tmp_path / hc.SCHEDULE_STATE_NAME
+    hc.save_schedule_state(
+        str(state_file),
+        {
+            "container-health": {
+                "status": "ok",
+                "exit_status": "ok",
+                "exit_seen_until": "2026-11-13 13:07:00",
+            }
+        },
+    )
+
+    sent_attempts = []
+    # Gửi Telegram hỏng (return False)
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_attempts.append(msg) or False)
+
+    rc1 = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+    assert len(sent_attempts) == 1
+
+    # Kiểm tra state file không được cập nhật (con trỏ vẫn ở 13:07:00)
+    st = hc.load_schedule_state(str(state_file))
+    assert st["container-health"]["exit_seen_until"] == "2026-11-13 13:07:00"
+
+    # Lần 2: sửa lại Telegram gửi thành công -> vẫn báo lại
+    sent_attempts.clear()
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: sent_attempts.append(msg) or True)
+
+    rc2 = hc.main(["--schedule-watch-only", "--logs-dir", str(tmp_path)])
+    assert rc2 == 1
+    assert len(sent_attempts) >= 1
+    assert any("container-health" in s for s in sent_attempts)
+
+    # Bây giờ state đã được lưu với con trỏ mới
+    st2 = hc.load_schedule_state(str(state_file))
+    assert st2["container-health"]["exit_seen_until"] == "2026-11-13 13:50:57"
+
+
+def test_dot225_normal_exit_code_in_new_runs_is_silent(tmp_path: Path):
+    """Test 7 (Brief đợt 225): Lần chạy mới thất bại bằng mã thuộc normal_exit_codes (container-health EXIT=1).
+    Kỳ vọng: 0 tin.
+    """
+    import scripts.heartbeat_check as hc
+
+    log_path = tmp_path / "container-health.log"
+    log_path.write_text(
+        "2026-11-13 13:30:00 container-health start\n"
+        "EXIT=1\n"
+        "2026-11-13 13:40:00 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    prev_state = {
+        "container-health": {
+            "status": "ok",
+            "exit_status": "ok",
+            "exit_seen_until": "2026-11-13 13:07:00",
+        }
+    }
+
+    now = datetime(2026, 11, 13, 14, 7, 0, tzinfo=TZ)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "container-health")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"container-health": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "container-health")
+        job_runs = None
+
+    job_exit_codes = {"container-health": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"container-health": hc.SCHEDULE_EXIT_POLICIES["container-health"]},
+        **kwargs,
+    )
+
+    assert alerts == []
+    assert new_state["container-health"].get("exit_seen_until") == "2026-11-13 13:40:00"
+
+
+def test_dot225_interleaved_skip_does_not_desync_or_match_alert_exit(tmp_path: Path):
+    """Test 8 (Brief đợt 225): Có dòng SKIP xen giữa các lần chạy mới.
+    Kỳ vọng: không làm lệch việc ghép EXIT= với start, và không có ALERT_EXIT= nào bị đọc thành EXIT=.
+    """
+    import scripts.heartbeat_check as hc
+
+    log_path = tmp_path / "container-health.log"
+    log_path.write_text(
+        "2026-11-13 13:10:00 container-health start\n"
+        "EXIT=4\n"
+        "2026-11-13 13:20:00 container-health SKIP: docker chua chay\n"
+        "ALERT_EXIT=1\n"
+        "2026-11-13 13:30:00 container-health start\n"
+        "EXIT=0\n",
+        encoding="utf-8",
+    )
+
+    prev_state = {
+        "container-health": {
+            "status": "ok",
+            "exit_status": "ok",
+            "exit_seen_until": "2026-11-13 13:00:00",
+        }
+    }
+
+    now = datetime(2026, 11, 13, 14, 0, 0, tzinfo=TZ)
+    get_runs_fn = getattr(hc, "get_job_runs", None)
+    if get_runs_fn is not None:
+        runs, _ = get_runs_fn(str(log_path), "container-health")
+        dt_last, code_last = runs[-1] if runs else (None, None)
+        job_runs = {"container-health": runs}
+    else:
+        dt_last, code_last, _ = hc.get_last_run_exit_code(str(log_path), "container-health")
+        job_runs = None
+
+    job_exit_codes = {"container-health": (dt_last, code_last, None)}
+    kwargs = {}
+    if job_runs is not None:
+        kwargs["job_runs"] = job_runs
+
+    alerts, new_state, _ = hc.evaluate_schedule_health(
+        job_last_seen={},
+        now=now,
+        previous_state=prev_state,
+        watch_jobs={},
+        job_exit_codes=job_exit_codes,
+        exit_policies={"container-health": hc.SCHEDULE_EXIT_POLICIES["container-health"]},
+        **kwargs,
+    )
+
+    assert len(alerts) == 1
+    assert "[WARN]" in alerts[0]
+    assert "13:10:00" in alerts[0]
+    assert "mã 4" in alerts[0]
+    assert "mã 1" not in alerts[0]
+    assert new_state["container-health"].get("exit_seen_until") == "2026-11-13 13:30:00"
+
+
+
 
