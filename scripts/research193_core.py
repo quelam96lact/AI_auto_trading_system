@@ -13,6 +13,7 @@ Defines:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -137,6 +138,7 @@ def simulate_rotation(
     n_stocks: int,
     initial_capital: float = 100_000_000.0,
     min_turnover: float = MIN_TURNOVER_193,
+    select_fn: Callable[[date], list[str]] | None = None,
 ) -> dict[str, Any]:
     """Simulate monthly rotation portfolio (§3.4).
 
@@ -207,6 +209,8 @@ def simulate_rotation(
             # Determine selected symbols
             if is_final_rebalance:
                 selected_syms: list[str] = []
+            elif select_fn is not None:
+                selected_syms = select_fn(current_sess)
             else:
                 selected_syms = score_and_rank_symbols(
                     r=current_sess,
