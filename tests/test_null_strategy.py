@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import nats.errors
+import pytest
 
 from trading.calendar_vn import TZ
 from trading.config import Config
@@ -126,11 +127,21 @@ def test_e_null_strategy_protocol_and_warmup_bars():
     assert strat.on_bar(bar, ctx) is None
 
 
-async def test_a_disabled_flag_runs_cleanly_places_no_orders_and_acks(monkeypatch):
-    """(a) ENGINE_STRATEGY_DISABLED=1: warm-up không lỗi, không đặt lệnh, vẫn ack message."""
-    monkeypatch.setenv("ENGINE_STRATEGY_DISABLED", "1")
+@pytest.mark.parametrize("flag_val", ["1", "TRUE", " yes ", "on"])
+async def test_a_disabled_flag_runs_cleanly_places_no_orders_and_acks(monkeypatch, flag_val):
+    """(a) ENGINE_STRATEGY_DISABLED bật ('1','TRUE',' yes ','on'): NullStrategy, không đặt lệnh, ack message."""
+    monkeypatch.setenv("ENGINE_STRATEGY_DISABLED", flag_val)
     alerts: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(engine_main, "alert", lambda lvl, msg, **kw: alerts.append((lvl, msg, kw)))
+
+    seen_strategies: list[object] = []
+    real_warmup = engine_main._warmup_strategy_from_history
+
+    def _spy_warmup(cfg, storage, strategy):
+        seen_strategies.append(strategy)
+        return real_warmup(cfg, storage, strategy)
+
+    monkeypatch.setattr(engine_main, "_warmup_strategy_from_history", _spy_warmup)
 
     base = datetime(2026, 11, 13, 9, 0, tzinfo=TZ)
     hist = [
@@ -151,10 +162,15 @@ async def test_a_disabled_flag_runs_cleanly_places_no_orders_and_acks(monkeypatc
         now=datetime(2026, 11, 13, 14, 0, tzinfo=TZ),
     )
 
+    assert len(seen_strategies) == 1
+    assert isinstance(seen_strategies[0], NullStrategy)
     assert msg.acked is True, f"msg not acked, termed={msg.termed}, alerts={alerts}"
     assert msg.termed is False
     storage.write_order.assert_not_called()
-    assert any("ENGINE_STRATEGY_DISABLED" in m and kw.get("strategy") == "NullStrategy" for _, m, kw in alerts)
+    assert any(
+        lvl == "INFO" and "ENGINE_STRATEGY_DISABLED" in m and kw.get("strategy") == "NullStrategy"
+        for lvl, m, kw in alerts
+    )
 
 
 async def test_b_disabled_flag_still_beats_heartbeat(monkeypatch):
@@ -177,36 +193,48 @@ async def test_b_disabled_flag_still_beats_heartbeat(monkeypatch):
     storage.beat.assert_called_with("engine")
 
 
-async def test_c_unset_or_zero_flag_uses_default_strategy(monkeypatch):
-    """(c) Không đặt hoặc đặt ENGINE_STRATEGY_DISABLED='0' -> gọi _default_strategy()."""
+@pytest.mark.parametrize("flag_val", [None, "", "0", "false", "no", "off"])
+async def test_c_unset_or_zero_flag_uses_default_strategy(monkeypatch, flag_val):
+    """(c) Không đặt, rỗng, hoặc '0'/'false'/'no'/'off' -> gọi _default_strategy(), KHÔNG phải NullStrategy."""
     real_default = engine_main._default_strategy
-    for val in (None, "0"):
-        if val is None:
-            monkeypatch.delenv("ENGINE_STRATEGY_DISABLED", raising=False)
-        else:
-            monkeypatch.setenv("ENGINE_STRATEGY_DISABLED", val)
-        monkeypatch.setattr(engine_main, "alert", lambda *a, **kw: None)
+    if flag_val is None:
+        monkeypatch.delenv("ENGINE_STRATEGY_DISABLED", raising=False)
+    else:
+        monkeypatch.setenv("ENGINE_STRATEGY_DISABLED", flag_val)
+    monkeypatch.setattr(engine_main, "alert", lambda *a, **kw: None)
 
-        called = {"default": 0}
+    called = {"default": 0}
+    seen_strategies: list[object] = []
 
-        def _spy_default(counter=called):
-            counter["default"] += 1
-            return real_default()
+    def _spy_default():
+        called["default"] += 1
+        strat = real_default()
+        seen_strategies.append(strat)
+        return strat
 
-        monkeypatch.setattr(engine_main, "_default_strategy", _spy_default)
-        storage = _make_fake_storage()
-        monkeypatch.setattr(engine_main, "Storage", lambda dsn, st=storage: st)
+    real_warmup = engine_main._warmup_strategy_from_history
 
-        stop_event = asyncio.Event()
-        stop_event.set()
-        _install_fake_nats(monkeypatch, _FakeSub([], stop_event=stop_event))
+    def _spy_warmup(cfg, storage, strategy):
+        seen_strategies.append(strategy)
+        return real_warmup(cfg, storage, strategy)
 
-        await engine_main.run(
-            _make_cfg([]),
-            stop_event=stop_event,
-            now=datetime(2026, 11, 13, 14, 0, tzinfo=TZ),
-        )
-        assert called["default"] == 1
+    monkeypatch.setattr(engine_main, "_default_strategy", _spy_default)
+    monkeypatch.setattr(engine_main, "_warmup_strategy_from_history", _spy_warmup)
+    storage = _make_fake_storage()
+    monkeypatch.setattr(engine_main, "Storage", lambda dsn, st=storage: st)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+    _install_fake_nats(monkeypatch, _FakeSub([], stop_event=stop_event))
+
+    await engine_main.run(
+        _make_cfg([]),
+        stop_event=stop_event,
+        now=datetime(2026, 11, 13, 14, 0, tzinfo=TZ),
+    )
+    assert called["default"] == 1
+    assert len(seen_strategies) >= 1
+    assert all(not isinstance(s, NullStrategy) for s in seen_strategies)
 
 
 async def test_d_explicit_strategy_overrides_disabled_flag(monkeypatch):
@@ -237,3 +265,48 @@ async def test_d_explicit_strategy_overrides_disabled_flag(monkeypatch):
 
     assert msg.acked is True, f"msg not acked, termed={msg.termed}, alerts={alerts}"
     custom_strat.on_bar.assert_called_once()
+
+
+async def test_f_invalid_disabled_flag_fails_safe_to_null_strategy_and_alerts_critical(monkeypatch):
+    """(f) Giá trị lạ như 'ture' -> fail-safe dùng NullStrategy VÀ alert CRITICAL nêu giá trị lạ."""
+    monkeypatch.setenv("ENGINE_STRATEGY_DISABLED", "ture")
+    alerts: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(engine_main, "alert", lambda lvl, msg, **kw: alerts.append((lvl, msg, kw)))
+
+    seen_strategies: list[object] = []
+    real_warmup = engine_main._warmup_strategy_from_history
+
+    def _spy_warmup(cfg, storage, strategy):
+        seen_strategies.append(strategy)
+        return real_warmup(cfg, storage, strategy)
+
+    monkeypatch.setattr(engine_main, "_warmup_strategy_from_history", _spy_warmup)
+
+    base = datetime(2026, 11, 13, 9, 0, tzinfo=TZ)
+    hist = [
+        Bar("HPG", base + timedelta(minutes=5 * i), 25_000, 25_100, 24_900, 25_000, 1_000)
+        for i in range(5)
+    ]
+    storage = _make_fake_storage(history_bars=hist)
+    monkeypatch.setattr(engine_main, "Storage", lambda dsn: storage)
+
+    live_bar = Bar("HPG", base + timedelta(minutes=30), 25_000, 26_000, 24_900, 25_900, 50_000)
+    msg = _FakeMsg(live_bar)
+    _install_fake_nats(monkeypatch, _FakeSub([msg]))
+
+    await engine_main.run(
+        _make_cfg(["HPG"]),
+        max_messages=1,
+        stop_event=asyncio.Event(),
+        now=datetime(2026, 11, 13, 14, 0, tzinfo=TZ),
+    )
+
+    assert len(seen_strategies) == 1
+    assert isinstance(seen_strategies[0], NullStrategy)
+    assert msg.acked is True, f"msg not acked, termed={msg.termed}, alerts={alerts}"
+    assert msg.termed is False
+    storage.write_order.assert_not_called()
+    assert any(
+        lvl == "CRITICAL" and "ture" in m and kw.get("strategy") == "NullStrategy"
+        for lvl, m, kw in alerts
+    )

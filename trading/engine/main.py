@@ -653,15 +653,25 @@ async def run(
     broker = _restore_or_init_paper_broker(cfg, storage, positions)
 
     if strategy is None:
-        if os.environ.get("ENGINE_STRATEGY_DISABLED") == "1":
+        raw_disabled = os.environ.get("ENGINE_STRATEGY_DISABLED")
+        norm_disabled = raw_disabled.strip().lower() if raw_disabled is not None else ""
+        if norm_disabled in {"1", "true", "yes", "on"}:
             strategy = NullStrategy()
             alert(
                 "INFO",
                 "engine strategy disabled via ENGINE_STRATEGY_DISABLED",
                 strategy="NullStrategy",
             )
-        else:
+        elif norm_disabled in {"", "0", "false", "no", "off"}:
             strategy = _default_strategy()
+        else:
+            strategy = NullStrategy()
+            alert(
+                "CRITICAL",
+                f"ENGINE_STRATEGY_DISABLED co gia tri la ({raw_disabled!r}) — fail-safe tat chien luoc (NullStrategy)",
+                strategy="NullStrategy",
+                value=raw_disabled,
+            )
 
     current_now = now if now is not None else datetime.now(TZ)
     await _wait_for_recent_bars(

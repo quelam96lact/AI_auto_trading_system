@@ -180,12 +180,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     with open(cfg_path, "r", encoding="utf-8") as f:
-        cfg_data = yaml.safe_load(f) or {}
+        cfg_data = yaml.safe_load(f)
 
-    if not args.symbols and not cfg_data.get("symbols"):
-        print("symbols rỗng: bỏ qua")
-        return 0
-    symbols = args.symbols or cfg_data.get("symbols", [])
+    if args.symbols:
+        symbols = args.symbols
+    else:
+        if (
+            not isinstance(cfg_data, dict)
+            or "symbols" not in cfg_data
+            or not isinstance(cfg_data["symbols"], list)
+        ):
+            print(
+                "LỖI: Khoá 'symbols' trong config bị thiếu hoặc không phải danh sách (list)",
+                file=sys.stderr,
+            )
+            return 2
+        symbols = cfg_data["symbols"]
+        if not symbols:
+            print("symbols rỗng: bỏ qua")
+            return 0
 
     dsn = resolve_dsn(args.dsn)
     storage = Storage(dsn)

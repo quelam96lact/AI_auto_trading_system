@@ -680,3 +680,47 @@ def test_26_empty_symbols_config_skips_without_telegram(monkeypatch, capsys, tmp
     assert sent == []
 
 
+def test_27_load_stream_symbols_missing_key_raises_value_error(tmp_path):
+    """Đợt 232: file config thiếu khoá symbols -> raise ValueError."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("indices: [VNINDEX]\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_stream_symbols(str(cfg_file))
+
+
+@pytest.mark.parametrize("yaml_content", ["symbols:\n", "symbols: HPG\n"])
+def test_28_load_stream_symbols_non_list_raises_value_error(tmp_path, yaml_content):
+    """Đợt 232: khoá symbols là null hoặc chuỗi (không phải list) -> raise ValueError."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(yaml_content, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_stream_symbols(str(cfg_file))
+
+
+def test_29_load_stream_symbols_missing_file_raises_file_not_found(tmp_path):
+    """Đợt 232: không tìm thấy file config -> raise FileNotFoundError."""
+    missing = tmp_path / "nonexistent_config.yaml"
+
+    with pytest.raises(FileNotFoundError):
+        load_stream_symbols(str(missing))
+
+
+def test_30_main_exits_nonzero_when_config_missing_symbols(monkeypatch, capsys, tmp_path):
+    """Đợt 232: mức caller main() khi config thiếu khoá symbols -> thoát != 0 và in LỖI ra stderr."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("indices: [VNINDEX]\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.stream_health_check.load_stream_symbols",
+        lambda config_path="config/config.yaml": load_stream_symbols(str(cfg_file)),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--session", "sang", "--date", "2026-09-14", "--logs-dir", str(tmp_path)])
+
+    assert exc.value.code != 0
+    assert exc.value.code == 2
+    assert "LỖI" in capsys.readouterr().err
+
+

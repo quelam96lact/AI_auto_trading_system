@@ -15,6 +15,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from check_silent_engine import analyze_symbol_bars, check_engine_symbols
 
@@ -225,9 +227,14 @@ def test_check_silent_engine_outbox_queue_and_flush(tmp_path: Path):
     assert not outbox_file.exists() or outbox_file.read_text(encoding="utf-8").strip() == ""
 
 
-def test_check_silent_engine_empty_symbols_returns_zero_skips(tmp_path, capsys):
+def test_check_silent_engine_empty_symbols_returns_zero_skips(tmp_path, capsys, monkeypatch):
     """Đợt 231: config.yaml có symbols: [] và không truyền --symbols -> trả 0, in bỏ qua."""
     import check_silent_engine
+
+    def _fail_storage(*args, **kwargs):
+        raise AssertionError("Không được tạo Storage khi symbols rỗng")
+
+    monkeypatch.setattr(check_silent_engine, "Storage", _fail_storage)
 
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text("symbols: []\n", encoding="utf-8")
@@ -236,3 +243,31 @@ def test_check_silent_engine_empty_symbols_returns_zero_skips(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "symbols rỗng: bỏ qua" in out
+
+
+@pytest.mark.parametrize(
+    "yaml_content",
+    [
+        "indices: [VNINDEX]\n",
+        "symbols:\n",
+        "symbols: HPG\n",
+    ],
+)
+def test_check_silent_engine_invalid_or_missing_symbols_returns_two(
+    tmp_path, capsys, monkeypatch, yaml_content
+):
+    """Đợt 232: thiếu khoá symbols, symbols null, hoặc symbols chuỗi -> in LỖI ra stderr, trả 2."""
+    import check_silent_engine
+
+    def _fail_storage(*args, **kwargs):
+        raise AssertionError("Không được tạo Storage khi config symbols lỗi")
+
+    monkeypatch.setattr(check_silent_engine, "Storage", _fail_storage)
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(yaml_content, encoding="utf-8")
+
+    rc = check_silent_engine.main(["--config", str(cfg_file), "--logs-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "LỖI:" in captured.err

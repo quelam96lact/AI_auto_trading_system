@@ -269,12 +269,18 @@ def load_stream_symbols(config_path: str = "config/config.yaml") -> tuple[str, .
         if repo_cfg.is_file():
             p = repo_cfg
         else:
-            return ("HPG", "AAA", "IJC")
+            raise FileNotFoundError(
+                f"Không tìm thấy file config tại {p} (hoặc {repo_cfg})"
+            )
     with open(p, encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    raw = data.get("symbols")
-    if not isinstance(raw, list):
-        return ()
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict) or "symbols" not in data:
+        raise ValueError(f"File config {p} thiếu khoá 'symbols'")
+    raw = data["symbols"]
+    if raw is None or not isinstance(raw, list):
+        raise ValueError(
+            f"Khoá 'symbols' trong {p} phải là list, nhận được {type(raw).__name__}"
+        )
     return tuple(str(s).strip() for s in raw if str(s).strip())
 
 
@@ -488,7 +494,11 @@ def main(argv: list[str] | None = None) -> None:
         )
         sys.exit(0)
 
-    stream_symbols = load_stream_symbols()
+    try:
+        stream_symbols = load_stream_symbols()
+    except (FileNotFoundError, ValueError) as e:
+        sys.stderr.write(f"LỖI: {e}\n")
+        sys.exit(2)
     if not stream_symbols:
         print("symbols rỗng: bỏ qua")
         sys.exit(0)

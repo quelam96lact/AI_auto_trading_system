@@ -266,7 +266,7 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         log_file="engine-cam.log",
         label="engine-cam",
         normal_exit_codes=frozenset({0, 1}),
-        reason="check_silent_engine.py:141, 167, 177, 240. Mã 0 là OK; mã 1 là phát hiện engine câm đã tự gửi Telegram qua alert_and_fail; mã 3 là crash/ngoại lệ chưa bắt (đợt 217). Mã 2 là lỗi config/symbols hoặc gửi Telegram hỏng.",
+        reason="check_silent_engine.py:149, 180, 197, 201, 266, 274. Mã 0 là OK hoặc `symbols: []` (bỏ qua có chủ đích, đợt 231); mã 1 là phát hiện engine câm đã tự gửi Telegram qua outbox; mã 3 là crash/ngoại lệ chưa bắt (đợt 217). Mã 2 là config thiếu/hỏng khoá symbols hoặc gửi Telegram hỏng.",
     ),
     "engine-consumer": JobExitPolicy(
         branch="engine-consumer",
