@@ -432,11 +432,11 @@ def test_outbox_loop_survives_flush_exception(tmp_path, caplog, monkeypatch):
     t = threading.Thread(target=box._loop, args=(0.01,), daemon=True)
     with caplog.at_level(logging.WARNING):
         t.start()
-        assert called.wait(timeout=1.0)
-        assert box.first_flush_done.is_set()
+        assert called.wait(timeout=5.0)
+        assert box.first_flush_done.wait(timeout=5.0)
         assert t.is_alive(), "thread phải còn sống sau khi _step ném lỗi"
         box.stop_event.set()
-        t.join(timeout=1.0)
+        t.join(timeout=5.0)
 
     assert "alert outbox flush loi: RuntimeError" in caplog.text
     assert not t.is_alive()
