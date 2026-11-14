@@ -352,6 +352,13 @@ SCHEDULE_EXIT_POLICIES: dict[str, JobExitPolicy] = {
         normal_exit_codes=frozenset({0}),
         reason="startup_catchup.py. Mã 0 là nạp bù xong và kiểm tra đủ; mã 1 là có bước lỗi, ngày thiếu, hoặc khoảng hỏng vượt --max-days.",
     ),
+    "daily-engine": JobExitPolicy(
+        branch="daily-engine",
+        log_file="daily-engine.log",
+        label="daily-engine",
+        normal_exit_codes=frozenset({0}),
+        reason="trading.daily_engine.runner: mã 0 là ổn (khớp/cập nhật xong hoặc không có phiên mới); mã 1 là dữ liệu chưa đủ (>=90% mã active); mã 2 là cấu hình hoặc strategy sổ không khớp; mã 3 là ngoại lệ chưa bắt.",
+    ),
     "universe-refresh": JobExitPolicy(
         branch="universe-refresh",
         log_file="universe-refresh.log",

@@ -286,8 +286,8 @@ def test_sched_branches_covered_in_exit_policies():
     sched_branches = extract_sched_branches(SCHED_SH)
     assert len(sched_branches) == 22
 
-    # universe-refresh chay qua scheduler daemon trong container, khong qua sched.sh
-    policy_branches = set(SCHEDULE_EXIT_POLICIES.keys()) - {"universe-refresh"}
+    # universe-refresh va daily-engine chay qua scheduler daemon trong container, khong qua sched.sh
+    policy_branches = set(SCHEDULE_EXIT_POLICIES.keys()) - {"universe-refresh", "daily-engine"}
     missing = sched_branches - policy_branches
     assert not missing, f"Các nhánh sau trong sched.sh thiếu chính sách mã thoát trong SCHEDULE_EXIT_POLICIES: {missing}"
 
@@ -301,6 +301,17 @@ def test_sched_branches_covered_in_exit_policies():
         assert len(policy.label) > 0
         assert 0 in policy.normal_exit_codes, f"Nhánh {branch} phải coi mã 0 là mã bình thường"
         assert len(policy.reason) > 0, f"Nhánh {branch} phải có giải thích căn cứ dòng code và lý do"
+
+
+def test_daily_engine_in_exit_policies():
+    """Brief 233: daily-engine có trong SCHEDULE_EXIT_POLICIES với normal_exit_codes == {0}."""
+    policy = SCHEDULE_EXIT_POLICIES.get("daily-engine")
+    assert policy is not None
+    assert policy.branch == "daily-engine"
+    assert policy.log_file == "daily-engine.log"
+    assert policy.label == "daily-engine"
+    assert policy.normal_exit_codes == frozenset({0})
+    assert "0" in policy.reason and "1" in policy.reason and "2" in policy.reason and "3" in policy.reason
 
 
 def test_get_last_run_exit_code_reads_exit_code(tmp_path: Path):

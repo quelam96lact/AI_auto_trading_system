@@ -31,10 +31,12 @@ logger = logging.getLogger("trading.scheduler")
 # Advisory lock IDs for pg_try_advisory_lock
 ADVISORY_LOCK_CATCHUP = 2026110101
 ADVISORY_LOCK_DAILY_CHECK = 2026110102
+ADVISORY_LOCK_DAILY_ENGINE = 2026111401
 
 # Job timeouts
 TIMEOUT_CATCHUP_SECONDS = 3 * 3600  # 3 hours (10,800s)
 TIMEOUT_DAILY_CHECK_SECONDS = 30 * 60  # 30 minutes (1,800s)
+TIMEOUT_DAILY_ENGINE_SECONDS = 15 * 60  # 15 minutes (900s)
 TIMEOUT_UNIVERSE_REFRESH_SECONDS = 3600  # 1 hour (3,600s)
 
 # Retry settings for catchup
@@ -460,6 +462,27 @@ def run_event(
                 rc=rc_daily,
                 attempts=1,
                 log_file="daily-data-check.log",
+                alert_fn=alert_fn,
+            )
+
+        cmd_daily_engine = [python_exe, "-m", "trading.daily_engine.runner"]
+        rc_engine = fn_job(
+            label="daily-engine",
+            log_file="daily-engine.log",
+            command=cmd_daily_engine,
+            timeout_seconds=TIMEOUT_DAILY_ENGINE_SECONDS,
+            lock_id=ADVISORY_LOCK_DAILY_ENGINE,
+            logs_dir=logs_dir,
+            cwd=cwd,
+            dsn=dsn,
+            lock_manager=lock_manager,
+        )
+        if rc_engine is not None and rc_engine != 0:
+            notify_job_failure(
+                label="daily-engine",
+                rc=rc_engine,
+                attempts=1,
+                log_file="daily-engine.log",
                 alert_fn=alert_fn,
             )
 

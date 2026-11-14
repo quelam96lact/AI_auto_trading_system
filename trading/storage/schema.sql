@@ -366,3 +366,46 @@ CREATE TABLE IF NOT EXISTS foreign_flow_daily (
   ingested_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (symbol, trading_date)
 );
+
+-- Brief 233 (2026-11-14): So paper engine nen ngay (tach biet hoan toan voi so cu)
+CREATE TABLE IF NOT EXISTS paper_daily_state (
+  id smallint PRIMARY KEY CHECK (id = 1),
+  strategy text NOT NULL,
+  capital double precision NOT NULL,
+  cash double precision NOT NULL,
+  realized_pnl double precision NOT NULL DEFAULT 0,
+  last_processed_date date NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS paper_daily_lots (
+  id bigserial PRIMARY KEY,
+  symbol text NOT NULL,
+  qty integer NOT NULL CHECK (qty > 0),
+  cost_per_share double precision NOT NULL,
+  buy_date date NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS paper_daily_orders (
+  id bigserial PRIMARY KEY,
+  strategy text NOT NULL,
+  created_date date NOT NULL,
+  exec_date date,
+  symbol text NOT NULL,
+  side text NOT NULL CHECK (side IN ('BUY','SELL')),
+  qty integer NOT NULL,
+  filled_qty integer NOT NULL DEFAULT 0,
+  status text NOT NULL CHECK (status IN ('pending','filled','expired','rejected')),
+  price double precision,
+  fee double precision,
+  tax double precision,
+  reason text
+);
+
+CREATE TABLE IF NOT EXISTS paper_daily_nav (
+  date date PRIMARY KEY,
+  cash double precision NOT NULL,
+  market_value double precision NOT NULL,
+  nav double precision NOT NULL,
+  n_positions integer NOT NULL
+);

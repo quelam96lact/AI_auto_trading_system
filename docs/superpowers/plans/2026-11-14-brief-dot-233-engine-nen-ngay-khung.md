@@ -82,6 +82,13 @@ Thứ tự trong `process_day`:
    - `reason="partial"` nếu `q < qty`. `cash` không bao giờ âm.
 6. **Định giá** ở close `d`: với mỗi mã đang giữ, giá = `bars_on_d[mã].close` nếu có và > 0, nếu không thì `last_close[mã]` (close > 0 gần nhất ≤ `d`). Không có giá nào → `ValueError` (không đoán). `market_value = Σ qty × giá`; `nav = cash + market_value`.
 
+**Làm rõ 14/11 (Lead, sau khi Researcher dựng kịch bản độc lập; không đổi luật):**
+- Thứ tự kiểm mỗi lệnh: `bad_qty` → `no_bar` → (bán) `not_held` → `unsettled`; (mua) `cash`.
+- Bán bị cắt bởi `settled` (`q < qty`) cũng là `filled` + `"partial"`.
+- Hai lệnh bán cùng mã cùng ngày: lệnh sau thấy `settled` đã giảm.
+- `process_day` không sửa tại chỗ list/dict đầu vào.
+- Lệnh không khớp: `price`/`fee`/`tax` = `None`. Lệnh mua khớp: `tax = 0.0`. Khớp đủ: `reason = None`.
+
 ## 4. Chiến lược (`strategy.py`)
 
 ```

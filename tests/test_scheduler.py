@@ -375,7 +375,7 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
     assert not (morning_logs_dir / "universe-refresh.log").exists()
     assert executed_labels == ["catchup"]
 
-    # Evening event goi ca 3 job theo thu tu: catchup -> daily-data-check -> universe-refresh
+    # Evening event goi ca 4 job theo thu tu: catchup -> daily-data-check -> daily-engine -> universe-refresh
     executed_labels.clear()
     evening_logs_dir = tmp_path / "evening_logs"
     run_event(
@@ -386,8 +386,9 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
     )
     assert (evening_logs_dir / "catchup.log").exists()
     assert (evening_logs_dir / "daily-data-check.log").exists()
+    assert (evening_logs_dir / "daily-engine.log").exists()
     assert (evening_logs_dir / "universe-refresh.log").exists()
-    assert executed_labels == ["catchup", "daily-data-check", "universe-refresh"]
+    assert executed_labels == ["catchup", "daily-data-check", "daily-engine", "universe-refresh"]
     evening_catchup_log = (evening_logs_dir / "catchup.log").read_text(
         encoding="utf-8"
     )
@@ -572,7 +573,7 @@ def test_run_job_with_retry_rc_124_once():
 
 
 def test_evening_jobs_continues_when_catchup_fails():
-    """evening_jobs voi catchup luon bang 1: daily-check va universe-refresh van duoc goi."""
+    """evening_jobs voi catchup luon bang 1: daily-check, daily-engine va universe-refresh van duoc goi."""
     executed = []
 
     def fake_runner(**kwargs):
@@ -593,6 +594,7 @@ def test_evening_jobs_continues_when_catchup_fails():
         "catchup",
         "catchup",
         "daily-data-check",
+        "daily-engine",
         "universe-refresh",
     ]
 
@@ -703,6 +705,32 @@ def test_evening_jobs_alerts_on_universe_refresh_failure():
     assert "universe-refresh" in alerts[0]
     assert "logs/universe-refresh.log" in alerts[0]
     assert "rc=2" in alerts[0]
+
+
+def test_evening_jobs_alerts_on_daily_engine_failure():
+    """evening_jobs: daily-engine rc=1 -> gui 1 tin canh bao voi label daily-engine."""
+    alerts = []
+    seen = []
+
+    def fake_runner(**kwargs):
+        label = kwargs.get("label")
+        seen.append(label)
+        if label == "daily-engine":
+            return 1
+        return 0
+
+    run_event(
+        event_type="evening_jobs",
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert seen == ["catchup", "daily-data-check", "daily-engine", "universe-refresh"]
+    assert len(alerts) == 1
+    assert "daily-engine" in alerts[0]
+    assert "logs/daily-engine.log" in alerts[0]
+    assert "rc=1" in alerts[0]
 
 
 def test_alert_exception_does_not_crash_scheduler():
