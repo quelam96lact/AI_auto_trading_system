@@ -1104,6 +1104,29 @@ def test_oom_kill_baseline_reset_on_restart_chain():
     assert "từ 0 lên 1" in alerts2[0]
 
 
+def test_dot236_engine_removed_from_default_services(monkeypatch, tmp_path):
+    """Đợt 236 §2.2 & §3(c): bỏ engine khỏi DEFAULT_SERVICES — main() không inspect và không báo khi engine stopped."""
+    import scripts.container_health_check as chc
+
+    inspected: list[str] = []
+
+    def fake_inspect(cname: str) -> ContainerStats:
+        inspected.append(cname)
+        status = "exited" if "engine" in cname else "running"
+        return _make_stat(name=cname, status=status)
+
+    monkeypatch.setattr(chc, "check_docker_daemon", lambda: True)
+    monkeypatch.setattr(chc, "inspect_container", fake_inspect)
+    monkeypatch.setattr(chc, "get_last_called_timestamp", lambda *a, **k: (None, None))
+    monkeypatch.setattr(chc, "evaluate_heartbeat_watch", lambda *a, **k: ([], None, []))
+    monkeypatch.setattr(chc, "send_telegram", lambda msg: True)
+
+    rc = chc.main(["--dry-run", "--state-file", str(tmp_path / "state.json")])
+    assert rc == 0
+    assert not any("engine" in name for name in inspected), f"vẫn còn inspect engine: {inspected}"
+    assert "engine" not in chc.DEFAULT_SERVICES
+
+
 
 
 

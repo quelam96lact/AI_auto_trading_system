@@ -18,7 +18,7 @@ from trading.calendar_vn import (
     market_minutes_between,
     previous_trading_day,
 )
-from trading.config import Config, load_config
+from trading.config import PAPER_ENGINE_CAPITAL, Config, load_config
 from trading.data_quality import is_dirty_bar
 from trading.engine.logic import bar_from_payload, process_bar
 from trading.logging_setup import attach_durable_alert_handler
@@ -30,7 +30,7 @@ from trading.strategies.octopus_pullback import OctopusPullbackStrategy
 from trading.strategy import RestoresTakeProfit, Strategy
 from trading.trailing_stop import TrailingStopManager
 
-CAPITAL = 100_000_000.0
+CAPITAL = PAPER_ENGINE_CAPITAL
 
 
 def real_capital_from_nav(

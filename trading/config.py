@@ -11,6 +11,7 @@ SSI_FC_STREAM_URL = "https://fc-datahub.ssi.com.vn/"
 # 0.28% mỗi chiều = 0.25% phí môi giới SSI + 0.03% phí trả Sở (nguồn chuẩn chung cho
 # PaperBroker và ước lượng đối soát lệnh thật).
 VN_EQUITY_FEE_RATE = 0.0028
+PAPER_ENGINE_CAPITAL = 100_000_000.0
 
 
 @dataclass(frozen=True)

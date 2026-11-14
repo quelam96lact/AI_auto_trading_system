@@ -4,6 +4,9 @@ import sys
 import urllib.error
 from datetime import date, datetime, timedelta
 
+import psycopg
+import pytest
+
 from scripts.heartbeat_check import (
     bar_stale,
     check_holiday_exhaustion,
@@ -26,19 +29,20 @@ def test_no_stale_when_all_services_fresh():
 
 def test_service_past_max_age_is_stale():
     rows = [
-        ("collector", NOW - timedelta(seconds=30)),
+        ("collector", NOW - timedelta(seconds=600)),
         ("engine", NOW - timedelta(seconds=600)),
     ]
-    assert stale_services(rows, NOW, 300) == ["engine"]
+    assert stale_services(rows, NOW, 300) == ["collector"]
 
 
 def test_missing_service_row_is_stale():
-    rows = [("collector", NOW - timedelta(seconds=30))]
-    assert stale_services(rows, NOW, 300) == ["engine"]
+    rows = [("engine", NOW - timedelta(seconds=30))]
+    assert stale_services(rows, NOW, 300) == ["collector"]
+    assert stale_services([("collector", NOW - timedelta(seconds=30))], NOW, 300) == []
 
 
 def test_all_services_missing_are_stale():
-    assert stale_services([], NOW, 300) == ["collector", "engine"]
+    assert stale_services([], NOW, 300) == ["collector"]
 
 
 # ============ FEE-ALARM-1 Viec 2A: dữ liệu ngừng chảy ============
@@ -1408,3 +1412,330 @@ def test_main_empty_symbols_skips_bar_stale_without_sql_error(
     assert any("FROM positions" in s for s in executed_sqls)
     assert "symbols rỗng: bỏ qua kiểm nến stream" in out
     assert "dữ liệu ngừng chảy" not in out
+
+
+def test_dot236_heartbeat_check_imports_without_trading_engine_main(monkeypatch):
+    """Đợt 236 §2.1 (phép phá a): scripts/heartbeat_check.py phải import được khi trading.engine.main bị chặn."""
+    import importlib
+
+    from trading.config import PAPER_ENGINE_CAPITAL
+
+    monkeypatch.delitem(sys.modules, "scripts.heartbeat_check", raising=False)
+    monkeypatch.setitem(sys.modules, "trading.engine.main", None)
+    imported = importlib.import_module("scripts.heartbeat_check")
+    assert imported.PAPER_ENGINE_CAPITAL == PAPER_ENGINE_CAPITAL == 100_000_000.0
+
+
+# ============ Đợt 236 Việc 3 & 4: Giám sát daily-engine (tuổi sổ + bất biến sổ mới) ============
+
+
+class _DailyFakeCur:
+    def __init__(self, row=None, exc=None):
+        self._row = row
+        self._exc = exc
+
+    def fetchone(self):
+        if self._exc is not None:
+            raise self._exc
+        return self._row
+
+
+class _DailyFakeConn:
+    def __init__(self, state_row=None, lots_total=0.0, state_exc=None):
+        self._state_row = state_row
+        self._lots_total = lots_total
+        self._state_exc = state_exc
+        self.rolled_back = False
+
+    def execute(self, query, *a, **k):
+        q = str(query)
+        if "FROM paper_daily_state" in q:
+            if self._state_exc is not None:
+                raise self._state_exc
+            return _DailyFakeCur(self._state_row)
+        if "FROM paper_daily_lots" in q:
+            return _DailyFakeCur((self._lots_total,))
+        return _DailyFakeCur(None)
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+def test_dot236_daily_engine_age_up_to_date_is_silent():
+    """Đợt 236 §3(e): last_processed_date == prev -> im lặng (phá <= thay < phải ĐỎ)."""
+    from scripts.heartbeat_check import daily_engine_age_alert
+
+    conn = _DailyFakeConn(state_row=(date(2026, 11, 16),))
+    now = datetime(2026, 11, 17, 9, 0, tzinfo=TZ)
+    tin, p_iso = daily_engine_age_alert(conn, now, frozenset(), None)
+    assert tin is None
+    assert p_iso == "2026-11-16"
+
+
+def test_dot236_daily_engine_age_behind_prev_alerts_critical():
+    """Đợt 236 §2.3: có state nhưng last_processed_date < prev -> CRITICAL nêu cả hai ngày."""
+    from scripts.heartbeat_check import daily_engine_age_alert
+
+    conn = _DailyFakeConn(state_row=(date(2026, 11, 13),))
+    now = datetime(2026, 11, 17, 9, 0, tzinfo=TZ)
+    tin, p_iso = daily_engine_age_alert(conn, now, frozenset(), None)
+    assert p_iso == "2026-11-16"
+    assert tin is not None
+    assert "[CRITICAL]" in tin
+    assert "2026-11-13" in tin
+    assert "2026-11-16" in tin
+
+
+def test_dot236_daily_engine_age_no_state_before_go_live_is_silent():
+    """Đợt 236 §3(f): không có state và prev < DAILY_ENGINE_GO_LIVE (16/11) -> im lặng."""
+    from scripts.heartbeat_check import daily_engine_age_alert
+
+    conn = _DailyFakeConn(state_row=None)
+    now = datetime(2026, 11, 16, 9, 0, tzinfo=TZ)  # prev = 2026-11-13 < 2026-11-16
+    tin, p_iso = daily_engine_age_alert(conn, now, frozenset(), None)
+    assert tin is None
+    assert p_iso == "2026-11-13"
+
+
+def test_dot236_daily_engine_age_no_state_on_or_after_go_live_alerts_critical():
+    """Đợt 236 §3(g): không có state và prev >= DAILY_ENGINE_GO_LIVE -> CRITICAL."""
+    from scripts.heartbeat_check import daily_engine_age_alert
+
+    conn = _DailyFakeConn(state_row=None)
+    now = datetime(2026, 11, 17, 9, 0, tzinfo=TZ)  # prev = 2026-11-16 == GO_LIVE
+    tin, p_iso = daily_engine_age_alert(conn, now, frozenset(), None)
+    assert p_iso == "2026-11-16"
+    assert tin is not None
+    assert "[CRITICAL]" in tin
+    assert "2026-11-16" in tin
+
+
+def test_dot236_daily_engine_age_missing_table_treated_as_no_state():
+    """Đợt 236 §2.3: bảng paper_daily_state chưa tồn tại -> coi như không có dòng."""
+    from scripts.heartbeat_check import daily_engine_age_alert
+
+    exc = psycopg.errors.UndefinedTable('relation "paper_daily_state" does not exist')
+    conn_before = _DailyFakeConn(state_exc=exc)
+    tin_before, _ = daily_engine_age_alert(
+        conn_before, datetime(2026, 11, 16, 9, 0, tzinfo=TZ), frozenset(), None
+    )
+    assert tin_before is None
+    assert conn_before.rolled_back is True
+
+    conn_after = _DailyFakeConn(state_exc=exc)
+    tin_after, _ = daily_engine_age_alert(
+        conn_after, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), frozenset(), None
+    )
+    assert tin_after is not None and "[CRITICAL]" in tin_after
+    assert conn_after.rolled_back is True
+
+
+def test_dot236_daily_engine_ledger_no_state_is_silent():
+    """Đợt 236 §2.4: không có state trong paper_daily_state -> bỏ qua."""
+    from scripts.heartbeat_check import daily_engine_ledger_alert
+
+    conn = _DailyFakeConn(state_row=None)
+    tin, day_iso = daily_engine_ledger_alert(
+        conn, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+    )
+    assert tin is None
+    assert day_iso == "2026-11-17"
+
+
+def test_dot236_daily_engine_ledger_matches_with_lots_and_realized_pnl_is_silent():
+    """Đợt 236 §3(h): sổ mới khớp khi có lots và realized_pnl != 0 (phá bỏ realized_pnl phải ĐỎ)."""
+    from scripts.heartbeat_check import daily_engine_ledger_alert
+
+    # 89_500_000.8 + 11_000_000.0 - 100_000_000.0 = 500_000.8; realized = 500_000.0 -> dev = 0.8 <= 1.0
+    conn = _DailyFakeConn(
+        state_row=(100_000_000.0, 89_500_000.8, 500_000.0),
+        lots_total=11_000_000.0,
+    )
+    tin, day_iso = daily_engine_ledger_alert(
+        conn, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+    )
+    assert tin is None
+    assert day_iso == "2026-11-17"
+
+
+def test_dot236_daily_engine_ledger_deviation_over_1_vnd_alerts_critical():
+    """Đợt 236 §2.4 & §3(h): lệch realized_pnl quá 1 đồng -> CRITICAL."""
+    from scripts.heartbeat_check import daily_engine_ledger_alert
+
+    # Lệch qua realized_pnl (-5.0 VND)
+    conn_realized = _DailyFakeConn(
+        state_row=(100_000_000.0, 100_000_000.0, 5.0),
+        lots_total=0.0,
+    )
+    tin1, _ = daily_engine_ledger_alert(
+        conn_realized, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+    )
+    assert tin1 is not None and "[CRITICAL]" in tin1
+
+    # Lệch qua cash/lots (+2.5 VND > 1.0)
+    conn_cash = _DailyFakeConn(
+        state_row=(100_000_000.0, 90_000_002.5, 0.0),
+        lots_total=10_000_000.0,
+    )
+    tin2, _ = daily_engine_ledger_alert(
+        conn_cash, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+    )
+    assert tin2 is not None and "[CRITICAL]" in tin2
+
+
+def test_dot236_main_deduplicates_daily_engine_alerts_once_per_day(monkeypatch, tmp_path):
+    """Đợt 236 §3(i): qua main(), cả kiểm tuổi sổ và bất biến sổ mới chỉ báo tối đa 1 tin/ngày."""
+    import scripts.heartbeat_check as hc
+
+    _mock_config_with_symbols(monkeypatch)
+    fixed_now = datetime(2026, 11, 17, 9, 0, tzinfo=TZ)  # Thứ Ba 17/11 -> prev = 16/11
+    monkeypatch.setenv("DB_DSN", "postgresql://fake:5432/trading")
+    monkeypatch.setattr(hc, "assess_date", lambda *a, **k: (0, set(), "OK"))
+
+    class FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            return fixed_now
+
+        strptime = staticmethod(datetime.strptime)
+
+    monkeypatch.setattr(hc, "datetime", FakeDatetime)
+
+    class FakeCur:
+        def __init__(self, result=None, rows=None):
+            self._result = result
+            self._rows = rows or []
+
+        def fetchall(self):
+            return self._rows
+
+        def fetchone(self):
+            return self._result
+
+    class FakeConn:
+        def execute(self, query, *a, **k):
+            q = str(query)
+            if "FROM heartbeat" in q:
+                return FakeCur(rows=[("collector", fixed_now - timedelta(seconds=30))])
+            if "max(ts) FROM bars" in q:
+                return FakeCur(result=(fixed_now - timedelta(minutes=2),))
+            if "FROM engine_state" in q:
+                return FakeCur(result=None)
+            if "FROM positions" in q:
+                return FakeCur(rows=[])
+            if "FROM paper_daily_state" in q:
+                if "last_processed_date" in q:
+                    return FakeCur(result=(date(2026, 11, 13),))  # trễ so với 2026-11-16
+                return FakeCur(result=(100_000_000.0, 100_000_100.0, 0.0))  # lệch 100đ
+            if "FROM paper_daily_lots" in q:
+                return FakeCur(result=(0.0,))
+            return FakeCur()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hc.psycopg, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(
+        hc,
+        "Storage",
+        lambda dsn: type(
+            "S",
+            (),
+            {
+                "load_ssi_token": lambda self: {
+                    "refresh_token_expires_at": fixed_now.timestamp() + 7200
+                },
+                "read_position_sync_ts": lambda self, acct: fixed_now - timedelta(minutes=2),
+                "read_foreign_flow_day_counts": lambda self, frm, to: {},
+                "read_5m_active_symbol_day_counts": lambda self, frm, to: {},
+            },
+        )(),
+    )
+    _fresh_job_logs(tmp_path, fixed_now)
+
+    sent_1: list[str] = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: bool(sent_1.append(msg)) or True)
+    rc1 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc1 == 1
+    assert len(sent_1) == 1
+    assert "2026-11-13" in sent_1[0] and "2026-11-16" in sent_1[0]
+    assert "daily-engine" in sent_1[0] and "LỆCH" in sent_1[0]
+    assert (tmp_path / hc.DAILY_ENGINE_AGE_STATE_NAME).is_file()
+    assert (tmp_path / hc.DAILY_ENGINE_LEDGER_STATE_NAME).is_file()
+
+    sent_2: list[str] = []
+    monkeypatch.setattr(hc, "send_telegram", lambda msg: bool(sent_2.append(msg)) or True)
+    rc2 = hc.main(["--logs-dir", str(tmp_path)])
+    assert rc2 == 0
+    assert sent_2 == []
+
+
+@pytest.mark.integration
+def test_dot236_integration_daily_engine_checks_on_test_db():
+    """Đợt 236: kiểm chứng daily_engine_age_alert & daily_engine_ledger_alert trên DB test trading_test."""
+    from scripts.heartbeat_check import (
+        daily_engine_age_alert,
+        daily_engine_ledger_alert,
+    )
+    from tests.conftest import TEST_DSN
+    from trading.storage.db import Storage
+
+    storage = Storage(TEST_DSN)
+    storage.init_schema()
+    with storage.conn() as c:
+        c.execute(
+            "TRUNCATE paper_daily_state, paper_daily_lots, paper_daily_orders, paper_daily_nav "
+            "RESTART IDENTITY CASCADE"
+        )
+        # 1. Rỗng trước GO_LIVE -> im lặng; >= GO_LIVE -> CRITICAL
+        tin_before, _ = daily_engine_age_alert(
+            c, datetime(2026, 11, 16, 9, 0, tzinfo=TZ), frozenset(), None
+        )
+        assert tin_before is None
+        tin_after, _ = daily_engine_age_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), frozenset(), None
+        )
+        assert tin_after is not None and "[CRITICAL]" in tin_after
+        tin_ledger_empty, _ = daily_engine_ledger_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+        )
+        assert tin_ledger_empty is None
+
+        # 2. Chèn state khớp & lots khớp -> im lặng
+        c.execute(
+            "INSERT INTO paper_daily_state (id, strategy, capital, cash, realized_pnl, last_processed_date) "
+            "VALUES (1, 'null', 100000000.0, 89500000.0, 500000.0, '2026-11-16')"
+        )
+        c.execute(
+            "INSERT INTO paper_daily_lots (symbol, qty, cost_per_share, buy_date) "
+            "VALUES ('HPG', 1000, 11000.0, '2026-11-16')"
+        )
+        tin_age_ok, _ = daily_engine_age_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), frozenset(), None
+        )
+        assert tin_age_ok is None
+        tin_ledger_ok, _ = daily_engine_ledger_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+        )
+        assert tin_ledger_ok is None
+
+        # 3. Làm lệch sổ 5đ và lùi last_processed_date -> cả 2 đều CRITICAL
+        c.execute(
+            "UPDATE paper_daily_state SET cash = 89500005.0, last_processed_date = '2026-11-13' WHERE id = 1"
+        )
+        tin_age_bad, _ = daily_engine_age_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), frozenset(), None
+        )
+        assert tin_age_bad is not None and "2026-11-13" in tin_age_bad and "2026-11-16" in tin_age_bad
+        tin_ledger_bad, _ = daily_engine_ledger_alert(
+            c, datetime(2026, 11, 17, 9, 0, tzinfo=TZ), None
+        )
+        assert tin_ledger_bad is not None and "[CRITICAL]" in tin_ledger_bad
+
+        c.execute(
+            "TRUNCATE paper_daily_state, paper_daily_lots, paper_daily_orders, paper_daily_nav "
+            "RESTART IDENTITY CASCADE"
+        )

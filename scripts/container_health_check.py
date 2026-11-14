@@ -66,7 +66,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_SERVICES = ("postgres", "collector", "engine", "nats", "grafana", "scheduler")
+DEFAULT_SERVICES = ("postgres", "collector", "nats", "grafana", "scheduler")
 
 DEFAULT_STATE_FILE = os.path.join(
     os.path.dirname(SPAM_GUARD_FILE),

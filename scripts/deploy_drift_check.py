@@ -38,11 +38,10 @@ except ImportError:
 from trading.alerts import _print_safe
 from trading.telegram import send_telegram
 
-SERVICES = ("collector", "engine", "scheduler")
+SERVICES = ("collector", "scheduler")
 
 SERVICE_WATCH_PATHS: dict[str, tuple[str, ...]] = {
     "collector": ("trading/",),
-    "engine": ("trading/",),
     "scheduler": ("trading/", "scripts/"),
 }
 

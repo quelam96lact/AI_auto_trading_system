@@ -72,17 +72,15 @@ from trading.calendar_vn import (
     market_minutes_between,
     previous_trading_day,
 )
-from trading.config import Config
+from trading.config import PAPER_ENGINE_CAPITAL, Config
 
-# LEDGER-1: import hang so tu trading/ —
-# da kiem main.py module-level KHONG chay side effect (chi import + dinh nghia;
-# storage/nats nam trong ham). KHONG chep so sang day (hai noi lech = bao lao
-# mai mai hoac im mai mai).
-from trading.engine.main import CAPITAL
+# LEDGER-1 / Đợt 236 §2.1: import hằng số vốn từ trading.config (một nguồn duy nhất,
+# không phụ thuộc trading.engine.main để tránh bẫy import làm chết chuông báo).
+# KHÔNG chép số sang đây (hai nơi lệch = báo láo mãi mãi hoặc im mãi mãi).
 from trading.storage.db import Storage
 from trading.telegram import send_telegram
 
-SERVICES = ("collector", "engine")
+SERVICES = ("collector",)
 DEFAULT_MAX_AGE_SECONDS = 300
 
 # LEDGER-1 2C: dung sai so sach. Can cu: float double tich luy qua hang nghin
@@ -120,6 +118,10 @@ HEARTBEAT_OUTBOX_NAME = outbox_name("heartbeat")
 PREV_DAY_BARS_STATE_NAME = ".prev_day_bars_state.json"
 PREV_DAY_FOREIGN_FLOW_STATE_NAME = ".prev_day_foreign_flow_state.json"
 PREV_DAY_5M_STATE_NAME = ".prev_day_5m_state.json"
+DAILY_ENGINE_AGE_STATE_NAME = ".daily_engine_age_state.json"
+DAILY_ENGINE_LEDGER_STATE_NAME = ".daily_engine_ledger_state.json"
+DAILY_ENGINE_GO_LIVE = date(2026, 11, 16)
+DAILY_ENGINE_LEDGER_TOLERANCE = 1.0
 
 
 class WatchJobConfig(NamedTuple):
@@ -1193,7 +1195,7 @@ def check_holiday_exhaustion(
 
 
 def ledger_deviation(
-    cash: float, realized_pnl: float, positions_value: float, capital: float = CAPITAL
+    cash: float, realized_pnl: float, positions_value: float, capital: float = PAPER_ENGINE_CAPITAL
 ) -> float:
     """2C: độ lệch hai sổ sách. Bất biến (đúng LUÔN, không chỉ khi phẳng):
         cash + Σ(avg_price × qty) − capital == realized_pnl
@@ -1432,6 +1434,129 @@ def prev_day_5m_alert(
         return tin, p_iso
 
     return None, p_iso
+
+
+def _is_undefined_table_error(exc: Exception) -> bool:
+    """Trả về True khi PostgreSQL báo bảng chưa tồn tại (SQLSTATE 42P01)."""
+    return isinstance(exc, psycopg.errors.UndefinedTable) or (
+        getattr(exc, "sqlstate", None) == "42P01"
+    )
+
+
+def _safe_rollback(conn: Any) -> None:
+    rollback = getattr(conn, "rollback", None)
+    if callable(rollback):
+        try:
+            rollback()
+        except Exception:
+            pass
+
+
+def daily_engine_age_alert(
+    conn: Any,
+    now: datetime,
+    holidays: frozenset[date],
+    alerted_for: str | None,
+    go_live: date = DAILY_ENGINE_GO_LIVE,
+) -> tuple[str | None, str]:
+    """Kiểm tuổi sổ paper engine nến ngày (đợt 236 §2.3).
+
+    Trả về (tin, prev_iso). Tối đa 1 tin/ngày theo `alerted_for == prev_iso`.
+    - Chưa có bảng hoặc chưa có dòng `paper_daily_state`: CRITICAL chỉ khi
+      `prev >= DAILY_ENGINE_GO_LIVE`.
+    - Có dòng state và `last_processed_date < prev`: CRITICAL nêu cả hai ngày.
+    """
+    prev = previous_trading_day(now.date(), holidays)
+    prev_iso = prev.isoformat()
+    if alerted_for == prev_iso or alerted_for == prev:
+        return None, prev_iso
+
+    row = None
+    try:
+        row = conn.execute(
+            "SELECT last_processed_date FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+    except Exception as exc:
+        if not _is_undefined_table_error(exc):
+            raise
+        _safe_rollback(conn)
+        row = None
+
+    if row is None or row[0] is None:
+        if prev >= go_live:
+            return (
+                (
+                    f"[CRITICAL] daily-engine chưa có trạng thái sổ paper "
+                    f"(paper_daily_state rỗng), cần xử lý tới phiên {prev_iso} — "
+                    "kiểm tra logs/daily-engine.log"
+                ),
+                prev_iso,
+            )
+        return None, prev_iso
+
+    raw_date = row[0]
+    if isinstance(raw_date, datetime):
+        last_processed = raw_date.date()
+    elif isinstance(raw_date, str):
+        last_processed = date.fromisoformat(raw_date)
+    else:
+        last_processed = raw_date
+
+    if last_processed < prev:
+        return (
+            (
+                f"[CRITICAL] daily-engine trễ phiên: last_processed_date={last_processed.isoformat()} "
+                f"< phiên liền trước {prev_iso} — kiểm tra logs/daily-engine.log"
+            ),
+            prev_iso,
+        )
+    return None, prev_iso
+
+
+def daily_engine_ledger_alert(
+    conn: Any,
+    now: datetime,
+    alerted_for: str | None,
+) -> tuple[str | None, str]:
+    """Kiểm bất biến sổ paper engine nến ngày (đợt 236 §2.4).
+
+    cash + Σ(qty × cost_per_share của paper_daily_lots) − capital == realized_pnl
+    Lệch quá 1 đồng -> CRITICAL (tối đa 1 tin/ngày theo ngày `now.date()`).
+    Không có state (hoặc bảng chưa tồn tại) -> bỏ qua.
+    """
+    today_iso = now.date().isoformat()
+    if alerted_for == today_iso:
+        return None, today_iso
+
+    row = None
+    try:
+        row = conn.execute(
+            "SELECT capital, cash, realized_pnl FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+    except Exception as exc:
+        if not _is_undefined_table_error(exc):
+            raise
+        _safe_rollback(conn)
+        return None, today_iso
+
+    if row is None:
+        return None, today_iso
+
+    capital, cash, realized_pnl = float(row[0]), float(row[1]), float(row[2])
+    lots_row = conn.execute(
+        "SELECT COALESCE(SUM(qty * cost_per_share), 0.0) FROM paper_daily_lots"
+    ).fetchone()
+    lots_value = float(lots_row[0] or 0.0) if lots_row is not None else 0.0
+
+    dev = ledger_deviation(cash, realized_pnl, lots_value, capital=capital)
+    if abs(dev) > DAILY_ENGINE_LEDGER_TOLERANCE:
+        tin = (
+            f"[CRITICAL] sổ daily-engine LỆCH: "
+            f"vế trái (cash + giá vốn lots − capital) = {cash + lots_value - capital:,.2f}, "
+            f"realized_pnl = {realized_pnl:,.2f}, độ lệch {dev:,.2f} VND"
+        )
+        return tin, today_iso
+    return None, today_iso
 
 
 def build_morning_summary(
@@ -1745,6 +1870,55 @@ def _check_prev_day_completions(
         except Exception:
             pass
 
+    # Đợt 236 Việc 3: kiểm tuổi sổ daily-engine
+    try:
+        age_state_file = Path(logs_dir) / DAILY_ENGINE_AGE_STATE_NAME
+        age_state = load_json_state(age_state_file, "daily-engine-age")
+        with psycopg.connect(dsn, connect_timeout=10) as c:
+            tin, p_iso = daily_engine_age_alert(
+                c,
+                now,
+                holidays,
+                age_state.get("alerted_for"),
+            )
+        if tin:
+            messages.append(tin)
+            if not dry_run:
+                save_json_state(age_state_file, {"alerted_for": p_iso})
+    except Exception as e:
+        try:
+            print(
+                "[WARN] heartbeat khong kiem duoc tuoi so daily-engine: "
+                f"{type(e).__name__}: {e}"[:300],
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
+    # Đợt 236 Việc 4: kiểm bất biến sổ daily-engine
+    try:
+        ledger_state_file = Path(logs_dir) / DAILY_ENGINE_LEDGER_STATE_NAME
+        ledger_state = load_json_state(ledger_state_file, "daily-engine-ledger")
+        with psycopg.connect(dsn, connect_timeout=10) as c:
+            tin, day_iso = daily_engine_ledger_alert(
+                c,
+                now,
+                ledger_state.get("alerted_for"),
+            )
+        if tin:
+            messages.append(tin)
+            if not dry_run:
+                save_json_state(ledger_state_file, {"alerted_for": day_iso})
+    except Exception as e:
+        try:
+            print(
+                "[WARN] heartbeat khong kiem duoc bat bien so daily-engine: "
+                f"{type(e).__name__}: {e}"[:300],
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
 
 def main(argv: list[str] | None = None) -> int:
     # Vô điều kiện, câu đầu tiên (brief 141): `if argv is not None` từng làm `main()` nuốt im lặng
@@ -1886,7 +2060,7 @@ def main(argv: list[str] | None = None) -> int:
             # dung lenh dang kiem, moi so lay tu DB, khong tinh gi them.
             messages.append(
                 f"[CRITICAL] hai sổ sách LỆCH: vế trái (cash + giá vốn − vốn) "
-                f"= {cash + positions_value - CAPITAL:,.2f}, vế phải (realized_pnl) "
+                f"= {cash + positions_value - PAPER_ENGINE_CAPITAL:,.2f}, vế phải (realized_pnl) "
                 f"= {realized:,.2f}, độ lệch {dev:,.2f} VND"
             )
     if not symbols:

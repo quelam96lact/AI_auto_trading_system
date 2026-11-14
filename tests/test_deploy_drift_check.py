@@ -128,11 +128,32 @@ def test_image_missing_warns_specifically():
 
 
 def test_scheduler_in_services():
-    """Đợt 202: scheduler phải nằm trong SERVICES và theo dõi cả trading/ lẫn scripts/."""
-    assert "scheduler" in deploy_drift_check.SERVICES
+    """Đợt 202 / 236: scheduler và collector nằm trong SERVICES, engine đã bỏ."""
+    assert deploy_drift_check.SERVICES == ("collector", "scheduler")
+    assert "engine" not in deploy_drift_check.SERVICES
+    assert "engine" not in deploy_drift_check.SERVICE_WATCH_PATHS
     assert deploy_drift_check.SERVICE_WATCH_PATHS["collector"] == ("trading/",)
-    assert deploy_drift_check.SERVICE_WATCH_PATHS["engine"] == ("trading/",)
     assert deploy_drift_check.SERVICE_WATCH_PATHS["scheduler"] == ("trading/", "scripts/")
+
+
+def test_dot236_main_ignores_stopped_engine_container(monkeypatch):
+    """Đợt 236 §2.2 & §3(d): main() không kiểm tra container engine khi engine đã dừng."""
+    monkeypatch.setattr(deploy_drift_check, "_git_trading_commit_epoch", lambda: 1_000_000)
+    monkeypatch.setattr(deploy_drift_check, "_git_commit_epoch", lambda paths: 1_000_000)
+
+    checked: list[str] = []
+
+    def fake_image_epoch(cname: str):
+        checked.append(cname)
+        return None if "engine" in cname else 1_500_000
+
+    monkeypatch.setattr(deploy_drift_check, "_image_created_epoch", fake_image_epoch)
+    sent = _capture_sent(monkeypatch)
+    rc = deploy_drift_check.main([])
+    assert rc == 0
+    assert sent == []
+    assert not any("engine" in cname for cname in checked)
+    assert set(deploy_drift_check.get_service_commit_epochs() or {}) == {"collector", "scheduler"}
 
 
 def test_drift_report_scripts_commit_warns_scheduler_only():
