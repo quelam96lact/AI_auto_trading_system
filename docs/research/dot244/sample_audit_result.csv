@@ -1,0 +1,31 @@
+row,a,b,c,d,ghi_chu
+4,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VNM ETF/MVIS Vietnam Index them HBC (1.53%) Q3/2017; hieu luc tu thu Hai (18/09).
+25,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; MVIS them KBC vao MVIS Vietnam Index (VNM ETF) Q1/2021; giao dich tu thu Hai 22/03.
+40,PASS,PASS,PASS,PASS,"HTTP 200; quote verbatim; MVIS Vietnam Index them VPI (0,57%) ky Q4/2021; effective_date trong -> N/A."
+71,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VNM ETF them moi BAF ky Q2/2025; giao dich tu thu Hai (23/06).
+73,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; MVIS Vietnam Local Index (VNM ETF) them HVN Q3/2025; giao dich tu thu Hai (22/9).
+83,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; MarketVector Vietnam Local Index (VNM ETF) loai CTR Q2/2026; giao dich tu thu Hai (22/6).
+96,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; tieu de/bai viet neu FTSE Vietnam ETF them BMP ky Q4/2017 (quote trich cau loai DPM/ITA/ASM); eff trong.
+111,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; bai VNM ETF nhung doan quote neu ro FTSE Vietnam Index loai HSG ky Q4/2018; eff trong.
+122,PASS,PASS,PASS,PASS,HTTP 200; quote gan nguyen van (HTML co khoang trang '( PDR )'); FTSE Vietnam Index them PDR Q1/2021 (bai co typo 'quy 1/2020' du ngay dang 05-03-2021); eff trong.
+130,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; bai VNM ETF nhung doan quote neu ro FTSE Vietnam Index them moi DGC ky Q4/2021; eff trong.
+135,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; FTSE Vietnam Index loai KDH ky Q3/2022; chinh thuc ap dung tu ngay 19/9/2022.
+149,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; FTSE Russell them TCH vao FTSE Vietnam Index Q2/2024; giao dich tu thu Hai (24/6).
+209,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE cong bo VNDiamond them moi TCM ky Q2/2022 (2022H1); eff trong.
+211,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE cong bo VNDiamond loai ra CTD ky Q2/2022 (2022H1); eff trong.
+212,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE cong bo VNDiamond loai ra NLG ky Q2/2022 (2022H1); eff trong.
+214,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE loai TCM khoi chi so VN-Diamond dot review thang 10/2022; eff trong.
+216,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VN-Diamond Index them moi HDB ky co cau thang 10/2023; eff trong.
+223,PASS,PASS,PASS,PASS,HTTP 200; phan than quote khop nguyen van (cot quote bi dinh menu/JS dau trang); VNDiamond loai VRE ky Q2/2025; hieu luc tu 28/4/2025.
+232,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE loai ITA khoi VN30; hieu luc tu 24/07/2017.
+243,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE them VHM vao VN30 ky 01/2019; hieu luc tu 11/02/2019.
+255,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VN30 Index them moi PLX ky thang 1/2020; hieu luc tu 03/02/2020.
+256,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VN30 Index them moi POW ky thang 1/2020; hieu luc tu 03/02/2020.
+257,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; VN30 Index loai DPM ky thang 1/2020; hieu luc tu 03/02/2020.
+279,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE loai KDH khoi VN30 ky thang 1/2023; hieu luc tu 06/02/2023.
+291,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; BCM bi loai khoi ro VN30 ky thang 1/2026; hieu luc ke tu ngay 2/2/2026.
+295,PASS,PASS,PASS,PASS,HTTP 200; phan than quote khop nguyen van (cot quote bi dinh header/thoi tiet/JS); VN30 loai TPB ky thang 7/2026; hieu luc tu 3/8/2026.
+299,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HoSE them BVH vao VNFinLead ky thang 1/2021; eff trong.
+305,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE them MSB vao VNFIN Lead ky 07/2021; hieu luc tu 02/08/2021.
+306,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE them SSB vao VNFIN Lead ky 07/2021; hieu luc tu 02/08/2021.
+309,PASS,PASS,PASS,PASS,HTTP 200; quote verbatim; HOSE loai HCM khoi VNFIN Lead ky 07/2021; hieu luc tu 02/08/2021.
