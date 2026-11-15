@@ -288,16 +288,18 @@ def upsert_daily_nav(
     market_value: float,
     nav: float,
     n_positions: int,
+    interest: float = 0.0,
 ) -> None:
     conn.execute(
-        "INSERT INTO paper_daily_nav (date, cash, market_value, nav, n_positions) "
-        "VALUES (%s, %s, %s, %s, %s) "
+        "INSERT INTO paper_daily_nav (date, cash, market_value, nav, n_positions, interest) "
+        "VALUES (%s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (date) DO UPDATE "
         "SET cash = EXCLUDED.cash, "
         "    market_value = EXCLUDED.market_value, "
         "    nav = EXCLUDED.nav, "
-        "    n_positions = EXCLUDED.n_positions",
-        (d, cash, market_value, nav, n_positions),
+        "    n_positions = EXCLUDED.n_positions, "
+        "    interest = EXCLUDED.interest",
+        (d, cash, market_value, nav, n_positions, interest),
     )
 
 

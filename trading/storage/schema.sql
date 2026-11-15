@@ -409,3 +409,6 @@ CREATE TABLE IF NOT EXISTS paper_daily_nav (
   nav double precision NOT NULL,
   n_positions integer NOT NULL
 );
+
+-- Brief 239 (2026-11-15): lai tien gui tren tien mat cong trong ngay d
+ALTER TABLE paper_daily_nav ADD COLUMN IF NOT EXISTS interest double precision NOT NULL DEFAULT 0;

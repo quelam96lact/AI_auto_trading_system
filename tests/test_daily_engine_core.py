@@ -432,3 +432,28 @@ def test_strategy_registry_and_null_daily_strategy(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("DAILY_ENGINE_STRATEGY", "does_not_exist")
     with pytest.raises(UnknownStrategyError):
         resolve_strategy()
+
+
+def test_mutation_a_accrue_cash_interest_compound_365_hand_calculated() -> None:
+    """Phép phá (a): Lãi kép theo ngày lịch (365 ngày/năm), trả 0 khi r<=0, days<=0, hoặc cash<=0."""
+    from trading.daily_engine.core import accrue_cash_interest
+
+    # Hand calc 180 calendar days at r=0.06:
+    # compound 365: 100_000_000 * ((1.06 ** (180/365)) - 1) = 2_915_219.5311719533
+    # (vs simple 365: 2_958_904.109589041; vs compound 252: 4_249_893.036340135)
+    intr_180 = accrue_cash_interest(100_000_000.0, date(2026, 1, 5), date(2026, 7, 4), 0.06)
+    assert intr_180 == pytest.approx(2_915_219.5311719533, abs=1e-6)
+
+    # Hand calc 1 calendar day at r=0.06: 100_000_000 * ((1.06 ** (1/365)) - 1) = 15_965.358745284597
+    # (vs simple 365: 16_438.35616438356)
+    intr_1 = accrue_cash_interest(100_000_000.0, date(2026, 1, 5), date(2026, 1, 6), 0.06)
+    assert intr_1 == pytest.approx(15_965.358745284597, abs=1e-6)
+
+    # Edge guards required by Brief 239 §2
+    assert accrue_cash_interest(100_000_000.0, date(2026, 1, 5), date(2026, 1, 10), 0.0) == 0.0
+    assert accrue_cash_interest(100_000_000.0, date(2026, 1, 5), date(2026, 1, 5), 0.06) == 0.0
+    assert accrue_cash_interest(100_000_000.0, date(2026, 1, 6), date(2026, 1, 5), 0.06) == 0.0
+    assert accrue_cash_interest(0.0, date(2026, 1, 5), date(2026, 1, 6), 0.06) == 0.0
+    assert accrue_cash_interest(-1_000_000.0, date(2026, 1, 5), date(2026, 1, 6), 0.06) == 0.0
+
+    assert NullDailyStrategy().cash_rate == 0.0

@@ -135,6 +135,9 @@ services:
       SSI_PRIVATE_KEY: ${SSI_PRIVATE_KEY}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      # Đợt 239 (15/11/2026): engine nến ngày chạy paper mốc 15% E1VFVN30 + tiền gửi 6%.
+      # Đổi chiến lược thì phải dựng sổ paper_daily_* mới (runner thoát 2 khi tên lệch).
+      DAILY_ENGINE_STRATEGY: "etf_deposit"
     depends_on:
       postgres: {condition: service_healthy}
     restart: unless-stopped

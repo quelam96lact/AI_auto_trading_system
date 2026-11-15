@@ -16,7 +16,7 @@ import psycopg
 from scripts._db_common import resolve_dsn
 from trading.calendar_vn import TZ, is_trading_day
 from trading.daily_engine import store
-from trading.daily_engine.core import Lot, process_day
+from trading.daily_engine.core import Lot, accrue_cash_interest, process_day
 from trading.daily_engine.strategy import (
     DailyContext,
     DailyStrategy,
@@ -67,12 +67,21 @@ def _aggregate_positions(lots: list[Lot]) -> dict[str, int]:
     return dict(positions)
 
 
+def _next_trading_day(d: date, holidays: set[date] | frozenset[date]) -> date:
+    """Return the next trading date strictly after `d` using calendar_vn + holidays."""
+    cur = d + timedelta(days=1)
+    while not is_trading_day(cur, holidays):
+        cur += timedelta(days=1)
+    return cur
+
+
 def _process_single_session(
     conn: psycopg.Connection,
     d: date,
     sessions: list[date],
     active_symbols: list[str],
     active_strategy: DailyStrategy,
+    holidays: set[date] | frozenset[date] = frozenset(),
 ) -> tuple[bool, str | None, int, int, float]:
     """Process one session inside `conn`'s active transaction.
 
@@ -97,9 +106,14 @@ def _process_single_session(
     bars_on_d = store.load_bars_on_day(conn, d, symbols)
     last_close = store.load_last_close_up_to(conn, d, symbols)
 
+    cash_rate = float(getattr(active_strategy, "cash_rate", 0.0))
+    interest = accrue_cash_interest(state.cash, state.last_processed_date, d, cash_rate)
+    cash_with_interest = state.cash + interest
+    realized_pnl_with_interest = state.realized_pnl + interest
+
     result = process_day(
-        cash=state.cash,
-        realized_pnl=state.realized_pnl,
+        cash=cash_with_interest,
+        realized_pnl=realized_pnl_with_interest,
         lots=lots,
         pending=pending,
         bars_on_d=bars_on_d,
@@ -111,7 +125,15 @@ def _process_single_session(
     store.save_order_outcomes(conn, d, result.outcomes)
     store.replace_lots(conn, result.lots)
     n_positions = len({lot.symbol for lot in result.lots if lot.qty > 0})
-    store.upsert_daily_nav(conn, d, result.cash, result.market_value, result.nav, n_positions)
+    store.upsert_daily_nav(
+        conn,
+        d,
+        result.cash,
+        result.market_value,
+        result.nav,
+        n_positions,
+        interest=interest,
+    )
     store.update_state(conn, result.cash, result.realized_pnl, d)
 
     positions = _aggregate_positions(result.lots)
@@ -122,6 +144,7 @@ def _process_single_session(
         nav=result.nav,
         positions=positions,
         bars_loader=lambda sym, n, _d=d, _c=conn: store.load_symbol_history_bars(_c, sym, _d, n),
+        next_trading_day=_next_trading_day(d, holidays),
     )
     intents = active_strategy.on_day(ctx)
     created = store.insert_pending_orders(conn, active_strategy.name, d, intents)
@@ -202,6 +225,7 @@ def _execute_engine(
                 sessions=sessions,
                 active_symbols=active_symbols,
                 active_strategy=active_strategy,
+                holidays=holidays,
             )
         if not ready:
             print(reason, file=sys.stderr)

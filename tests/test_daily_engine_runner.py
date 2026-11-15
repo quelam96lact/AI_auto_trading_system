@@ -395,3 +395,218 @@ def test_runner_entrypoint_exits_3_on_unhandled_exception(
     assert exc_info.value.code == 3
     captured = capsys.readouterr()
     assert "simulated crash" in captured.err
+
+
+@pytest.mark.integration
+def test_mutation_b_interest_added_to_realized_pnl_preserves_ledger_invariant(
+    clean_daily_db: Storage,
+) -> None:
+    """Phép phá (b): Lãi tiền gửi cộng vào cả cash và realized_pnl để giữ bất biến sổ."""
+    from trading.daily_engine.strategy import EtfDepositStrategy
+
+    storage = clean_daily_db
+    _seed_universe(storage, ["E1VFVN30"])
+    d0 = date(2026, 1, 5)
+    d1 = date(2026, 1, 6)
+    d2 = date(2026, 1, 7)
+    _seed_day_bars(storage, d0, {"E1VFVN30": (20_000.0, 20_000.0)})
+    _seed_day_bars(storage, d1, {"E1VFVN30": (20_000.0, 20_000.0)})
+    _seed_day_bars(storage, d2, {"E1VFVN30": (20_000.0, 20_500.0)})
+
+    strat = EtfDepositStrategy()
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d0) == 0
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d2) == 0
+
+    expected_interest_total = 15_965.358745284597 + 15_967.907672083255
+    with storage.conn() as c:
+        row = c.execute(
+            "SELECT capital, cash, realized_pnl, last_processed_date FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+        lots_cost_row = c.execute(
+            "SELECT COALESCE(SUM(qty * cost_per_share), 0.0) FROM paper_daily_lots"
+        ).fetchone()
+
+    capital, cash, realized_pnl, last_proc = (
+        float(row[0]),
+        float(row[1]),
+        float(row[2]),
+        row[3],
+    )
+    lots_cost = float(lots_cost_row[0])
+    assert last_proc == d2
+    assert realized_pnl == pytest.approx(expected_interest_total, abs=1e-4)
+    assert cash + lots_cost - capital == pytest.approx(realized_pnl, abs=1e-4)
+
+
+@pytest.mark.integration
+def test_mutation_c_rerun_same_day_does_not_accrue_interest_twice(
+    clean_daily_db: Storage,
+) -> None:
+    """Phép phá (c): Chạy lại cùng ngày đã xử lý không cộng lãi lần hai."""
+    from trading.daily_engine.strategy import EtfDepositStrategy
+
+    storage = clean_daily_db
+    _seed_universe(storage, ["E1VFVN30"])
+    d0 = date(2026, 1, 5)
+    d1 = date(2026, 1, 6)
+    _seed_day_bars(storage, d0, {"E1VFVN30": (20_000.0, 20_000.0)})
+    _seed_day_bars(storage, d1, {"E1VFVN30": (20_000.0, 20_000.0)})
+
+    strat = EtfDepositStrategy()
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d0) == 0
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d1) == 0
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d1) == 0
+
+    expected_intr = 15_965.358745284597
+    with storage.conn() as c:
+        cash, realized_pnl = c.execute(
+            "SELECT cash, realized_pnl FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+        nav_rows = c.execute(
+            "SELECT date, interest, cash FROM paper_daily_nav ORDER BY date"
+        ).fetchall()
+
+    assert float(cash) == pytest.approx(CAPITAL + expected_intr, abs=1e-4)
+    assert float(realized_pnl) == pytest.approx(expected_intr, abs=1e-4)
+    assert len(nav_rows) == 1
+    assert nav_rows[0][0] == d1
+    assert float(nav_rows[0][1]) == pytest.approx(expected_intr, abs=1e-4)
+    assert float(nav_rows[0][2]) == pytest.approx(CAPITAL + expected_intr, abs=1e-4)
+
+
+@pytest.mark.integration
+def test_mutation_d_null_strategy_accrues_zero_interest(clean_daily_db: Storage) -> None:
+    """Phép phá (d): Chiến lược null có cash_rate=0 nên không được cộng lãi tiền gửi."""
+    storage = clean_daily_db
+    _seed_universe(storage, ["AAA"])
+    d0 = date(2026, 1, 5)
+    d1 = date(2026, 1, 6)
+    _seed_day_bars(storage, d0, {"AAA": (20_000.0, 20_000.0)})
+    _seed_day_bars(storage, d1, {"AAA": (20_000.0, 21_000.0)})
+
+    assert run_daily_engine(dsn=TEST_DSN, today=d0) == 0
+    assert run_daily_engine(dsn=TEST_DSN, today=d1) == 0
+
+    with storage.conn() as c:
+        cash, realized_pnl = c.execute(
+            "SELECT cash, realized_pnl FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+        interest = c.execute(
+            "SELECT interest FROM paper_daily_nav WHERE date = %s",
+            (d1,),
+        ).fetchone()[0]
+
+    assert float(cash) == pytest.approx(CAPITAL)
+    assert float(realized_pnl) == pytest.approx(0.0)
+    assert float(interest) == pytest.approx(0.0)
+
+
+@pytest.mark.integration
+def test_mutation_e_interest_accrued_before_order_matching_hand_calculated(
+    clean_daily_db: Storage,
+) -> None:
+    """Phép phá (e): Lãi cộng TRƯỚC process_day giúp tiền mặt tăng trước giờ mở cửa khớp lệnh mua."""
+    storage = clean_daily_db
+    _seed_universe(storage, ["E1VFVN30"])
+    d0 = date(2026, 1, 9)   # Friday
+    d1 = date(2026, 1, 12)  # Monday -> days = 3
+    _seed_day_bars(storage, d0, {"E1VFVN30": (19_900.0, 19_900.0)})
+    # Buy cost for 5000 shares @ open=19_935 = 5000 * 19935 * 1.0005 * 1.0028 = 100_004_067.045
+    # Initial cash 100_000_000 alone only affords 4900 shares, but + 3-day interest (47_903.7234) affords all 5000!
+    _seed_day_bars(storage, d1, {"E1VFVN30": (19_935.0, 20_000.0)})
+
+    class _NoopDepositRateStrategy:
+        name = "test_deposit_only"
+        cash_rate = 0.06
+
+        def on_day(self, ctx: DailyContext) -> list[OrderIntent]:
+            return []
+
+    strat = _NoopDepositRateStrategy()
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d0) == 0
+    with storage.conn() as c:
+        c.execute(
+            "INSERT INTO paper_daily_orders (strategy, created_date, symbol, side, qty, status) "
+            "VALUES ('test_deposit_only', %s, 'E1VFVN30', 'BUY', 5000, 'pending')",
+            (d0,),
+        )
+
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d1) == 0
+
+    with storage.conn() as c:
+        order_row = c.execute(
+            "SELECT status, filled_qty FROM paper_daily_orders ORDER BY id LIMIT 1"
+        ).fetchone()
+        state_row = c.execute(
+            "SELECT cash, realized_pnl FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+        nav_row = c.execute(
+            "SELECT interest, cash FROM paper_daily_nav WHERE date = %s",
+            (d1,),
+        ).fetchone()
+
+    assert order_row == ("filled", 5000)
+    assert float(nav_row[0]) == pytest.approx(47_903.723423226016, abs=1e-4)
+    assert float(nav_row[1]) == pytest.approx(43_836.67842324078, abs=1e-4)
+    assert float(state_row[0]) == pytest.approx(43_836.67842324078, abs=1e-4)
+    assert float(state_row[1]) == pytest.approx(47_903.723423226016, abs=1e-4)
+
+
+@pytest.mark.integration
+def test_mutation_j_runner_populates_next_trading_day_correctly(clean_daily_db: Storage) -> None:
+    """Phép phá (j): Runner điền ctx.next_trading_day theo is_trading_day + holidays (bỏ qua lễ Tết Tây & cuối tuần)."""
+    storage = clean_daily_db
+    _seed_universe(storage, ["AAA"])
+    d0 = date(2026, 12, 29)
+    d1 = date(2026, 12, 30)  # next_trading_day -> 2026-12-31
+    d2 = date(2026, 12, 31)  # next_trading_day -> 2027-01-04 (2027-01-01 holiday, 02/03 weekend)
+    _seed_day_bars(storage, d0, {"AAA": (10_000.0, 10_000.0)})
+    _seed_day_bars(storage, d1, {"AAA": (10_000.0, 10_000.0)})
+    _seed_day_bars(storage, d2, {"AAA": (10_000.0, 10_000.0)})
+
+    recorded: list[tuple[date, date | None]] = []
+
+    class _CaptureNextTradingDayStrategy:
+        name = "test_next_td"
+        cash_rate = 0.0
+
+        def on_day(self, ctx: DailyContext) -> list[OrderIntent]:
+            recorded.append((ctx.d, ctx.next_trading_day))
+            return []
+
+    strat = _CaptureNextTradingDayStrategy()
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d0) == 0
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d2) == 0
+
+    assert recorded == [
+        (date(2026, 12, 30), date(2026, 12, 31)),
+        (date(2026, 12, 31), date(2027, 1, 4)),
+    ]
+
+
+@pytest.mark.integration
+def test_mutation_k_dry_run_leaves_no_interest_or_orders_in_db(clean_daily_db: Storage) -> None:
+    """Phép phá (k): --dry-run rollback toàn bộ, không để lại lãi tiền gửi hay lệnh trong DB."""
+    from trading.daily_engine.strategy import EtfDepositStrategy
+
+    storage = clean_daily_db
+    _seed_universe(storage, ["E1VFVN30"])
+    d0 = date(2026, 1, 5)
+    d1 = date(2026, 1, 6)
+    _seed_day_bars(storage, d0, {"E1VFVN30": (20_000.0, 20_000.0)})
+    _seed_day_bars(storage, d1, {"E1VFVN30": (20_000.0, 20_000.0)})
+
+    strat = EtfDepositStrategy()
+    assert run_daily_engine(dsn=TEST_DSN, strategy=strat, today=d0) == 0
+    assert run_daily_engine(dsn=TEST_DSN, dry_run=True, strategy=strat, today=d1) == 0
+
+    with storage.conn() as c:
+        state = c.execute(
+            "SELECT cash, realized_pnl, last_processed_date FROM paper_daily_state WHERE id = 1"
+        ).fetchone()
+        nav_cnt = c.execute("SELECT count(*) FROM paper_daily_nav").fetchone()[0]
+        orders_cnt = c.execute("SELECT count(*) FROM paper_daily_orders").fetchone()[0]
+
+    assert state == (CAPITAL, 0.0, d0)
+    assert nav_cnt == 0
+    assert orders_cnt == 0

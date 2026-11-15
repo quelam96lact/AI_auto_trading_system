@@ -71,8 +71,22 @@ __all__ = [
     "Lot",
     "OrderOutcome",
     "PendingOrder",
+    "accrue_cash_interest",
     "process_day",
 ]
+
+
+def accrue_cash_interest(
+    cash: float,
+    prev_date: date,
+    d: date,
+    annual_rate: float,
+) -> float:
+    """Return calendar-day compound interest on `cash` over `(prev_date, d]` (365-day basis)."""
+    days = (d - prev_date).days
+    if annual_rate <= 0.0 or days <= 0 or cash <= 0.0:
+        return 0.0
+    return float(cash) * ((1.0 + float(annual_rate)) ** (days / 365.0) - 1.0)
 
 
 def _rejected(order_id: int, reason: str) -> OrderOutcome:
