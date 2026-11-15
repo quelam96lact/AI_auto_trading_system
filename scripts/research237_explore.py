@@ -305,6 +305,7 @@ def _build_report_markdown(
     candidates: list[dict[str, Any]],
     cand_sha: str,
     sel_sha: str,
+    pbo_ea: float | None = None,
 ) -> str:
     lines: list[str] = [
         "# Báo Cáo Khám Phá Danh Mục Ít Được Chú Ý (Brief 237)",
@@ -388,6 +389,10 @@ def _build_report_markdown(
         "## Bước 4: DSR (n_trials = 9 + 29 = 38)",
         "",
         f"- **DSR (EA):** {'không tính' if dsr_val is None else f'{dsr_val:.4f} (ngưỡng >= 0.95 -> ' + ('ĐẠT' if dsr_val >= 0.95 else 'TRƯỢT') + ')'}",
+    ])
+    if pbo_ea is not None:
+        lines.append(f"- PBO (EA, CSCV): {pbo_ea:.3f}")
+    lines.extend([
         "",
         "## Kết luận Ứng Viên",
         "",
@@ -415,6 +420,7 @@ def run_exploration(
     dsr_fn: Callable[[float, int, float, float, list[float]], float] = compute_step4_dsr,
     report_builder_fn: Callable[..., str] = _build_report_markdown,
     grid: dict[str, list[int]] = GRID,
+    pbo_fn: Callable[[np.ndarray], float] | None = None,
 ) -> dict[str, Any]:
     """Execute exploration workflow (§5). First line calls assert_ledger_safety."""
     assert_ledger_safety(ledger_path)
@@ -521,6 +527,16 @@ def run_exploration(
         f"\n[Step 1] Best EA config by sharpe_X: {best_ea['params']} "
         f"(sharpe_X={best_ea['metrics']['sharpe_X']:.4f}, mean_X={best_ea['metrics']['mean_X']*100:.2f}%)"
     )
+
+    pbo_ea: float | None = None
+    if pbo_fn is not None:
+        excess_cols = [
+            np.asarray(entry["sim"]["monthly_returns"], dtype=float) - np.asarray(ea_ew, dtype=float)
+            for entry in ea_results
+        ]
+        pbo_matrix = np.column_stack(excess_cols)
+        pbo_ea = float(pbo_fn(pbo_matrix))
+        print(f"[Step 1] PBO (EA, CSCV): {pbo_ea:.3f}")
 
     # Step 2: Plateau
     plateau_passed, plateau_reasons = check_plateau(best_ea, ea_results, grid)
@@ -657,12 +673,13 @@ def run_exploration(
         candidates=candidates,
         cand_sha=cand_sha,
         sel_sha=sel_sha,
+        **({"pbo_ea": pbo_ea} if pbo_ea is not None else {}),
     )
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_md)
 
     print(f"\nDone: {len(candidates)} candidate(s). candidates.json sha256 = {cand_sha}")
-    return {
+    result: dict[str, Any] = {
         "step0_counts": step0_counts,
         "ea_results": ea_results,
         "best_ea": best_ea,
@@ -676,6 +693,9 @@ def run_exploration(
         "candidates_sha": cand_sha,
         "selections_sha": sel_sha,
     }
+    if pbo_ea is not None:
+        result["pbo_ea"] = pbo_ea
+    return result
 
 
 def run_step0_only(data_dir: Path | str = DATA_DIR) -> dict[str, int]:
