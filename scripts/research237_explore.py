@@ -414,6 +414,7 @@ def run_exploration(
     select_symbols_fn: Callable[..., list[str]] = select_lowattn_symbols,
     dsr_fn: Callable[[float, int, float, float, list[float]], float] = compute_step4_dsr,
     report_builder_fn: Callable[..., str] = _build_report_markdown,
+    grid: dict[str, list[int]] = GRID,
 ) -> dict[str, Any]:
     """Execute exploration workflow (§5). First line calls assert_ledger_safety."""
     assert_ledger_safety(ledger_path)
@@ -446,8 +447,8 @@ def run_exploration(
     selections_dump: dict[str, Any] = {}
 
     print(f"\n--- Step 1: Running EA for {idea_id} (9 configs) ---")
-    for s_win in GRID["S"]:
-        for n_stocks in GRID["N"]:
+    for s_win in grid["S"]:
+        for n_stocks in grid["N"]:
             params = {"S": s_win, "N": n_stocks}
             cfg_key = _config_key(params)
             selected_record: dict[str, list[str]] = {}
@@ -522,7 +523,7 @@ def run_exploration(
     )
 
     # Step 2: Plateau
-    plateau_passed, plateau_reasons = check_plateau(best_ea, ea_results, GRID)
+    plateau_passed, plateau_reasons = check_plateau(best_ea, ea_results, grid)
     if plateau_passed:
         print("[Step 2] Plateau: PASSED (all +/- 1 step neighbors pass).")
     else:
