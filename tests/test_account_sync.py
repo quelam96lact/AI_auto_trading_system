@@ -1449,3 +1449,166 @@ async def test_confirm1_single_zero_field_margin_writes_at_night():
     assert len(storage.balance_calls) == 1
     assert storage.balance_calls[0]["withdrawable"] == 0.0
     assert storage.balance_calls[0]["total_debt"] == 31000000.0
+
+
+class _FakeStorageWithAcctBal(FakeStorage):
+    """FakeStorage cho phép đặt riêng account_balance trước trong read_balance_for_nav."""
+
+    def __init__(self, prev_acct_bal: float = 0.0):
+        super().__init__()
+        self._prev_acct_bal = prev_acct_bal
+
+    def read_balance_for_nav(self, account_no):
+        if self._prev_balance is None:
+            return None
+        d = self._prev_balance[1]
+        ts = self._prev_balance[-1]
+        return (self._prev_acct_bal, d, 0.0, ts)
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_balance_reproduced_2026_11_13():
+    """Brief 242 (a): Tái hiện 0434226 đêm 13/11/2026 23:20 (ab=75.614.394 -> -165, wd=0, debt=0)."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    alerts = []
+    storage = FakeStorage()
+    storage._prev_balance = (75_614_394.0, 0.0, datetime(2026, 11, 13, 23, 15, tzinfo=_TZ))
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        # Nhịp 23:20 thứ Sáu 13/11 -> không ghi, WARN đặt cờ
+        t1 = datetime(2026, 11, 13, 23, 20, tzinfo=_TZ)
+        await account_sync._sync_balance(
+            _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0), "cid", "0434226", t1, storage
+        )
+        assert storage.balance_calls == []
+        assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+        assert any(lvl == "WARN" and "CONFIRM-1" in msg for lvl, msg in alerts)
+
+        # Nhịp 23:25 thứ Sáu 13/11 -> không ghi
+        t2 = datetime(2026, 11, 13, 23, 25, tzinfo=_TZ)
+        await account_sync._sync_balance(
+            _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0), "cid", "0434226", t2, storage
+        )
+        assert storage.balance_calls == []
+
+        # Nhịp CN 15/11 13:47 (không phải ngày GD) -> không ghi
+        t3 = datetime(2026, 11, 15, 13, 47, tzinfo=_TZ)
+        await account_sync._sync_balance(
+            _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0), "cid", "0434226", t3, storage
+        )
+        assert storage.balance_calls == []
+
+        # Nhịp thứ Hai 16/11 09:00 vẫn -165 -> ghi (xác nhận)
+        t4 = datetime(2026, 11, 16, 9, 0, tzinfo=_TZ)
+        await account_sync._sync_balance(
+            _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0), "cid", "0434226", t4, storage
+        )
+        assert len(storage.balance_calls) == 1
+        assert storage.balance_calls[0]["account_balance"] == -165.0
+        assert not _acct_sync_mod._pending_zero_balance.get("0434226")
+    finally:
+        _acct_sync_mod.alert = _orig
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_balance_recovers_clears_pending():
+    """Brief 242 (b): Sau nhịp hoãn -165, nhịp 05:06 trả ab=75.614.394 -> ghi và xoá cờ chờ."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    storage = FakeStorage()
+    storage._prev_balance = (75_614_394.0, 0.0, datetime(2026, 11, 13, 23, 15, tzinfo=_TZ))
+    t1 = datetime(2026, 11, 13, 23, 20, tzinfo=_TZ)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0), "cid", "0434226", t1, storage
+    )
+    assert storage.balance_calls == []
+    assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+
+    t2 = datetime(2026, 11, 14, 5, 6, tzinfo=_TZ)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=75_614_394, total_debt=0, withdrawable=75_614_394),
+        "cid", "0434226", t2, storage,
+    )
+    assert len(storage.balance_calls) == 1
+    assert storage.balance_calls[0]["account_balance"] == 75_614_394.0
+    assert not _acct_sync_mod._pending_zero_balance.get("0434226")
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_real_zero_account_0434221_writes_immediately():
+    """Brief 242 (c): 0434221 thật (1.902 dòng ab=0): trước (0,0,0), SSI trả ab=0 lúc 10:00 & 23:00 -> ghi ngay."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    storage = FakeStorage()
+    storage._prev_balance = (0.0, 0.0, datetime(2026, 11, 13, 9, 55, tzinfo=_TZ))
+
+    t1 = datetime(2026, 11, 13, 10, 0, tzinfo=_TZ)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=0, total_debt=0, withdrawable=0), "cid", "0434221", t1, storage
+    )
+    t2 = datetime(2026, 11, 13, 23, 0, tzinfo=_TZ)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=0, total_debt=0, withdrawable=0), "cid", "0434221", t2, storage
+    )
+
+    assert len(storage.balance_calls) == 2
+    assert storage.balance_calls[0]["account_balance"] == 0.0
+    assert storage.balance_calls[1]["account_balance"] == 0.0
+    assert not _acct_sync_mod._pending_zero_balance.get("0434221")
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_threshold_strict_lt():
+    """Brief 242 (d): Ngưỡng BALANCE_DUST_VND=1000 (< nghiêm ngặt): -999 bị bắt, -1000 và 1000 ghi ngay."""
+    from trading.calendar_vn import TZ as _TZ
+
+    ts = datetime(2026, 11, 13, 23, 20, tzinfo=_TZ)
+
+    _reset_confirm1()
+    s_hold = FakeStorage()
+    s_hold._prev_balance = (75_614_394.0, 0.0, ts)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-999, total_debt=0, withdrawable=0), "cid", "0434226", ts, s_hold
+    )
+    assert s_hold.balance_calls == []
+    assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+
+    _reset_confirm1()
+    s_neg = FakeStorage()
+    s_neg._prev_balance = (75_614_394.0, 0.0, ts)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-1000, total_debt=0, withdrawable=0), "cid", "0434226", ts, s_neg
+    )
+    assert len(s_neg.balance_calls) == 1
+    assert s_neg.balance_calls[0]["account_balance"] == -1000.0
+
+    _reset_confirm1()
+    s_pos = FakeStorage()
+    s_pos._prev_balance = (75_614_394.0, 0.0, ts)
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=1000, total_debt=0, withdrawable=0), "cid", "0434226", ts, s_pos
+    )
+    assert len(s_pos.balance_calls) == 1
+    assert s_pos.balance_calls[0]["account_balance"] == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_prev_large_account_balance_with_zero_wd_and_debt():
+    """Brief 242 (e): Dòng trước chỉ có ab=50.000.000 (wd=0, debt=0) -> ab=-64 bị hoãn (nhánh 1.3)."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    ts = datetime(2026, 11, 13, 23, 20, tzinfo=_TZ)
+    storage = _FakeStorageWithAcctBal(prev_acct_bal=50_000_000.0)
+    storage._prev_balance = (0.0, 0.0, ts)
+
+    await account_sync._sync_balance(
+        _fake_auth_balance(acct_bal=-64, total_debt=0, withdrawable=0), "cid", "0434226", ts, storage
+    )
+    assert storage.balance_calls == []
+    assert _acct_sync_mod._pending_zero_balance.get("0434226") is True

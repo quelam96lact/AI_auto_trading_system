@@ -22,6 +22,7 @@ _pending_zero_balance: dict[str, bool] = {}       # account_no -> True khi đang
 
 CONFIRM_WINDOW_START = time(9, 0)
 CONFIRM_WINDOW_END = time(15, 30)
+BALANCE_DUST_VND = 1000.0
 
 
 def _is_in_confirmation_window(ts: datetime, holidays: set[date] | frozenset = frozenset()) -> bool:
@@ -111,14 +112,19 @@ async def _sync_balance(
     total_debt = float(equity["totalDebt"])
     withdrawable = float(equity["withdrawable"])
 
-    # CONFIRM-1 (Phần B, đợt 124 & đợt 164): cả ba trường = 0 đồng thời là dấu hiệu bảo trì SSI
-    # (đo được 14 lần trong lịch sử, luôn cả hai tài khoản cùng lúc, không thể thật).
-    # Điều kiện bắt: CẢ BA = 0 (không phải bất kỳ một trường = 0 — b7: withdrawable=0
-    # thật cho tài khoản margin, không được bắt nhầm).
+    # CONFIRM-1 (Phần B, đợt 124, đợt 164 & đợt 242): cả ba trường = 0 (hoặc số dư bụi
+    # |account_balance| < BALANCE_DUST_VND với withdrawable=0, totalDebt=0) là dấu hiệu
+    # bảo trì/lỗi SSI.
+    # Điều kiện bắt: |acct_bal| < BALANCE_DUST_VND và total_debt == 0 và withdrawable == 0
+    # (b7: withdrawable=0 thật cho tài khoản margin khi acct_bal lớn không bị bắt nhầm).
     # Áp quy tắc xác nhận hai lần tương tự _sync_positions: chỉ xác nhận trong cửa sổ giao dịch.
-    if acct_bal == 0.0 and total_debt == 0.0 and withdrawable == 0.0:
+    if abs(acct_bal) < BALANCE_DUST_VND and total_debt == 0.0 and withdrawable == 0.0:
         prev_bal = storage.read_account_balance_with_debt(account_no)
-        prev_nonzero = prev_bal is not None and (prev_bal[0] != 0.0 or prev_bal[1] != 0.0)
+        prev_nav = storage.read_balance_for_nav(account_no)
+        prev_nonzero = (
+            (prev_bal is not None and (prev_bal[0] != 0.0 or prev_bal[1] != 0.0))
+            or (prev_nav is not None and abs(prev_nav[0]) >= BALANCE_DUST_VND)
+        )
         if prev_nonzero:
             if not _pending_zero_balance.get(account_no):
                 _pending_zero_balance[account_no] = True
