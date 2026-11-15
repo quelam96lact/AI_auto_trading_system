@@ -22,6 +22,10 @@ Tại phiên `t` của mã `m` (không phải chứng chỉ quỹ; mã có nến
 - Bỏ phiên đầu tiên mã xuất hiện trong dữ liệu.
 - **Thanh khoản:** GTGD trung bình 20 phiên tới `t−1` (`close × volume`) ≥ 1 tỷ.
 
+**Làm rõ 16/11 (trước khi đo, sau đối chiếu oracle lệch 36 sự kiện):**
+- "`t−1`" = **nến liền trước của chính mã** (không phải phiên liền trước trên `sessions.csv`), cho cả `r_t` lẫn điều kiện đầu chuỗi. Lý do: giá tham chiếu biên độ là giá đóng cửa phiên giao dịch gần nhất của mã; ngày sàn riêng nghỉ (vd HOSE 24/01/2018) hay mã tạm ngừng không làm mất sự kiện.
+- **Cửa sổ sự kiện IS:** `t` từ 2017-01-01 tới 2022-12-30; dữ liệu 2016 chỉ làm nền thanh khoản/đầu chuỗi.
+
 ## 3. Giao dịch (3 cấu hình)
 
 - **Vào:** giá mở cửa phiên `t+1`. Không có nến `t+1` → bỏ, đếm.
