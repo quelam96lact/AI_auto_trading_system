@@ -41,6 +41,11 @@ Cùng chữ ký và **cùng kết quả số** với `scripts/research188_core.p
 - Ứng viên = ô tự nó đạt. Không có → `None`.
 - Chọn ô có `neighbor_pass_fraction` lớn nhất; hoà → trung vị điểm các ô láng giềng không NaN (gồm chính nó) lớn nhất; hoà nữa → chỉ số nhỏ nhất theo thứ tự từ điển. Trả tuple chỉ số (int Python).
 
+### 1.7 Làm rõ (15/11, sau câu hỏi của oracle)
+- `deflated_sharpe` là **ngoại lệ** của quy tắc ValueError: khớp số với bản 188 ở mọi đầu vào (`n_obs<=1` → 0.0, `n_trials<=1` → `sr_star=0`, `sr_trials_var<0` kẹp về 0). Không raise.
+- `std == 0` so sánh tuyệt đối (không dung sai). dtype chỉ số: `np.issubdtype(dtype, np.integer)` là đủ.
+- **Không đặc tả, không kiểm (cả test lẫn oracle):** đầu vào `bool`, `float` thay cho int, list thay cho ndarray, mảng rỗng/0-D, NaN/inf trong `sharpe_cols`/`scores`, `threshold` NaN/inf, `N==0`/`T==0` ở `sharpe_cols`. Hành vi tuỳ Builder.
+
 ## 2. Phạm vi file
 
 - **Tạo mới:** `scripts/overfit_core.py`, `tests/test_overfit_core.py`.
