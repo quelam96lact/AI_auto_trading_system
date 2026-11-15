@@ -103,8 +103,9 @@ def select_lowattn_symbols(
     min_turnover: float = MIN_TURNOVER_237,
     long_window: int = LONG_WINDOW,
     out_scores: dict[str, float] | None = None,
+    descending: bool = False,
 ) -> list[str]:
-    """Select top N lowest-AT_S symbols from §3.2 universe at r^- (§3.3).
+    """Select top N lowest-AT_S (or highest-AT_S when descending=True) symbols at r^- (§3.3).
 
     AT_S = mean(v over last s_window bars up to r^-) / mean(v over last 250 bars up to r^-),
     where v_i = close_i * volume_i. Symbols with denominator <= 0 are excluded.
@@ -143,5 +144,8 @@ def select_lowattn_symbols(
             out_scores[sym] = at_score
         eligible.append((at_score, sym))
 
-    eligible.sort(key=lambda item: (item[0], item[1]))
+    if descending:
+        eligible.sort(key=lambda item: (-item[0], item[1]))
+    else:
+        eligible.sort(key=lambda item: (item[0], item[1]))
     return [sym for _score, sym in eligible[:n_stocks]]

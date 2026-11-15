@@ -240,9 +240,10 @@ def compute_step4_dsr(
     skew: float,
     kurt: float,
     ea_sharpes: list[float],
+    extra_trials: int = PRIOR_NEGATIVE_FAMILIES,
 ) -> float:
-    """Compute Step 4 Deflated Sharpe Ratio (§5): n_trials = len(ea_sharpes) + 29."""
-    n_trials = len(ea_sharpes) + PRIOR_NEGATIVE_FAMILIES
+    """Compute Step 4 Deflated Sharpe Ratio (§5): n_trials = len(ea_sharpes) + extra_trials."""
+    n_trials = len(ea_sharpes) + extra_trials
     sr_trials_var = float(np.var(ea_sharpes, ddof=1)) if len(ea_sharpes) > 1 else 0.0
     return deflated_sharpe(
         sr=sharpe_x,
@@ -260,11 +261,12 @@ def _make_selector(
     s_window: int,
     n_stocks: int,
     selected_record: dict[str, list[str]],
+    select_symbols_fn: Callable[..., list[str]] = select_lowattn_symbols,
 ) -> Callable[[date], list[str]]:
     """Build a select_fn closure that records selections by ISO date."""
 
     def _select(r: date) -> list[str]:
-        syms = select_lowattn_symbols(
+        syms = select_symbols_fn(
             r=r,
             sessions=sessions,
             bars_by_symbol=bars_by_symbol,
@@ -406,6 +408,12 @@ def run_exploration(
     report_path: Path | str = REPORT_PATH,
     selections_path: Path | str = SELECTIONS_PATH,
     verify_step0: bool = True,
+    idea_id: str = IDEA_ID,
+    idea_type: str = IDEA_TYPE,
+    seed: int = SEED_237,
+    select_symbols_fn: Callable[..., list[str]] = select_lowattn_symbols,
+    dsr_fn: Callable[[float, int, float, float, list[float]], float] = compute_step4_dsr,
+    report_builder_fn: Callable[..., str] = _build_report_markdown,
 ) -> dict[str, Any]:
     """Execute exploration workflow (§5). First line calls assert_ledger_safety."""
     assert_ledger_safety(ledger_path)
@@ -437,20 +445,22 @@ def run_exploration(
     ea_sharpes: list[float] = []
     selections_dump: dict[str, Any] = {}
 
-    print(f"\n--- Step 1: Running EA for {IDEA_ID} (9 configs) ---")
+    print(f"\n--- Step 1: Running EA for {idea_id} (9 configs) ---")
     for s_win in GRID["S"]:
         for n_stocks in GRID["N"]:
             params = {"S": s_win, "N": n_stocks}
             cfg_key = _config_key(params)
             selected_record: dict[str, list[str]] = {}
-            select_fn = _make_selector(sessions, stocks, s_win, n_stocks, selected_record)
+            select_fn = _make_selector(
+                sessions, stocks, s_win, n_stocks, selected_record, select_symbols_fn=select_symbols_fn
+            )
 
             sim = simulate_rotation(
                 rebalance_dates=ea_rebal,
                 bars_by_symbol=stocks,
                 sessions=sessions,
                 exchanges=exchanges,
-                idea_type=IDEA_TYPE,
+                idea_type=idea_type,
                 lookback=s_win,
                 n_stocks=n_stocks,
                 min_turnover=MIN_TURNOVER_237,
@@ -462,12 +472,12 @@ def run_exploration(
                 monthly_ew=ea_ew,
                 rebalance_dates=ea_rebal,
                 portfolio_metrics=sim,
-                seed=SEED_237,
+                seed=seed,
             )
 
             ea_sharpes.append(metrics["sharpe_X"])
             ea_results.append({
-                "idea_id": IDEA_ID,
+                "idea_id": idea_id,
                 "params": params,
                 "period": "EA",
                 "sim": sim,
@@ -482,8 +492,8 @@ def run_exploration(
             }
 
             evaluate_and_log(
-                idea_id=IDEA_ID,
-                idea_fn_or_sha=IDEA_TYPE,
+                idea_id=idea_id,
+                idea_fn_or_sha=idea_type,
                 params=params,
                 market="stock",
                 period="EA",
@@ -527,17 +537,19 @@ def run_exploration(
         p = best_ea["params"]
         s_win = int(p["S"])
         n_stocks = int(p["N"])
-        print(f"\n--- Step 3: Running EB once for {IDEA_ID} {p} ({len(eb_rebal) - 1} months) ---")
+        print(f"\n--- Step 3: Running EB once for {idea_id} {p} ({len(eb_rebal) - 1} months) ---")
         eb_ew = ew_benchmark(eb_rebal, stocks, sessions, min_turnover=MIN_TURNOVER_237)
         eb_selected_record: dict[str, list[str]] = {}
-        eb_select_fn = _make_selector(sessions, stocks, s_win, n_stocks, eb_selected_record)
+        eb_select_fn = _make_selector(
+            sessions, stocks, s_win, n_stocks, eb_selected_record, select_symbols_fn=select_symbols_fn
+        )
 
         sim_eb = simulate_rotation(
             rebalance_dates=eb_rebal,
             bars_by_symbol=stocks,
             sessions=sessions,
             exchanges=exchanges,
-            idea_type=IDEA_TYPE,
+            idea_type=idea_type,
             lookback=s_win,
             n_stocks=n_stocks,
             min_turnover=MIN_TURNOVER_237,
@@ -548,11 +560,11 @@ def run_exploration(
             monthly_ew=eb_ew,
             rebalance_dates=eb_rebal,
             portfolio_metrics=sim_eb,
-            seed=SEED_237,
+            seed=seed,
         )
 
         eb_entry = {
-            "idea_id": IDEA_ID,
+            "idea_id": idea_id,
             "params": p,
             "period": "EB",
             "sim": sim_eb,
@@ -566,8 +578,8 @@ def run_exploration(
         }
 
         evaluate_and_log(
-            idea_id=IDEA_ID,
-            idea_fn_or_sha=IDEA_TYPE,
+            idea_id=idea_id,
+            idea_fn_or_sha=idea_type,
             params=p,
             market="stock",
             period="EB",
@@ -606,17 +618,17 @@ def run_exploration(
     candidates: list[dict[str, Any]] = []
     if eb_passed and eb_entry is not None:
         m_ea = best_ea["metrics"]
-        dsr_val = compute_step4_dsr(
-            sharpe_x=m_ea["sharpe_X"],
-            n_months=m_ea["n"],
-            skew=m_ea["skew"],
-            kurt=m_ea["kurt"],
-            ea_sharpes=ea_sharpes,
+        dsr_val = dsr_fn(
+            m_ea["sharpe_X"],
+            m_ea["n"],
+            m_ea["skew"],
+            m_ea["kurt"],
+            ea_sharpes,
         )
         print(f"\n[Step 4] DSR on EA = {dsr_val:.4f} (threshold >= 0.95)")
         if dsr_val >= 0.95:
             candidates.append({
-                "idea_id": IDEA_ID,
+                "idea_id": idea_id,
                 "params": best_ea["params"],
                 "ea_sharpe_x": m_ea["sharpe_X"],
                 "eb_sharpe_x": eb_entry["metrics"]["sharpe_X"],
@@ -631,7 +643,7 @@ def run_exploration(
         json.dump(candidates, f, indent=2)
     cand_sha = hashlib.sha256(Path(candidates_path).read_bytes()).hexdigest()
 
-    report_md = _build_report_markdown(
+    report_md = report_builder_fn(
         step0_counts=step0_counts,
         ea_results=ea_results,
         best_ea=best_ea,

@@ -27,6 +27,7 @@ import hashlib
 import io
 import json
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -64,6 +65,10 @@ def validate_candidates(
     hurdle_cagr: float = 0.10,
     etf_cagr: float = ETF_EB_CAGR,
     etf_mdd: float = ETF_EB_MDD,
+    expected_idea_id: str = IDEA_ID,
+    idea_type: str = IDEA_TYPE,
+    seed: int = SEED_237,
+    select_symbols_fn: Callable[..., list[str]] = select_lowattn_symbols,
 ) -> int:
     """Validate candidates in V1 or V2 against §6 gates."""
     cand_p = Path(candidates_path)
@@ -123,7 +128,7 @@ def validate_candidates(
         idea_id = cand["idea_id"]
         params = cand["params"]
 
-        if idea_id != IDEA_ID:
+        if idea_id != expected_idea_id:
             print(f"ERROR: Unknown idea_id {idea_id}", file=sys.stderr)
             all_passed = False
             continue
@@ -133,7 +138,7 @@ def validate_candidates(
         print(f"\n--- Validating [{part}] {idea_id} ({params}) ---")
 
         def _select_fn(r: date, _s: int = s_win, _n: int = n_stocks) -> list[str]:
-            return select_lowattn_symbols(
+            return select_symbols_fn(
                 r=r,
                 sessions=sessions,
                 bars_by_symbol=stocks,
@@ -148,7 +153,7 @@ def validate_candidates(
             bars_by_symbol=stocks,
             sessions=sessions,
             exchanges=exchanges,
-            idea_type=IDEA_TYPE,
+            idea_type=idea_type,
             lookback=s_win,
             n_stocks=n_stocks,
             min_turnover=MIN_TURNOVER_237,
@@ -160,7 +165,7 @@ def validate_candidates(
             monthly_ew=ew_rets,
             rebalance_dates=val_rebal,
             portfolio_metrics=sim,
-            seed=SEED_237,
+            seed=seed,
         )
 
         mean_x = float(metrics["mean_X"])
