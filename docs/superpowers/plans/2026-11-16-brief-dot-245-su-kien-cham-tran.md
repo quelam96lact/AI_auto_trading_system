@@ -25,6 +25,7 @@ Tại phiên `t` của mã `m` (không phải chứng chỉ quỹ; mã có nến
 **Làm rõ 16/11 (trước khi đo, sau đối chiếu oracle lệch 36 sự kiện):**
 - "`t−1`" = **nến liền trước của chính mã** (không phải phiên liền trước trên `sessions.csv`), cho cả `r_t` lẫn điều kiện đầu chuỗi. Lý do: giá tham chiếu biên độ là giá đóng cửa phiên giao dịch gần nhất của mã; ngày sàn riêng nghỉ (vd HOSE 24/01/2018) hay mã tạm ngừng không làm mất sự kiện.
 - **Cửa sổ sự kiện IS:** `t` từ 2017-01-01 tới 2022-12-30; dữ liệu 2016 chỉ làm nền thanh khoản/đầu chuỗi.
+- **Sửa lỗi brief (T+2):** `t+1`, `t+H` tính theo phiên của `sessions.csv`. Khi thiếu nến ở `t+H`, chỉ được bán ở nến gần nhất trong **`[t+3, t+H]`** (không phải `(t+1, t+H]`: mua ở `t+1` thì cổ phiếu về `t+3`); không có → bỏ, đếm. Với H = 3 nghĩa là thiếu nến `t+3` thì bỏ.
 
 ## 3. Giao dịch (3 cấu hình)
 
