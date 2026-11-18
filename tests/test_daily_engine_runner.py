@@ -610,3 +610,165 @@ def test_mutation_k_dry_run_leaves_no_interest_or_orders_in_db(clean_daily_db: S
     assert state == (CAPITAL, 0.0, d0)
     assert nav_cnt == 0
     assert orders_cnt == 0
+
+
+def _patch_fake_runner_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    state: object | None,
+    processed_dates: list[date],
+    init_sessions_seen: list[list[date]],
+    ready_date_return: date | None = None,
+    not_ready_dates: set[date] | None = None,
+) -> None:
+    """Patch Storage/store/strategy/DSN in runner for DB-free unit tests."""
+    from contextlib import contextmanager
+
+    import trading.daily_engine.runner as runner_mod
+
+    class _FakeConn:
+        @contextmanager
+        def transaction(self, force_rollback: bool = False):
+            _ = force_rollback
+            yield self
+
+    class _FakeStorage:
+        def __init__(self, dsn: str) -> None:
+            _ = dsn
+
+        def init_schema(self) -> None:
+            return None
+
+        def read_active_universe(self) -> list[str]:
+            return ["AAA"]
+
+        @contextmanager
+        def conn(self):
+            yield _FakeConn()
+
+    class _FakeStrategy:
+        name = "fake_strat"
+        cash_rate = 0.0
+
+    monkeypatch.setattr(runner_mod, "Storage", _FakeStorage)
+    monkeypatch.setattr(runner_mod, "resolve_dsn", lambda dsn=None: "postgresql://fake")
+    monkeypatch.setattr(runner_mod, "resolve_strategy", lambda: _FakeStrategy())
+    monkeypatch.setattr(runner_mod, "load_holidays", lambda path: set())
+
+    monkeypatch.setattr(runner_mod.store, "load_state", lambda conn: state)
+    monkeypatch.setattr(runner_mod.store, "load_lots", lambda conn: [])
+    monkeypatch.setattr(runner_mod.store, "load_latest_nav_or_cash", lambda conn, cash: cash)
+
+    def _fake_find_ready(conn, init_sessions: list[date], active_symbols: list[str]):
+        init_sessions_seen.append(list(init_sessions))
+        return ready_date_return
+
+    monkeypatch.setattr(runner_mod.store, "find_latest_ready_session", _fake_find_ready)
+    monkeypatch.setattr(
+        runner_mod.store,
+        "insert_initial_state",
+        lambda conn, name, cap, ready_d: None,
+    )
+
+    def _fake_process_single_session(**kwargs):
+        d: date = kwargs["d"]
+        if not_ready_dates and d in not_ready_dates:
+            return False, f"not ready {d}", 0, 0, 0.0
+        processed_dates.append(d)
+        return True, None, 0, 0, CAPITAL
+
+    monkeypatch.setattr(runner_mod, "_process_single_session", _fake_process_single_session)
+
+
+def test_runner_through_yesterday_processes_yesterday_only_and_exits_0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(c) --through-yesterday: last_processed_date=hom kia, hom nay chua co nen -> chi xu ly hom qua, exit 0."""
+    from types import SimpleNamespace
+
+    import trading.daily_engine.runner as runner_mod
+
+    d_tue = date(2026, 11, 17)
+    d_wed = date(2026, 11, 18)
+    d_thu = date(2026, 11, 19)
+
+    processed: list[date] = []
+    init_seen: list[list[date]] = []
+    state = SimpleNamespace(strategy="fake_strat", cash=CAPITAL, last_processed_date=d_tue)
+    _patch_fake_runner_env(
+        monkeypatch,
+        state=state,
+        processed_dates=processed,
+        init_sessions_seen=init_seen,
+        not_ready_dates={d_thu},
+    )
+
+    # CLI --through-yesterday voi vn_today = 2026-11-19
+    class _FixedDatetime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 19, 9, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(runner_mod, "datetime", _FixedDatetime)
+    rc = runner_mod.main(["--through-yesterday"])
+    assert rc == 0
+    assert processed == [d_wed]
+
+
+def test_runner_through_yesterday_initializes_up_to_yesterday_when_no_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(d) --through-yesterday va chua co state: khoi tao o phien san sang gan nhat <= hom qua."""
+    d_wed = date(2026, 11, 18)
+    d_thu = date(2026, 11, 19)
+
+    processed: list[date] = []
+    init_seen: list[list[date]] = []
+    _patch_fake_runner_env(
+        monkeypatch,
+        state=None,
+        processed_dates=processed,
+        init_sessions_seen=init_seen,
+        ready_date_return=d_wed,
+    )
+
+    rc = run_daily_engine(today=d_thu, through_yesterday=True)
+    assert rc == 0
+    assert len(init_seen) == 1
+    assert max(init_seen[0]) == d_wed
+    assert processed == []
+
+
+def test_runner_default_without_through_yesterday_preserves_old_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) Khong co co --through-yesterday -> hanh vi cu y het (xu ly toi vn_today, tra 1 neu hom nay chua san sang)."""
+    from types import SimpleNamespace
+
+    import trading.daily_engine.runner as runner_mod
+
+    d_tue = date(2026, 11, 17)
+    d_wed = date(2026, 11, 18)
+    d_thu = date(2026, 11, 19)
+
+    processed: list[date] = []
+    init_seen: list[list[date]] = []
+    state = SimpleNamespace(strategy="fake_strat", cash=CAPITAL, last_processed_date=d_tue)
+    _patch_fake_runner_env(
+        monkeypatch,
+        state=state,
+        processed_dates=processed,
+        init_sessions_seen=init_seen,
+        not_ready_dates={d_thu},
+    )
+
+    class _FixedDatetime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 19, 9, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(runner_mod, "datetime", _FixedDatetime)
+    rc = runner_mod.main([])
+    assert rc == 1
+    assert processed == [d_wed]
+

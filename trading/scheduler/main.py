@@ -375,6 +375,33 @@ def run_startup(
             log_file="catchup.log",
             alert_fn=alert_fn,
         )
+
+    fn_job = runner_fn if runner_fn is not None else run_job
+    cmd_daily_engine = [
+        python_exe,
+        "-m",
+        "trading.daily_engine.runner",
+        "--through-yesterday",
+    ]
+    rc_engine = fn_job(
+        label="daily-engine",
+        log_file="daily-engine.log",
+        command=cmd_daily_engine,
+        timeout_seconds=TIMEOUT_DAILY_ENGINE_SECONDS,
+        lock_id=ADVISORY_LOCK_DAILY_ENGINE,
+        logs_dir=logs_dir,
+        cwd=cwd,
+        dsn=dsn,
+        lock_manager=lock_manager,
+    )
+    if rc_engine is not None and rc_engine != 0:
+        notify_job_failure(
+            label="daily-engine",
+            rc=rc_engine,
+            attempts=1,
+            log_file="daily-engine.log",
+            alert_fn=alert_fn,
+        )
     return rc
 
 

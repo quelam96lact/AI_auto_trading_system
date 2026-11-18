@@ -359,7 +359,8 @@ def test_run_startup_and_run_event(tmp_path: Path, monkeypatch):
         python_exe=sys.executable,
     )
     assert (startup_logs_dir / "catchup.log").exists()
-    assert executed_labels == ["catchup"]
+    assert (startup_logs_dir / "daily-engine.log").exists()
+    assert executed_labels == ["catchup", "daily-engine"]
 
     # Morning event chi goi catchup
     executed_labels.clear()
@@ -610,6 +611,8 @@ def test_catchup_alert_on_all_retries_failed():
     rc_iter = iter([1, 1, 1])
 
     def fake_runner(**kwargs):
+        if kwargs.get("label") == "daily-engine":
+            return 0
         return next(rc_iter)
 
     rc = run_startup(
@@ -632,6 +635,8 @@ def test_catchup_no_alert_when_retry_succeeds():
     rc_iter = iter([1, 0])
 
     def fake_runner(**kwargs):
+        if kwargs.get("label") == "daily-engine":
+            return 0
         return next(rc_iter)
 
     rc = run_startup(
@@ -757,6 +762,8 @@ def test_run_job_with_retry_actual_attempts_counted():
     rc_iter = iter([1, 2])
 
     def fake_runner(**kwargs):
+        if kwargs.get("label") == "daily-engine":
+            return 0
         return next(rc_iter)
 
     rc, attempts = run_job_with_retry(
@@ -773,5 +780,58 @@ def test_run_job_with_retry_actual_attempts_counted():
     )
     assert rc == 2
     assert attempts == 2
+
+
+def test_run_startup_runs_catchup_then_daily_engine_through_yesterday():
+    """(a) run_startup chay catchup roi daily-engine (--through-yesterday) ke ca khi catchup rc != 0; tra rc cua catchup."""
+    from trading.scheduler.main import (
+        ADVISORY_LOCK_DAILY_ENGINE,
+        TIMEOUT_DAILY_ENGINE_SECONDS,
+    )
+
+    calls: list[dict] = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("label") == "catchup":
+            return 2  # permanent catchup error (khong retry)
+        return 0
+
+    rc = run_startup(
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=lambda _: None,
+    )
+    assert rc == 2
+    assert [c["label"] for c in calls] == ["catchup", "catchup", "catchup", "daily-engine"]
+
+    eng = calls[-1]
+    assert eng["log_file"] == "daily-engine.log"
+    assert eng["lock_id"] == ADVISORY_LOCK_DAILY_ENGINE
+    assert eng["timeout_seconds"] == TIMEOUT_DAILY_ENGINE_SECONDS
+    assert eng["command"][-3:] == ["-m", "trading.daily_engine.runner", "--through-yesterday"]
+
+
+def test_run_startup_alerts_when_daily_engine_fails():
+    """(b) engine rc != 0 luc startup -> notify_job_failure(label='daily-engine', ...) duoc goi."""
+    alerts: list[str] = []
+
+    def fake_runner(**kwargs):
+        if kwargs.get("label") == "daily-engine":
+            return 1
+        return 0
+
+    rc = run_startup(
+        logs_dir=Path("/fake"),
+        sleep_fn=lambda _: None,
+        runner_fn=fake_runner,
+        alert_fn=alerts.append,
+    )
+    assert rc == 0
+    assert len(alerts) == 1
+    assert "daily-engine" in alerts[0]
+    assert "logs/daily-engine.log" in alerts[0]
+
 
 

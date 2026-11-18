@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Chay thu va rollback toan bo transaction, in tom tat",
     )
+    parser.add_argument(
+        "--through-yesterday",
+        action="store_true",
+        help="Chi xu ly toi ngay hom qua (vn_today - 1 ngay) de tranh loi gia khi chay ban ngay",
+    )
     return parser
 
 
@@ -249,6 +254,7 @@ def run_daily_engine(
     dry_run: bool = False,
     strategy: DailyStrategy | None = None,
     today: date | None = None,
+    through_yesterday: bool = False,
 ) -> int:
     try:
         active_strategy = resolve_strategy() if strategy is None else strategy
@@ -263,6 +269,7 @@ def run_daily_engine(
         return 2
 
     vn_today = today or datetime.now(TZ).date()
+    end_date = vn_today - timedelta(days=1) if through_yesterday else vn_today
     holidays = load_holidays(config_path)
     storage = Storage(resolved_dsn)
     storage.init_schema()
@@ -275,7 +282,7 @@ def run_daily_engine(
                 active_strategy=active_strategy,
                 active_symbols=active_symbols,
                 holidays=holidays,
-                vn_today=vn_today,
+                vn_today=end_date,
                 dry_run=True,
                 dry_conn=dry_conn,
             )
@@ -285,7 +292,7 @@ def run_daily_engine(
         active_strategy=active_strategy,
         active_symbols=active_symbols,
         holidays=holidays,
-        vn_today=vn_today,
+        vn_today=end_date,
         dry_run=False,
         dry_conn=None,
     )
@@ -297,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         dsn=args.dsn,
         config_path=args.config,
         dry_run=args.dry_run,
+        through_yesterday=args.through_yesterday,
     )
 
 
