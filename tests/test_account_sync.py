@@ -1612,3 +1612,33 @@ async def test_confirm1_dust_prev_large_account_balance_with_zero_wd_and_debt():
     )
     assert storage.balance_calls == []
     assert _acct_sync_mod._pending_zero_balance.get("0434226") is True
+
+
+@pytest.mark.asyncio
+async def test_confirm1_dust_balance_warn_includes_account_balance():
+    """Dot 247: WARN dau tien cua CONFIRM-1 so du bui phai chua gia tri account_balance (vd -165) va tien to CONFIRM-1:."""
+    _reset_confirm1()
+    from trading.calendar_vn import TZ as _TZ
+
+    alerts: list[tuple[str, str]] = []
+    storage = FakeStorage()
+    ts = datetime(2026, 11, 13, 23, 20, tzinfo=_TZ)
+    storage._prev_balance = (75_614_394.0, 0.0, datetime(2026, 11, 13, 23, 15, tzinfo=_TZ))
+    _orig = _acct_sync_mod.alert
+    _acct_sync_mod.alert = lambda level, msg, **kw: alerts.append((level, msg))
+    try:
+        await account_sync._sync_balance(
+            _fake_auth_balance(acct_bal=-165, total_debt=0, withdrawable=0),
+            "cid",
+            "0434226",
+            ts,
+            storage,
+        )
+    finally:
+        _acct_sync_mod.alert = _orig
+
+    warns = [msg for lvl, msg in alerts if lvl == "WARN"]
+    assert len(warns) == 1
+    assert warns[0].startswith("CONFIRM-1:")
+    assert "-165" in warns[0]
+

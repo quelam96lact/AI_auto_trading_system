@@ -130,7 +130,7 @@ async def _sync_balance(
                 _pending_zero_balance[account_no] = True
                 alert(
                     "WARN",
-                    "CONFIRM-1: số dư cả ba trường = 0 đột ngột (SSI bảo trì?), chờ xác nhận",
+                    f"CONFIRM-1: số dư ~ 0 đột ngột (account_balance={acct_bal:.0f}, withdrawable=0, debt=0; SSI bảo trì?), chờ xác nhận",
                     account_no=account_no,
                 )
                 return  # KHÔNG ghi
@@ -138,14 +138,14 @@ async def _sync_balance(
                 if not _is_in_confirmation_window(ts, holidays):
                     alert(
                         "INFO",
-                        "CONFIRM-1: số dư cả ba trường vẫn = 0 ngoài cửa sổ giao dịch, tiếp tục chờ",
+                        "CONFIRM-1: số dư vẫn ~ 0 ngoài cửa sổ giao dịch, tiếp tục chờ",
                         account_no=account_no,
                     )
                     return  # KHÔNG ghi
                 _pending_zero_balance.pop(account_no, None)
                 alert(
                     "WARN",
-                    "CONFIRM-1: xác nhận số dư = 0 sau hai nhịp liên tiếp",
+                    "CONFIRM-1: xác nhận số dư ~ 0 sau hai nhịp liên tiếp",
                     account_no=account_no,
                 )
         else:
